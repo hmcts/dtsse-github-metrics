@@ -15,8 +15,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import RepositoryPage from "@/app/repositories/[repository]/page";
+import { RepositoryUnknownError } from "@/lib/not-found";
 import { PRODUCTION_BADGE } from "@/lib/production";
 import type { ContributorRow, PracticeFinding, RepositoryDetail, RepositoryPracticeEvidence, RepositoryTrend, TrendWindow, WindowOptions } from "@/lib/types";
+
+const api = vi.hoisted(() => ({ getWindows: vi.fn(), getRepository: vi.fn(), getTrend: vi.fn() }));
+
+// Mocked by path, so `api.ts` — and the Postgres pool and `server-only` guard behind it — is never loaded here.
+vi.mock("@/lib/api", async () => {
+  const { RepositoryUnknownError: Unknown, isNotFound } = await import("@/lib/not-found");
+  return { ...api, RepositoryUnknownError: Unknown, isNotFound };
+});
 
 vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined })
@@ -135,18 +144,11 @@ function evidence(): RepositoryPracticeEvidence {
  * every case that is not about the trend section refuses it so the charts stay out of the markup.
  */
 async function renderDetail(detail: RepositoryDetail, series: RepositoryTrend | null = null): Promise<string> {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string) => {
-      if (url.includes("/trend")) {
-        return series === null
-          ? Promise.reject(new Error("no trend in this test"))
-          : Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(series) });
-      }
-      const body = url.includes("/windows") ? WINDOWS : detail;
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-    })
-  );
+  api.getWindows.mockResolvedValue(WINDOWS);
+  api.getRepository.mockResolvedValue(detail);
+  // A rejected trend is how the page is shown to render its other sections regardless: the series is one block
+  // among several, and losing it must not lose the evidence beside it.
+  api.getTrend.mockImplementation(() => (series === null ? Promise.reject(new Error("no trend in this test")) : Promise.resolve(series)));
   const page = await RepositoryPage({
     params: Promise.resolve({ repository: "api" }),
     searchParams: Promise.resolve({})
@@ -344,14 +346,18 @@ describe("a repository the span cannot be reported for", () => {
 
   it("draws none of the evidence blocks, and asks for no trend it could not draw", async () => {
     const asked: string[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        asked.push(url);
-        const body = url.includes("/windows") ? WINDOWS : unavailable("nothing collected");
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-      })
-    );
+    api.getWindows.mockImplementation(() => {
+      asked.push("windows");
+      return Promise.resolve(WINDOWS);
+    });
+    api.getRepository.mockImplementation(() => {
+      asked.push("repository");
+      return Promise.resolve(unavailable("nothing collected"));
+    });
+    api.getTrend.mockImplementation(() => {
+      asked.push("trend");
+      return Promise.reject(new Error("no trend for an unreported repository"));
+    });
     const markup = renderToStaticMarkup(
       await RepositoryPage({
         params: Promise.resolve({ repository: "api" }),
@@ -364,23 +370,20 @@ describe("a repository the span cannot be reported for", () => {
     }
     // A series is cut from the caches per period, which is work worth doing only for a page that is
     // going to draw the rest of the block too.
-    expect(asked.some((url) => url.includes("/trend"))).toBe(false);
+    expect(asked).not.toContain("trend");
   });
 
-  /** Refuse the repository read with `status`, which is how the two refusals are told apart. */
-  async function refuse(status: number): Promise<unknown> {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) =>
-        url.includes("/windows")
-          ? Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(WINDOWS) })
-          : Promise.resolve({
-              ok: false,
-              status,
-              text: () => Promise.resolve('{"detail":"no repository api is configured"}')
-            })
-      )
-    );
+  /**
+   * Refuse the repository read, which is how the two refusals are told apart.
+   *
+   * `missing` is a name the configuration does not hold, which the page answers with Next's own not-found;
+   * anything else is a fault it must surface. Upstream distinguished them by HTTP status, and this port
+   * distinguishes them by TYPE — there is no response left to carry a status.
+   */
+  async function refuse(missing: boolean): Promise<unknown> {
+    api.getWindows.mockResolvedValue(WINDOWS);
+    api.getRepository.mockRejectedValue(missing ? new RepositoryUnknownError("no repository api is configured") : new Error("the evidence could not be read"));
+    api.getTrend.mockRejectedValue(new Error("no trend for a refused repository"));
     return RepositoryPage({
       params: Promise.resolve({ repository: "api" }),
       searchParams: Promise.resolve({})
@@ -388,11 +391,11 @@ describe("a repository the span cannot be reported for", () => {
   }
 
   it("answers a name the configuration does not hold as not found", async () => {
-    await expect(refuse(404)).rejects.toThrow("notFound");
+    await expect(refuse(true)).rejects.toThrow("notFound");
   });
 
   it("lets every other refusal surface as the fault it is", async () => {
-    await expect(refuse(500)).rejects.toThrow("API 500");
+    await expect(refuse(false)).rejects.toThrow("the evidence could not be read");
   });
 });
 

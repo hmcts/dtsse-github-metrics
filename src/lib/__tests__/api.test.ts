@@ -1,172 +1,62 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  ApiError,
-  apiFetch,
-  DEFAULT_API_URL,
-  getActor,
-  getActors,
-  getOverview,
-  getRepositories,
-  getRepository,
-  getTeam,
-  getTeams,
-  getTrend,
-  getWindows,
-  isNotFound
-} from "@/lib/api";
+import { readFile } from "node:fs/promises";
+import { describe, expect, it } from "vitest";
 
-const calls: { url: string; options: RequestInit | undefined }[] = [];
-
-function respond(body: unknown, ok = true, status = 200, text = ""): void {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string, options: RequestInit | undefined) => {
-      calls.push({ url, options });
-      return Promise.resolve({
-        ok,
-        status,
-        json: () => Promise.resolve(body),
-        text: () => Promise.resolve(text)
-      });
-    })
-  );
+/**
+ * Replaces the upstream test of the same name, which stubbed `fetch` to exercise an HTTP client.
+ *
+ * There is no HTTP client any more: `api.ts` calls the ported evidence code in-process, which means importing it
+ * opens a Postgres pool. So this file asserts the module's SHAPE — the boundary properties the pages and the build
+ * depend on — and the behaviour that needs a database is asserted in `test/integration/` against a real one.
+ *
+ * The not-found signal is exercised there too, through the pages' own path.
+ */
+async function source(): Promise<string> {
+  return readFile("src/lib/api.ts", "utf8");
 }
 
-beforeEach(() => {
-  calls.length = 0;
-  delete process.env.API_URL;
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-});
-
-describe("apiFetch", () => {
-  it("reads the service on localhost when no API_URL is configured", async () => {
-    respond({ status: "ok" });
-    await apiFetch("/healthz");
-    expect(calls[0]?.url).toBe(`${DEFAULT_API_URL}/healthz`);
+describe("api.ts", () => {
+  it("should be server-only, so a client component importing it fails at build time", async () => {
+    // A clear message instead of an opaque bundling error out of `pg` or `@prisma/client`.
+    expect((await source()).startsWith('import "server-only";')).toBe(true);
   });
 
-  it("reads API_URL per call, so a deployment can change it without a rebuild", async () => {
-    respond({ status: "ok" });
-    process.env.API_URL = "http://evidence.internal:9000";
-    await apiFetch("/healthz");
-    expect(calls[0]?.url).toBe("http://evidence.internal:9000/healthz");
+  it("should reach for no HTTP client at all", async () => {
+    // The absence of `fetch` here is the point of the port: the loopback hop to a FastAPI service, its CORS policy
+    // and its second serialisation boundary all went away together.
+    // Stripped of comments first: the module's own documentation names `API_URL` to say it went away, and that
+    // sentence is worth keeping.
+    const code = (await source()).replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    expect(code).not.toContain("fetch(");
+    expect(code).not.toContain("API_URL");
+    expect(code).not.toContain("process.env.API_URL");
   });
 
-  it("never caches, because the service rebuilds a window when a collection lands", async () => {
-    respond({ status: "ok" });
-    await apiFetch("/healthz");
-    expect(calls[0]?.options).toEqual({ cache: "no-store" });
+  it("should read the policy document from METRICS_CONFIG", async () => {
+    expect(await source()).toContain("METRICS_CONFIG");
   });
 
-  it("raises with the service's own detail, which names what was refused", async () => {
-    respond(null, false, 404, '{"detail":"repository is not configured: nothing-here"}');
-    await expect(apiFetch("/repositories/nothing-here")).rejects.toThrow(
-      'API 404 for /repositories/nothing-here: {"detail":"repository is not configured: nothing-here"}'
-    );
+  it("should still export every getter the pages import", async () => {
+    // The pages were carried over verbatim, so this list is their contract rather than this file's choice.
+    const text = await source();
+
+    for (const getter of ["getWindows", "getOverview", "getRepositories", "getRepository", "getTrend", "getActors", "getActor", "getTeams", "getTeam"]) {
+      expect(text).toContain(`export async function ${getter}`);
+    }
+    // Re-exported rather than declared, so a page-level test can construct the real type without importing this
+    // module and the Postgres pool behind it.
+    expect(text).toContain('export { isNotFound, RepositoryUnknownError } from "@/lib/not-found"');
   });
 
-  it("still raises when the failed response has no readable body", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve({
-          ok: false,
-          status: 500,
-          json: () => Promise.resolve(null),
-          text: () => Promise.reject(new Error("connection reset"))
-        })
-      )
-    );
-    await expect(apiFetch("/overview")).rejects.toThrow("API 500 for /overview: ");
-  });
+  it("should signal a missing name by type rather than by an HTTP status", async () => {
+    // The pages branch on `isNotFound` to render Next's own not-found; there is no response to carry a 404.
+    const text = await source();
+    const signal = await readFile("src/lib/not-found.ts", "utf8");
 
-  it("reads an unparseable success as a fault of its own rather than a bare SyntaxError", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() =>
-        Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.reject(new SyntaxError("Unexpected token <")),
-          text: () => Promise.resolve("")
-        })
-      )
-    );
-    const refused = await apiFetch("/overview").catch((error: unknown) => error);
-    expect(refused).toBeInstanceOf(ApiError);
-    expect((refused as ApiError).message).toBe("API 200 for /overview: response was not JSON");
-    expect(isNotFound(refused)).toBe(false);
-  });
-
-  it("carries the status, so a page can answer a 404 with not-found and nothing else", async () => {
-    respond(null, false, 404, '{"detail":"repository is not configured: nothing-here"}');
-    const refused = await apiFetch("/repositories/nothing-here").catch((error: unknown) => error);
-    expect(refused).toBeInstanceOf(ApiError);
-    expect((refused as ApiError).status).toBe(404);
-    expect(isNotFound(refused)).toBe(true);
-  });
-
-  it("reads any other failure as a fault rather than as a name nobody configured", async () => {
-    respond(null, false, 503, "the caches are being rebuilt");
-    const refused = await apiFetch("/overview").catch((error: unknown) => error);
-    expect(isNotFound(refused)).toBe(false);
-    expect(isNotFound(new Error("connection reset"))).toBe(false);
-  });
-});
-
-describe("endpoints", () => {
-  it("asks each route for the requested span", async () => {
-    respond([]);
-    await getWindows();
-    await getOverview(8);
-    await getRepositories(8);
-    await getActors(1);
-    await getTeams(26);
-    expect(calls.map((call) => call.url.replace(DEFAULT_API_URL, ""))).toEqual([
-      "/windows",
-      "/overview?weeks=8",
-      "/repositories?weeks=8",
-      "/actors?weeks=1",
-      "/teams?weeks=26"
-    ]);
-  });
-
-  it("encodes the name in every path, so a slug can never open a path of its own", async () => {
-    respond({});
-    await getRepository("cath/service", 4);
-    await getActor("Alice Smith", 4);
-    await getTeam("team one", 4);
-    expect(calls.map((call) => call.url.replace(DEFAULT_API_URL, ""))).toEqual([
-      "/repositories/cath%2Fservice?weeks=4",
-      "/actors/Alice%20Smith?weeks=4",
-      "/teams/team%20one?weeks=4"
-    ]);
-  });
-
-  it("asks for a series with no window but always with a cut, which the service has no default for", async () => {
-    respond({});
-    await getTrend("cath-service", 26);
-    expect(calls[0]?.url.replace(DEFAULT_API_URL, "")).toBe("/repositories/cath-service/trend?periods=26");
-  });
-
-  it("encodes the repository in a trend path too", async () => {
-    respond({});
-    await getTrend("cath/service", 26);
-    expect(calls[0]?.url.replace(DEFAULT_API_URL, "")).toBe("/repositories/cath%2Fservice/trend?periods=26");
-  });
-
-  it("returns the parsed body to the caller", async () => {
-    const body = {
-      options: [1, 4],
-      default: 4,
-      trend_periods: 26,
-      collected_through: "2026-09-01T00:00:00+00:00",
-      collection_stale: false
-    };
-    respond(body);
-    await expect(getWindows()).resolves.toEqual(body);
+    expect(text).toContain("RepositoryUnknownError");
+    expect(signal).toContain("class RepositoryUnknownError");
+    // No status on either side: there is no response to carry one.
+    expect(signal).not.toContain("readonly status");
+    expect(text).not.toContain("readonly status");
   });
 });

@@ -9,9 +9,13 @@
  * own inputs and the tables are tested on the `weeks` they are handed, so the join between them is
  * only visible from here.
  *
- * The pages are async server components reading cookies and the service, so `next/headers` and
- * `fetch` are stubbed and the awaited tree is handed to `renderToStaticMarkup`, exactly as
+ * The pages are async server components reading cookies and the evidence code, so `next/headers` and
+ * `@/lib/api` are stubbed and the awaited tree is handed to `renderToStaticMarkup`, exactly as
  * `repository-page.test.ts` does it.
+ *
+ * The stub is on `@/lib/api` rather than on `fetch`: this port calls the ported evidence code in-process, so
+ * there is no HTTP client left to intercept. Each getter records the span it was asked at, which is the same
+ * observation the URL's `?weeks=` used to carry.
  */
 
 import { renderToStaticMarkup } from "react-dom/server";
@@ -94,6 +98,17 @@ const TEAMS: TeamRow[] = [{ team: "platform", repositories: 2, unavailable: 0, a
 /** Every path the stubbed service was asked for, in the order the pages asked for them. */
 let requested: string[] = [];
 
+const api = vi.hoisted(() => ({
+  getWindows: vi.fn(),
+  getOverview: vi.fn(),
+  getRepositories: vi.fn(),
+  getActors: vi.fn(),
+  getTeams: vi.fn()
+}));
+
+// Mocked by path, so `api.ts` — and the Postgres pool and `server-only` guard behind it — is never loaded here.
+vi.mock("@/lib/api", () => api);
+
 vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined })
 }));
@@ -107,28 +122,34 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => search
 }));
 
-/** Answer each list endpoint from the fixtures above, recording the path it was asked for. */
+/** Answer each getter from the fixtures above, recording the getter and the span it was asked at. */
 function stubService(): void {
   requested = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string) => {
-      requested.push(url);
-      const body = (() => {
-        if (url.includes("/windows")) return WINDOWS;
-        if (url.includes("/overview")) return OVERVIEW;
-        if (url.includes("/repositories")) return REPOSITORIES;
-        if (url.includes("/actors")) return ACTORS;
-        return TEAMS;
-      })();
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-    })
-  );
+  api.getWindows.mockImplementation(() => {
+    requested.push("windows");
+    return Promise.resolve(WINDOWS);
+  });
+  api.getOverview.mockImplementation((weeks: number) => {
+    requested.push(`overview?weeks=${weeks}`);
+    return Promise.resolve(OVERVIEW);
+  });
+  api.getRepositories.mockImplementation((weeks: number) => {
+    requested.push(`repositories?weeks=${weeks}`);
+    return Promise.resolve(REPOSITORIES);
+  });
+  api.getActors.mockImplementation((weeks: number) => {
+    requested.push(`actors?weeks=${weeks}`);
+    return Promise.resolve(ACTORS);
+  });
+  api.getTeams.mockImplementation((weeks: number) => {
+    requested.push(`teams?weeks=${weeks}`);
+    return Promise.resolve(TEAMS);
+  });
 }
 
-/** The spans the data endpoints were asked at, which `/windows` itself does not take. */
+/** The spans the data getters were asked at, which `getWindows` itself does not take. */
 function spans(): string[] {
-  return requested.filter((url) => !url.includes("/windows")).map((url) => new URL(url).searchParams.get("weeks") ?? "none");
+  return requested.filter((entry) => entry !== "windows").map((entry) => new URL(entry, "https://x.test").searchParams.get("weeks") ?? "none");
 }
 
 afterEach(() => {
@@ -191,17 +212,10 @@ describe("the three list routes", () => {
 
   /** Answer every list endpoint with nothing in it, which each of the three pages must say aloud. */
   function stubEmptyService(): void {
-    requested = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) =>
-        Promise.resolve({
-          ok: true,
-          status: 200,
-          json: () => Promise.resolve(url.includes("/windows") ? WINDOWS : url.includes("/overview") ? OVERVIEW : [])
-        })
-      )
-    );
+    stubService();
+    api.getRepositories.mockResolvedValue([]);
+    api.getActors.mockResolvedValue([]);
+    api.getTeams.mockResolvedValue([]);
   }
 
   it("says so rather than drawing an empty table where a list came back empty", async () => {
@@ -245,18 +259,8 @@ describe("the three list routes", () => {
     expect(partial).toContain("2 reported");
     expect(partial).not.toContain("all reported");
 
-    requested = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn((url: string) => {
-        const body = (() => {
-          if (url.includes("/windows")) return WINDOWS;
-          if (url.includes("/overview")) return { ...OVERVIEW, repositories: 12, unavailable: 0 };
-          return REPOSITORIES;
-        })();
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-      })
-    );
+    stubService();
+    api.getOverview.mockResolvedValue({ ...OVERVIEW, repositories: 12, unavailable: 0 });
     const reported = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
     expect(reported).toContain("all reported");

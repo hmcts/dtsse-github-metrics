@@ -14,6 +14,13 @@ export default defineConfig({
   // render through `@testing-library/react`. Fast Refresh, its other half, is inert here.
   plugins: [react()],
   resolve: {
+    // `server-only` is deliberately NOT resolved through its `react-server` condition here.
+    //
+    // Doing that globally makes React itself resolve to `react-server`, whose entry point refuses to load outside
+    // an experimental channel — which broke every component test at once. The guard is therefore left armed, and
+    // the modules that import `server-only` are asserted by reading their source rather than by importing them:
+    // see src/lib/__tests__/api.test.ts. Behaviour that needs those modules loaded is covered in
+    // test/integration/, whose own config is free to resolve them because nothing there renders a component.
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url))
     }

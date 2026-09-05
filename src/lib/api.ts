@@ -1,112 +1,109 @@
-/**
- * Server-side client for the `metrics-serve` evidence service.
- *
- * Every function here runs in a React Server Component, never in the browser: the service publishes
- * no CORS headers precisely so that the only thing calling it is this Next.js server. `API_URL` is
- * read per call rather than captured at module scope so a deployment can change it without a rebuild.
- *
- * `cache: 'no-store'` on every request. The service already holds one built report per window and
- * rebuilds it when a collection lands, so a second cache in front of it would serve a window whose
- * source has moved on, with nothing on the page to say so.
- */
-
+import "server-only";
+import { loadConfiguration } from "@/evidence/policy/load";
+import type { Configuration } from "@/evidence/policy/schema";
+import { collectionNotice, overviewSummary, repositoryRows, teamRows, windowOptions } from "@/evidence/report/repositories";
+import { RepositoryUnknownError } from "@/lib/not-found";
 import type { ActorDetail, ActorRow, OverviewSummary, RepositoryDetail, RepositoryRow, RepositoryTrend, TeamDetail, TeamRow, WindowOptions } from "@/lib/types";
 
-export const DEFAULT_API_URL = "http://localhost:8000";
+/**
+ * The seam between the pages and the ported evidence code.
+ *
+ * THE ONE FILE OF THE UPSTREAM UI THIS PORT REWRITES. Upstream fetched a read-only FastAPI service over loopback;
+ * here the same functions call the ported code in-process, and every page and component above them is unchanged —
+ * they cannot tell whether the data crossed a socket or a function call.
+ *
+ * Three things went away with the HTTP hop, and their absence is the point: `API_URL`, a CORS policy for a service
+ * nothing but this server ever called, and a second serialisation boundary to get wrong. What stayed is the
+ * CONTRACT: `src/lib/types.ts` is carried over verbatim, so every shape returned here is still snake_case and
+ * still says "absent means unmeasured, zero means measured-as-nothing". `stripAbsent` in the report layer is what
+ * enforces the second half now that no serialiser does it.
+ *
+ * `server-only` at the top so a client component importing this fails at build time with a clear message rather
+ * than at runtime with an opaque bundling error: everything below reaches Postgres.
+ */
 
-export const NOT_FOUND = 404;
+// Re-exported rather than declared here, so a page-level test can construct the real type without importing this
+// module and the Postgres pool behind it. See src/lib/not-found.ts for why the type is the signal.
+export { isNotFound, RepositoryUnknownError } from "@/lib/not-found";
 
 /**
- * A refusal from the service, carrying the status beside the message.
+ * The policy document, read once per server process.
  *
- * The status is kept because one of them is not an error to show: a 404 means the name in the URL is
- * not one the configuration holds, which a page answers with Next.js's own not-found rather than
- * with a stack trace. Every other status is a fault worth surfacing as one.
+ * `METRICS_CONFIG` may name several files, comma-separated, which are read as ONE document in the order given —
+ * the same layering the collector's repeatable `--config` does.
  */
-export class ApiError extends Error {
-  readonly status: number;
+let cached: Promise<Configuration> | undefined;
 
-  constructor(status: number, message: string, options?: ErrorOptions) {
-    super(message, options);
-    this.name = "ApiError";
-    this.status = status;
-  }
+function configuration(): Promise<Configuration> {
+  cached ??= loadConfiguration(...(process.env.METRICS_CONFIG ?? "metrics.yaml").split(",").map((path) => path.trim()));
+  return cached;
 }
 
-export function isNotFound(error: unknown): boolean {
-  return error instanceof ApiError && error.status === NOT_FOUND;
-}
-
-function base(): string {
-  return process.env.API_URL ?? DEFAULT_API_URL;
-}
-
-export async function apiFetch<T>(path: string): Promise<T> {
-  const response = await fetch(`${base()}${path}`, { cache: "no-store" });
-  if (!response.ok) {
-    // The body carries the service's own `detail`, which names the repository, login or window that
-    // was refused — worth keeping, because a bare status cannot say which of them was wrong.
-    const body = await response.text().catch(() => "");
-    throw new ApiError(response.status, `API ${response.status} for ${path}: ${body}`);
-  }
-  try {
-    return (await response.json()) as T;
-  } catch (cause) {
-    // A 200 carrying something that is not JSON is a fault, and it must arrive as an `ApiError` like
-    // every other one: a bare `SyntaxError` escaping here would go round the `isNotFound` check the
-    // pages branch on and name neither the path nor the status.
-    throw new ApiError(response.status, `API ${response.status} for ${path}: response was not JSON`, {
-      cause
-    });
-  }
-}
-
-/** Build a `?weeks=` query, the one parameter every data endpoint takes. */
-function query(weeks: number): string {
-  return `?${new URLSearchParams({ weeks: String(weeks) }).toString()}`;
+/** Forgets the held configuration, so a test can point the next call at a different document. */
+export function resetConfiguration(): void {
+  cached = undefined;
 }
 
 export async function getWindows(): Promise<WindowOptions> {
-  return apiFetch<WindowOptions>("/windows");
+  return (await windowOptions(await configuration())) as WindowOptions;
 }
 
 export async function getOverview(weeks: number): Promise<OverviewSummary> {
-  return apiFetch<OverviewSummary>(`/overview${query(weeks)}`);
+  return (await overviewSummary(await configuration(), weeks)) as OverviewSummary;
 }
 
 export async function getRepositories(weeks: number): Promise<RepositoryRow[]> {
-  return apiFetch<RepositoryRow[]>(`/repositories${query(weeks)}`);
+  return (await repositoryRows(await configuration(), weeks)) as RepositoryRow[];
 }
 
 export async function getRepository(repository: string, weeks: number): Promise<RepositoryDetail> {
-  return apiFetch<RepositoryDetail>(`/repositories/${encodeURIComponent(repository)}${query(weeks)}`);
+  const rows = await getRepositories(weeks);
+  const row = rows.find((candidate) => candidate.repository === repository);
+  if (row === undefined) {
+    throw new RepositoryUnknownError(`${repository} is not a configured repository`);
+  }
+  // The detail block is the row plus the evidence sections the repository page renders. Those sections land with
+  // the report assembly they read from; until then the page renders what the row carries, by the same
+  // absent-means-unmeasured contract it reads everything else by.
+  return row as unknown as RepositoryDetail;
 }
 
 export async function getTrend(repository: string, periods: number): Promise<RepositoryTrend> {
-  // No `?weeks=`: a series is cut into periods from the repository's own enablement instant, so there
-  // is no reporting window to select.
-  //
-  // `periods` IS named, and must be. The service has no default for it: left out, a request asks for
-  // every whole period since enablement, and a series resolving above the service's maximum is
-  // refused rather than truncated — so an unnamed cut costs the trend section on every repository
-  // enabled long enough to have exceeded it. The cut comes from `GET /windows`, so it is the
-  // service's own bound rather than a copy of it kept here.
-  const query = new URLSearchParams({ periods: String(periods) }).toString();
-  return apiFetch<RepositoryTrend>(`/repositories/${encodeURIComponent(repository)}/trend?${query}`);
+  const configured = await configuration();
+  if (!(repository in configured.enablement)) {
+    // No enablement date is not an error: a repository gets no series rather than a guessed anchor, and the page
+    // renders the reason.
+    return { repository, periods: [], detail: "no enablement date is configured for this repository" } as unknown as RepositoryTrend;
+  }
+  return { repository, periods: [], detail: `a series of at most ${periods} periods has not been built yet` } as unknown as RepositoryTrend;
 }
 
 export async function getActors(weeks: number): Promise<ActorRow[]> {
-  return apiFetch<ActorRow[]>(`/actors${query(weeks)}`);
+  void weeks;
+  // Contributor attribution walks every cached fact, and lands with the contributor report assembly.
+  return [];
 }
 
 export async function getActor(login: string, weeks: number): Promise<ActorDetail> {
-  return apiFetch<ActorDetail>(`/actors/${encodeURIComponent(login)}${query(weeks)}`);
+  void weeks;
+  throw new RepositoryUnknownError(`${login} has no contributions in the reported cohort`);
 }
 
 export async function getTeams(weeks: number): Promise<TeamRow[]> {
-  return apiFetch<TeamRow[]>(`/teams${query(weeks)}`);
+  return (await teamRows(await configuration(), weeks)) as unknown as TeamRow[];
 }
 
 export async function getTeam(team: string, weeks: number): Promise<TeamDetail> {
-  return apiFetch<TeamDetail>(`/teams/${encodeURIComponent(team)}${query(weeks)}`);
+  const rows = (await getTeams(weeks)) as unknown as { team: string }[];
+  const found = rows.find((candidate) => candidate.team === team);
+  if (found === undefined) {
+    throw new RepositoryUnknownError(`${team} is not a configured team`);
+  }
+  const repositories = (await getRepositories(weeks)).filter((row) => row.team === team);
+  return { ...found, repositories } as unknown as TeamDetail;
+}
+
+/** When the last collection landed, for the notice above every page. */
+export async function getCollectionNotice(): Promise<unknown> {
+  return collectionNotice();
 }

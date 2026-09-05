@@ -16,6 +16,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TeamPage, { dynamic } from "@/app/teams/[team]/page";
+import { RepositoryUnknownError } from "@/lib/not-found";
 import type { RepositoryRow, TeamActorRow, TeamDetail, WindowOptions } from "@/lib/types";
 
 const WINDOWS: WindowOptions = {
@@ -74,32 +75,39 @@ let requested: string[] = [];
  * `status` is how a refusal is chosen: 404 for an identifier the configuration does not hold, and
  * anything else for a fault the page must surface rather than dress up as a team nobody configured.
  */
+const api = vi.hoisted(() => ({ getWindows: vi.fn(), getTeam: vi.fn() }));
+
+// Mocked by path, so `api.ts` — and the Postgres pool and `server-only` guard behind it — is never loaded here.
+vi.mock("@/lib/api", async () => {
+  const { RepositoryUnknownError, isNotFound } = await import("@/lib/not-found");
+  return { ...api, RepositoryUnknownError, isNotFound };
+});
+
 function stubService(change: (detail: TeamDetail) => TeamDetail = (detail) => detail, status = 200): void {
   requested = [];
   const detail = change(team());
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string) => {
-      requested.push(url);
-      if (url.includes("/windows")) {
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(WINDOWS) });
-      }
-      if (status !== 200) {
-        return Promise.resolve({
-          ok: false,
-          status,
-          text: () => Promise.resolve('{"detail":"no team platform is configured"}')
-        });
-      }
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(detail) });
-    })
-  );
+  api.getWindows.mockImplementation(() => {
+    requested.push("windows");
+    return Promise.resolve(WINDOWS);
+  });
+  api.getTeam.mockImplementation((name: string, weeks: number) => {
+    requested.push(`team?weeks=${weeks}`);
+    if (status === 404) {
+      // A name the configuration does not hold. The page branches on the TYPE now, where it used to branch on a
+      // status: there is no response left to carry one.
+      return Promise.reject(new RepositoryUnknownError(`${name} is not configured`));
+    }
+    if (status !== 200) {
+      return Promise.reject(new Error("the evidence could not be read"));
+    }
+    return Promise.resolve(detail);
+  });
 }
 
 /** The span the team was read at, which `/windows` itself does not take. */
 function span(): string | null {
-  const url = requested.find((each) => !each.includes("/windows"));
-  return url === undefined ? "none" : new URL(url).searchParams.get("weeks");
+  const entry = requested.find((each) => each !== "windows");
+  return entry === undefined ? "none" : new URL(entry, "https://x.test").searchParams.get("weeks");
 }
 
 async function render(weeks?: string): Promise<string> {
@@ -287,7 +295,7 @@ describe("the team page", () => {
 
   it("lets every other refusal surface as the fault it is", async () => {
     stubService((detail) => detail, 503);
-    await expect(render()).rejects.toThrow("API 503");
+    await expect(render()).rejects.toThrow("the evidence could not be read");
   });
 
   it("is dynamic, so a page is never served at another reader’s span", () => {

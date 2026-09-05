@@ -17,6 +17,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ActorPage, { dynamic } from "@/app/contributors/[login]/page";
+import { RepositoryUnknownError } from "@/lib/not-found";
 import { PRODUCTION_BADGE } from "@/lib/production";
 import type { ActorDetail, ActorRepositoryReadiness, WindowOptions } from "@/lib/types";
 
@@ -70,6 +71,14 @@ let requested: string[] = [];
  * `status` is how a refusal is chosen: 404 for a login the window does not hold, and anything else
  * for a service or network fault, which the page must not disguise as a person nobody has heard of.
  */
+const api = vi.hoisted(() => ({ getWindows: vi.fn(), getActor: vi.fn() }));
+
+// Mocked by path, so `api.ts` — and the Postgres pool and `server-only` guard behind it — is never loaded here.
+vi.mock("@/lib/api", async () => {
+  const { RepositoryUnknownError, isNotFound } = await import("@/lib/not-found");
+  return { ...api, RepositoryUnknownError, isNotFound };
+});
+
 function stubService(repositories: ActorRepositoryReadiness[] = REPOSITORIES, status = 200, production?: string[]): void {
   requested = [];
   const detail: ActorDetail = {
@@ -77,29 +86,28 @@ function stubService(repositories: ActorRepositoryReadiness[] = REPOSITORIES, st
     teams: { api: "platform", web: "digital" },
     production
   };
-  vi.stubGlobal(
-    "fetch",
-    vi.fn((url: string) => {
-      requested.push(url);
-      if (url.includes("/windows")) {
-        return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(WINDOWS) });
-      }
-      if (status !== 200) {
-        return Promise.resolve({
-          ok: false,
-          status,
-          text: () => Promise.resolve(`{"detail":"no actor ada at this span"}`)
-        });
-      }
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(detail) });
-    })
-  );
+  api.getWindows.mockImplementation(() => {
+    requested.push("windows");
+    return Promise.resolve(WINDOWS);
+  });
+  api.getActor.mockImplementation((login: string, weeks: number) => {
+    requested.push(`actor/${login}?weeks=${weeks}`);
+    if (status === 404) {
+      // A login with no contributions in the cohort. The page branches on the TYPE now, where it used to branch
+      // on a status: there is no response left to carry one.
+      return Promise.reject(new RepositoryUnknownError(`no actor ${login} at this span`));
+    }
+    if (status !== 200) {
+      return Promise.reject(new Error("the evidence could not be read"));
+    }
+    return Promise.resolve(detail);
+  });
 }
 
 /** The span the person was read at, which `/windows` itself does not take. */
 function span(): string | null {
-  const url = requested.find((each) => !each.includes("/windows"));
-  return url === undefined ? "none" : new URL(url).searchParams.get("weeks");
+  const entry = requested.find((each) => each !== "windows");
+  return entry === undefined ? "none" : new URL(entry, "https://x.test").searchParams.get("weeks");
 }
 
 async function render(login = "Ada", weeks?: string): Promise<string> {
@@ -128,8 +136,8 @@ describe("the contributor page", () => {
     expect(markup).toContain(">ada<");
     expect(markup).toContain("contributor");
     expect(markup).toContain("9 merges across 2 repositories");
-    // Case survives into the request: the service does the folding, not the page.
-    expect(requested.some((url) => url.includes("/actors/ADA"))).toBe(true);
+    // Case survives into the request: the evidence layer does the folding, not the page.
+    expect(requested.some((entry) => entry.startsWith("actor/ADA"))).toBe(true);
   });
 
   it("reads the person at the span asked for, and links at the same one", async () => {
@@ -222,7 +230,7 @@ describe("the contributor page", () => {
 
   it("lets every other refusal surface as the fault it is", async () => {
     stubService(REPOSITORIES, 503);
-    await expect(render()).rejects.toThrow("API 503");
+    await expect(render()).rejects.toThrow("the evidence could not be read");
   });
 
   it("is dynamic, so a page is never served at another reader’s span", () => {
