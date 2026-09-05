@@ -31,6 +31,16 @@ function values(entries: Record<string, string>): Map<string, string> {
   return new Map(Object.entries(entries));
 }
 
+/** Awaits a read that must fail, and hands back the SonarError it failed with. */
+async function failing(work: Promise<unknown>): Promise<SonarError> {
+  const outcome = await work.then(
+    () => undefined,
+    (thrown: unknown) => thrown
+  );
+  expect(outcome).toBeInstanceOf(SonarError);
+  return outcome as SonarError;
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -179,11 +189,8 @@ describe("createSonarClient", () => {
     // 123 of one organisation's 240 declarations named a project that does not exist: stale keys, not failures.
     const fetch = replying({ status: 404, body: {} });
 
-    const error = await createSonarClient({ organization: "hmcts", fetch })
-      .projectAnalyses("hmcts.gone", 1)
-      .catch((thrown: unknown) => thrown as SonarError);
+    const error = await failing(createSonarClient({ organization: "hmcts", fetch }).projectAnalyses("hmcts.gone", 1));
 
-    expect(error).toBeInstanceOf(SonarError);
     expect(error.reason).toBe(AvailabilityReason.NotFoundOrInaccessible);
   });
 
@@ -195,9 +202,7 @@ describe("createSonarClient", () => {
   ])("should carry HTTP %i as %s", async (status, reason) => {
     const fetch = replying({ status, body: {} });
 
-    const error = await createSonarClient({ organization: "hmcts", fetch })
-      .measures("hmcts.cath", undefined)
-      .catch((thrown: unknown) => thrown as SonarError);
+    const error = await failing(createSonarClient({ organization: "hmcts", fetch }).measures("hmcts.cath", undefined));
 
     expect(error.reason).toBe(reason);
   });
