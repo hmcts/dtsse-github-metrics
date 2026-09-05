@@ -62,7 +62,15 @@ async function collectRepository(
     console.warn(`${repository}: could not be read at all, so nothing was collected for it`);
     return { observed: false, failures: 1 };
   }
-  const defaultBranch = metadata.default_branch ?? "main";
+  // NOT defaulted. GitHub returns `default_branch` on every repository it will answer for at all, and guessing
+  // one would be worse than failing: HMCTS repositories are a mix of `master` and `main` — pcs-api is `master` —
+  // so a wrong guess collects a branch that may not exist and reports the merge gate of one that does not gate
+  // anything. A repository whose metadata carries no branch is a repository nothing can be asked about.
+  const defaultBranch = metadata.default_branch;
+  if (defaultBranch === undefined || defaultBranch === "") {
+    console.warn(`${repository}: GitHub named no default branch, so nothing was collected for it`);
+    return { observed: false, failures: 1 };
+  }
 
   const edge = mutableEdge(window, configuration.lookback.mutable_hours, reference);
 
