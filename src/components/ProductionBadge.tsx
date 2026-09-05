@@ -1,5 +1,5 @@
-import clsx from 'clsx';
-import { PRODUCTION_BADGE, PRODUCTION_LABEL } from '@/lib/production';
+import clsx from "clsx";
+import { PRODUCTION_BADGE, PRODUCTION_LABEL } from "@/lib/production";
 
 /**
  * The `Production` badge: a repository's deployment approval, as a word beside its name.
@@ -19,13 +19,6 @@ export function ProductionBadge({ production }: { production?: boolean }) {
     return null;
   }
   return (
-    <span
-      className={clsx(
-        'inline-block rounded px-1.5 py-0.5 text-xs uppercase tracking-wide whitespace-nowrap',
-        PRODUCTION_BADGE,
-      )}
-    >
-      {PRODUCTION_LABEL}
-    </span>
+    <span className={clsx("inline-block rounded px-1.5 py-0.5 text-xs uppercase tracking-wide whitespace-nowrap", PRODUCTION_BADGE)}>{PRODUCTION_LABEL}</span>
   );
 }

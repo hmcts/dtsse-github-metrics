@@ -13,11 +13,11 @@
  *     percent prints `<0.1%`, so a row somebody is in never reads like a deliberate zero.
  */
 
-import type { DistributionObservation, Observation, RateObservation } from '@/lib/types';
+import type { DistributionObservation, Observation, RateObservation } from "@/lib/types";
 
-export const ABSENT = '-';
+export const ABSENT = "-";
 
-export const NOT_APPLICABLE = 'not applicable';
+export const NOT_APPLICABLE = "not applicable";
 
 /**
  * Format one number the way the report's `%g` does: as few digits as say it exactly.
@@ -66,17 +66,17 @@ export function percentageOf(count: number, total: number): string {
     return ABSENT;
   }
   const share = tenth((count / total) * 100);
-  return count > 0 && share === 0 ? '<0.1%' : percent(share);
+  return count > 0 && share === 0 ? "<0.1%" : percent(share);
 }
 
 /** A rate carries a `denominator`; a distribution carries a `unit`. That is the whole discriminator. */
 export function isRate(observation: Observation): observation is RateObservation {
-  return 'denominator' in observation;
+  return "denominator" in observation;
 }
 
 /** Format a rate observation as its percentage, or as words when there was no sample to divide. */
 export function rate(observation: RateObservation): string {
-  if (observation.status !== 'observed') {
+  if (observation.status !== "observed") {
     return NOT_APPLICABLE;
   }
   return percent(tenth((observation.numerator / observation.denominator) * 100));
@@ -89,7 +89,7 @@ export function basis(observation: RateObservation): string {
 
 /** Format a distribution's median with its unit — the value a metric grid leads on. */
 export function median(observation: DistributionObservation): string {
-  if (observation.status !== 'observed') {
+  if (observation.status !== "observed") {
     return NOT_APPLICABLE;
   }
   return `${figure(observation.median)} ${observation.unit}`;
@@ -103,7 +103,7 @@ export function summarise(observation: Observation): string {
 /** State what a distribution was measured over, in the same "N of M" register as a rate's basis. */
 export function sample(observation: DistributionObservation): string {
   const size = observation.sample_size;
-  return `${size} ${size === 1 ? 'sample' : 'samples'}`;
+  return `${size} ${size === 1 ? "sample" : "samples"}`;
 }
 
 /** Describe what an observation was measured over, whichever shape it is. */

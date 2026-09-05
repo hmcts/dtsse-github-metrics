@@ -1,10 +1,10 @@
-import type { Metadata } from 'next';
-import './globals.css';
-import { Navigation } from '@/components/Navigation';
+import type { Metadata } from "next";
+import "./globals.css";
+import { Navigation } from "@/components/Navigation";
 
 export const metadata: Metadata = {
-  title: 'GitHub Metrics Dashboard',
-  description: 'Repository, contributor, and team evidence from the metrics caches',
+  title: "GitHub Metrics Dashboard",
+  description: "Repository, contributor, and team evidence from the metrics caches"
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

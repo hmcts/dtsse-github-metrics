@@ -1,13 +1,13 @@
-'use client';
+"use client";
 
-import Link from 'next/link';
-import { useState } from 'react';
-import { RAGLabel } from '@/components/RAGCard';
-import { SortHeader, type Align } from '@/components/SortHeader';
-import { combinationKey } from '@/lib/rag';
-import { nextDirection, sorted, type Direction, type SortValue } from '@/lib/sort';
-import type { ActorRow, ReadinessLabel } from '@/lib/types';
-import { withWeeks } from '@/lib/weeks';
+import Link from "next/link";
+import { useState } from "react";
+import { RAGLabel } from "@/components/RAGCard";
+import { type Align, SortHeader } from "@/components/SortHeader";
+import { combinationKey } from "@/lib/rag";
+import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
+import type { ActorRow, ReadinessLabel } from "@/lib/types";
+import { withWeeks } from "@/lib/weeks";
 
 interface Column {
   key: string;
@@ -18,16 +18,16 @@ interface Column {
 
 /** The column the list opens on, ascending: all green first, and the unlabelled last either way. */
 const READINESS: Column = {
-  key: 'readiness',
-  label: 'Readiness',
-  align: 'right',
-  read: (row) => combinationKey(row.labels),
+  key: "readiness",
+  label: "Readiness",
+  align: "right",
+  read: (row) => combinationKey(row.labels)
 };
 
 const COLUMNS: readonly Column[] = [
-  { key: 'login', label: 'Login', read: (row) => row.login },
-  { key: 'repositories', label: 'Repositories', align: 'right', read: (row) => row.repositories },
-  READINESS,
+  { key: "login", label: "Login", read: (row) => row.login },
+  { key: "repositories", label: "Repositories", align: "right", read: (row) => row.repositories },
+  READINESS
 ];
 
 /**
@@ -48,17 +48,9 @@ const COLUMNS: readonly Column[] = [
  * `labelled` says whether the readiness policy graded anything at all in this window, which one
  * person's row cannot say on its own — see `Readiness`.
  */
-export function ActorsTable({
-  rows,
-  weeks,
-  labelled,
-}: {
-  rows: readonly ActorRow[];
-  weeks: number;
-  labelled: boolean;
-}) {
+export function ActorsTable({ rows, weeks, labelled }: { rows: readonly ActorRow[]; weeks: number; labelled: boolean }) {
   const [column, setColumn] = useState<Column>(READINESS);
-  const [direction, setDirection] = useState<Direction>('ascending');
+  const [direction, setDirection] = useState<Direction>("ascending");
 
   const ordered = sorted(rows, column.read, direction);
 
@@ -97,9 +89,7 @@ export function ActorsTable({
                   {row.login}
                 </Link>
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                {row.repositories}
-              </td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.repositories}</td>
               <td className="py-2 pr-3 text-right">
                 <Readiness labels={row.labels} labelled={labelled} />
               </td>

@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useEffect, useRef, useState } from 'react';
-import { Search, X } from 'lucide-react';
-import { filterTarget } from '@/lib/filter';
+import { Search, X } from "lucide-react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { filterTarget } from "@/lib/filter";
 
 /**
  * A filter term that lives in the URL rather than in this component's state alone.
@@ -21,8 +21,8 @@ export const FILTER_DEBOUNCE_MILLISECONDS = 300;
 
 export function FilterSearchBox({
   parameter,
-  placeholder = 'Filter…',
-  className,
+  placeholder = "Filter…",
+  className
 }: {
   /** The query-string key this box reads and writes, e.g. `repository`. */
   parameter: string;
@@ -32,7 +32,7 @@ export function FilterSearchBox({
   const router = useRouter();
   const pathname = usePathname();
   const searchParameters = useSearchParams();
-  const [value, setValue] = useState<string>(() => searchParameters.get(parameter) ?? '');
+  const [value, setValue] = useState<string>(() => searchParameters.get(parameter) ?? "");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // The last term this box navigated to, so the effect below can tell a URL change it caused from
   // one it did not.
@@ -46,7 +46,7 @@ export function FilterSearchBox({
   // typed with the term they typed 300ms ago: the input visibly reverts and the caret jumps. A term
   // this box sent is therefore skipped, leaving only the changes something else made.
   useEffect(() => {
-    const term = searchParameters.get(parameter) ?? '';
+    const term = searchParameters.get(parameter) ?? "";
     if (term === sent.current) {
       sent.current = null;
       return;
@@ -64,7 +64,7 @@ export function FilterSearchBox({
     // `window.location.search` rather than `searchParameters`: the latter only updates on a router
     // navigation, so a parameter another control wrote with `replaceState` would be dropped here.
     router.replace(filterTarget(pathname, window.location.search, parameter, term), {
-      scroll: false,
+      scroll: false
     });
   }
 
@@ -76,17 +76,14 @@ export function FilterSearchBox({
   }
 
   function clear() {
-    setValue('');
+    setValue("");
     clearTimer(timer);
-    navigate('');
+    navigate("");
   }
 
   return (
-    <div className={`relative ${className ?? 'w-full max-w-sm'}`}>
-      <Search
-        className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none"
-        aria-hidden="true"
-      />
+    <div className={`relative ${className ?? "w-full max-w-sm"}`}>
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" aria-hidden="true" />
       <input
         type="text"
         value={value}

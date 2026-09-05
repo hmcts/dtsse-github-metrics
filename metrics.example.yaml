@@ -1,0 +1,81 @@
+version: 1
+organization: hmcts
+# No `database:` key. Upstream named two SQLite files here; this port stores everything in Postgres
+# and takes the connection string from DATABASE_URL (or the POSTGRES_* parts the Helm chart mounts),
+# because where the data lives is a deployment concern rather than a policy decision.
+lookback:
+  operational_days: 90
+  maximum_days: 365
+  stale_open_days: 14
+  stale_collection_days: 8
+triviality:
+  maximum_lines: 10
+  maximum_files: 1
+assessment:
+  enabled: true
+  minimum_merges: 10
+  independent-review-coverage:
+    green_percentage: 90
+    amber_percentage: 70
+  approval-coverage:
+    green_percentage: 90
+    amber_percentage: 70
+  checks-passing-at-merge:
+    green_percentage: 90
+    amber_percentage: 70
+  # Flow signals are graded by cost rather than compliance, so the boundary is a maximum, not a
+  # minimum — and each is reported as a caution, never allowed to hold the readiness label down,
+  # because a cost is never evidence that anything ungoverned merged.
+  pull-request-size:
+    maximum: 400
+  merge-cycle-time:
+    maximum: 24
+  time-to-first-review:
+    maximum: 8
+  # Two allowances, and a repository is within the policy when either forgives it: the percentage
+  # carries the judgement because two unreviewed merges out of 246 is a pair of lapses and two out
+  # of 20 is a habit, and the count is the absolute floor beneath it for a thin cohort.
+  unreviewed-substantial-merges:
+    maximum_count: 0
+    maximum_percentage: 1
+  # A caution boundary rather than a green/amber pair: a shallow review rate is weighed, never
+  # allowed to hold the readiness label down.
+  review-depth-minimum-percentage: 50
+# Neither number enters the readiness label. `reference_patterns` is a list because HMCTS traces work
+# through both a GitHub issue and a Jira key; the defaults below match those two.
+traceability:
+  minimum_description: 30
+  reference_patterns:
+    - '#\d+'
+    - '[A-Z][A-Z0-9]+-\d+'
+excluded_repositories: []
+teams:
+  - identifier: example
+    display_name: Example Team
+    repositories:
+      - example-service
+# When agentic tooling was turned on for each repository, which the tool cannot observe. It anchors
+# the `trend` baseline and periods, and parses exactly as a window edge does: a bare date is UTC
+# midnight, a naive datetime is UTC, an offset is honoured. Every name must be a configured
+# repository; a repository listed here gets a series, one omitted reports that it has no date.
+enablement:
+  example-service: 2026-06-01
+# The SonarCloud organisation key. Omit it when it matches `organization`, as it does at HMCTS; it is
+# here only because the two names are allowed to differ.
+sonar_organization: hmcts
+# The answer of last resort for a repository whose project the stored `map-sonar` map cannot settle,
+# and the only place a human decides a mapping. Ambiguity is real: `rpx-xui-icp-api` declares
+# `em-icp-api` in its `sonar-project.properties`, and so does `em-icp-api` itself, so at most one of
+# them owns the project and no evidence in either repository says which. Every name must be a
+# configured repository and no key may be empty, because an override silently meaning "unresolved"
+# would read as a decision somebody made.
+sonar_projects:
+  example-service: example-service
+# Where the list of repositories approved to deploy to production is published: HMCTS's
+# `environment-approvals.yml`, the document its deployment pipeline reads to decide whether a
+# repository may be promoted to an environment at all, whose `prod:` sequence is what puts a
+# `Production` badge on a row. The fetch is unauthenticated — the file is public and a token sent to a
+# raw content host would be a leak buying nothing — and it is made by the service, refreshing on
+# `--warm-interval` rather than on a collection. Set it to `null` to disable the fetch entirely; no
+# repository then carries a badge. The default below is HMCTS's and is only a default.
+production_list_url: https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml

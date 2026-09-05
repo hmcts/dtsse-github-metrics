@@ -1,7 +1,7 @@
-import { EmptyState } from '@/components/EmptyState';
-import { MetricCard } from '@/components/MetricCard';
-import { metricDetail, metricTone, metricValue } from '@/lib/metrics';
-import type { BehaviourMetricSummary, ReadinessAssessment } from '@/lib/types';
+import { EmptyState } from "@/components/EmptyState";
+import { MetricCard } from "@/components/MetricCard";
+import { metricDetail, metricTone, metricValue } from "@/lib/metrics";
+import type { BehaviourMetricSummary, ReadinessAssessment } from "@/lib/types";
 
 /**
  * The behaviour metrics for one cohort, one card each, in the order the report computes them.
@@ -23,7 +23,7 @@ import type { BehaviourMetricSummary, ReadinessAssessment } from '@/lib/types';
 export function MetricsGrid({
   summaries,
   empty,
-  assessment,
+  assessment
 }: {
   summaries: readonly BehaviourMetricSummary[];
   /** What no metrics means here — no eligible merges, or a repository this window cannot report. */

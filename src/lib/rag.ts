@@ -14,58 +14,58 @@
  * nothing for, so a lookup can never miss and no component needs a fallback of its own.
  */
 
-import type { ReadinessLabel } from '@/lib/types';
+import type { ReadinessLabel } from "@/lib/types";
 
 /** The five presentation states: the report's four labels, and "nothing was graded". */
-export type RAGState = ReadinessLabel | 'none';
+export type RAGState = ReadinessLabel | "none";
 
-export const RAG_STATES: readonly RAGState[] = ['green', 'amber', 'red', 'cannot_assess', 'none'];
+export const RAG_STATES: readonly RAGState[] = ["green", "amber", "red", "cannot_assess", "none"];
 
 /** Resolve an optional label — absent from the JSON when nothing was graded — to a state. */
 export function state(label: ReadinessLabel | null | undefined): RAGState {
-  return label ?? 'none';
+  return label ?? "none";
 }
 
 export const RAG_LABEL: Record<RAGState, string> = {
-  green: 'Ready',
-  amber: 'Caution',
-  red: 'Blocked',
-  cannot_assess: 'Cannot assess',
-  none: 'Not assessed',
+  green: "Ready",
+  amber: "Caution",
+  red: "Blocked",
+  cannot_assess: "Cannot assess",
+  none: "Not assessed"
 };
 
 /** The left colour bar that replaces every emoji use, sized so it reads at a glance in a table row. */
 export const RAG_BORDER: Record<RAGState, string> = {
-  green: 'border-l-4 border-l-rag-green',
-  amber: 'border-l-4 border-l-rag-amber',
-  red: 'border-l-4 border-l-rag-red',
-  cannot_assess: 'border-l-4 border-l-rag-none',
-  none: 'border-l-4 border-l-rag-none',
+  green: "border-l-4 border-l-rag-green",
+  amber: "border-l-4 border-l-rag-amber",
+  red: "border-l-4 border-l-rag-red",
+  cannot_assess: "border-l-4 border-l-rag-none",
+  none: "border-l-4 border-l-rag-none"
 };
 
 export const RAG_BADGE: Record<RAGState, string> = {
-  green: 'bg-green-950 text-green-300 border border-green-800',
-  amber: 'bg-amber-950 text-amber-300 border border-amber-800',
-  red: 'bg-red-950 text-red-300 border border-red-800',
-  cannot_assess: 'bg-slate-800 text-slate-400 border border-slate-700',
-  none: 'bg-slate-800 text-slate-500 border border-slate-700',
+  green: "bg-green-950 text-green-300 border border-green-800",
+  amber: "bg-amber-950 text-amber-300 border border-amber-800",
+  red: "bg-red-950 text-red-300 border border-red-800",
+  cannot_assess: "bg-slate-800 text-slate-400 border border-slate-700",
+  none: "bg-slate-800 text-slate-500 border border-slate-700"
 };
 
 export const RAG_DOT: Record<RAGState, string> = {
-  green: 'bg-rag-green',
-  amber: 'bg-rag-amber',
-  red: 'bg-rag-red',
-  cannot_assess: 'bg-rag-none',
-  none: 'bg-rag-none',
+  green: "bg-rag-green",
+  amber: "bg-rag-amber",
+  red: "bg-rag-red",
+  cannot_assess: "bg-rag-none",
+  none: "bg-rag-none"
 };
 
 /** Hexes for the chart marks, where a Tailwind class cannot reach: recharts takes colours as values. */
 export const RAG_HEX: Record<RAGState, string> = {
-  green: '#4ade80',
-  amber: '#fbbf24',
-  red: '#f87171',
-  cannot_assess: '#64748b',
-  none: '#64748b',
+  green: "#4ade80",
+  amber: "#fbbf24",
+  red: "#f87171",
+  cannot_assess: "#64748b",
+  none: "#64748b"
 };
 
 export function borderClass(label: ReadinessLabel | null | undefined): string {
@@ -93,7 +93,7 @@ export function labelText(label: ReadinessLabel | null | undefined): string {
  */
 export function severity(label: ReadinessLabel | null | undefined): number | undefined {
   const resolved = state(label);
-  return resolved === 'none' ? undefined : RAG_STATES.indexOf(resolved);
+  return resolved === "none" ? undefined : RAG_STATES.indexOf(resolved);
 }
 
 /**
@@ -104,11 +104,11 @@ export function severity(label: ReadinessLabel | null | undefined): number | und
  * partial map would silently drop it and sort everybody carrying only it as if they had no label.
  */
 const COMBINATION_DIGIT: Record<RAGState, string | undefined> = {
-  green: '1',
-  amber: '2',
-  red: '3',
+  green: "1",
+  amber: "2",
+  red: "3",
   cannot_assess: undefined,
-  none: undefined,
+  none: undefined
 };
 
 /**
@@ -141,7 +141,7 @@ export function combinationKey(labels: readonly ReadinessLabel[] | undefined): s
       digits.add(digit);
     }
   }
-  return digits.size === 0 ? undefined : [...digits].sort().join('');
+  return digits.size === 0 ? undefined : [...digits].sort().join("");
 }
 
 /**
@@ -158,7 +158,7 @@ export function combinationKey(labels: readonly ReadinessLabel[] | undefined): s
  * module is: a label added to `ReadinessLabel` counts here without this function being touched.
  */
 export function anyLabelled(labels: Record<string, number>): boolean {
-  return RAG_STATES.some((resolved) => resolved !== 'none' && (labels[resolved] ?? 0) > 0);
+  return RAG_STATES.some((resolved) => resolved !== "none" && (labels[resolved] ?? 0) > 0);
 }
 
 /**
@@ -168,5 +168,5 @@ export function anyLabelled(labels: Record<string, number>): boolean {
  * a donut slice and a table row reach the same colour for the same repositories.
  */
 export function distributionState(key: string): RAGState {
-  return RAG_STATES.includes(key as RAGState) ? (key as RAGState) : 'none';
+  return RAG_STATES.includes(key as RAGState) ? (key as RAGState) : "none";
 }

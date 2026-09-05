@@ -14,34 +14,28 @@
  * `repository-page.test.ts` does it.
  */
 
-import { renderToStaticMarkup } from 'react-dom/server';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import ContributorsPage from '@/app/contributors/page';
-import RepositoriesPage from '@/app/repositories/page';
-import TeamsPage from '@/app/teams/page';
-import { ESTATE_FILTERS } from '@/lib/rows';
-import type {
-  ActorRow,
-  OverviewSummary,
-  RepositoryRow,
-  TeamRow,
-  WindowOptions,
-} from '@/lib/types';
+import { renderToStaticMarkup } from "react-dom/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import ContributorsPage from "@/app/contributors/page";
+import RepositoriesPage from "@/app/repositories/page";
+import TeamsPage from "@/app/teams/page";
+import { ESTATE_FILTERS } from "@/lib/rows";
+import type { ActorRow, OverviewSummary, RepositoryRow, TeamRow, WindowOptions } from "@/lib/types";
 
 const WINDOWS: WindowOptions = {
   options: [4, 12, 26],
   default: 4,
   trend_periods: 8,
-  collection_stale: false,
+  collection_stale: false
 };
 
 const OVERVIEW: OverviewSummary = {
-  organization: 'hmcts',
+  organization: "hmcts",
   weeks: 12,
-  starts_at: '2026-06-08T00:00:00Z',
-  ends_at: '2026-08-31T00:00:00Z',
-  built_at: '2026-08-31T01:00:00Z',
-  collected_through: '2026-08-31T00:00:00Z',
+  starts_at: "2026-06-08T00:00:00Z",
+  ends_at: "2026-08-31T00:00:00Z",
+  built_at: "2026-08-31T01:00:00Z",
+  collected_through: "2026-08-31T00:00:00Z",
   repositories: 3,
   unavailable: 1,
   teams: 1,
@@ -50,7 +44,7 @@ const OVERVIEW: OverviewSummary = {
   direct_commits: 1,
   // The reported two only: `label_counts` counts the unreportable repository nowhere, which is why
   // the readiness donut has to be told how many the span left out.
-  labels: { green: 1, amber: 1 },
+  labels: { green: 1, amber: 1 }
 };
 
 /**
@@ -62,83 +56,79 @@ const OVERVIEW: OverviewSummary = {
 const CLEAR_ALERTS = {
   dependabot: { open: 0, by_severity: {} },
   code_scanning: { open: 0, by_severity: {} },
-  secret_scanning: { open: 0, by_severity: {} },
+  secret_scanning: { open: 0, by_severity: {} }
 };
 
 const REPOSITORIES: RepositoryRow[] = [
   {
-    repository: 'api',
-    team: 'platform',
-    readiness: 'green',
+    repository: "api",
+    team: "platform",
+    readiness: "green",
     required_approving_reviews: 2,
     required_status_checks: 3,
-    unreviewed_substantial: 'none',
+    unreviewed_substantial: "none",
     sonar_coverage: 92.5,
     security: CLEAR_ALERTS,
     sonar_security_rating: { value: 1 },
-    sonar_security_issues: 0,
+    sonar_security_issues: 0
   },
   {
-    repository: 'web',
-    team: 'platform',
-    readiness: 'amber',
+    repository: "web",
+    team: "platform",
+    readiness: "amber",
     required_approving_reviews: 0,
     required_status_checks: 0,
-    unreviewed_substantial: 'above',
+    unreviewed_substantial: "above",
     sonar_coverage: 41,
     security: { ...CLEAR_ALERTS, dependabot: { open: 2, by_severity: { critical: 1, low: 1 } } },
     sonar_security_rating: { value: 2 },
-    sonar_security_issues: 3,
+    sonar_security_issues: 3
   },
-  { repository: 'batch', team: 'platform', detail: 'no window could be reported for this repository' },
+  { repository: "batch", team: "platform", detail: "no window could be reported for this repository" }
 ];
 
-const ACTORS: ActorRow[] = [{ login: 'ada', repositories: 2, labels: ['green'] }];
+const ACTORS: ActorRow[] = [{ login: "ada", repositories: 2, labels: ["green"] }];
 
-const TEAMS: TeamRow[] = [
-  { team: 'platform', repositories: 2, unavailable: 0, actors: 1, labels: { green: 1 } },
-];
+const TEAMS: TeamRow[] = [{ team: "platform", repositories: 2, unavailable: 0, actors: 1, labels: { green: 1 } }];
 
 /** Every path the stubbed service was asked for, in the order the pages asked for them. */
 let requested: string[] = [];
 
-vi.mock('next/headers', () => ({
-  cookies: () => Promise.resolve({ get: () => undefined }),
+vi.mock("next/headers", () => ({
+  cookies: () => Promise.resolve({ get: () => undefined })
 }));
 
 /** What the client components on the page read the URL as, which a test about filtering sets. */
 let search = new URLSearchParams();
 
-vi.mock('next/navigation', () => ({
+vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: () => undefined }),
-  usePathname: () => '/repositories',
-  useSearchParams: () => search,
+  usePathname: () => "/repositories",
+  useSearchParams: () => search
 }));
 
 /** Answer each list endpoint from the fixtures above, recording the path it was asked for. */
 function stubService(): void {
   requested = [];
   vi.stubGlobal(
-    'fetch',
+    "fetch",
     vi.fn((url: string) => {
       requested.push(url);
       const body = (() => {
-        if (url.includes('/windows')) return WINDOWS;
-        if (url.includes('/overview')) return OVERVIEW;
-        if (url.includes('/repositories')) return REPOSITORIES;
-        if (url.includes('/actors')) return ACTORS;
+        if (url.includes("/windows")) return WINDOWS;
+        if (url.includes("/overview")) return OVERVIEW;
+        if (url.includes("/repositories")) return REPOSITORIES;
+        if (url.includes("/actors")) return ACTORS;
         return TEAMS;
       })();
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-    }),
+    })
   );
 }
 
 /** The spans the data endpoints were asked at, which `/windows` itself does not take. */
 function spans(): string[] {
-  return requested
-    .filter((url) => !url.includes('/windows'))
-    .map((url) => new URL(url).searchParams.get('weeks') ?? 'none');
+  return requested.filter((url) => !url.includes("/windows")).map((url) => new URL(url).searchParams.get("weeks") ?? "none");
 }
 
 afterEach(() => {
@@ -146,21 +136,21 @@ afterEach(() => {
   search = new URLSearchParams();
 });
 
-describe('the three list routes', () => {
-  it('fetches the repositories list at the span asked for, and links at the same one', async () => {
+describe("the three list routes", () => {
+  it("fetches the repositories list at the span asked for, and links at the same one", async () => {
     stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({ weeks: '26' }) }));
+    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({ weeks: "26" }) }));
 
-    expect(spans()).toEqual(['26', '26']);
+    expect(spans()).toEqual(["26", "26"]);
     expect(markup).toContain('href="/repositories/api?weeks=26"');
     expect(markup).toContain('href="/teams/platform?weeks=26"');
   });
 
-  it('fetches the contributors list at the span asked for, and links at the same one', async () => {
+  it("fetches the contributors list at the span asked for, and links at the same one", async () => {
     stubService();
-    const markup = renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({ weeks: '26' }) }));
+    const markup = renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({ weeks: "26" }) }));
 
-    expect(spans()).toEqual(['26', '26']);
+    expect(spans()).toEqual(["26", "26"]);
     expect(markup).toContain('href="/contributors/ada?weeks=26"');
     // The caption is the only statement of what the list is ordered by, and `ActorsTable`'s default
     // column is what makes it true: change one without the other and the page misdescribes itself.
@@ -168,11 +158,11 @@ describe('the three list routes', () => {
     expect(markup).toMatch(/by their repositories(&#x27;|') labels/);
   });
 
-  it('fetches the teams list at the span asked for, and links at the same one', async () => {
+  it("fetches the teams list at the span asked for, and links at the same one", async () => {
     stubService();
-    const markup = renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({ weeks: '26' }) }));
+    const markup = renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({ weeks: "26" }) }));
 
-    expect(spans()).toEqual(['26', '26']);
+    expect(spans()).toEqual(["26", "26"]);
     expect(markup).toContain('href="/teams/platform?weeks=26"');
   });
 
@@ -183,42 +173,42 @@ describe('the three list routes', () => {
    * cookie and then from `/windows`. A page hard-coding a span, or one linking at the span it was
    * last rendered at, reads identically until the default moves.
    */
-  it('falls back to the service default where no span was asked for', async () => {
+  it("falls back to the service default where no span was asked for", async () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    expect(spans()).toEqual(['4', '4']);
+    expect(spans()).toEqual(["4", "4"]);
     expect(markup).toContain('href="/repositories/api?weeks=4"');
   });
 
   /** A span off the list is not a span: `/windows` says what is on offer and the page keeps to it. */
-  it('ignores a span the service does not offer', async () => {
+  it("ignores a span the service does not offer", async () => {
     stubService();
-    renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({ weeks: '99' }) }));
+    renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({ weeks: "99" }) }));
 
-    expect(spans()).toEqual(['4', '4']);
+    expect(spans()).toEqual(["4", "4"]);
   });
 
   /** Answer every list endpoint with nothing in it, which each of the three pages must say aloud. */
   function stubEmptyService(): void {
     requested = [];
     vi.stubGlobal(
-      'fetch',
+      "fetch",
       vi.fn((url: string) =>
         Promise.resolve({
           ok: true,
           status: 200,
-          json: () => Promise.resolve(url.includes('/windows') ? WINDOWS : url.includes('/overview') ? OVERVIEW : []),
-        }),
-      ),
+          json: () => Promise.resolve(url.includes("/windows") ? WINDOWS : url.includes("/overview") ? OVERVIEW : [])
+        })
+      )
     );
   }
 
-  it('says so rather than drawing an empty table where a list came back empty', async () => {
+  it("says so rather than drawing an empty table where a list came back empty", async () => {
     stubEmptyService();
     const markup = renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({}) }));
 
-    expect(markup).toContain('No team is configured for this organisation.');
+    expect(markup).toContain("No team is configured for this organisation.");
   });
 
   /**
@@ -228,21 +218,17 @@ describe('the three list routes', () => {
    * this span, are different facts with different remedies — the first is a configuration that names
    * nothing, the second a window too short or a collection not run — so each page names its own.
    */
-  it('names what is missing per list, with the remedy that list has', async () => {
+  it("names what is missing per list, with the remedy that list has", async () => {
     stubEmptyService();
-    const repositories = renderToStaticMarkup(
-      await RepositoriesPage({ searchParams: Promise.resolve({}) }),
-    );
-    const contributors = renderToStaticMarkup(
-      await ContributorsPage({ searchParams: Promise.resolve({}) }),
-    );
+    const repositories = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    const contributors = renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }));
 
-    expect(repositories).toContain('No repository is configured for this organisation.');
-    expect(repositories).toContain('Add repositories to the configuration');
-    expect(contributors).toContain('Nobody contributed to a reported repository at this span.');
-    expect(contributors).toContain('Run metrics collect for the span being asked for');
+    expect(repositories).toContain("No repository is configured for this organisation.");
+    expect(repositories).toContain("Add repositories to the configuration");
+    expect(contributors).toContain("Nobody contributed to a reported repository at this span.");
+    expect(contributors).toContain("Run metrics collect for the span being asked for");
     // The headline figures are still drawn: the overview answered, and zero is a figure.
-    expect(repositories).toContain('Merged pull requests');
+    expect(repositories).toContain("Merged pull requests");
   });
 
   /**
@@ -251,44 +237,33 @@ describe('the three list routes', () => {
    * `12 repositories` with two of them unreported is a different estate from twelve reported ones,
    * and the detail under the count is the only place the page says which of the two it is.
    */
-  it('says how many repositories the span reported, where it could not report them all', async () => {
+  it("says how many repositories the span reported, where it could not report them all", async () => {
     stubService();
     // The fixture estate is three repositories with one of them unreportable, which is the row the
     // donuts are counted against.
-    const partial = renderToStaticMarkup(
-      await RepositoriesPage({ searchParams: Promise.resolve({}) }),
-    );
-    expect(partial).toContain('2 reported');
-    expect(partial).not.toContain('all reported');
+    const partial = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    expect(partial).toContain("2 reported");
+    expect(partial).not.toContain("all reported");
 
     requested = [];
     vi.stubGlobal(
-      'fetch',
+      "fetch",
       vi.fn((url: string) => {
         const body = (() => {
-          if (url.includes('/windows')) return WINDOWS;
-          if (url.includes('/overview')) return { ...OVERVIEW, repositories: 12, unavailable: 0 };
+          if (url.includes("/windows")) return WINDOWS;
+          if (url.includes("/overview")) return { ...OVERVIEW, repositories: 12, unavailable: 0 };
           return REPOSITORIES;
         })();
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
-      }),
+      })
     );
-    const reported = renderToStaticMarkup(
-      await RepositoriesPage({ searchParams: Promise.resolve({}) }),
-    );
+    const reported = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    expect(reported).toContain('all reported');
+    expect(reported).toContain("all reported");
   });
 
   /** The six donut titles, in the order they are drawn in. */
-  const DONUTS = [
-    'Readiness',
-    'Enforces review',
-    'Enforces CI',
-    'Unreviewed substantial merges',
-    'Test coverage',
-    'Security issues',
-  ];
+  const DONUTS = ["Readiness", "Enforces review", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"];
 
   /**
    * The legend of one donut, read off the rendered page as the band words and the counts under them.
@@ -301,11 +276,9 @@ describe('the three list routes', () => {
     const bands: Record<string, number> = {};
     // `text-slate-400[^"]*` because every legend here is interactive now and its label carries the
     // hover class beside that one — the words and the count are what is being read either way.
-    const entries = panel.matchAll(
-      /text-slate-400[^"]*">([^<]+)<\/span><span class="text-xs text-slate-600 tabular-nums">(\d+)</g,
-    );
+    const entries = panel.matchAll(/text-slate-400[^"]*">([^<]+)<\/span><span class="text-xs text-slate-600 tabular-nums">(\d+)</g);
     for (const match of entries) {
-      bands[match[1] ?? ''] = Number(match[2]);
+      bands[match[1] ?? ""] = Number(match[2]);
     }
     return bands;
   }
@@ -319,7 +292,7 @@ describe('the three list routes', () => {
    * included, which is distributed over the REPORTED repositories and has to be told about the rest —
    * is asserted to total the three the estate holds.
    */
-  it('draws six donuts over the estate, counting the unmeasured repository in each', async () => {
+  it("draws six donuts over the estate, counting the unmeasured repository in each", async () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
@@ -329,41 +302,41 @@ describe('the three list routes', () => {
     expect(Math.min(...positions)).toBeGreaterThan(-1);
     // The grid `SkeletonChart` stands in for while the page is cold, asserted at both ends: the
     // bones and the charts drawn at different widths is the layout shift the boundary exists to stop.
-    expect(markup).toContain('grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4');
+    expect(markup).toContain("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4");
 
-    expect(legend(markup, 'Enforces review')).toEqual({
+    expect(legend(markup, "Enforces review")).toEqual({
       Multiple: 1,
       Enforced: 0,
       Unenforced: 1,
-      Unknown: 1,
+      Unknown: 1
     });
-    expect(legend(markup, 'Enforces CI')).toEqual({ Enforced: 1, Unenforced: 1, Unknown: 1 });
-    expect(legend(markup, 'Unreviewed substantial merges')).toEqual({
+    expect(legend(markup, "Enforces CI")).toEqual({ Enforced: 1, Unenforced: 1, Unknown: 1 });
+    expect(legend(markup, "Unreviewed substantial merges")).toEqual({
       Clear: 1,
-      'Within allowance': 0,
-      'Above allowance': 1,
-      Unknown: 1,
+      "Within allowance": 0,
+      "Above allowance": 1,
+      Unknown: 1
     });
-    expect(legend(markup, 'Test coverage')).toEqual({
-      '90% or more': 1,
-      '80% to under 90%': 0,
-      'Below 80%': 1,
-      Unknown: 1,
+    expect(legend(markup, "Test coverage")).toEqual({
+      "90% or more": 1,
+      "80% to under 90%": 0,
+      "Below 80%": 1,
+      Unknown: 1
     });
     // Clear alerts and an A rating against a critical Dependabot alert, which outranks the B rating
     // and the open issues beside it: the band is the worst signal on the row, not a tally of them.
-    expect(legend(markup, 'Security issues')).toEqual({
+    expect(legend(markup, "Security issues")).toEqual({
       Clear: 1,
       Medium: 0,
       High: 1,
-      Unknown: 1,
+      Unknown: 1
     });
-    expect(legend(markup, 'Readiness')).toEqual({
+    expect(legend(markup, "Readiness")).toEqual({
       Ready: 1,
       Caution: 1,
       Blocked: 0,
-      'Cannot assess': 0,
-      'Not assessed': 1,
+      "Cannot assess": 0,
+      "Not assessed": 1
     });
 
     // And each of the five totals the whole estate, which is what counting the unmeasured row into
@@ -385,32 +358,32 @@ describe('the three list routes', () => {
    * Medium since the same day's reversal. `tone.test.ts` grades the letters; this says the page
    * tells the reader the same thing.
    */
-  it('explains the security band with the signals and the boundary the code applies', async () => {
+  it("explains the security band with the signals and the boundary the code applies", async () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    const panel = panelOf(markup, 'Security issues');
-    expect(panel).toContain('security rating and issues');
-    expect(panel).toContain('a security rating of D or worse');
-    expect(panel).toContain('a rating of B or C');
-    expect(panel).not.toContain('hotspot');
-    expect(panel).not.toContain('C or worse');
+    const panel = panelOf(markup, "Security issues");
+    expect(panel).toContain("security rating and issues");
+    expect(panel).toContain("a security rating of D or worse");
+    expect(panel).toContain("a rating of B or C");
+    expect(panel).not.toContain("hotspot");
+    expect(panel).not.toContain("C or worse");
   });
 
   /** The panel of one donut, from its heading to the next one's. */
   function panelOf(markup: string, title: string): string {
     const opened = markup.indexOf(`>${title}</h3>`);
     expect(opened).toBeGreaterThan(-1);
-    const next = markup.indexOf('<h3', opened + 1);
+    const next = markup.indexOf("<h3", opened + 1);
     return markup.slice(opened, next === -1 ? undefined : next);
   }
 
   /** The labels of one donut's legend entries drawn as pressed, which is what it is filtered to. */
   function pressed(markup: string, title: string): string[] {
     return panelOf(markup, title)
-      .split('<button')
+      .split("<button")
       .filter((entry) => entry.includes('aria-pressed="true"'))
-      .map((entry) => /text-slate-400[^"]*">([^<]+)</.exec(entry)?.[1] ?? 'unlabelled');
+      .map((entry) => /text-slate-400[^"]*">([^<]+)</.exec(entry)?.[1] ?? "unlabelled");
   }
 
   /**
@@ -425,16 +398,14 @@ describe('the three list routes', () => {
   function chips(markup: string): string[] {
     const opened = markup.indexOf('aria-label="Repository filters"');
     expect(opened).toBeGreaterThan(-1);
-    const group = markup.slice(opened, markup.indexOf('</div>', opened));
-    return [
-      ...group.matchAll(
-        /<span class="text-slate-400 uppercase tracking-wide">([^<]*)<\/span>([^<]*)</g,
-      ),
-    ].map((match) => `${match[1] ?? ''}${match[2] ?? ''}`.trim());
+    const group = markup.slice(opened, markup.indexOf("</div>", opened));
+    return [...group.matchAll(/<span class="text-slate-400 uppercase tracking-wide">([^<]*)<\/span>([^<]*)</g)].map((match) =>
+      `${match[1] ?? ""}${match[2] ?? ""}`.trim()
+    );
   }
 
   /** Every donut is a filter control, so each legend is a labelled group of buttons. */
-  it('makes each donut the filter control for its own dimension', async () => {
+  it("makes each donut the filter control for its own dimension", async () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
@@ -453,20 +424,20 @@ describe('the three list routes', () => {
    * key in the security bands too, so a coverage donut wired to `security` would light up there
    * instead. The table below reads the same parameter, which is why the chip and the rows say so.
    */
-  it('wires each donut to its own parameter, and the table reads them back', async () => {
-    search = new URLSearchParams('coverage=high');
+  it("wires each donut to its own parameter, and the table reads them back", async () => {
+    search = new URLSearchParams("coverage=high");
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    expect(pressed(markup, 'Test coverage')).toEqual(['90% or more']);
-    for (const title of DONUTS.filter((each) => each !== 'Test coverage')) {
+    expect(pressed(markup, "Test coverage")).toEqual(["90% or more"]);
+    for (const title of DONUTS.filter((each) => each !== "Test coverage")) {
       expect(pressed(markup, title)).toEqual([]);
     }
     // The chip names the dimension the donut drew, read off the chip row rather than off the page:
     // both of its words are in the donut's own heading and legend whatever the chips hold, so
     // asserting them against the whole markup would pass with no chip row rendered at all.
-    expect(chips(markup)).toEqual(['Test coverage: 90% or more']);
-    expect(markup).toContain('Remove Test coverage filter');
+    expect(chips(markup)).toEqual(["Test coverage: 90% or more"]);
+    expect(markup).toContain("Remove Test coverage filter");
     // And the table holds only the row in that band.
     expect(markup).toContain('href="/repositories/api?weeks=4"');
     expect(markup).not.toContain('href="/repositories/web?weeks=4"');
@@ -486,7 +457,7 @@ describe('the three list routes', () => {
    * handed a neighbour's parameter render identically to five wired correctly — the mistake shows
    * only when a value is put in the URL and the wrong legend lights up, or none of them does.
    */
-  it('reads every dimension back on the donut that writes it', async () => {
+  it("reads every dimension back on the donut that writes it", async () => {
     for (const filter of ESTATE_FILTERS) {
       const option = filter.options[0];
       if (option === undefined) {
@@ -494,9 +465,7 @@ describe('the three list routes', () => {
       }
       search = new URLSearchParams(`${filter.parameter}=${option.key}`);
       stubService();
-      const markup = renderToStaticMarkup(
-        await RepositoriesPage({ searchParams: Promise.resolve({}) }),
-      );
+      const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
       expect(pressed(markup, filter.title)).toEqual([option.name]);
       for (const title of DONUTS.filter((each) => each !== filter.title)) {

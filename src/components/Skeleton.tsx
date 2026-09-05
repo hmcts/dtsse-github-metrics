@@ -1,4 +1,4 @@
-import { Panel } from '@/components/Section';
+import { Panel } from "@/components/Section";
 
 /**
  * The bones of a page, for the `loading.tsx` each route segment now carries.
@@ -113,7 +113,7 @@ export function SkeletonSection({ rows }: { rows: number }) {
  * between, which is how the landing page draws five.
  */
 export function SkeletonChart({ count = 1 }: { count?: number }) {
-  const columns = count > 1 ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' : 'grid-cols-1 lg:grid-cols-3';
+  const columns = count > 1 ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3" : "grid-cols-1 lg:grid-cols-3";
   return (
     <div className={`grid ${columns} gap-4`}>
       {Array.from({ length: count }, (_, index) => (

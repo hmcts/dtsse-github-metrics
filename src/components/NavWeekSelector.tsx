@@ -1,9 +1,9 @@
-'use client';
+"use client";
 
-import clsx from 'clsx';
-import { usePathname, useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
-import { weeksCookie } from '@/lib/weeks';
+import clsx from "clsx";
+import { usePathname, useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
+import { weeksCookie } from "@/lib/weeks";
 
 /**
  * The window-span selector each page puts in its own header, beside the subject it applies to.
@@ -60,13 +60,11 @@ export function NavWeekSelector({ options, active }: { options: readonly number[
     // Read from the live location rather than `useSearchParams`, so any filter a client component
     // put in the URL with `replaceState` survives a span change.
     const parameters = new URLSearchParams(window.location.search);
-    parameters.set('weeks', String(weeks));
+    parameters.set("weeks", String(weeks));
     startTransition(() => router.replace(`${pathname}?${parameters.toString()}`));
   }
 
-  return (
-    <WeekSpanButtons options={options} current={current} pending={pending} onChoose={choose} />
-  );
+  return <WeekSpanButtons options={options} current={current} pending={pending} onChoose={choose} />;
 }
 
 /**
@@ -84,7 +82,7 @@ export function WeekSpanButtons({
   options,
   current,
   pending,
-  onChoose,
+  onChoose
 }: {
   options: readonly number[];
   current: number;
@@ -93,7 +91,7 @@ export function WeekSpanButtons({
 }) {
   return (
     <div
-      className={clsx('flex items-center gap-1.5 transition-opacity', pending && 'opacity-50')}
+      className={clsx("flex items-center gap-1.5 transition-opacity", pending && "opacity-50")}
       role="group"
       aria-label="Reporting window"
       aria-busy={pending}
@@ -106,9 +104,7 @@ export function WeekSpanButtons({
           aria-pressed={current === weeks}
           aria-label={`${weeks} week window`}
           className={`px-3 py-1.5 rounded text-sm transition-colors ${
-            current === weeks
-              ? 'bg-indigo-600 text-white'
-              : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200'
+            current === weeks ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
           }`}
         >
           {weeks}w

@@ -1,24 +1,17 @@
-import { cookies } from 'next/headers';
-import { CollectionNotice } from '@/components/CollectionNotice';
-import { EmptyState } from '@/components/EmptyState';
-import { FilterSearchBox } from '@/components/FilterSearchBox';
-import { MetricCard } from '@/components/MetricCard';
-import { NavWeekSelector } from '@/components/NavWeekSelector';
-import { OrganisationHeader } from '@/components/OrganisationHeader';
-import { LABEL_PARAMETER, RepositoriesTable, TERM_PARAMETER } from '@/components/RepositoriesTable';
-import { Panel, Section } from '@/components/Section';
-import { SummaryPieChart } from '@/components/charts/SummaryPieChart';
-import { getOverview, getRepositories, getWindows } from '@/lib/api';
-import {
-  checksSlices,
-  coverageSlices,
-  distributionSlices,
-  reviewSlices,
-  securitySlices,
-  unreviewedSlices,
-} from '@/lib/chart';
-import { count, span } from '@/lib/format';
-import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
+import { cookies } from "next/headers";
+import { CollectionNotice } from "@/components/CollectionNotice";
+import { SummaryPieChart } from "@/components/charts/SummaryPieChart";
+import { EmptyState } from "@/components/EmptyState";
+import { FilterSearchBox } from "@/components/FilterSearchBox";
+import { MetricCard } from "@/components/MetricCard";
+import { NavWeekSelector } from "@/components/NavWeekSelector";
+import { OrganisationHeader } from "@/components/OrganisationHeader";
+import { LABEL_PARAMETER, RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTable";
+import { Panel, Section } from "@/components/Section";
+import { getOverview, getRepositories, getWindows } from "@/lib/api";
+import { checksSlices, coverageSlices, distributionSlices, reviewSlices, securitySlices, unreviewedSlices } from "@/lib/chart";
+import { count, span } from "@/lib/format";
+import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
  * The estate at one window span: what was covered, how it is labelled, and every repository in it.
@@ -32,20 +25,11 @@ import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
  * collection lands, so a cached page here would show figures whose source has moved on with nothing
  * on the page to say so — and `cookies()` is read for the span preference besides.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export default async function RepositoriesPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ weeks?: SearchValue }>;
-}) {
+export default async function RepositoriesPage({ searchParams }: { searchParams?: Promise<{ weeks?: SearchValue }> }) {
   const windows = await getWindows();
-  const weeks = resolveWeeks(
-    (await searchParams)?.weeks,
-    (await cookies()).get(WEEKS_COOKIE)?.value,
-    windows.options,
-    windows.default,
-  );
+  const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   // Two requests against one bundle, fetched together rather than in sequence: they come from the
   // same built report in the service, so serialising them would only add a round trip to it.
   const [overview, repositories] = await Promise.all([getOverview(weeks), getRepositories(weeks)]);
@@ -55,10 +39,7 @@ export default async function RepositoriesPage({
     <div className="space-y-8">
       <CollectionNotice windows={windows} />
 
-      <OrganisationHeader
-        overview={overview}
-        action={<NavWeekSelector options={windows.options} active={weeks} />}
-      />
+      <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
       {/* The estate's headline figures share the panel every section is drawn on: the cards
           themselves are flat now, and four unbounded figures would float on the page background. */}
@@ -67,22 +48,14 @@ export default async function RepositoriesPage({
           <MetricCard
             label="Repositories"
             value={overview.repositories}
-            detail={
-              overview.unavailable > 0
-                ? `${overview.repositories - overview.unavailable} reported`
-                : 'all reported'
-            }
+            detail={overview.unavailable > 0 ? `${overview.repositories - overview.unavailable} reported` : "all reported"}
           />
           <MetricCard label="Teams" value={overview.teams} />
-          <MetricCard
-            label="Contributors"
-            value={overview.actors}
-            detail="contributed to a reported repository"
-          />
+          <MetricCard label="Contributors" value={overview.actors} detail="contributed to a reported repository" />
           <MetricCard
             label="Merged pull requests"
             value={overview.merged_pull_requests}
-            detail={`${count(overview.direct_commits, 'direct commit', 'direct commits')} besides`}
+            detail={`${count(overview.direct_commits, "direct commit", "direct commits")} besides`}
           />
         </div>
       </Panel>
@@ -136,13 +109,7 @@ export default async function RepositoriesPage({
         />
       </div>
 
-      <Section
-        heading="Repositories"
-        detail={window}
-        action={
-          <FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />
-        }
-      >
+      <Section heading="Repositories" detail={window} action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}>
         {repositories.length === 0 ? (
           <EmptyState
             message="No repository is configured for this organisation."

@@ -1,37 +1,37 @@
-import { cookies } from 'next/headers';
-import Link from 'next/link';
-import { notFound } from 'next/navigation';
-import { AssessmentSection } from '@/components/AssessmentSection';
-import { CollectionNotice } from '@/components/CollectionNotice';
-import { ContributorsTable } from '@/components/ContributorsTable';
-import { DefinitionList } from '@/components/DefinitionList';
-import { EmptyState } from '@/components/EmptyState';
-import { EntityHeader } from '@/components/EntityHeader';
-import { FindingsTable } from '@/components/FindingsTable';
-import { MetricCard } from '@/components/MetricCard';
-import { MetricsGrid } from '@/components/MetricsGrid';
-import { NavWeekSelector } from '@/components/NavWeekSelector';
-import { Panel, Section, SectionPair } from '@/components/Section';
-import { TrendSection } from '@/components/TrendSection';
-import { getRepository, getTrend, getWindows, isNotFound } from '@/lib/api';
-import { instant, span } from '@/lib/format';
-import { hasPeriods } from '@/lib/trend';
+import { cookies } from "next/headers";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { AssessmentSection } from "@/components/AssessmentSection";
+import { CollectionNotice } from "@/components/CollectionNotice";
+import { ContributorsTable } from "@/components/ContributorsTable";
+import { DefinitionList } from "@/components/DefinitionList";
+import { EmptyState } from "@/components/EmptyState";
+import { EntityHeader } from "@/components/EntityHeader";
+import { FindingsTable } from "@/components/FindingsTable";
+import { MetricCard } from "@/components/MetricCard";
+import { MetricsGrid } from "@/components/MetricsGrid";
+import { NavWeekSelector } from "@/components/NavWeekSelector";
+import { Panel, Section, SectionPair } from "@/components/Section";
+import { TrendSection } from "@/components/TrendSection";
+import { getRepository, getTrend, getWindows, isNotFound } from "@/lib/api";
+import { instant, span } from "@/lib/format";
 import {
   codeownersCard,
   excludedDetail,
   excludedMerges,
+  type LabelledValue,
   maintenanceRows,
   maintenanceSummary,
   mergeGateRows,
   openPullRequestCards,
   securityCards,
   sonarGateCard,
-  sonarRows,
-  type LabelledValue,
-} from '@/lib/repository';
-import { directCommitTone } from '@/lib/tone';
-import type { RepositoryDetail, SonarReport } from '@/lib/types';
-import { WEEKS_COOKIE, resolveWeeks, withWeeks, type SearchValue } from '@/lib/weeks';
+  sonarRows
+} from "@/lib/repository";
+import { directCommitTone } from "@/lib/tone";
+import { hasPeriods } from "@/lib/trend";
+import type { RepositoryDetail, SonarReport } from "@/lib/types";
+import { resolveWeeks, type SearchValue, WEEKS_COOKIE, withWeeks } from "@/lib/weeks";
 
 /**
  * One repository's whole evidence block at one window span.
@@ -51,22 +51,17 @@ import { WEEKS_COOKIE, resolveWeeks, withWeeks, type SearchValue } from '@/lib/w
  * A repository the span cannot be reported for keeps its page and says why. It is a configured
  * repository either way, and a 404 for one would read as a repository nobody has heard of.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 export default async function RepositoryPage({
   params,
-  searchParams,
+  searchParams
 }: {
   params: Promise<{ repository: string }>;
   searchParams?: Promise<{ weeks?: SearchValue }>;
 }) {
   const windows = await getWindows();
-  const weeks = resolveWeeks(
-    (await searchParams)?.weeks,
-    (await cookies()).get(WEEKS_COOKIE)?.value,
-    windows.options,
-    windows.default,
-  );
+  const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const detail = await readRepository((await params).repository, weeks);
   const evidence = detail.evidence;
 
@@ -81,10 +76,7 @@ export default async function RepositoryPage({
       action={<NavWeekSelector options={windows.options} active={weeks} />}
       context={
         <>
-          <Link
-            href={withWeeks(`/teams/${encodeURIComponent(detail.team)}`, weeks)}
-            className="text-indigo-400 hover:text-indigo-300"
-          >
+          <Link href={withWeeks(`/teams/${encodeURIComponent(detail.team)}`, weeks)} className="text-indigo-400 hover:text-indigo-300">
             {detail.team}
           </Link>
           {evidence ? <span>{span(evidence.starts_at, evidence.ends_at)}</span> : null}
@@ -103,7 +95,7 @@ export default async function RepositoryPage({
         {header}
         <EmptyState
           message={`This span holds no evidence for ${detail.repository}.`}
-          detail={`${detail.detail ?? 'no reason was given'} — run metrics collect for the span being asked for, or read the repository at a span the caches cover.`}
+          detail={`${detail.detail ?? "no reason was given"} — run metrics collect for the span being asked for, or read the repository at a span the caches cover.`}
         />
       </div>
     );
@@ -137,26 +129,26 @@ export default async function RepositoryPage({
           <ValueCards
             values={[
               {
-                label: 'Merges reported',
+                label: "Merges reported",
                 value: String(evidence.cohort.reported),
                 detail: `${evidence.cohort.merged} merged in the span`,
                 // Throughput, and uncoloured on purpose: a busy repository is not a good one.
-                tone: 'neutral',
+                tone: "neutral"
               },
               {
-                label: 'Merges excluded',
+                label: "Merges excluded",
                 value: String(excludedMerges(evidence.cohort)),
                 detail: excludedDetail(evidence.cohort),
                 // Excluding Dependabot's merges is the cohort working, not a shortfall in it.
-                tone: 'neutral',
+                tone: "neutral"
               },
               {
-                label: 'Direct commits',
+                label: "Direct commits",
                 value: String(evidence.cohort.direct_commits),
-                detail: 'landed on the default branch without a pull request',
-                tone: directCommitTone(evidence.cohort.direct_commits),
+                detail: "landed on the default branch without a pull request",
+                tone: directCommitTone(evidence.cohort.direct_commits)
               },
-              codeownersCard(evidence.codeowners),
+              codeownersCard(evidence.codeowners)
             ]}
           />
         </div>
@@ -165,11 +157,7 @@ export default async function RepositoryPage({
       {/* Above the assessment on purpose: these are the measurements the policy graded, and a
           reader takes the verdict better having read the figures it was drawn from. */}
       <Section heading="Behaviour" detail={span(evidence.starts_at, evidence.ends_at)}>
-        <MetricsGrid
-          summaries={evidence.metrics}
-          empty="No behaviour metric was computed for this repository at this span."
-          assessment={evidence.assessment}
-        />
+        <MetricsGrid summaries={evidence.metrics} empty="No behaviour metric was computed for this repository at this span." assessment={evidence.assessment} />
       </Section>
 
       {evidence.assessment ? (
@@ -188,10 +176,7 @@ export default async function RepositoryPage({
       <SectionPair>
         <Section heading="Merge gate" detail={read(evidence.merge_gate.fetched_at)}>
           {evidence.merge_gate.gate === undefined ? (
-            <EmptyState
-              message="The merge gate could not be read for this repository."
-              detail={evidence.merge_gate.detail}
-            />
+            <EmptyState message="The merge gate could not be read for this repository." detail={evidence.merge_gate.detail} />
           ) : (
             <DefinitionList values={mergeGateRows(evidence.merge_gate.gate)} />
           )}
@@ -199,10 +184,7 @@ export default async function RepositoryPage({
 
         <Section heading="Open pull requests" detail={read(evidence.open_pull_requests.fetched_at)}>
           {openPullRequests.length === 0 ? (
-            <EmptyState
-              message="Open pull-request state was not collected for this repository."
-              detail={evidence.open_pull_requests.detail}
-            />
+            <EmptyState message="Open pull-request state was not collected for this repository." detail={evidence.open_pull_requests.detail} />
           ) : (
             // Two across rather than the four the full width allowed: in half a row, four counts
             // are four cramped columns, and two rows of two keep each figure at headline size.
@@ -216,10 +198,7 @@ export default async function RepositoryPage({
       <SectionPair>
         <Section heading="Security alerts" detail={read(evidence.security.fetched_at)}>
           {alerts === undefined ? (
-            <EmptyState
-              message="No security alert family could be read for this repository."
-              detail={evidence.security.detail}
-            />
+            <EmptyState message="No security alert family could be read for this repository." detail={evidence.security.detail} />
           ) : (
             <DefinitionList values={securityCards(alerts)} />
           )}
@@ -303,21 +282,9 @@ function sonarMeasures(report: SonarReport): LabelledValue[] {
  */
 function ValueCards({ values, columns = 4 }: { values: readonly LabelledValue[]; columns?: 2 | 4 }) {
   return (
-    <div
-      className={
-        columns === 2
-          ? 'grid grid-cols-1 sm:grid-cols-2 gap-4'
-          : 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4'
-      }
-    >
+    <div className={columns === 2 ? "grid grid-cols-1 sm:grid-cols-2 gap-4" : "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4"}>
       {values.map((value) => (
-        <MetricCard
-          key={value.label}
-          label={value.label}
-          value={value.value}
-          detail={value.detail}
-          tone={value.tone}
-        />
+        <MetricCard key={value.label} label={value.label} value={value.value} detail={value.detail} tone={value.tone} />
       ))}
     </div>
   );

@@ -10,21 +10,21 @@
  * every slice, dimmed when empty, so the reader sees the full label set whatever this window holds.
  */
 
-import { RAG_HEX, RAG_LABEL, RAG_STATES, distributionState } from '@/lib/rag';
+import { distributionState, RAG_HEX, RAG_LABEL, RAG_STATES } from "@/lib/rag";
 import {
+  type Band,
   CHECKS_BANDS,
   COVERAGE_BANDS,
-  REVIEW_BANDS,
-  SECURITY_BANDS,
-  UNREVIEWED_BANDS,
   checksBand,
   coverageBand,
+  REVIEW_BANDS,
   reviewBand,
+  SECURITY_BANDS,
   securityBand,
-  unreviewedBand,
-  type Band,
-} from '@/lib/tone';
-import type { RepositoryRow } from '@/lib/types';
+  UNREVIEWED_BANDS,
+  unreviewedBand
+} from "@/lib/tone";
+import type { RepositoryRow } from "@/lib/types";
 
 export interface PieSlice {
   /**
@@ -62,8 +62,8 @@ export function distributionSlices(labels: Record<string, number>, unreportable 
     value:
       Object.entries(labels)
         .filter(([key]) => distributionState(key) === readiness)
-        .reduce((total, [, count]) => total + count, 0) + (readiness === 'none' ? unreportable : 0),
-    color: RAG_HEX[readiness],
+        .reduce((total, [, count]) => total + count, 0) + (readiness === "none" ? unreportable : 0),
+    color: RAG_HEX[readiness]
   }));
 }
 
@@ -78,16 +78,12 @@ export function distributionSlices(labels: Record<string, number>, unreportable 
  * Generic over the item so the counting can be tested without a `RepositoryRow`, and so a later
  * donut over some other list needs no second copy of this.
  */
-export function bandSlices<Key extends string, Item>(
-  bands: readonly Band<Key>[],
-  items: readonly Item[],
-  band: (item: Item) => Key,
-): PieSlice[] {
+export function bandSlices<Key extends string, Item>(bands: readonly Band<Key>[], items: readonly Item[], band: (item: Item) => Key): PieSlice[] {
   return bands.map((entry) => ({
     key: entry.key,
     name: entry.name,
     value: items.filter((item) => band(item) === entry.key).length,
-    color: entry.mark,
+    color: entry.mark
   }));
 }
 

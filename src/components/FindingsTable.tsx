@@ -1,7 +1,7 @@
-import Link from 'next/link';
-import { percent } from '@/lib/format';
-import type { PracticeFinding } from '@/lib/types';
-import { withWeeks } from '@/lib/weeks';
+import Link from "next/link";
+import { percent } from "@/lib/format";
+import type { PracticeFinding } from "@/lib/types";
+import { withWeeks } from "@/lib/weeks";
 
 /**
  * What the practice rules found in one repository's window, and the merges behind each finding.
@@ -15,13 +15,7 @@ import { withWeeks } from '@/lib/weeks';
  * assertion until the six merges are reachable; the links are what make a finding arguable, and a
  * finding nobody can check is one nobody should be asked to act on.
  */
-export function FindingsTable({
-  findings,
-  weeks,
-}: {
-  findings: readonly PracticeFinding[];
-  weeks: number;
-}) {
+export function FindingsTable({ findings, weeks }: { findings: readonly PracticeFinding[]; weeks: number }) {
   return (
     // No border of its own: the table sits inside a `Section` panel that already draws one.
     <div className="overflow-x-auto">
@@ -58,9 +52,7 @@ export function FindingsTable({
                 <span className="text-slate-200">{finding.rule}</span>
                 <p className="text-slate-500 mt-0.5">{finding.message}</p>
               </td>
-              <td className="py-2 pr-3 align-top uppercase tracking-wide text-slate-400">
-                {finding.severity}
-              </td>
+              <td className="py-2 pr-3 align-top uppercase tracking-wide text-slate-400">{finding.severity}</td>
               <td className="py-2 pr-3 align-top">
                 <Link
                   href={withWeeks(`/contributors/${encodeURIComponent(finding.actor_login)}`, weeks)}
@@ -69,23 +61,13 @@ export function FindingsTable({
                   {finding.actor_login}
                 </Link>
               </td>
-              <td className="py-2 pr-3 align-top text-right tabular-nums text-slate-300">
-                {finding.occurrences}
-              </td>
-              <td className="py-2 pr-3 align-top text-right tabular-nums text-slate-300">
-                {finding.authored_merges}
-              </td>
-              <td className="py-2 pr-3 align-top text-right tabular-nums text-slate-300">
-                {percent(finding.percentage)}
-              </td>
+              <td className="py-2 pr-3 align-top text-right tabular-nums text-slate-300">{finding.occurrences}</td>
+              <td className="py-2 pr-3 align-top text-right tabular-nums text-slate-300">{finding.authored_merges}</td>
+              <td className="py-2 pr-3 align-top text-right tabular-nums text-slate-300">{percent(finding.percentage)}</td>
               <td className="py-2 pr-3 align-top">
                 <div className="flex flex-wrap gap-x-2 gap-y-1">
                   {finding.pull_requests.map((reference) => (
-                    <a
-                      key={reference.url}
-                      href={reference.url}
-                      className="font-mono text-indigo-400 hover:text-indigo-300"
-                    >
+                    <a key={reference.url} href={reference.url} className="font-mono text-indigo-400 hover:text-indigo-300">
                       #{reference.number}
                     </a>
                   ))}

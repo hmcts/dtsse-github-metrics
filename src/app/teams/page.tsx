@@ -1,13 +1,13 @@
-import { cookies } from 'next/headers';
-import { CollectionNotice } from '@/components/CollectionNotice';
-import { EmptyState } from '@/components/EmptyState';
-import { NavWeekSelector } from '@/components/NavWeekSelector';
-import { OrganisationHeader } from '@/components/OrganisationHeader';
-import { Section } from '@/components/Section';
-import { TeamsList } from '@/components/TeamsList';
-import { getOverview, getTeams, getWindows } from '@/lib/api';
-import { span } from '@/lib/format';
-import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
+import { cookies } from "next/headers";
+import { CollectionNotice } from "@/components/CollectionNotice";
+import { EmptyState } from "@/components/EmptyState";
+import { NavWeekSelector } from "@/components/NavWeekSelector";
+import { OrganisationHeader } from "@/components/OrganisationHeader";
+import { Section } from "@/components/Section";
+import { TeamsList } from "@/components/TeamsList";
+import { getOverview, getTeams, getWindows } from "@/lib/api";
+import { span } from "@/lib/format";
+import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
  * Every configured team at one window span, with the readiness labels its repositories carry.
@@ -19,30 +19,18 @@ import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
  * Three requests where the overview made five — `/windows`, `/overview` for the header, and `/teams`
  * for the cards — all against the one bundle the service already holds for this span.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export default async function TeamsPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ weeks?: SearchValue }>;
-}) {
+export default async function TeamsPage({ searchParams }: { searchParams?: Promise<{ weeks?: SearchValue }> }) {
   const windows = await getWindows();
-  const weeks = resolveWeeks(
-    (await searchParams)?.weeks,
-    (await cookies()).get(WEEKS_COOKIE)?.value,
-    windows.options,
-    windows.default,
-  );
+  const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const [overview, teams] = await Promise.all([getOverview(weeks), getTeams(weeks)]);
 
   return (
     <div className="space-y-8">
       <CollectionNotice windows={windows} />
 
-      <OrganisationHeader
-        overview={overview}
-        action={<NavWeekSelector options={windows.options} active={weeks} />}
-      />
+      <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
       <Section heading="Teams" detail={span(overview.starts_at, overview.ends_at)}>
         {teams.length === 0 ? (

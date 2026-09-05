@@ -1,5 +1,5 @@
-import { collectionNotice } from '@/lib/collection';
-import type { WindowOptions } from '@/lib/types';
+import { collectionNotice } from "@/lib/collection";
+import type { WindowOptions } from "@/lib/types";
 
 /**
  * The bar every page carries when its figures are anchored at an old collection.
@@ -22,10 +22,7 @@ export function CollectionNotice({ windows }: { windows: WindowOptions }) {
     return null;
   }
   return (
-    <div
-      role="status"
-      className="bg-amber-950/40 border border-amber-900 border-l-4 border-l-rag-amber rounded-lg px-4 py-3"
-    >
+    <div role="status" className="bg-amber-950/40 border border-amber-900 border-l-4 border-l-rag-amber rounded-lg px-4 py-3">
       <p className="text-sm text-amber-200">{notice}</p>
     </div>
   );

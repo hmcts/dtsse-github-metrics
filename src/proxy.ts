@@ -1,5 +1,5 @@
-import { NextResponse, type NextRequest } from 'next/server';
-import { WEEKS_COOKIE, rememberableWeeks, weeksCookie } from '@/lib/weeks';
+import { type NextRequest, NextResponse } from "next/server";
+import { rememberableWeeks, WEEKS_COOKIE, weeksCookie } from "@/lib/weeks";
 
 /**
  * Remembers the span a request named, so the navigation bar cannot quietly change the window.
@@ -25,7 +25,7 @@ export function proxy(request: NextRequest): NextResponse {
   const response = NextResponse.next();
   const asked = rememberableWeeks(request.nextUrl.searchParams.get(WEEKS_COOKIE));
   if (asked !== null && String(asked) !== request.cookies.get(WEEKS_COOKIE)?.value) {
-    response.headers.append('set-cookie', weeksCookie(asked));
+    response.headers.append("set-cookie", weeksCookie(asked));
   }
   return response;
 }
@@ -37,5 +37,5 @@ export function proxy(request: NextRequest): NextResponse {
  * each of them would be work with nothing to decide.
  */
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"]
 };

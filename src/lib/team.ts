@@ -11,17 +11,17 @@
  * missing collection rather than as a small team.
  */
 
-import { count } from '@/lib/format';
-import type { TeamDetail } from '@/lib/types';
+import { count } from "@/lib/format";
+import type { TeamDetail } from "@/lib/types";
 
 /** What the team owns: every repository the configuration gives it, reported or not. */
 export function holdings(detail: TeamDetail): string {
-  return count(detail.repositories.length, 'repository', 'repositories');
+  return count(detail.repositories.length, "repository", "repositories");
 }
 
 /** How many people authored a reported merge in this team's repositories at this span. */
 export function people(detail: TeamDetail): string {
-  return count(detail.actors.length, 'contributor', 'contributors');
+  return count(detail.actors.length, "contributor", "contributors");
 }
 
 /**
@@ -35,5 +35,5 @@ export function unreported(detail: TeamDetail): string | undefined {
   if (detail.unavailable === 0) {
     return undefined;
   }
-  return `${count(detail.unavailable, 'repository', 'repositories')} not reported at this span`;
+  return `${count(detail.unavailable, "repository", "repositories")} not reported at this span`;
 }

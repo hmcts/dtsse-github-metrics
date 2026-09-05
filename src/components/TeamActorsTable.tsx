@@ -1,6 +1,6 @@
-import Link from 'next/link';
-import type { TeamActorRow } from '@/lib/types';
-import { withWeeks } from '@/lib/weeks';
+import Link from "next/link";
+import type { TeamActorRow } from "@/lib/types";
+import { withWeeks } from "@/lib/weeks";
 
 /**
  * Everyone who authored a reported merge in one team's repositories, alphabetically.
@@ -47,12 +47,8 @@ export function TeamActorsTable({ rows, weeks }: { rows: readonly TeamActorRow[]
                   {row.login}
                 </Link>
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                {row.repositories}
-              </td>
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                {row.contributions}
-              </td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.repositories}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.contributions}</td>
             </tr>
           ))}
         </tbody>

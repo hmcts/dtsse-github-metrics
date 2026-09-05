@@ -11,15 +11,15 @@
  * boundary, so the value a component holds is the value the service sent.
  */
 
-export type ReadinessLabel = 'green' | 'amber' | 'red' | 'cannot_assess';
+export type ReadinessLabel = "green" | "amber" | "red" | "cannot_assess";
 
-export type ObservationStatus = 'observed' | 'not_applicable';
+export type ObservationStatus = "observed" | "not_applicable";
 
-export type AlertSeverity = 'critical' | 'high' | 'medium' | 'low';
+export type AlertSeverity = "critical" | "high" | "medium" | "low";
 
-export type FindingSeverity = 'high' | 'medium' | 'low';
+export type FindingSeverity = "high" | "medium" | "low";
 
-export type SonarGateLevel = 'OK' | 'ERROR' | 'NONE';
+export type SonarGateLevel = "OK" | "ERROR" | "NONE";
 
 /**
  * Where a window's unreviewed substantial merging sat against the allowance it was judged by.
@@ -28,7 +28,7 @@ export type SonarGateLevel = 'OK' | 'ERROR' | 'NONE';
  * allowance forgiving what it was configured to forgive, which is a different fact from nothing
  * having merged unreviewed at all — so the three words are three answers, not a scale of two.
  */
-export type UnreviewedSubstantialOutcome = 'none' | 'within' | 'above';
+export type UnreviewedSubstantialOutcome = "none" | "within" | "above";
 
 export interface RateObservation {
   status: ObservationStatus;
@@ -309,12 +309,12 @@ export interface ActorReadiness {
 }
 
 /** The single percentile a distribution is compared at, named as the field it reads. */
-export type Percentile = 'median' | 'percentile_75';
+export type Percentile = "median" | "percentile_75";
 
 /** What arithmetic a delta reports: a rate moves in points, a count and a percentile in per cent. */
-export type DeltaBasis = 'percentage_points' | 'percentage_change';
+export type DeltaBasis = "percentage_points" | "percentage_change";
 
-export type AlertFamily = 'dependabot' | 'code-scanning' | 'secret-scanning';
+export type AlertFamily = "dependabot" | "code-scanning" | "secret-scanning";
 
 export interface TrendThroughput {
   merges: number;

@@ -1,17 +1,9 @@
-import { EmptyState } from '@/components/EmptyState';
-import { Section } from '@/components/Section';
-import { TrendChart } from '@/components/charts/TrendChart';
-import { count, day } from '@/lib/format';
-import {
-  ROUTE_HEX,
-  cutDetail,
-  metricCharts,
-  periodSpan,
-  throughputRows,
-  windowReasons,
-  type MetricChart,
-} from '@/lib/trend';
-import type { RepositoryTrend } from '@/lib/types';
+import { TrendChart } from "@/components/charts/TrendChart";
+import { EmptyState } from "@/components/EmptyState";
+import { Section } from "@/components/Section";
+import { count, day } from "@/lib/format";
+import { cutDetail, type MetricChart, metricCharts, periodSpan, ROUTE_HEX, throughputRows, windowReasons } from "@/lib/trend";
+import type { RepositoryTrend } from "@/lib/types";
 
 /**
  * One repository's periods since it was enabled, and only ever one repository's.
@@ -37,13 +29,13 @@ export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: nu
     <Section
       heading="Trend"
       detail={[
-        count(series.periods.length, 'whole period', 'whole periods'),
-        span === null ? undefined : `of ${count(span, 'day', 'days')}`,
+        count(series.periods.length, "whole period", "whole periods"),
+        span === null ? undefined : `of ${count(span, "day", "days")}`,
         series.enablement_at === undefined ? undefined : `since ${day(series.enablement_at)}`,
-        cutDetail(series, cut),
+        cutDetail(series, cut)
       ]
         .filter((part) => part !== undefined)
-        .join(' ')}
+        .join(" ")}
     >
       <div className="space-y-4">
         <ChartCard title="Merges by route" detail="what each period put onto the default branch">
@@ -51,8 +43,8 @@ export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: nu
             data={throughputRows(series)}
             shape="bar"
             series={[
-              { key: 'merged_pull_requests', label: 'pull requests', color: ROUTE_HEX.pullRequests },
-              { key: 'direct_commits', label: 'direct commits', color: ROUTE_HEX.directCommits },
+              { key: "merged_pull_requests", label: "pull requests", color: ROUTE_HEX.pullRequests },
+              { key: "direct_commits", label: "direct commits", color: ROUTE_HEX.directCommits }
             ]}
           />
         </ChartCard>
@@ -70,9 +62,7 @@ export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: nu
           </div>
         )}
 
-        {series.delta_detail === undefined ? null : (
-          <p className="text-xs text-slate-500">No period was compared: {series.delta_detail}</p>
-        )}
+        {series.delta_detail === undefined ? null : <p className="text-xs text-slate-500">No period was compared: {series.delta_detail}</p>}
 
         {reasons.length === 0 ? null : (
           <ul className="text-xs text-slate-500 space-y-1">
@@ -89,11 +79,7 @@ export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: nu
 function MetricSeriesCard({ chart }: { chart: MetricChart }) {
   return (
     <ChartCard title={chart.label} detail={`${chart.unit} · ${chart.basis}`}>
-      <TrendChart
-        data={chart.rows}
-        unit={chart.axis}
-        series={[{ key: 'value', label: chart.label, color: ROUTE_HEX.pullRequests }]}
-      />
+      <TrendChart data={chart.rows} unit={chart.axis} series={[{ key: "value", label: chart.label, color: ROUTE_HEX.pullRequests }]} />
     </ChartCard>
   );
 }
@@ -105,15 +91,7 @@ function MetricSeriesCard({ chart }: { chart: MetricChart }) {
  * panel was one of the nested boxes this page was rebuilt to lose. A chart is bounded by its own
  * axes, so the grid gap is enough to keep two of them apart.
  */
-function ChartCard({
-  title,
-  detail,
-  children,
-}: {
-  title: string;
-  detail: string;
-  children: React.ReactNode;
-}) {
+function ChartCard({ title, detail, children }: { title: string; detail: string; children: React.ReactNode }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-2">

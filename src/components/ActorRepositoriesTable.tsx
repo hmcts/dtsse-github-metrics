@@ -1,11 +1,11 @@
-import clsx from 'clsx';
-import Link from 'next/link';
-import { ProductionBadge } from '@/components/ProductionBadge';
-import { RAGLabel } from '@/components/RAGCard';
-import { team } from '@/lib/actor';
-import { borderClass } from '@/lib/rag';
-import type { ActorRepositoryReadiness } from '@/lib/types';
-import { withWeeks } from '@/lib/weeks';
+import clsx from "clsx";
+import Link from "next/link";
+import { ProductionBadge } from "@/components/ProductionBadge";
+import { RAGLabel } from "@/components/RAGCard";
+import { team } from "@/lib/actor";
+import { borderClass } from "@/lib/rag";
+import type { ActorRepositoryReadiness } from "@/lib/types";
+import { withWeeks } from "@/lib/weeks";
 
 /**
  * Which repositories one person worked in this window, and how each of them is labelled.
@@ -29,7 +29,7 @@ export function ActorRepositoriesTable({
   rows,
   teams,
   production,
-  weeks,
+  weeks
 }: {
   rows: readonly ActorRepositoryReadiness[];
   /** Repository to owning team, so a row can link its team without a second request. */
@@ -73,7 +73,7 @@ export function ActorRepositoriesTable({
         <tbody className="divide-y divide-slate-800/50">
           {rows.map((row) => (
             <tr key={row.repository} className="hover:bg-slate-800/30">
-              <td className={clsx('py-2 pl-3 pr-3', borderClass(row.readiness))}>
+              <td className={clsx("py-2 pl-3 pr-3", borderClass(row.readiness))}>
                 <Link
                   href={withWeeks(`/repositories/${encodeURIComponent(row.repository)}`, weeks)}
                   className="font-mono text-indigo-400 hover:text-indigo-300 break-all"
@@ -90,9 +90,7 @@ export function ActorRepositoriesTable({
               <td className="py-2 pr-3">
                 <ProductionBadge production={deploys(production, row.repository)} />
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                {row.contributions}
-              </td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.contributions}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.blocking}</td>
             </tr>
           ))}
@@ -109,10 +107,7 @@ export function ActorRepositoriesTable({
  * project's rule is that unavailable data never becomes a negative, and the badge renders nothing
  * for either — so the two look alike to a reader while staying different in the data.
  */
-function deploys(
-  production: readonly string[] | undefined,
-  repository: string,
-): boolean | undefined {
+function deploys(production: readonly string[] | undefined, repository: string): boolean | undefined {
   return production === undefined ? undefined : production.includes(repository);
 }
 
@@ -122,10 +117,7 @@ function TeamCell({ team: owner, weeks }: { team: string | undefined; weeks: num
     return <span className="text-slate-500">no owning team was reported</span>;
   }
   return (
-    <Link
-      href={withWeeks(`/teams/${encodeURIComponent(owner)}`, weeks)}
-      className="text-indigo-400 hover:text-indigo-300"
-    >
+    <Link href={withWeeks(`/teams/${encodeURIComponent(owner)}`, weeks)} className="text-indigo-400 hover:text-indigo-300">
       {owner}
     </Link>
   );

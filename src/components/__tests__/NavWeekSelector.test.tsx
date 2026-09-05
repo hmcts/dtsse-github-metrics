@@ -18,10 +18,10 @@
  * lands.
  */
 
-import { Suspense, useEffect, useState } from 'react';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NavWeekSelector } from '@/components/NavWeekSelector';
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { Suspense, useEffect, useState } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { NavWeekSelector } from "@/components/NavWeekSelector";
 
 const OPTIONS = [4, 12, 26] as const;
 
@@ -30,14 +30,14 @@ let replaced: string[] = [];
 /** Set from the harness's mount effect so the stubbed router can move the span it renders at. */
 let arrive: (weeks: number) => void = () => undefined;
 
-vi.mock('next/navigation', () => ({
+vi.mock("next/navigation", () => ({
   useRouter: () => ({
     replace: (target: string) => {
       replaced.push(target);
-      arrive(Number(new URL(target, 'https://metrics.test').searchParams.get('weeks')));
-    },
+      arrive(Number(new URL(target, "https://metrics.test").searchParams.get("weeks")));
+    }
   }),
-  usePathname: () => '/teams',
+  usePathname: () => "/teams"
 }));
 
 /**
@@ -93,7 +93,7 @@ function Page() {
 }
 
 function group(): HTMLElement {
-  return screen.getByRole('group', { name: 'Reporting window' });
+  return screen.getByRole("group", { name: "Reporting window" });
 }
 
 function button(weeks: number): HTMLElement {
@@ -102,11 +102,11 @@ function button(weeks: number): HTMLElement {
 
 /** The span the group says is selected, which is the guess while a render is in flight. */
 function pressed(): number | undefined {
-  return OPTIONS.find((weeks) => button(weeks).getAttribute('aria-pressed') === 'true');
+  return OPTIONS.find((weeks) => button(weeks).getAttribute("aria-pressed") === "true");
 }
 
 function busy(): boolean {
-  return group().getAttribute('aria-busy') === 'true';
+  return group().getAttribute("aria-busy") === "true";
 }
 
 /** Move the span without anybody pressing a button — a nav link, or the back button. */
@@ -117,39 +117,39 @@ async function navigateTo(span: number): Promise<void> {
 beforeEach(() => {
   replaced = [];
   unfetched.clear();
-  document.cookie = 'weeks=; path=/; max-age=0';
-  window.history.replaceState(null, '', '/teams');
+  document.cookie = "weeks=; path=/; max-age=0";
+  window.history.replaceState(null, "", "/teams");
 });
 
 afterEach(cleanup);
 
-describe('NavWeekSelector', () => {
-  it('presses the span the page was rendered at, with nothing in flight', () => {
+describe("NavWeekSelector", () => {
+  it("presses the span the page was rendered at, with nothing in flight", () => {
     render(<Page />);
 
     expect(pressed()).toBe(4);
     expect(busy()).toBe(false);
   });
 
-  it('writes the cookie before it navigates, so the next render sees the new preference', () => {
+  it("writes the cookie before it navigates, so the next render sees the new preference", () => {
     render(<Page />);
 
     fireEvent.click(button(12));
 
-    expect(document.cookie).toContain('weeks=12');
-    expect(replaced).toEqual(['/teams?weeks=12']);
+    expect(document.cookie).toContain("weeks=12");
+    expect(replaced).toEqual(["/teams?weeks=12"]);
   });
 
-  it('carries a filter another control put in the URL through the span change', () => {
-    window.history.replaceState(null, '', '/teams?repository=api');
+  it("carries a filter another control put in the URL through the span change", () => {
+    window.history.replaceState(null, "", "/teams?repository=api");
     render(<Page />);
 
     fireEvent.click(button(26));
 
-    expect(replaced).toEqual(['/teams?repository=api&weeks=26']);
+    expect(replaced).toEqual(["/teams?repository=api&weeks=26"]);
   });
 
-  it('presses the chosen span at once and says it is working until the render lands', async () => {
+  it("presses the chosen span at once and says it is working until the render lands", async () => {
     inFlight(26);
     render(<Page />);
 
@@ -158,17 +158,17 @@ describe('NavWeekSelector', () => {
     // The guess: 26 is pressed while the page behind it is still the four-week one.
     expect(pressed()).toBe(26);
     expect(busy()).toBe(true);
-    expect(screen.getByText('4 weeks of figures')).toBeTruthy();
+    expect(screen.getByText("4 weeks of figures")).toBeTruthy();
 
     await land(26);
 
     // Both halves lift together — neither is left standing over figures the other gave up on.
     expect(pressed()).toBe(26);
     expect(busy()).toBe(false);
-    expect(screen.getByText('26 weeks of figures')).toBeTruthy();
+    expect(screen.getByText("26 weeks of figures")).toBeTruthy();
   });
 
-  it('stays live while pending, so a reader can change their mind without waiting', async () => {
+  it("stays live while pending, so a reader can change their mind without waiting", async () => {
     inFlight(26);
     inFlight(12);
     render(<Page />);
@@ -178,18 +178,18 @@ describe('NavWeekSelector', () => {
     fireEvent.click(button(12));
 
     expect(pressed()).toBe(12);
-    expect(replaced).toEqual(['/teams?weeks=26', '/teams?weeks=12']);
+    expect(replaced).toEqual(["/teams?weeks=26", "/teams?weeks=12"]);
 
     await land(12);
 
     expect(pressed()).toBe(12);
     expect(busy()).toBe(false);
-    expect(screen.getByText('12 weeks of figures')).toBeTruthy();
+    expect(screen.getByText("12 weeks of figures")).toBeTruthy();
   });
 
   // The component stays mounted across a span change — only the query string moves — so an
   // optimistic value that outlived its render would highlight the span the reader has just left.
-  it('drops the guess when a render arrives at a span it was not made against', async () => {
+  it("drops the guess when a render arrives at a span it was not made against", async () => {
     inFlight(26);
     render(<Page />);
 
@@ -204,7 +204,7 @@ describe('NavWeekSelector', () => {
     expect(busy()).toBe(false);
   });
 
-  it('does not resurrect the guess on a later render at another span', async () => {
+  it("does not resurrect the guess on a later render at another span", async () => {
     inFlight(12);
     render(<Page />);
 
@@ -232,7 +232,7 @@ describe('NavWeekSelector', () => {
    * Worth pinning because the reset cannot see the difference: it compares `active` against its own
    * last guess and knows nothing about how many clicks are outstanding.
    */
-  it('keeps the later click pressed when the render for the earlier one answers', async () => {
+  it("keeps the later click pressed when the render for the earlier one answers", async () => {
     inFlight(12);
     inFlight(26);
     render(<Page />);
@@ -240,7 +240,7 @@ describe('NavWeekSelector', () => {
     fireEvent.click(button(12));
     fireEvent.click(button(26));
     expect(pressed()).toBe(26);
-    expect(replaced).toEqual(['/teams?weeks=12', '/teams?weeks=26']);
+    expect(replaced).toEqual(["/teams?weeks=12", "/teams?weeks=26"]);
 
     await land(12);
 
@@ -248,22 +248,18 @@ describe('NavWeekSelector', () => {
     // the figures beside the selector are still the four-week ones until 26 answers.
     expect(pressed()).toBe(26);
     expect(busy()).toBe(true);
-    expect(screen.getByText('4 weeks of figures')).toBeTruthy();
+    expect(screen.getByText("4 weeks of figures")).toBeTruthy();
 
     await land(26);
 
     expect(pressed()).toBe(26);
     expect(busy()).toBe(false);
-    expect(screen.getByText('26 weeks of figures')).toBeTruthy();
+    expect(screen.getByText("26 weeks of figures")).toBeTruthy();
   });
 
-  it('offers exactly the spans it was given and no others', () => {
+  it("offers exactly the spans it was given and no others", () => {
     render(<Page />);
 
-    expect(screen.getAllByRole('button').map((element) => element.textContent)).toEqual([
-      '4w',
-      '12w',
-      '26w',
-    ]);
+    expect(screen.getAllByRole("button").map((element) => element.textContent)).toEqual(["4w", "12w", "26w"]);
   });
 });

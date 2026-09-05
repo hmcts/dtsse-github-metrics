@@ -16,9 +16,10 @@
  * the same figure in `metrics evidence` output are one claim rather than two.
  */
 
-import { ABSENT, count, figure, instant, percent, quantity } from '@/lib/format';
+import { ABSENT, count, figure, instant, percent, quantity } from "@/lib/format";
 import {
   alertTone,
+  type ConditionOutcome,
   codeownersTone,
   gateFieldTone,
   maintenanceTone,
@@ -26,9 +27,8 @@ import {
   sonarGateTone,
   sonarMeasureTone,
   sonarRatingTone,
-  type ConditionOutcome,
-  type Tone,
-} from '@/lib/tone';
+  type Tone
+} from "@/lib/tone";
 import type {
   CodeownersReport,
   CohortSummary,
@@ -41,8 +41,8 @@ import type {
   SecurityAlertEvidence,
   SonarMeasures,
   SonarRating,
-  SonarReport,
-} from '@/lib/types';
+  SonarReport
+} from "@/lib/types";
 
 /**
  * One labelled figure: what it is, what it was, and what it was measured over or read from.
@@ -62,9 +62,9 @@ export interface LabelledValue {
 /** Render a tri-state field without turning a value GitHub withheld into a false one. */
 export function yesOrNo(value: boolean | null | undefined): string {
   if (value === null || value === undefined) {
-    return 'not disclosed';
+    return "not disclosed";
   }
-  return value ? 'yes' : 'no';
+  return value ? "yes" : "no";
 }
 
 /**
@@ -105,26 +105,26 @@ function gradedFirst(conditions: ReadinessCondition[]): ReadinessCondition[] {
 export function conditionGroups(assessment: ReadinessAssessment): ConditionGroup[] {
   return [
     {
-      key: 'blocking',
-      heading: 'Blocking',
-      detail: 'held the label below ready, each carrying the ceiling it imposed',
-      empty: 'Nothing blocked this repository: an empty blocking group is the only way to reach ready.',
-      conditions: assessment.blocking,
+      key: "blocking",
+      heading: "Blocking",
+      detail: "held the label below ready, each carrying the ceiling it imposed",
+      empty: "Nothing blocked this repository: an empty blocking group is the only way to reach ready.",
+      conditions: assessment.blocking
     },
     {
-      key: 'caution',
-      heading: 'Caution',
-      detail: 'not disqualifying, but worth weighing',
-      empty: 'Nothing the policy checked was flagged for caution.',
-      conditions: assessment.caution,
+      key: "caution",
+      heading: "Caution",
+      detail: "not disqualifying, but worth weighing",
+      empty: "Nothing the policy checked was flagged for caution.",
+      conditions: assessment.caution
     },
     {
-      key: 'clear',
-      heading: 'Clear',
-      detail: 'checked, and imposing no ceiling',
-      empty: 'Nothing the policy checked came back clear.',
-      conditions: gradedFirst(assessment.clear),
-    },
+      key: "clear",
+      heading: "Clear",
+      detail: "checked, and imposing no ceiling",
+      empty: "Nothing the policy checked came back clear.",
+      conditions: gradedFirst(assessment.clear)
+    }
   ];
 }
 
@@ -143,9 +143,9 @@ export function excludedMerges(cohort: CohortSummary): number {
 export function excludedDetail(cohort: CohortSummary): string {
   const authors = Object.entries(cohort.excluded_authors);
   if (authors.length === 0) {
-    return 'no author was excluded from this window';
+    return "no author was excluded from this window";
   }
-  return authors.map(([login, merges]) => `${login} ${merges}`).join(' · ');
+  return authors.map(([login, merges]) => `${login} ${merges}`).join(" · ");
 }
 
 /**
@@ -165,9 +165,7 @@ export function mergeGateRows(gate: MergeGateEvidence): LabelledValue[] {
   // DISTINCT contexts, matching `MergeGateEvidence.required_contexts`: two rulesets both demanding
   // `build` demand one check, so naming it twice would print a row the text report does not and
   // count a check the estate donut does not.
-  const contexts = [
-    ...new Set(gate.status_checks.flatMap((rule) => rule.required_status_checks.map((check) => check.context))),
-  ];
+  const contexts = [...new Set(gate.status_checks.flatMap((rule) => rule.required_status_checks.map((check) => check.context)))];
   const dismissed = gate.pull_requests.some((rule) => rule.dismiss_stale_reviews_on_push);
   // A protected branch whose rules GitHub WITHHELD arrives with the same empty rule arrays as one
   // that carries no rules at all — `inventory.merge_gate_without_rule_details` builds both, and
@@ -182,58 +180,58 @@ export function mergeGateRows(gate: MergeGateEvidence): LabelledValue[] {
   // all: `GateValue` is the flag or the count a tone could be read off, and neither of those two
   // fields is one. `gateFieldTone` answers neutral for both, which is where that stays decided.
   return [
-    { label: 'Branch', value: gate.branch, tone: gateFieldTone('branch') },
-    { label: 'Protected', value: yesOrNo(gate.protected), tone: gateFieldTone('protected', gate.protected) },
+    { label: "Branch", value: gate.branch, tone: gateFieldTone("branch") },
+    { label: "Protected", value: yesOrNo(gate.protected), tone: gateFieldTone("protected", gate.protected) },
     {
-      label: 'Rules observed',
+      label: "Rules observed",
       value: yesOrNo(gate.rules_observed),
-      tone: gateFieldTone('rules_observed', gate.rules_observed),
+      tone: gateFieldTone("rules_observed", gate.rules_observed)
     },
     {
-      label: 'Approving reviews required',
+      label: "Approving reviews required",
       value: String(required),
-      tone: gateFieldTone('required_approving_review_count', withheld ? undefined : required),
+      tone: gateFieldTone("required_approving_review_count", withheld ? undefined : required)
     },
     {
-      label: 'Required status checks',
-      value: [...contexts].sort().join(', ') || 'none',
-      tone: gateFieldTone('required_status_checks', withheld ? undefined : contexts.length),
+      label: "Required status checks",
+      value: [...contexts].sort().join(", ") || "none",
+      tone: gateFieldTone("required_status_checks", withheld ? undefined : contexts.length)
     },
     {
-      label: 'Dismiss stale reviews on push',
+      label: "Dismiss stale reviews on push",
       value: yesOrNo(dismissed),
-      tone: gateFieldTone('dismiss_stale_reviews_on_push', withheld ? undefined : dismissed),
+      tone: gateFieldTone("dismiss_stale_reviews_on_push", withheld ? undefined : dismissed)
     },
     {
-      label: 'Applies to administrators',
+      label: "Applies to administrators",
       value: yesOrNo(gate.applies_to_administrators),
-      tone: gateFieldTone('applies_to_administrators', gate.applies_to_administrators),
+      tone: gateFieldTone("applies_to_administrators", gate.applies_to_administrators)
     },
     {
-      label: 'Restricts deletions',
+      label: "Restricts deletions",
       value: yesOrNo(gate.restricts_deletions),
-      tone: gateFieldTone('restricts_deletions', gate.restricts_deletions),
+      tone: gateFieldTone("restricts_deletions", gate.restricts_deletions)
     },
     {
-      label: 'Blocks force pushes',
+      label: "Blocks force pushes",
       value: yesOrNo(gate.blocks_force_pushes),
-      tone: gateFieldTone('blocks_force_pushes', gate.blocks_force_pushes),
+      tone: gateFieldTone("blocks_force_pushes", gate.blocks_force_pushes)
     },
     {
-      label: 'Requires linear history',
+      label: "Requires linear history",
       value: yesOrNo(gate.requires_linear_history),
-      tone: gateFieldTone('requires_linear_history', gate.requires_linear_history),
+      tone: gateFieldTone("requires_linear_history", gate.requires_linear_history)
     },
     {
-      label: 'Restricts branch names',
+      label: "Restricts branch names",
       value: yesOrNo(gate.restricts_branch_names),
-      tone: gateFieldTone('restricts_branch_names', gate.restricts_branch_names),
+      tone: gateFieldTone("restricts_branch_names", gate.restricts_branch_names)
     },
     {
-      label: 'Rules not interpreted',
-      value: gate.unmodelled_rules.join(', ') || 'none',
-      tone: gateFieldTone('unmodelled_rules'),
-    },
+      label: "Rules not interpreted",
+      value: gate.unmodelled_rules.join(", ") || "none",
+      tone: gateFieldTone("unmodelled_rules")
+    }
   ];
 }
 
@@ -251,45 +249,42 @@ export function openPullRequestCards(report: OpenPullRequestReport): LabelledVal
   if (summary === undefined) {
     return [];
   }
-  const measured =
-    report.starts_at === undefined || report.ends_at === undefined
-      ? undefined
-      : `${instant(report.starts_at)} to ${instant(report.ends_at)}`;
+  const measured = report.starts_at === undefined || report.ends_at === undefined ? undefined : `${instant(report.starts_at)} to ${instant(report.ends_at)}`;
   const read = report.fetched_at === undefined ? undefined : `as at ${instant(report.fetched_at)}`;
   return [
     {
-      label: 'Opened in window',
+      label: "Opened in window",
       value: String(summary.opened_in_window),
       detail: measured,
-      tone: openPullRequestTone('opened_in_window', summary.opened_in_window),
+      tone: openPullRequestTone("opened_in_window", summary.opened_in_window)
     },
     {
-      label: 'Closed without merge',
+      label: "Closed without merge",
       value: String(summary.closed_without_merge),
       detail: measured,
-      tone: openPullRequestTone('closed_without_merge', summary.closed_without_merge),
+      tone: openPullRequestTone("closed_without_merge", summary.closed_without_merge)
     },
     {
-      label: 'Currently open',
+      label: "Currently open",
       value: String(summary.currently_open),
       detail: read,
-      tone: openPullRequestTone('currently_open', summary.currently_open),
+      tone: openPullRequestTone("currently_open", summary.currently_open)
     },
     {
-      label: 'Stale open',
+      label: "Stale open",
       value: String(summary.stale_open),
       detail: read,
-      tone: openPullRequestTone('stale_open', summary.stale_open),
-    },
+      tone: openPullRequestTone("stale_open", summary.stale_open)
+    }
   ];
 }
 
 /** The three alert families, in the one order every rendering of this block lists them in. */
-export const ALERT_FAMILIES = ['dependabot', 'code-scanning', 'secret-scanning'] as const;
+export const ALERT_FAMILIES = ["dependabot", "code-scanning", "secret-scanning"] as const;
 
 export type AlertFamily = (typeof ALERT_FAMILIES)[number];
 
-const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
+const SEVERITIES = ["critical", "high", "medium", "low"] as const;
 
 /**
  * Break one family's open alerts down by severity, or say why there is no breakdown to give.
@@ -299,25 +294,25 @@ const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const;
  */
 export function severityDetail(family: AlertFamily, count: OpenAlertCount): string {
   if (count.open === undefined) {
-    return count.detail ?? 'not available';
+    return count.detail ?? "not available";
   }
-  if (family === 'secret-scanning') {
-    return 'no severity is reported for this family';
+  if (family === "secret-scanning") {
+    return "no severity is reported for this family";
   }
-  return SEVERITIES.map((severity) => `${severity} ${count.by_severity[severity] ?? 0}`).join(' · ');
+  return SEVERITIES.map((severity) => `${severity} ${count.by_severity[severity] ?? 0}`).join(" · ");
 }
 
 export function securityCards(alerts: SecurityAlertEvidence): LabelledValue[] {
   const counts: Record<AlertFamily, OpenAlertCount> = {
     dependabot: alerts.dependabot,
-    'code-scanning': alerts.code_scanning,
-    'secret-scanning': alerts.secret_scanning,
+    "code-scanning": alerts.code_scanning,
+    "secret-scanning": alerts.secret_scanning
   };
   return ALERT_FAMILIES.map((family) => ({
     label: family,
     value: figure(counts[family].open),
     detail: severityDetail(family, counts[family]),
-    tone: alertTone(family, counts[family]),
+    tone: alertTone(family, counts[family])
   }));
 }
 
@@ -335,12 +330,12 @@ export function maintenanceRows(report: MaintenanceReport): LabelledValue[] {
     detail:
       window.human_detail === undefined
         ? `human commit: ${humanAnswer(window.human_committed_within)}`
-        : `human commit: ${humanAnswer(window.human_committed_within)} — ${window.human_detail}`,
+        : `human commit: ${humanAnswer(window.human_committed_within)} — ${window.human_detail}`
   }));
 }
 
 function humanAnswer(value: boolean | undefined): string {
-  return value === undefined ? 'unknown' : yesOrNo(value);
+  return value === undefined ? "unknown" : yesOrNo(value);
 }
 
 /**
@@ -352,28 +347,16 @@ function humanAnswer(value: boolean | undefined): string {
 export function maintenanceSummary(report: MaintenanceReport): string {
   const maintenance = report.maintenance;
   if (maintenance === undefined) {
-    return report.detail ?? 'not available';
+    return report.detail ?? "not available";
   }
   // `== null` catches both shapes on purpose: the service omits an unobserved instant rather than
   // sending `null`, and a strict `=== null` here would print `searched back to -` on every
   // repository whose search DID find a human commit — the common path, and the one absence this
   // block exists to keep apart from "none within the window".
-  const lastCommit =
-    maintenance.last_commit_at == null
-      ? 'none: the branch has no commits'
-      : instant(maintenance.last_commit_at);
-  const lastHuman =
-    maintenance.last_human_commit_at == null ? 'none found' : instant(maintenance.last_human_commit_at);
-  const searched =
-    maintenance.searched_back_to == null
-      ? []
-      : [`searched back to ${instant(maintenance.searched_back_to)}`];
-  return [
-    `branch ${maintenance.branch}`,
-    `last commit ${lastCommit}`,
-    `last human commit ${lastHuman}`,
-    ...searched,
-  ].join(' · ');
+  const lastCommit = maintenance.last_commit_at == null ? "none: the branch has no commits" : instant(maintenance.last_commit_at);
+  const lastHuman = maintenance.last_human_commit_at == null ? "none found" : instant(maintenance.last_human_commit_at);
+  const searched = maintenance.searched_back_to == null ? [] : [`searched back to ${instant(maintenance.searched_back_to)}`];
+  return [`branch ${maintenance.branch}`, `last commit ${lastCommit}`, `last human commit ${lastHuman}`, ...searched].join(" · ");
 }
 
 /**
@@ -387,30 +370,27 @@ export function codeownersCard(report: CodeownersReport): LabelledValue {
   const codeowners = report.codeowners;
   if (codeowners === undefined) {
     return {
-      label: 'CODEOWNERS',
+      label: "CODEOWNERS",
       value: ABSENT,
-      detail: report.detail ?? 'not available',
-      tone: codeownersTone(undefined),
+      detail: report.detail ?? "not available",
+      tone: codeownersTone(undefined)
     };
   }
   if (codeowners.files.length === 0) {
     return {
-      label: 'CODEOWNERS',
-      value: 'absent',
-      detail: 'no CODEOWNERS file at any of the checked locations',
-      tone: codeownersTone(0),
+      label: "CODEOWNERS",
+      value: "absent",
+      detail: "no CODEOWNERS file at any of the checked locations",
+      tone: codeownersTone(0)
     };
   }
   return {
-    label: 'CODEOWNERS',
-    value: count(codeowners.files.length, 'file', 'files'),
+    label: "CODEOWNERS",
+    value: count(codeowners.files.length, "file", "files"),
     tone: codeownersTone(codeowners.files.length),
     detail: codeowners.files
-      .map(
-        (file) =>
-          `${file.path} (${file.size_bytes} bytes, ${file.recognised_by_github ? 'recognised' : 'not recognised'} by GitHub)`,
-      )
-      .join(' · '),
+      .map((file) => `${file.path} (${file.size_bytes} bytes, ${file.recognised_by_github ? "recognised" : "not recognised"} by GitHub)`)
+      .join(" · ")
   };
 }
 
@@ -427,23 +407,23 @@ export function sonarGateCard(report: SonarReport): LabelledValue {
   const measures = report.measures;
   if (measures === undefined) {
     return {
-      label: 'Quality gate',
+      label: "Quality gate",
       value: ABSENT,
-      detail: [...named, report.detail ?? 'not available'].join(' · '),
-      tone: sonarGateTone(undefined),
+      detail: [...named, report.detail ?? "not available"].join(" · "),
+      tone: sonarGateTone(undefined)
     };
   }
-  const analysed = measures.analysis_at === undefined ? 'never analysed' : `analysed ${instant(measures.analysis_at)}`;
+  const analysed = measures.analysis_at === undefined ? "never analysed" : `analysed ${instant(measures.analysis_at)}`;
   return {
-    label: 'Quality gate',
-    value: measures.gate === undefined ? 'not reported' : measures.gate.level,
-    detail: [...named, analysed].join(' · '),
-    tone: sonarGateTone(measures.gate?.level),
+    label: "Quality gate",
+    value: measures.gate === undefined ? "not reported" : measures.gate.level,
+    detail: [...named, analysed].join(" · "),
+    tone: sonarGateTone(measures.gate?.level)
   };
 }
 
 /** The `A`-to-E letter behind a SonarCloud rating, or the number where this build knows no letter. */
-export const SONAR_RATING_LETTERS = ['A', 'B', 'C', 'D', 'E'] as const;
+export const SONAR_RATING_LETTERS = ["A", "B", "C", "D", "E"] as const;
 
 export function ratingLetter(rating: SonarRating | undefined): string {
   if (rating === undefined) {
@@ -467,51 +447,51 @@ export function ratingLetter(rating: SonarRating | undefined): string {
  */
 export function sonarRows(measures: SonarMeasures): LabelledValue[] {
   return [
-    { label: 'Coverage', value: percent(measures.coverage), tone: sonarMeasureTone('coverage', measures) },
+    { label: "Coverage", value: percent(measures.coverage), tone: sonarMeasureTone("coverage", measures) },
     {
-      label: 'Duplicated lines',
+      label: "Duplicated lines",
       value: percent(measures.duplicated_lines_density),
-      tone: sonarMeasureTone('duplicated_lines_density', measures),
+      tone: sonarMeasureTone("duplicated_lines_density", measures)
     },
     {
-      label: 'Lines of code',
+      label: "Lines of code",
       value: quantity(measures.lines_of_code),
-      tone: sonarMeasureTone('lines_of_code', measures),
+      tone: sonarMeasureTone("lines_of_code", measures)
     },
     {
-      label: 'Violations',
+      label: "Violations",
       value: quantity(measures.violations),
-      tone: sonarMeasureTone('violations', measures),
+      tone: sonarMeasureTone("violations", measures)
     },
     {
-      label: 'Reliability issues',
+      label: "Reliability issues",
       value: quantity(measures.reliability_issues),
-      tone: sonarMeasureTone('reliability_issues', measures),
+      tone: sonarMeasureTone("reliability_issues", measures)
     },
     {
-      label: 'Maintainability issues',
+      label: "Maintainability issues",
       value: quantity(measures.maintainability_issues),
-      tone: sonarMeasureTone('maintainability_issues', measures),
+      tone: sonarMeasureTone("maintainability_issues", measures)
     },
     {
-      label: 'Security issues',
+      label: "Security issues",
       value: quantity(measures.security_issues),
-      tone: sonarMeasureTone('security_issues', measures),
+      tone: sonarMeasureTone("security_issues", measures)
     },
     {
-      label: 'Reliability rating',
+      label: "Reliability rating",
       value: ratingLetter(measures.reliability_rating),
-      tone: sonarRatingTone(measures.reliability_rating),
+      tone: sonarRatingTone(measures.reliability_rating)
     },
     {
-      label: 'Maintainability rating',
+      label: "Maintainability rating",
       value: ratingLetter(measures.maintainability_rating),
-      tone: sonarRatingTone(measures.maintainability_rating),
+      tone: sonarRatingTone(measures.maintainability_rating)
     },
     {
-      label: 'Security rating',
+      label: "Security rating",
       value: ratingLetter(measures.security_rating),
-      tone: sonarRatingTone(measures.security_rating),
-    },
+      tone: sonarRatingTone(measures.security_rating)
+    }
   ];
 }

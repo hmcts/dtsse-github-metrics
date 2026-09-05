@@ -1,4 +1,4 @@
-import { SkeletonList } from '@/components/Skeleton';
+import { SkeletonList } from "@/components/Skeleton";
 
 /**
  * The team list's bones: the organisation header above one table.

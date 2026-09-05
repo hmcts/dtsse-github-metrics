@@ -6,17 +6,17 @@
  * were cut into, the delta basis beside each metric, and the reason a window observed nothing.
  */
 
-import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
-import { describe, expect, it } from 'vitest';
-import { TrendSection } from '@/components/TrendSection';
-import { BASIS_LABEL, NO_BASIS } from '@/lib/trend';
-import type { RepositoryTrend, TrendMetric, TrendPeriod, TrendWindow } from '@/lib/types';
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import { TrendSection } from "@/components/TrendSection";
+import { BASIS_LABEL, NO_BASIS } from "@/lib/trend";
+import type { RepositoryTrend, TrendMetric, TrendPeriod, TrendWindow } from "@/lib/types";
 
 const RATE: TrendMetric = {
-  metric: 'approval-coverage',
-  summary: { status: 'observed', numerator: 8, denominator: 10 },
-  value: 80,
+  metric: "approval-coverage",
+  summary: { status: "observed", numerator: 8, denominator: 10 },
+  value: 80
 };
 
 function window(starts: string, overrides: Partial<TrendWindow> = {}): TrendWindow {
@@ -27,16 +27,14 @@ function window(starts: string, overrides: Partial<TrendWindow> = {}): TrendWind
     cohort: { merged: 10, reported: 10, excluded_authors: {}, direct_commits: 2 },
     throughput: { merges: 12, merged_pull_requests: 10, direct_commits: 2, active_contributors: 3 },
     metrics: [RATE],
-    ...overrides,
+    ...overrides
   };
 }
 
 const PERIOD: TrendPeriod = {
-  ...window('2026-06-29T00:00:00Z', { ends_at: '2026-07-27T00:00:00Z' }),
+  ...window("2026-06-29T00:00:00Z", { ends_at: "2026-07-27T00:00:00Z" }),
   index: 1,
-  deltas: [
-    { measure: 'approval-coverage', basis: 'percentage_points', baseline: 75, period: 80, change: 5 },
-  ],
+  deltas: [{ measure: "approval-coverage", basis: "percentage_points", baseline: 75, period: 80, change: 5 }]
 };
 
 /** The cut the page asks for, well above anything these fixtures hold unless a test says otherwise. */
@@ -47,63 +45,62 @@ function markup(series: RepositoryTrend, cut = CUT): string {
 }
 
 const SERIES: RepositoryTrend = {
-  repository: 'cath-service',
-  enablement_at: '2026-06-01T00:00:00Z',
-  baseline: window('2026-06-01T00:00:00Z', { ends_at: '2026-06-29T00:00:00Z' }),
+  repository: "cath-service",
+  enablement_at: "2026-06-01T00:00:00Z",
+  baseline: window("2026-06-01T00:00:00Z", { ends_at: "2026-06-29T00:00:00Z" }),
   periods: [PERIOD],
-  alert_observations: [],
+  alert_observations: []
 };
 
-describe('TrendSection', () => {
+describe("TrendSection", () => {
   const rendered = markup(SERIES);
 
-  it('says how many whole periods were cut, how long they are, and from when', () => {
-    expect(rendered).toContain('1 whole period of 28 days since 2026-06-01');
+  it("says how many whole periods were cut, how long they are, and from when", () => {
+    expect(rendered).toContain("1 whole period of 28 days since 2026-06-01");
   });
 
-  it('states the arithmetic each metric was compared with, beside that metric', () => {
-    expect(rendered).toContain('approval-coverage');
+  it("states the arithmetic each metric was compared with, beside that metric", () => {
+    expect(rendered).toContain("approval-coverage");
     expect(rendered).toContain(BASIS_LABEL.percentage_points);
   });
 
-  it('grades nothing: no readiness word reaches a series', () => {
-    expect(rendered).not.toContain('Ready');
-    expect(rendered).not.toContain('Blocked');
+  it("grades nothing: no readiness word reaches a series", () => {
+    expect(rendered).not.toContain("Ready");
+    expect(rendered).not.toContain("Blocked");
   });
 
-  it('explains a window that observed nothing instead of drawing it as a zero', () => {
+  it("explains a window that observed nothing instead of drawing it as a zero", () => {
     const suppressed = markup({
       ...SERIES,
       baseline: {
-        starts_at: '2026-06-01T00:00:00Z',
-        ends_at: '2026-06-29T00:00:00Z',
+        starts_at: "2026-06-01T00:00:00Z",
+        ends_at: "2026-06-29T00:00:00Z",
         metrics: [],
-        detail: 'cached pull_request evidence does not cover this window',
+        detail: "cached pull_request evidence does not cover this window"
       },
       periods: [{ ...PERIOD, deltas: [] }],
-      delta_detail:
-        'the baseline window is not comparable, so no delta was computed: cached pull_request evidence does not cover this window',
+      delta_detail: "the baseline window is not comparable, so no delta was computed: cached pull_request evidence does not cover this window"
     });
-    expect(suppressed).toContain('Baseline (2026-06-01): cached pull_request evidence does not cover');
-    expect(suppressed).toContain('No period was compared:');
+    expect(suppressed).toContain("Baseline (2026-06-01): cached pull_request evidence does not cover");
+    expect(suppressed).toContain("No period was compared:");
     expect(suppressed).toContain(NO_BASIS);
   });
 
-  it('says a series at the cut holds the first periods, not the whole history since enablement', () => {
-    expect(markup(SERIES, 1)).toContain('the first 1, the most one request may ask for');
+  it("says a series at the cut holds the first periods, not the whole history since enablement", () => {
+    expect(markup(SERIES, 1)).toContain("the first 1, the most one request may ask for");
   });
 
-  it('says nothing about a cut for a series that did not reach it', () => {
-    expect(rendered).not.toContain('the most one request may ask for');
+  it("says nothing about a cut for a series that did not reach it", () => {
+    expect(rendered).not.toContain("the most one request may ask for");
   });
 
-  it('says why a series holds no metric chart rather than leaving a blank', () => {
+  it("says why a series holds no metric chart rather than leaving a blank", () => {
     const thin = markup({
       ...SERIES,
-      baseline: window('2026-06-01T00:00:00Z', { metrics: [] }),
-      periods: [{ ...PERIOD, metrics: [] }],
+      baseline: window("2026-06-01T00:00:00Z", { metrics: [] }),
+      periods: [{ ...PERIOD, metrics: [] }]
     });
-    expect(thin).toContain('No behaviour metric was observed in any period of this series.');
+    expect(thin).toContain("No behaviour metric was observed in any period of this series.");
   });
 
   /**
@@ -114,16 +111,16 @@ describe('TrendSection', () => {
    * shorter sentence rather than as "of null days" or "since undefined" — a page that printed either
    * would be stating a fact the series does not carry.
    */
-  it('leaves out the period length and the enablement date where the series carries neither', () => {
+  it("leaves out the period length and the enablement date where the series carries neither", () => {
     const partial = markup({
       ...SERIES,
       enablement_at: undefined,
-      periods: [{ ...PERIOD, starts_at: 'not an instant', ends_at: 'not an instant either' }],
+      periods: [{ ...PERIOD, starts_at: "not an instant", ends_at: "not an instant either" }]
     });
 
-    expect(partial).toContain('1 whole period');
-    expect(partial).not.toContain('days');
-    expect(partial).not.toContain('since');
+    expect(partial).toContain("1 whole period");
+    expect(partial).not.toContain("days");
+    expect(partial).not.toContain("since");
     expect(partial).not.toMatch(/null|undefined|NaN/);
   });
 });

@@ -19,14 +19,9 @@
  * narrowest one there is: complete reads green, and anything short of complete carries no colour.
  */
 
-import { figure, isRate, population, summarise } from '@/lib/format';
-import { conditionTone, labelTone, type ConditionOutcome, type Tone } from '@/lib/tone';
-import type {
-  BehaviourMetricSummary,
-  Observation,
-  ReadinessAssessment,
-  ReadinessCondition,
-} from '@/lib/types';
+import { figure, isRate, population, summarise } from "@/lib/format";
+import { type ConditionOutcome, conditionTone, labelTone, type Tone } from "@/lib/tone";
+import type { BehaviourMetricSummary, Observation, ReadinessAssessment, ReadinessCondition } from "@/lib/types";
 
 /** The value a metric card leads on: the rate's percentage, or the distribution's median. */
 export function metricValue(summary: BehaviourMetricSummary): string {
@@ -51,7 +46,7 @@ export function metricDetail(summary: BehaviourMetricSummary): string {
 export function percentile(observation: Observation): string | null {
   // `== null` for the reason `maintenanceSummary` records: an unplaced percentile arrives as a
   // missing key, so a strict `=== null` would print `p75 -` beside a sample size.
-  if (isRate(observation) || observation.status !== 'observed' || observation.percentile_75 == null) {
+  if (isRate(observation) || observation.status !== "observed" || observation.percentile_75 == null) {
     return null;
   }
   return `p75 ${figure(observation.percentile_75)} ${observation.unit}`;
@@ -73,16 +68,13 @@ export function percentile(observation: Observation): string | null {
  * `clear` and its card reads green. `not-observed` is the caution the policy raises for a metric it
  * had no denominator or no sample to grade.
  */
-const GRADED_SUFFIXES = ['at-target', 'below-target', 'above-target', 'not-observed'] as const;
+const GRADED_SUFFIXES = ["at-target", "below-target", "above-target", "not-observed"] as const;
 
 /** The three sections in the order they are searched; a condition appears in exactly one. */
-const OUTCOMES: readonly ConditionOutcome[] = ['blocking', 'caution', 'clear'];
+const OUTCOMES: readonly ConditionOutcome[] = ["blocking", "caution", "clear"];
 
 /** The assessment condition that graded one metric, or nothing where no condition names it. */
-function graded(
-  metric: string,
-  assessment: ReadinessAssessment,
-): { outcome: ConditionOutcome; condition: ReadinessCondition } | undefined {
+function graded(metric: string, assessment: ReadinessAssessment): { outcome: ConditionOutcome; condition: ReadinessCondition } | undefined {
   const names: readonly string[] = GRADED_SUFFIXES.map((suffix) => `${metric}-${suffix}`);
   for (const outcome of OUTCOMES) {
     const condition = assessment[outcome].find((each) => names.includes(each.condition));
@@ -102,7 +94,7 @@ function graded(
  * wrote: there is no condition to read, and complete is the one verdict that needs no target to be
  * worth stating.
  */
-const COMPLETENESS_RATES: readonly string[] = ['description-quality', 'traceability-reference'];
+const COMPLETENESS_RATES: readonly string[] = ["description-quality", "traceability-reference"];
 
 /**
  * Whether one of those two rates is complete: every eligible merge counted, none missed.
@@ -117,7 +109,7 @@ const COMPLETENESS_RATES: readonly string[] = ['description-quality', 'traceabil
  * merges at all.
  */
 function complete(observation: Observation): boolean {
-  if (!isRate(observation) || observation.status !== 'observed') {
+  if (!isRate(observation) || observation.status !== "observed") {
     return false;
   }
   return observation.denominator > 0 && observation.numerator === observation.denominator;
@@ -144,23 +136,20 @@ function complete(observation: Observation): boolean {
  * records why there is nothing to ask; the consequence is that the rule reads the same on a
  * contributor page, where no assessment arrives and every other card on the grid is colourless.
  */
-export function metricTone(
-  summary: BehaviourMetricSummary,
-  assessment: ReadinessAssessment | undefined,
-): Tone {
+export function metricTone(summary: BehaviourMetricSummary, assessment: ReadinessAssessment | undefined): Tone {
   if (COMPLETENESS_RATES.includes(summary.metric)) {
-    return complete(summary.summary) ? 'good' : 'neutral';
+    return complete(summary.summary) ? "good" : "neutral";
   }
   // `== null` per the missing-key rule, for the two cases above: a contributor page passes none, and
   // a repository the readiness policy graded nothing for is served without one.
   if (assessment == null) {
-    return 'neutral';
+    return "neutral";
   }
   const found = graded(summary.metric, assessment);
   if (found === undefined) {
-    return 'neutral';
+    return "neutral";
   }
-  if (found.outcome === 'blocking') {
+  if (found.outcome === "blocking") {
     return labelTone(found.condition.label);
   }
   // The clear and caution sections read exactly as they do in the assessment above, informational

@@ -1,20 +1,20 @@
-'use client';
+"use client";
 
-import clsx from 'clsx';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import type { CSSProperties } from 'react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
-import { InfoTooltip } from '@/components/InfoTooltip';
-import { activeSlices, totalValue, type PieSlice } from '@/lib/chart';
-import { filterTarget } from '@/lib/filter';
-import { percentageOf } from '@/lib/format';
+import clsx from "clsx";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { CSSProperties } from "react";
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { InfoTooltip } from "@/components/InfoTooltip";
+import { activeSlices, type PieSlice, totalValue } from "@/lib/chart";
+import { filterTarget } from "@/lib/filter";
+import { percentageOf } from "@/lib/format";
 
 /** The hover card's frame, which is inline because recharts styles its tooltip wrapper directly. */
 const TOOLTIP: CSSProperties = {
-  backgroundColor: '#1e293b',
-  border: '1px solid #334155',
-  borderRadius: '6px',
-  padding: '8px 12px',
+  backgroundColor: "#1e293b",
+  border: "1px solid #334155",
+  borderRadius: "6px",
+  padding: "8px 12px"
 };
 
 interface DonutProperties {
@@ -59,43 +59,30 @@ interface SliceFilter {
 export function SummaryPieChart({ parameter, ...donut }: DonutProperties) {
   // Two components rather than one with a conditional hook: `useRouter` throws where no router is
   // mounted, and a static donut is drawn by pages and tests that have none.
-  return parameter === undefined ? (
-    <Donut {...donut} />
-  ) : (
-    <FilteringDonut {...donut} parameter={parameter} />
-  );
+  return parameter === undefined ? <Donut {...donut} /> : <FilteringDonut {...donut} parameter={parameter} />;
 }
 
 /** The same donut, wired to the URL: reads the dimension's current value and writes the next one. */
-function FilteringDonut({
-  parameter,
-  ...donut
-}: Omit<DonutProperties, 'parameter'> & { parameter: string }) {
+function FilteringDonut({ parameter, ...donut }: Omit<DonutProperties, "parameter"> & { parameter: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParameters = useSearchParams();
-  const active = searchParameters.get(parameter) ?? '';
+  const active = searchParameters.get(parameter) ?? "";
 
   function toggle(key: string) {
     // Clicking the slice already filtered on clears the filter, which is the parameter's absence —
     // the same navigation the search box makes when its box is emptied. `window.location.search`
     // rather than `searchParameters`, so a parameter another control wrote is carried through.
-    const chosen = key === active ? '' : key;
+    const chosen = key === active ? "" : key;
     router.replace(filterTarget(pathname, window.location.search, parameter, chosen), {
-      scroll: false,
+      scroll: false
     });
   }
 
   return <Donut {...donut} filter={{ active, toggle }} />;
 }
 
-function Donut({
-  title,
-  data,
-  height = 175,
-  tooltip,
-  filter,
-}: Omit<DonutProperties, 'parameter'> & { filter?: SliceFilter }) {
+function Donut({ title, data, height = 175, tooltip, filter }: Omit<DonutProperties, "parameter"> & { filter?: SliceFilter }) {
   const total = totalValue(data);
   const wedges = activeSlices(data);
 
@@ -122,7 +109,7 @@ function Donut({
               paddingAngle={wedges.length > 1 ? 2 : 0}
               dataKey="value"
               strokeWidth={0}
-              className={filter ? 'cursor-pointer' : undefined}
+              className={filter ? "cursor-pointer" : undefined}
               onClick={filter ? (sector) => filter.toggle(clickedKey(sector)) : undefined}
             >
               {wedges.map((wedge) => (
@@ -151,11 +138,7 @@ function Donut({
         </ResponsiveContainer>
       )}
 
-      <div
-        className="flex flex-wrap justify-center gap-x-3 gap-y-1.5"
-        role={filter ? 'group' : undefined}
-        aria-label={filter ? `${title} filter` : undefined}
-      >
+      <div className="flex flex-wrap justify-center gap-x-3 gap-y-1.5" role={filter ? "group" : undefined} aria-label={filter ? `${title} filter` : undefined}>
         {data.map((slice) =>
           filter ? (
             <button
@@ -165,9 +148,9 @@ function Donut({
               aria-pressed={slice.key === filter.active}
               // `-mx-1 px-1` so the highlight has room without the entry moving when it is applied.
               className={clsx(
-                'group flex items-center gap-1.5 -mx-1 px-1 rounded transition-colors',
-                'focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500',
-                slice.key === filter.active ? 'bg-slate-800' : null,
+                "group flex items-center gap-1.5 -mx-1 px-1 rounded transition-colors",
+                "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
+                slice.key === filter.active ? "bg-slate-800" : null
               )}
               style={{ opacity: slice.value === 0 ? 0.38 : 1 }}
             >
@@ -182,7 +165,7 @@ function Donut({
             >
               <LegendEntry slice={slice} />
             </div>
-          ),
+          )
         )}
       </div>
     </div>
@@ -210,14 +193,8 @@ function clickedKey(sector: unknown): string {
 function LegendEntry({ slice, interactive }: { slice: PieSlice; interactive?: boolean }) {
   return (
     <>
-      <span
-        className="shrink-0 w-2 h-2 rounded-full"
-        style={{ backgroundColor: slice.color }}
-        aria-hidden="true"
-      />
-      <span className={clsx('text-xs text-slate-400', interactive && 'group-hover:text-slate-200')}>
-        {slice.name}
-      </span>
+      <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
+      <span className={clsx("text-xs text-slate-400", interactive && "group-hover:text-slate-200")}>{slice.name}</span>
       <span className="text-xs text-slate-600 tabular-nums">{slice.value}</span>
     </>
   );

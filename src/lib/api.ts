@@ -10,19 +10,9 @@
  * source has moved on, with nothing on the page to say so.
  */
 
-import type {
-  ActorDetail,
-  ActorRow,
-  OverviewSummary,
-  RepositoryDetail,
-  RepositoryRow,
-  RepositoryTrend,
-  TeamDetail,
-  TeamRow,
-  WindowOptions,
-} from '@/lib/types';
+import type { ActorDetail, ActorRow, OverviewSummary, RepositoryDetail, RepositoryRow, RepositoryTrend, TeamDetail, TeamRow, WindowOptions } from "@/lib/types";
 
-export const DEFAULT_API_URL = 'http://localhost:8000';
+export const DEFAULT_API_URL = "http://localhost:8000";
 
 export const NOT_FOUND = 404;
 
@@ -38,7 +28,7 @@ export class ApiError extends Error {
 
   constructor(status: number, message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = 'ApiError';
+    this.name = "ApiError";
     this.status = status;
   }
 }
@@ -52,11 +42,11 @@ function base(): string {
 }
 
 export async function apiFetch<T>(path: string): Promise<T> {
-  const response = await fetch(`${base()}${path}`, { cache: 'no-store' });
+  const response = await fetch(`${base()}${path}`, { cache: "no-store" });
   if (!response.ok) {
     // The body carries the service's own `detail`, which names the repository, login or window that
     // was refused — worth keeping, because a bare status cannot say which of them was wrong.
-    const body = await response.text().catch(() => '');
+    const body = await response.text().catch(() => "");
     throw new ApiError(response.status, `API ${response.status} for ${path}: ${body}`);
   }
   try {
@@ -66,7 +56,7 @@ export async function apiFetch<T>(path: string): Promise<T> {
     // every other one: a bare `SyntaxError` escaping here would go round the `isNotFound` check the
     // pages branch on and name neither the path nor the status.
     throw new ApiError(response.status, `API ${response.status} for ${path}: response was not JSON`, {
-      cause,
+      cause
     });
   }
 }
@@ -77,7 +67,7 @@ function query(weeks: number): string {
 }
 
 export async function getWindows(): Promise<WindowOptions> {
-  return apiFetch<WindowOptions>('/windows');
+  return apiFetch<WindowOptions>("/windows");
 }
 
 export async function getOverview(weeks: number): Promise<OverviewSummary> {

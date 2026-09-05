@@ -1,9 +1,9 @@
-import { EmptyState } from '@/components/EmptyState';
-import { RAGRow } from '@/components/RAGCard';
-import { Section } from '@/components/Section';
-import { conditionGroups } from '@/lib/repository';
-import { conditionTone } from '@/lib/tone';
-import type { ReadinessAssessment } from '@/lib/types';
+import { EmptyState } from "@/components/EmptyState";
+import { RAGRow } from "@/components/RAGCard";
+import { Section } from "@/components/Section";
+import { conditionGroups } from "@/lib/repository";
+import { conditionTone } from "@/lib/tone";
+import type { ReadinessAssessment } from "@/lib/types";
 
 /**
  * Everything the readiness policy checked, in the three groups it decided in.

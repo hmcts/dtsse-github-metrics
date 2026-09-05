@@ -1,16 +1,16 @@
-import { cookies } from 'next/headers';
-import { notFound } from 'next/navigation';
-import { ActorRepositoriesTable } from '@/components/ActorRepositoriesTable';
-import { CollectionNotice } from '@/components/CollectionNotice';
-import { EmptyState } from '@/components/EmptyState';
-import { EntityHeader } from '@/components/EntityHeader';
-import { MetricsGrid } from '@/components/MetricsGrid';
-import { NavWeekSelector } from '@/components/NavWeekSelector';
-import { Section } from '@/components/Section';
-import { activity, measured } from '@/lib/actor';
-import { getActor, getWindows, isNotFound } from '@/lib/api';
-import type { ActorDetail } from '@/lib/types';
-import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
+import { cookies } from "next/headers";
+import { notFound } from "next/navigation";
+import { ActorRepositoriesTable } from "@/components/ActorRepositoriesTable";
+import { CollectionNotice } from "@/components/CollectionNotice";
+import { EmptyState } from "@/components/EmptyState";
+import { EntityHeader } from "@/components/EntityHeader";
+import { MetricsGrid } from "@/components/MetricsGrid";
+import { NavWeekSelector } from "@/components/NavWeekSelector";
+import { Section } from "@/components/Section";
+import { activity, measured } from "@/lib/actor";
+import { getActor, getWindows, isNotFound } from "@/lib/api";
+import type { ActorDetail } from "@/lib/types";
+import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
  * One person's window: which repositories they worked in, and what was measured in each of them.
@@ -24,22 +24,11 @@ import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
  * case-insensitively — and the page displays the spelling the report uses rather than the spelling
  * that was typed, so two links to the same person read as one page about them.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export default async function ActorPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ login: string }>;
-  searchParams?: Promise<{ weeks?: SearchValue }>;
-}) {
+export default async function ActorPage({ params, searchParams }: { params: Promise<{ login: string }>; searchParams?: Promise<{ weeks?: SearchValue }> }) {
   const windows = await getWindows();
-  const weeks = resolveWeeks(
-    (await searchParams)?.weeks,
-    (await cookies()).get(WEEKS_COOKIE)?.value,
-    windows.options,
-    windows.default,
-  );
+  const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const detail = await readActor((await params).login, weeks);
   const actor = detail.actor;
 
@@ -61,25 +50,13 @@ export default async function ActorPage({
             detail="Read this person at a longer span, or run metrics collect for the span being asked for."
           />
         ) : (
-          <ActorRepositoriesTable
-            rows={actor.repositories}
-            teams={detail.teams}
-            production={detail.production}
-            weeks={weeks}
-          />
+          <ActorRepositoriesTable rows={actor.repositories} teams={detail.teams} production={detail.production} weeks={weeks} />
         )}
       </Section>
 
       {actor.repositories.map((row) => (
-        <Section
-          key={row.repository}
-          heading={`Behaviour in ${row.repository}`}
-          detail={measured(row)}
-        >
-          <MetricsGrid
-            summaries={row.metrics}
-            empty={`No behaviour metric could be measured over ${actor.actor_login}’s merges in ${row.repository}.`}
-          />
+        <Section key={row.repository} heading={`Behaviour in ${row.repository}`} detail={measured(row)}>
+          <MetricsGrid summaries={row.metrics} empty={`No behaviour metric could be measured over ${actor.actor_login}’s merges in ${row.repository}.`} />
         </Section>
       ))}
     </div>

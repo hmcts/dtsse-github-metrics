@@ -22,10 +22,10 @@
  */
 
 /** The word. A repository is either a production service or it is not badged at all. */
-export const PRODUCTION_LABEL = 'Production';
+export const PRODUCTION_LABEL = "Production";
 
 /** The badge: `RAG_BADGE`'s shape in the royal palette, border included and for its reason. */
-export const PRODUCTION_BADGE = 'bg-royal-surface text-royal-text border border-royal-border';
+export const PRODUCTION_BADGE = "bg-royal-surface text-royal-text border border-royal-border";
 
 /**
  * The filter toggle when it is on: the royal surface and its border, so the bar reads as pressed.
@@ -33,14 +33,13 @@ export const PRODUCTION_BADGE = 'bg-royal-surface text-royal-text border border-
  * `ring-1` rather than `border`, unlike the badge: the toggle sits in a row of chips sized by their
  * padding, and a border would move the words a pixel as it turned on.
  */
-export const PRODUCTION_TOGGLE_ACTIVE = 'bg-royal-surface text-royal-text ring-1 ring-royal-border';
+export const PRODUCTION_TOGGLE_ACTIVE = "bg-royal-surface text-royal-text ring-1 ring-royal-border";
 
 /** The toggle when it is off: the greyed slate the readiness filter used, hover included. */
-export const PRODUCTION_TOGGLE_INACTIVE =
-  'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200';
+export const PRODUCTION_TOGGLE_INACTIVE = "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200";
 
 /** The toggle's dot, royal blue in BOTH states so the control's colour is legible while it is off. */
-export const PRODUCTION_DOT = 'bg-royal';
+export const PRODUCTION_DOT = "bg-royal";
 
 /** The hex, for anywhere a class cannot reach — a chart mark takes a colour as a value. */
-export const PRODUCTION_HEX = '#4169e1';
+export const PRODUCTION_HEX = "#4169e1";

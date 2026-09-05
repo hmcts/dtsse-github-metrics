@@ -1,5 +1,5 @@
-import clsx from 'clsx';
-import { valueClass, type Tone } from '@/lib/tone';
+import clsx from "clsx";
+import { type Tone, valueClass } from "@/lib/tone";
 
 /**
  * A settings list: what was asked on the left, what came back on the right, one row per line.
@@ -34,15 +34,7 @@ export function DefinitionList({ values }: { values: readonly DefinitionRow[] })
       {values.map((row) => (
         <div key={row.label} className="flex flex-wrap items-baseline gap-x-4 py-2 first:pt-0 last:pb-0">
           <dt className="text-sm text-slate-400">{row.label}</dt>
-          <dd
-            className={clsx(
-              'ml-auto text-sm font-medium text-right',
-              numeric(row.value) && 'tabular-nums',
-              valueClass(row.tone),
-            )}
-          >
-            {row.value}
-          </dd>
+          <dd className={clsx("ml-auto text-sm font-medium text-right", numeric(row.value) && "tabular-nums", valueClass(row.tone))}>{row.value}</dd>
           {/* Its own line under the pair, because a detail is a sentence: the severity breakdown
               behind an alert count, when a maintenance answer was last true. */}
           {row.detail ? <dd className="w-full text-xs text-slate-500">{row.detail}</dd> : null}

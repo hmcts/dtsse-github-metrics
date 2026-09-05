@@ -38,7 +38,8 @@
         "noSvgWithoutTitle": "off"
       },
       "suspicious": {
-        "noExplicitAny": "off"
+        "noExplicitAny": "off",
+        "noUnknownAtRules": "off"
       },
       "style": {
         "noNonNullAssertion": "off",
@@ -52,6 +53,26 @@
       "trailingCommas": "none"
     }
   },
+  "overrides": [
+    {
+      "includes": ["src/app/**", "src/components/**", "src/lib/**", "!src/lib/api.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noDocumentCookie": "off",
+            "noArrayIndexKey": "off"
+          },
+          "a11y": {
+            "useSemanticElements": "off",
+            "useAriaPropsSupportedByRole": "off"
+          },
+          "style": {
+            "useBlockStatements": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": {
     "enabled": true,
     "actions": {

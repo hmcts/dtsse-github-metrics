@@ -1,18 +1,7 @@
-'use client';
+"use client";
 
-import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import { day } from '@/lib/format';
+import { Bar, BarChart, CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { day } from "@/lib/format";
 
 /**
  * A period series for one repository, and only ever for one repository.
@@ -37,22 +26,22 @@ export interface TrendSeries {
 }
 
 const TOOLTIP = {
-  backgroundColor: '#1e293b',
-  border: '1px solid #334155',
-  borderRadius: '6px',
-  color: '#f1f5f9',
+  backgroundColor: "#1e293b",
+  border: "1px solid #334155",
+  borderRadius: "6px",
+  color: "#f1f5f9"
 };
 
-const TICK = { fill: '#94a3b8', fontSize: 11 };
+const TICK = { fill: "#94a3b8", fontSize: 11 };
 
-const GRID = '#1e293b';
+const GRID = "#1e293b";
 
-const LEGEND = { fontSize: 12, color: '#94a3b8' };
+const LEGEND = { fontSize: 12, color: "#94a3b8" };
 
 const MARGIN = { top: 4, right: 8, left: 0, bottom: 0 };
 
 /** The row key every period is named by, and the height every chart on the page is drawn at. */
-const X_KEY = 'starts_at';
+const X_KEY = "starts_at";
 
 const HEIGHT = 250;
 
@@ -61,18 +50,18 @@ const tick = (value: unknown) => day(String(value));
 export function TrendChart({
   data,
   series,
-  shape = 'line',
-  unit,
+  shape = "line",
+  unit
 }: {
   data: readonly Record<string, unknown>[];
   series: readonly TrendSeries[];
-  shape?: 'line' | 'bar';
+  shape?: "line" | "bar";
   /** Suffix for the value axis, e.g. `%` or ` h`. */
   unit?: string;
 }) {
   const rows = [...data];
 
-  if (shape === 'bar') {
+  if (shape === "bar") {
     return (
       <ResponsiveContainer width="100%" height={HEIGHT}>
         <BarChart data={rows} margin={MARGIN}>
@@ -82,13 +71,7 @@ export function TrendChart({
           <Tooltip contentStyle={TOOLTIP} labelFormatter={tick} />
           <Legend wrapperStyle={LEGEND} />
           {series.map((bar) => (
-            <Bar
-              key={bar.key}
-              dataKey={bar.key}
-              name={bar.label}
-              fill={bar.color}
-              radius={[3, 3, 0, 0]}
-            />
+            <Bar key={bar.key} dataKey={bar.key} name={bar.label} fill={bar.color} radius={[3, 3, 0, 0]} />
           ))}
         </BarChart>
       </ResponsiveContainer>

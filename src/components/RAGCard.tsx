@@ -1,7 +1,7 @@
-import clsx from 'clsx';
-import { badgeClass, borderClass, labelText } from '@/lib/rag';
-import { borderClass as toneBorderClass, type Tone } from '@/lib/tone';
-import type { ReadinessLabel } from '@/lib/types';
+import clsx from "clsx";
+import { badgeClass, borderClass, labelText } from "@/lib/rag";
+import { type Tone, borderClass as toneBorderClass } from "@/lib/tone";
+import type { ReadinessLabel } from "@/lib/types";
 
 /**
  * A readiness label as a word, for a table cell or beside a name.
@@ -13,14 +13,7 @@ import type { ReadinessLabel } from '@/lib/types';
  */
 export function RAGLabel({ label }: { label?: ReadinessLabel }) {
   return (
-    <span
-      className={clsx(
-        'inline-block rounded px-1.5 py-0.5 text-xs uppercase tracking-wide whitespace-nowrap',
-        badgeClass(label),
-      )}
-    >
-      {labelText(label)}
-    </span>
+    <span className={clsx("inline-block rounded px-1.5 py-0.5 text-xs uppercase tracking-wide whitespace-nowrap", badgeClass(label))}>{labelText(label)}</span>
   );
 }
 
@@ -35,7 +28,7 @@ export function RAGCard({
   label,
   heading,
   detail,
-  children,
+  children
 }: {
   label?: ReadinessLabel;
   heading: React.ReactNode;
@@ -44,12 +37,7 @@ export function RAGCard({
   children?: React.ReactNode;
 }) {
   return (
-    <div
-      className={clsx(
-        'bg-slate-900 border border-slate-800 rounded-lg p-5 hover:border-slate-700 transition-colors',
-        borderClass(label),
-      )}
-    >
+    <div className={clsx("bg-slate-900 border border-slate-800 rounded-lg p-5 hover:border-slate-700 transition-colors", borderClass(label))}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-slate-100">{heading}</span>
         <RAGLabel label={label} />
@@ -76,24 +64,9 @@ export function RAGCard({
  * ALWAYS WINS: the policy's own ceiling is the stronger statement, and two colours on one row would
  * be two verdicts about it. What decides a row's tone is `tone.conditionTone`, not this component.
  */
-export function RAGRow({
-  label,
-  tone,
-  condition,
-  detail,
-}: {
-  label?: ReadinessLabel;
-  tone?: Tone;
-  condition: string;
-  detail: string;
-}) {
+export function RAGRow({ label, tone, condition, detail }: { label?: ReadinessLabel; tone?: Tone; condition: string; detail: string }) {
   return (
-    <div
-      className={clsx(
-        'bg-slate-900/50 rounded-r py-2 pl-3 pr-4',
-        label ? borderClass(label) : toneBorderClass(tone),
-      )}
-    >
+    <div className={clsx("bg-slate-900/50 rounded-r py-2 pl-3 pr-4", label ? borderClass(label) : toneBorderClass(tone))}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-slate-200">{condition}</span>
         {label ? <RAGLabel label={label} /> : null}

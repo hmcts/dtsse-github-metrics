@@ -1,6 +1,6 @@
-import { collectedLabel } from '@/lib/collection';
-import { count, instant, span } from '@/lib/format';
-import type { OverviewSummary } from '@/lib/types';
+import { collectedLabel } from "@/lib/collection";
+import { count, instant, span } from "@/lib/format";
+import type { OverviewSummary } from "@/lib/types";
 
 /**
  * The head of each estate list: which organisation, at which span, built from which collection.
@@ -16,7 +16,7 @@ import type { OverviewSummary } from '@/lib/types';
  */
 export function OrganisationHeader({
   overview,
-  action,
+  action
 }: {
   overview: OverviewSummary;
   /** The header's own control — the week selector, which every page carries at the top right. */
@@ -27,24 +27,20 @@ export function OrganisationHeader({
   return (
     <header className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-          organization
-        </span>
+        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">organization</span>
         <h1 className="font-mono text-xl text-slate-100 break-all">{overview.organization}</h1>
         {action ? <div className="ml-auto">{action}</div> : null}
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-400">
         <span>{span(overview.starts_at, overview.ends_at)}</span>
-        <span>{count(overview.weeks, 'week', 'weeks')}</span>
+        <span>{count(overview.weeks, "week", "weeks")}</span>
         {/* Beside the window rather than in place of the build stamp: the window ends where the
             caches end, and the two instants answer different questions — what the figures cover,
             and when this bundle was assembled from them. */}
         {collected ? <span>{collected}</span> : null}
         <span className="text-slate-500">Report built {instant(overview.built_at)}</span>
         {overview.unavailable > 0 ? (
-          <span className="text-slate-500">
-            {count(overview.unavailable, 'repository', 'repositories')} not reported at this span
-          </span>
+          <span className="text-slate-500">{count(overview.unavailable, "repository", "repositories")} not reported at this span</span>
         ) : null}
       </div>
     </header>

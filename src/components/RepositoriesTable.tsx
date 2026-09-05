@@ -1,40 +1,35 @@
-'use client';
+"use client";
 
-import clsx from 'clsx';
-import { X } from 'lucide-react';
-import Link from 'next/link';
-import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { useState } from 'react';
-import { EmptyState } from '@/components/EmptyState';
-import { ProductionBadge } from '@/components/ProductionBadge';
-import { RAGLabel } from '@/components/RAGCard';
-import { SortHeader, type Align } from '@/components/SortHeader';
-import { filterTarget } from '@/lib/filter';
-import { ABSENT, figure } from '@/lib/format';
+import clsx from "clsx";
+import { X } from "lucide-react";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useState } from "react";
+import { EmptyState } from "@/components/EmptyState";
+import { ProductionBadge } from "@/components/ProductionBadge";
+import { RAGLabel } from "@/components/RAGCard";
+import { type Align, SortHeader } from "@/components/SortHeader";
+import { filterTarget } from "@/lib/filter";
+import { ABSENT, figure } from "@/lib/format";
+import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
+import { borderClass, severity } from "@/lib/rag";
 import {
-  PRODUCTION_DOT,
-  PRODUCTION_LABEL,
-  PRODUCTION_TOGGLE_ACTIVE,
-  PRODUCTION_TOGGLE_INACTIVE,
-} from '@/lib/production';
-import { borderClass, severity } from '@/lib/rag';
-import {
-  ESTATE_FILTERS,
-  PRODUCTION_PARAMETER,
-  PRODUCTION_VALUE,
   answerOrder,
   codeownersPresent,
-  filterRepositories,
-  orderRepositories,
-  parseFilters,
-  parseProduction,
-  productionCount,
+  ESTATE_FILTERS,
   type EstateFilter,
   type FilterOption,
-} from '@/lib/rows';
-import { nextDirection, sorted, type Direction, type SortValue } from '@/lib/sort';
-import type { RepositoryRow } from '@/lib/types';
-import { withWeeks } from '@/lib/weeks';
+  filterRepositories,
+  orderRepositories,
+  PRODUCTION_PARAMETER,
+  PRODUCTION_VALUE,
+  parseFilters,
+  parseProduction,
+  productionCount
+} from "@/lib/rows";
+import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
+import type { RepositoryRow } from "@/lib/types";
+import { withWeeks } from "@/lib/weeks";
 
 /**
  * Every configured repository in one table: what was found in this window, and what was not.
@@ -54,9 +49,9 @@ import { withWeeks } from '@/lib/weeks';
  * one they did not mean. A bar that appeared and vanished with those chips read as a status line; a
  * permanent one reads as the control it now is, with the chips as additions to it.
  */
-export const TERM_PARAMETER = 'repository';
+export const TERM_PARAMETER = "repository";
 
-export const LABEL_PARAMETER = 'label';
+export const LABEL_PARAMETER = "label";
 
 interface Column {
   key: string;
@@ -66,52 +61,46 @@ interface Column {
 }
 
 const COLUMNS: readonly Column[] = [
-  { key: 'team', label: 'Team', read: (row) => row.team },
-  { key: 'repository', label: 'Repository', read: (row) => row.repository },
-  { key: 'readiness', label: 'Readiness', read: (row) => severity(row.readiness) },
+  { key: "team", label: "Team", read: (row) => row.team },
+  { key: "repository", label: "Repository", read: (row) => row.repository },
+  { key: "readiness", label: "Readiness", read: (row) => severity(row.readiness) },
   // Directly right of the label, because the two together are what a reader scans the list for:
   // which services are graded how, and which of them deploy to production. It sorts on
   // `answerOrder`, the same three-valued reader the governance columns use, so a repository whose
   // answer could not be read is held back from BOTH ends — an unread answer is not the answer to
   // "which are the production services" nor to "which are not".
-  { key: 'production', label: 'Production', read: (row) => answerOrder(row.production) },
-  { key: 'merged', label: 'Merged', align: 'right', read: (row) => row.merged_pull_requests },
-  { key: 'direct', label: 'Direct commits', align: 'right', read: (row) => row.direct_commits },
-  { key: 'open', label: 'Open', align: 'right', read: (row) => row.currently_open },
-  { key: 'stale', label: 'Stale', align: 'right', read: (row) => row.stale_open },
+  { key: "production", label: "Production", read: (row) => answerOrder(row.production) },
+  { key: "merged", label: "Merged", align: "right", read: (row) => row.merged_pull_requests },
+  { key: "direct", label: "Direct commits", align: "right", read: (row) => row.direct_commits },
+  { key: "open", label: "Open", align: "right", read: (row) => row.currently_open },
+  { key: "stale", label: "Stale", align: "right", read: (row) => row.stale_open },
   // Both governance answers sort on `answerOrder`, the value their own cell prints, so a header
   // click orders the column a reader is looking at rather than the count behind it: CODEOWNERS is
   // Yes at one file and at forty alike, and Sonar has no count at all. They centre rather than
   // right-align: Yes, No and a dash are words, and a right edge would read them as figures.
   {
-    key: 'codeowners',
-    label: 'CODEOWNERS',
-    align: 'center',
-    read: (row) => answerOrder(codeownersPresent(row)),
+    key: "codeowners",
+    label: "CODEOWNERS",
+    align: "center",
+    read: (row) => answerOrder(codeownersPresent(row))
   },
   {
-    key: 'sonar',
-    label: 'Sonar',
-    align: 'center',
-    read: (row) => answerOrder(row.sonar_reported),
+    key: "sonar",
+    label: "Sonar",
+    align: "center",
+    read: (row) => answerOrder(row.sonar_reported)
   },
-  { key: 'findings', label: 'Findings', align: 'right', read: (row) => row.finding_occurrences },
+  { key: "findings", label: "Findings", align: "right", read: (row) => row.finding_occurrences }
 ];
 
-export function RepositoriesTable({
-  rows,
-  weeks,
-}: {
-  rows: readonly RepositoryRow[];
-  weeks: number;
-}) {
+export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRow[]; weeks: number }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const [column, setColumn] = useState<Column | null>(null);
-  const [direction, setDirection] = useState<Direction>('ascending');
+  const [direction, setDirection] = useState<Direction>("ascending");
 
-  const term = searchParameters.get(TERM_PARAMETER) ?? '';
+  const term = searchParameters.get(TERM_PARAMETER) ?? "";
   const filters = parseFilters((parameter) => searchParameters.get(parameter));
   const production = parseProduction((parameter) => searchParameters.get(parameter));
   const found = filterRepositories(rows, term, filters, production);
@@ -128,8 +117,8 @@ export function RepositoriesTable({
     // Clearing a filter is the parameter's absence rather than an empty value, which would read back
     // as a filter for the empty string. `window.location.search`, so the other chips, the term and
     // the span all come through — this drops one dimension, not the reader's whole view.
-    router.replace(filterTarget(pathname, window.location.search, parameter, ''), {
-      scroll: false,
+    router.replace(filterTarget(pathname, window.location.search, parameter, ""), {
+      scroll: false
     });
   }
 
@@ -137,9 +126,9 @@ export function RepositoriesTable({
     // The same navigation the chips make, in the toggle's one value: on writes it, off is the
     // parameter's absence rather than an empty value. `window.location.search` keeps the span, the
     // term and every chip — this control owns one parameter and touches nothing else.
-    const chosen = production ? '' : PRODUCTION_VALUE;
+    const chosen = production ? "" : PRODUCTION_VALUE;
     router.replace(filterTarget(pathname, window.location.search, PRODUCTION_PARAMETER, chosen), {
-      scroll: false,
+      scroll: false
     });
   }
 
@@ -155,29 +144,19 @@ export function RepositoriesTable({
           onClick={toggleProduction}
           aria-pressed={production}
           className={clsx(
-            'flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors',
-            'focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500',
-            production ? PRODUCTION_TOGGLE_ACTIVE : PRODUCTION_TOGGLE_INACTIVE,
+            "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+            "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
+            production ? PRODUCTION_TOGGLE_ACTIVE : PRODUCTION_TOGGLE_INACTIVE
           )}
         >
-          <span
-            className={clsx('shrink-0 w-2 h-2 rounded-full', PRODUCTION_DOT)}
-            aria-hidden="true"
-          />
+          <span className={clsx("shrink-0 w-2 h-2 rounded-full", PRODUCTION_DOT)} aria-hidden="true" />
           {PRODUCTION_LABEL}
           <span className="tabular-nums text-slate-500">{produced}</span>
         </button>
 
         {chips.map(({ filter, option }) => (
-          <span
-            key={filter.parameter}
-            className="flex items-center gap-1.5 rounded bg-slate-800 py-1 pl-2 pr-1 text-xs text-slate-200"
-          >
-            <span
-              className="shrink-0 w-2 h-2 rounded-full"
-              style={{ backgroundColor: option.color }}
-              aria-hidden="true"
-            />
+          <span key={filter.parameter} className="flex items-center gap-1.5 rounded bg-slate-800 py-1 pl-2 pr-1 text-xs text-slate-200">
+            <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: option.color }} aria-hidden="true" />
             <span className="text-slate-400 uppercase tracking-wide">{`${filter.title}: `}</span>
             {option.name}
             <button
@@ -193,10 +172,7 @@ export function RepositoriesTable({
       </div>
 
       {ordered.length === 0 ? (
-        <EmptyState
-          message="No repository matches this filter."
-          detail="Clear the term, the Production toggle, or a filter above, to see the whole estate."
-        />
+        <EmptyState message="No repository matches this filter." detail="Clear the term, the Production toggle, or a filter above, to see the whole estate." />
       ) : (
         // No border of its own: the table sits inside a `Section` panel that already draws one.
         <div className="overflow-x-auto">
@@ -219,11 +195,8 @@ export function RepositoriesTable({
             <tbody className="divide-y divide-slate-800/50">
               {ordered.map((row) => (
                 <tr key={row.repository} className="hover:bg-slate-800/30">
-                  <td className={clsx('py-2 pl-3 pr-3', borderClass(row.readiness))}>
-                    <Link
-                      href={withWeeks(`/teams/${encodeURIComponent(row.team)}`, weeks)}
-                      className="text-indigo-400 hover:text-indigo-300"
-                    >
+                  <td className={clsx("py-2 pl-3 pr-3", borderClass(row.readiness))}>
+                    <Link href={withWeeks(`/teams/${encodeURIComponent(row.team)}`, weeks)} className="text-indigo-400 hover:text-indigo-300">
                       {row.team}
                     </Link>
                   </td>
@@ -269,9 +242,7 @@ export function RepositoriesTable({
  * dimension whose value named no option was already dropped by `parseFilters`, which is why the
  * lookup here cannot come back empty.
  */
-function activeChips(
-  filters: ReturnType<typeof parseFilters>,
-): { filter: EstateFilter; option: FilterOption }[] {
+function activeChips(filters: ReturnType<typeof parseFilters>): { filter: EstateFilter; option: FilterOption }[] {
   return ESTATE_FILTERS.flatMap((filter) => {
     const option = filter.options.find((entry) => entry.key === filters[filter.parameter]);
     return option === undefined ? [] : [{ filter, option }];
@@ -294,9 +265,5 @@ function Figure({ value }: { value?: number }) {
  * not a figure to be read down a right edge.
  */
 function Answer({ value }: { value?: boolean }) {
-  return (
-    <td className="py-2 pr-3 text-center text-slate-300">
-      {value === undefined ? ABSENT : value ? 'Yes' : 'No'}
-    </td>
-  );
+  return <td className="py-2 pr-3 text-center text-slate-300">{value === undefined ? ABSENT : value ? "Yes" : "No"}</td>;
 }

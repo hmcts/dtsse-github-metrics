@@ -1,4 +1,4 @@
-import { SkeletonChart, SkeletonHeader, SkeletonPage, SkeletonSection } from '@/components/Skeleton';
+import { SkeletonChart, SkeletonHeader, SkeletonPage, SkeletonSection } from "@/components/Skeleton";
 
 /**
  * One team's bones: the entity header, the readiness donut, and the two tables under it — the

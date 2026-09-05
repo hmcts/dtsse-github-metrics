@@ -1,10 +1,4 @@
-import {
-  SkeletonCards,
-  SkeletonChart,
-  SkeletonHeader,
-  SkeletonPage,
-  SkeletonSection,
-} from '@/components/Skeleton';
+import { SkeletonCards, SkeletonChart, SkeletonHeader, SkeletonPage, SkeletonSection } from "@/components/Skeleton";
 
 /**
  * The landing page's bones: the organisation header, the four estate figures, the six donuts and

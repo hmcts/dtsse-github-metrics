@@ -1,13 +1,13 @@
-import { cookies } from 'next/headers';
-import { ActorsTable } from '@/components/ActorsTable';
-import { CollectionNotice } from '@/components/CollectionNotice';
-import { EmptyState } from '@/components/EmptyState';
-import { NavWeekSelector } from '@/components/NavWeekSelector';
-import { OrganisationHeader } from '@/components/OrganisationHeader';
-import { Section } from '@/components/Section';
-import { getActors, getOverview, getWindows } from '@/lib/api';
-import { anyLabelled } from '@/lib/rag';
-import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
+import { cookies } from "next/headers";
+import { ActorsTable } from "@/components/ActorsTable";
+import { CollectionNotice } from "@/components/CollectionNotice";
+import { EmptyState } from "@/components/EmptyState";
+import { NavWeekSelector } from "@/components/NavWeekSelector";
+import { OrganisationHeader } from "@/components/OrganisationHeader";
+import { Section } from "@/components/Section";
+import { getActors, getOverview, getWindows } from "@/lib/api";
+import { anyLabelled } from "@/lib/rag";
+import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
  * Everyone who contributed to a reported repository at one window span, by their repositories'
@@ -24,30 +24,18 @@ import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
  * besides the header — whether the policy graded anything at all in this window, which the readiness
  * column needs and no single row can say.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export default async function ContributorsPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ weeks?: SearchValue }>;
-}) {
+export default async function ContributorsPage({ searchParams }: { searchParams?: Promise<{ weeks?: SearchValue }> }) {
   const windows = await getWindows();
-  const weeks = resolveWeeks(
-    (await searchParams)?.weeks,
-    (await cookies()).get(WEEKS_COOKIE)?.value,
-    windows.options,
-    windows.default,
-  );
+  const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const [overview, actors] = await Promise.all([getOverview(weeks), getActors(weeks)]);
 
   return (
     <div className="space-y-8">
       <CollectionNotice windows={windows} />
 
-      <OrganisationHeader
-        overview={overview}
-        action={<NavWeekSelector options={windows.options} active={weeks} />}
-      />
+      <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
       <Section heading="Contributors" detail="by their repositories' labels">
         {actors.length === 0 ? (

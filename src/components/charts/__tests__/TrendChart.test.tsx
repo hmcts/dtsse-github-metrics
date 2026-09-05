@@ -23,20 +23,20 @@
  * animation, and real time gives a half-drawn chart at a nondeterministic point in it.
  */
 
-import { act, cleanup, render } from '@testing-library/react';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TrendChart, type TrendSeries } from '@/components/charts/TrendChart';
+import { act, cleanup, render } from "@testing-library/react";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { TrendChart, type TrendSeries } from "@/components/charts/TrendChart";
 
 const COVERAGE: TrendSeries = {
-  key: 'approval-coverage',
-  label: 'Approval coverage',
-  color: '#4ade80',
+  key: "approval-coverage",
+  label: "Approval coverage",
+  color: "#4ade80"
 };
 
 /** Two periods a day apart in UTC but a month apart on the axis, so a wrong tick is legible. */
 const ROWS: Record<string, unknown>[] = [
-  { starts_at: '2026-06-01T00:00:00Z', 'approval-coverage': 80 },
-  { starts_at: '2026-06-29T00:00:00Z', 'approval-coverage': 90 },
+  { starts_at: "2026-06-01T00:00:00Z", "approval-coverage": 80 },
+  { starts_at: "2026-06-29T00:00:00Z", "approval-coverage": 90 }
 ];
 
 /** Longer than the opening animation, so every mark has reached its final position. */
@@ -77,14 +77,7 @@ beforeEach(() => {
   // `requestAnimationFrame` and reads the clock for its easing, so faking the timers alone would
   // leave the animation running in real time and the chart part-drawn.
   vi.useFakeTimers({
-    toFake: [
-      'setTimeout',
-      'clearTimeout',
-      'requestAnimationFrame',
-      'cancelAnimationFrame',
-      'performance',
-      'Date',
-    ],
+    toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame", "performance", "Date"]
   });
 });
 
@@ -94,13 +87,8 @@ afterEach(() => {
 });
 
 /** Render a chart and run its opening animation out, so the marks are settled before they are read. */
-async function drawn(
-  shape: 'line' | 'bar',
-  data: readonly Record<string, unknown>[] = ROWS,
-): Promise<HTMLElement> {
-  const { container } = render(
-    <TrendChart data={data} series={[COVERAGE]} shape={shape} unit="%" />,
-  );
+async function drawn(shape: "line" | "bar", data: readonly Record<string, unknown>[] = ROWS): Promise<HTMLElement> {
+  const { container } = render(<TrendChart data={data} series={[COVERAGE]} shape={shape} unit="%" />);
   await act(async () => {
     await vi.advanceTimersByTimeAsync(SETTLED_MILLISECONDS);
   });
@@ -116,36 +104,34 @@ async function drawn(
  * empty list, which is a passing `toHaveLength(0)` and a silently unchecked formatter.
  */
 function periodTicks(container: HTMLElement): string[] {
-  const labels = container.querySelector('.recharts-xAxis-tick-labels');
+  const labels = container.querySelector(".recharts-xAxis-tick-labels");
   if (labels === null) {
-    throw new Error('the period axis was not drawn');
+    throw new Error("the period axis was not drawn");
   }
-  return [...labels.querySelectorAll('.recharts-cartesian-axis-tick-value')].map(
-    (tick) => tick.textContent ?? '',
-  );
+  return [...labels.querySelectorAll(".recharts-cartesian-axis-tick-value")].map((tick) => tick.textContent ?? "");
 }
 
-describe('TrendChart period axis', () => {
-  it('labels each period as its UTC day, not as the timestamp the row carries', async () => {
-    const container = await drawn('line');
+describe("TrendChart period axis", () => {
+  it("labels each period as its UTC day, not as the timestamp the row carries", async () => {
+    const container = await drawn("line");
 
-    expect(periodTicks(container)).toEqual(['2026-06-01', '2026-06-29']);
+    expect(periodTicks(container)).toEqual(["2026-06-01", "2026-06-29"]);
   });
 
-  it('labels a bar chart the same way, from the axis written out in its own branch', async () => {
-    const container = await drawn('bar');
+  it("labels a bar chart the same way, from the axis written out in its own branch", async () => {
+    const container = await drawn("bar");
 
-    expect(periodTicks(container)).toEqual(['2026-06-01', '2026-06-29']);
+    expect(periodTicks(container)).toEqual(["2026-06-01", "2026-06-29"]);
   });
 
-  it('names a period whose timestamp will not parse rather than dropping the tick', async () => {
-    const container = await drawn('line', [
-      { starts_at: 'not a moment', 'approval-coverage': 80 },
-      { starts_at: '2026-06-29T00:00:00Z', 'approval-coverage': 90 },
+  it("names a period whose timestamp will not parse rather than dropping the tick", async () => {
+    const container = await drawn("line", [
+      { starts_at: "not a moment", "approval-coverage": 80 },
+      { starts_at: "2026-06-29T00:00:00Z", "approval-coverage": 90 }
     ]);
 
     // The formatter's absent-value branch, which `src/lib/__tests__/format.test.ts` pins the words
     // of. An axis short a tick would silently shift every period label along by one.
-    expect(periodTicks(container)).toEqual(['-', '2026-06-29']);
+    expect(periodTicks(container)).toEqual(["-", "2026-06-29"]);
   });
 });

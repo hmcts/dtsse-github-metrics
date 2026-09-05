@@ -1,4 +1,4 @@
-import { SkeletonHeader, SkeletonPage, SkeletonSection } from '@/components/Skeleton';
+import { SkeletonHeader, SkeletonPage, SkeletonSection } from "@/components/Skeleton";
 
 /**
  * One contributor's bones: the entity header, the repositories they worked in, and one behaviour

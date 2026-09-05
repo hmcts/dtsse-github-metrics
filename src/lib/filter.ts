@@ -10,15 +10,10 @@
  * with `replaceState`.
  */
 
-export function filterTarget(
-  pathname: string,
-  search: string,
-  parameter: string,
-  term: string,
-): string {
+export function filterTarget(pathname: string, search: string, parameter: string, term: string): string {
   const parameters = new URLSearchParams(search);
   const trimmed = term.trim();
-  if (trimmed === '') {
+  if (trimmed === "") {
     // An empty box means "no filter", which is the parameter's absence — not `?filter=`, which would
     // read back as a filter for the empty string on the next render.
     parameters.delete(parameter);
@@ -26,7 +21,7 @@ export function filterTarget(
     parameters.set(parameter, trimmed);
   }
   const query = parameters.toString();
-  return query === '' ? pathname : `${pathname}?${query}`;
+  return query === "" ? pathname : `${pathname}?${query}`;
 }
 
 /** Case-insensitive substring match, the comparison every filter box on the site makes. */

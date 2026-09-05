@@ -1,4 +1,4 @@
-import { Info } from 'lucide-react';
+import { Info } from "lucide-react";
 
 /**
  * The small explanation beside a heading — what a band means, what a metric counts.

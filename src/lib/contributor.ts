@@ -31,17 +31,17 @@
  * nothing measured — and "0 unreviewed merges" would report that as a clean window.
  */
 
-import { ABSENT, figure, isRate } from '@/lib/format';
-import type { BehaviourMetricSummary, ContributorRow, Observation } from '@/lib/types';
+import { ABSENT, figure, isRate } from "@/lib/format";
+import type { BehaviourMetricSummary, ContributorRow, Observation } from "@/lib/types";
 
 /** The metric whose rate carries the two routes a change took, and how many were reviewed. */
-const REVIEW_COVERAGE = 'independent-review-coverage';
+const REVIEW_COVERAGE = "independent-review-coverage";
 
 /** The metric whose distribution carries how large this person's pull requests were. */
-const SIZE = 'pull-request-size';
+const SIZE = "pull-request-size";
 
 /** The classification `GovernanceRate` counts a push straight onto the default branch under. */
-const DIRECT_COMMIT = 'direct-commit';
+const DIRECT_COMMIT = "direct-commit";
 
 /**
  * The four figures one contributor row renders as, counts absent where nothing was measured.
@@ -73,10 +73,10 @@ function nonNegative(value: number): number | undefined {
 }
 
 /** The three review-coverage counts, or three absences where there was no rate to read. */
-function routes(row: ContributorRow): Pick<ContributorFigures, 'merged' | 'directPushes' | 'unreviewed'> {
+function routes(row: ContributorRow): Pick<ContributorFigures, "merged" | "directPushes" | "unreviewed"> {
   const summary = summaryFor(row, REVIEW_COVERAGE);
   const observation: Observation | undefined = summary?.summary;
-  if (summary === undefined || observation === undefined || !isRate(observation) || observation.status !== 'observed') {
+  if (summary === undefined || observation === undefined || !isRate(observation) || observation.status !== "observed") {
     return {};
   }
   // A classification the window never saw is a missing key rather than a zero, so `?? 0` here is
@@ -86,7 +86,7 @@ function routes(row: ContributorRow): Pick<ContributorFigures, 'merged' | 'direc
   return {
     merged: nonNegative(observation.denominator - direct),
     directPushes: direct,
-    unreviewed: nonNegative(observation.denominator - observation.numerator - direct),
+    unreviewed: nonNegative(observation.denominator - observation.numerator - direct)
   };
 }
 
@@ -100,7 +100,7 @@ function routes(row: ContributorRow): Pick<ContributorFigures, 'merged' | 'direc
  */
 function size(row: ContributorRow): string {
   const observation: Observation | undefined = summaryFor(row, SIZE)?.summary;
-  if (observation === undefined || isRate(observation) || observation.status !== 'observed') {
+  if (observation === undefined || isRate(observation) || observation.status !== "observed") {
     return ABSENT;
   }
   // `== null` per the missing-key rule: an unplaced median arrives as no key at all.

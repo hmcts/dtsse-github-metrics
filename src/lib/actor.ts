@@ -12,8 +12,8 @@
  * page exists for, and is not a ranking of the repositories either.
  */
 
-import { count } from '@/lib/format';
-import type { ActorReadiness, ActorRepositoryReadiness } from '@/lib/types';
+import { count } from "@/lib/format";
+import type { ActorReadiness, ActorRepositoryReadiness } from "@/lib/types";
 
 /** How many merges this person authored in the window, added up over their repositories. */
 export function merges(actor: ActorReadiness): number {
@@ -28,8 +28,8 @@ export function merges(actor: ActorReadiness): number {
  * would hide which of the two is being read.
  */
 export function activity(actor: ActorReadiness): string {
-  const across = count(actor.repositories.length, 'repository', 'repositories');
-  return `${count(merges(actor), 'merge', 'merges')} across ${across}`;
+  const across = count(actor.repositories.length, "repository", "repositories");
+  return `${count(merges(actor), "merge", "merges")} across ${across}`;
 }
 
 /**
@@ -51,5 +51,5 @@ export function team(teams: Record<string, string>, repository: string): string 
  * hundred.
  */
 export function measured(row: ActorRepositoryReadiness): string {
-  return `${count(row.contributions, 'merge', 'merges')} in this repository`;
+  return `${count(row.contributions, "merge", "merges")} in this repository`;
 }

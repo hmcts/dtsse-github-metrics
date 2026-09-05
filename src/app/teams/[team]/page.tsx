@@ -1,19 +1,19 @@
-import { cookies } from 'next/headers';
-import { notFound } from 'next/navigation';
-import { CollectionNotice } from '@/components/CollectionNotice';
-import { EmptyState } from '@/components/EmptyState';
-import { EntityHeader } from '@/components/EntityHeader';
-import { FilterSearchBox } from '@/components/FilterSearchBox';
-import { NavWeekSelector } from '@/components/NavWeekSelector';
-import { LABEL_PARAMETER, RepositoriesTable, TERM_PARAMETER } from '@/components/RepositoriesTable';
-import { Section } from '@/components/Section';
-import { SummaryPieChart } from '@/components/charts/SummaryPieChart';
-import { TeamActorsTable } from '@/components/TeamActorsTable';
-import { getTeam, getWindows, isNotFound } from '@/lib/api';
-import { distributionSlices } from '@/lib/chart';
-import { holdings, people, unreported } from '@/lib/team';
-import type { TeamDetail } from '@/lib/types';
-import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
+import { cookies } from "next/headers";
+import { notFound } from "next/navigation";
+import { CollectionNotice } from "@/components/CollectionNotice";
+import { SummaryPieChart } from "@/components/charts/SummaryPieChart";
+import { EmptyState } from "@/components/EmptyState";
+import { EntityHeader } from "@/components/EntityHeader";
+import { FilterSearchBox } from "@/components/FilterSearchBox";
+import { NavWeekSelector } from "@/components/NavWeekSelector";
+import { LABEL_PARAMETER, RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTable";
+import { Section } from "@/components/Section";
+import { TeamActorsTable } from "@/components/TeamActorsTable";
+import { getTeam, getWindows, isNotFound } from "@/lib/api";
+import { distributionSlices } from "@/lib/chart";
+import { holdings, people, unreported } from "@/lib/team";
+import type { TeamDetail } from "@/lib/types";
+import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
  * One team's window: what it owns, how those repositories are labelled, and who worked in them.
@@ -28,22 +28,11 @@ import { WEEKS_COOKIE, resolveWeeks, type SearchValue } from '@/lib/weeks';
  * repositories list then agree about what a repository row says, and the search box, the donut's
  * filter and the chip it raises all work here exactly as they do there.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export default async function TeamPage({
-  params,
-  searchParams,
-}: {
-  params: Promise<{ team: string }>;
-  searchParams?: Promise<{ weeks?: SearchValue }>;
-}) {
+export default async function TeamPage({ params, searchParams }: { params: Promise<{ team: string }>; searchParams?: Promise<{ weeks?: SearchValue }> }) {
   const windows = await getWindows();
-  const weeks = resolveWeeks(
-    (await searchParams)?.weeks,
-    (await cookies()).get(WEEKS_COOKIE)?.value,
-    windows.options,
-    windows.default,
-  );
+  const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const detail = await readTeam((await params).team, weeks);
   const missing = unreported(detail);
 
@@ -80,13 +69,7 @@ export default async function TeamPage({
         />
       </div>
 
-      <Section
-        heading="Repositories"
-        detail="team then repository"
-        action={
-          <FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository…" />
-        }
-      >
+      <Section heading="Repositories" detail="team then repository" action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository…" />}>
         {detail.repositories.length === 0 ? (
           <EmptyState
             message={`No repository is configured for ${detail.team}.`}
@@ -97,10 +80,7 @@ export default async function TeamPage({
         )}
       </Section>
 
-      <Section
-        heading="Contributors"
-        detail="alphabetical, counted within this team’s repositories"
-      >
+      <Section heading="Contributors" detail="alphabetical, counted within this team’s repositories">
         {detail.actors.length === 0 ? (
           <EmptyState
             message={`Nobody authored a reported merge in ${detail.team}’s repositories at this span.`}

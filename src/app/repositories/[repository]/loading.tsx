@@ -1,4 +1,4 @@
-import { SkeletonCards, SkeletonHeader, SkeletonPage, SkeletonSection } from '@/components/Skeleton';
+import { SkeletonCards, SkeletonHeader, SkeletonPage, SkeletonSection } from "@/components/Skeleton";
 
 /**
  * One repository's bones: the entity header, the cohort row, and the first few sections of the

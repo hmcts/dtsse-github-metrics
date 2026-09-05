@@ -1,10 +1,10 @@
-import clsx from 'clsx';
-import Link from 'next/link';
-import { contributorFigures } from '@/lib/contributor';
-import { quantity } from '@/lib/format';
-import { directCommitTone, unreviewedMergeTone, valueClass, type Tone } from '@/lib/tone';
-import type { ContributorRow } from '@/lib/types';
-import { withWeeks } from '@/lib/weeks';
+import clsx from "clsx";
+import Link from "next/link";
+import { contributorFigures } from "@/lib/contributor";
+import { quantity } from "@/lib/format";
+import { directCommitTone, type Tone, unreviewedMergeTone, valueClass } from "@/lib/tone";
+import type { ContributorRow } from "@/lib/types";
+import { withWeeks } from "@/lib/weeks";
 
 /**
  * Who authored this repository's window, and what each of them actually did in it.
@@ -30,13 +30,7 @@ import { withWeeks } from '@/lib/weeks';
  * a direct push or an unreviewed merge is a fact to weigh, and the assessment above the table is
  * what grades the repository. Contributions and median size stay plain — neither has a better value.
  */
-export function ContributorsTable({
-  rows,
-  weeks,
-}: {
-  rows: readonly ContributorRow[];
-  weeks: number;
-}) {
+export function ContributorsTable({ rows, weeks }: { rows: readonly ContributorRow[]; weeks: number }) {
   return (
     // No border of its own: the table sits inside a `Section` panel that already draws one.
     <div className="overflow-x-auto">
@@ -78,26 +72,12 @@ export function ContributorsTable({
                     {row.login}
                   </Link>
                 </td>
-                <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                  {row.contributions}
-                </td>
-                <td className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                  {quantity(figures.merged)}
-                </td>
-                <td
-                  className={clsx(
-                    'py-2 pr-3 text-right tabular-nums',
-                    cellClass(directCommitTone(figures.directPushes)),
-                  )}
-                >
+                <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.contributions}</td>
+                <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{quantity(figures.merged)}</td>
+                <td className={clsx("py-2 pr-3 text-right tabular-nums", cellClass(directCommitTone(figures.directPushes)))}>
                   {quantity(figures.directPushes)}
                 </td>
-                <td
-                  className={clsx(
-                    'py-2 pr-3 text-right tabular-nums',
-                    cellClass(unreviewedMergeTone(figures.unreviewed)),
-                  )}
-                >
+                <td className={clsx("py-2 pr-3 text-right tabular-nums", cellClass(unreviewedMergeTone(figures.unreviewed)))}>
                   {quantity(figures.unreviewed)}
                 </td>
                 <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{figures.size}</td>
@@ -118,5 +98,5 @@ export function ContributorsTable({
  * brightest number in the column. Only the three coloured tones are taken from `lib/tone.ts`.
  */
 function cellClass(tone: Tone): string {
-  return tone === 'neutral' ? 'text-slate-300' : valueClass(tone);
+  return tone === "neutral" ? "text-slate-300" : valueClass(tone);
 }

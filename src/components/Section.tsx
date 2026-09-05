@@ -14,17 +14,7 @@
  * figure and its window are read together. `action` is the section's own control — a filter box, a
  * toggle — and sits at the end of the heading row, which a border divides from the body.
  */
-export function Section({
-  heading,
-  detail,
-  action,
-  children,
-}: {
-  heading: string;
-  detail?: string;
-  action?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
+export function Section({ heading, detail, action, children }: { heading: string; detail?: string; action?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <Panel>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-slate-800 px-4 py-3">

@@ -1,16 +1,16 @@
-'use client';
+"use client";
 
-import clsx from 'clsx';
-import { ChevronDown, ChevronUp } from 'lucide-react';
-import type { Direction } from '@/lib/sort';
+import clsx from "clsx";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import type { Direction } from "@/lib/sort";
 
 /** Which edge a column reads from: its cells and its header have to agree. */
-export type Align = 'left' | 'right' | 'center';
+export type Align = "left" | "right" | "center";
 
 const ALIGNMENT: Record<Align, string> = {
-  left: 'text-left',
-  right: 'text-right',
-  center: 'text-center',
+  left: "text-left",
+  right: "text-right",
+  center: "text-center"
 };
 
 /**
@@ -36,8 +36,8 @@ export function SortHeader({
   active,
   direction,
   onSort,
-  align = 'left',
-  first,
+  align = "left",
+  first
 }: {
   label: string;
   active: boolean;
@@ -48,20 +48,16 @@ export function SortHeader({
   /** The leading column, which takes the table's left inset as its body cell does. */
   first?: boolean;
 }) {
-  const Chevron = direction === 'ascending' ? ChevronUp : ChevronDown;
+  const Chevron = direction === "ascending" ? ChevronUp : ChevronDown;
   return (
-    <th
-      scope="col"
-      aria-sort={active ? direction : 'none'}
-      className={clsx('py-2 pr-3 font-medium', first ? 'pl-3' : null, ALIGNMENT[align])}
-    >
+    <th scope="col" aria-sort={active ? direction : "none"} className={clsx("py-2 pr-3 font-medium", first ? "pl-3" : null, ALIGNMENT[align])}>
       <button
         type="button"
         onClick={onSort}
         className={clsx(
-          'inline-flex items-center gap-1 rounded transition-colors hover:text-slate-200',
-          'focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500',
-          active ? 'text-slate-200' : null,
+          "inline-flex items-center gap-1 rounded transition-colors hover:text-slate-200",
+          "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
+          active ? "text-slate-200" : null
         )}
       >
         {label}

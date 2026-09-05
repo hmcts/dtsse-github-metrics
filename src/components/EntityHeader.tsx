@@ -1,8 +1,8 @@
-import clsx from 'clsx';
-import { ProductionBadge } from '@/components/ProductionBadge';
-import { RAGLabel } from '@/components/RAGCard';
-import { borderClass } from '@/lib/rag';
-import type { ReadinessLabel } from '@/lib/types';
+import clsx from "clsx";
+import { ProductionBadge } from "@/components/ProductionBadge";
+import { RAGLabel } from "@/components/RAGCard";
+import { borderClass } from "@/lib/rag";
+import type { ReadinessLabel } from "@/lib/types";
 
 /**
  * The head of a repository, contributor or team page: where you are now, and nothing about how you
@@ -19,7 +19,7 @@ import type { ReadinessLabel } from '@/lib/types';
  * `/contributors/[login]`, where it was `/actors/[login]` — and the service's own `/actors` endpoints
  * and field names did not move.
  */
-export type EntityKind = 'repository' | 'contributor' | 'team';
+export type EntityKind = "repository" | "contributor" | "team";
 
 export function EntityHeader({
   kind,
@@ -27,7 +27,7 @@ export function EntityHeader({
   label,
   production,
   context,
-  action,
+  action
 }: {
   kind: EntityKind;
   name: string;
@@ -46,12 +46,7 @@ export function EntityHeader({
   action?: React.ReactNode;
 }) {
   return (
-    <header
-      className={clsx(
-        'bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2',
-        label === undefined ? null : borderClass(label),
-      )}
-    >
+    <header className={clsx("bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2", label === undefined ? null : borderClass(label))}>
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{kind}</span>
         <h1 className="font-mono text-xl text-slate-100 break-all">{name}</h1>
@@ -60,11 +55,7 @@ export function EntityHeader({
 
         {action ? <div className="ml-auto">{action}</div> : null}
       </div>
-      {context ? (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-400">
-          {context}
-        </div>
-      ) : null}
+      {context ? <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-400">{context}</div> : null}
     </header>
   );
 }

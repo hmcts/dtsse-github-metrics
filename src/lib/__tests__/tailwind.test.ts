@@ -12,44 +12,53 @@
  * `__tests__` directory is the one exemption — see `TESTS`.
  */
 
-import { readdirSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
-import config from '../../../tailwind.config';
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import config from "../../../tailwind.config";
 
-const SOURCE = fileURLToPath(new URL('../../', import.meta.url));
+const SOURCE = fileURLToPath(new URL("../../", import.meta.url));
 
 /**
- * Tests, which are the one kind of directory under `src` that needs no glob.
+ * The directories under `src` that need no glob.
  *
- * A class string in a test is an assertion ABOUT markup, not markup a browser is served, and the
- * component it asserts on lives in a directory that is scanned. `src/__tests__` exists because
+ * `__tests__`: a class string in a test is an assertion ABOUT markup, not markup a browser is served,
+ * and the component it asserts on lives in a directory that is scanned. `src/__tests__` exists because
  * `src/proxy.ts` sits at the top of `src` and its test sits beside it; the nested
  * `components/__tests__` and `lib/__tests__` are already covered by their parent's glob.
+ *
+ * `evidence` and `cli` are this port's addition and hold no markup at all: they are the server-only
+ * collection, grading and reporting code that replaced the Python package, and they render nothing.
+ * `evidence` is also compiled by `tsc` into the collector image, where Tailwind does not run.
+ *
+ * They are exempted rather than added as globs, so the exemption states WHY a directory holds no class
+ * strings instead of hiding the question behind a scan that would always find nothing. A component
+ * must never appear under either — CLAUDE.md's server-only rule — and if one ever does, it belongs in
+ * `src/components` where this guard already covers it.
  */
-const TESTS = '__tests__';
+const UNSCANNED = new Set(["__tests__", "evidence", "cli"]);
 
 /** The `src` subdirectory each `./src/<name>/**` glob scans. */
 function scanned(): string[] {
   const globs = Array.isArray(config.content) ? config.content : [];
   return globs
-    .filter((glob): glob is string => typeof glob === 'string')
+    .filter((glob): glob is string => typeof glob === "string")
     .map((glob) => /^\.\/src\/([^/*]+)\//.exec(glob)?.[1])
     .filter((name): name is string => name !== undefined);
 }
 
-describe('tailwind content', () => {
-  it('scans every source directory, so no class string goes unemitted', () => {
+describe("tailwind content", () => {
+  it("scans every source directory, so no class string goes unemitted", () => {
     const directories = readdirSync(SOURCE, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && entry.name !== TESTS)
+      .filter((entry) => entry.isDirectory() && !UNSCANNED.has(entry.name))
       .map((entry) => entry.name);
     expect(directories.length).toBeGreaterThan(0);
     expect([...scanned()].sort()).toEqual([...directories].sort());
   });
 
-  it('scans the directory the RAG classes are declared in', () => {
+  it("scans the directory the RAG classes are declared in", () => {
     // Named on its own because it is the one that was actually missed: every `rag-*`, `bg-green-950`
     // and `border-l-4` in the app is written in `lib/rag.ts` and nowhere else.
-    expect(scanned()).toContain('lib');
+    expect(scanned()).toContain("lib");
   });
 });

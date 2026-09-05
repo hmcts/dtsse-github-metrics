@@ -1,4 +1,4 @@
-import { type Tone, valueClass } from '@/lib/tone';
+import { type Tone, valueClass } from "@/lib/tone";
 
 /**
  * One figure with its name over it — the unit every stat row on the site is built from.
@@ -27,7 +27,7 @@ export function MetricCard({
   label,
   value,
   detail,
-  tone,
+  tone
 }: {
   label: string;
   value: string | number;

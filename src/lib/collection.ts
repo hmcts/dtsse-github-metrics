@@ -16,8 +16,8 @@
  * the day is the whole of it, and it must read as the same day the window's own dates do.
  */
 
-import { day } from '@/lib/format';
-import type { WindowOptions } from '@/lib/types';
+import { day } from "@/lib/format";
+import type { WindowOptions } from "@/lib/types";
 
 /**
  * The warning for a collection the service has reported as stale, or `null` when it is current.
@@ -30,7 +30,7 @@ export function collectionNotice(windows: WindowOptions): string | null {
     return null;
   }
   if (windows.collected_through == null) {
-    return 'Nothing has been collected for this organisation, so no repository can be reported at any span. Run metrics collect.';
+    return "Nothing has been collected for this organisation, so no repository can be reported at any span. Run metrics collect.";
   }
   return `The last collection reaches ${day(windows.collected_through)}. Every figure here covers the window ending there rather than one ending today. Run metrics collect.`;
 }

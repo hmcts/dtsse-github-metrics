@@ -18,7 +18,7 @@
  * named a span without ever pressing a button — see `rememberableWeeks`.
  */
 
-export const WEEKS_COOKIE = 'weeks';
+export const WEEKS_COOKIE = "weeks";
 
 /** A year, so the choice survives closing the browser: it is a reading preference, not a session. */
 export const WEEKS_COOKIE_MAXIMUM_AGE = 365 * 24 * 3600;
@@ -32,7 +32,7 @@ export const WEEKS_COOKIE_MAXIMUM_AGE = 365 * 24 * 3600;
  */
 export function parseWeeks(raw: SearchValue, options: readonly number[]): number | null {
   const only = single(raw);
-  if (only === undefined || only.trim() === '') {
+  if (only === undefined || only.trim() === "") {
     return null;
   }
   const parsed = Number(only);
@@ -56,12 +56,7 @@ function single(raw: SearchValue): string | undefined {
 }
 
 /** Resolve the span a page renders at: URL, then cookie, then the service's default. */
-export function resolveWeeks(
-  parameter: SearchValue,
-  cookie: string | null | undefined,
-  options: readonly number[],
-  fallback: number,
-): number {
+export function resolveWeeks(parameter: SearchValue, cookie: string | null | undefined, options: readonly number[], fallback: number): number {
   return parseWeeks(parameter, options) ?? parseWeeks(cookie, options) ?? fallback;
 }
 
@@ -76,7 +71,7 @@ function carry(path: string, weeks: string): string {
 }
 
 /** The route `/` redirects to, which is the repositories list. */
-export const LANDING_PATH = '/repositories';
+export const LANDING_PATH = "/repositories";
 
 /**
  * Where a request for `/` goes, carrying the span it named.
@@ -89,7 +84,7 @@ export const LANDING_PATH = '/repositories';
  */
 export function landingTarget(parameter: SearchValue): string {
   const only = single(parameter);
-  if (only === undefined || only.trim() === '') {
+  if (only === undefined || only.trim() === "") {
     return LANDING_PATH;
   }
   return carry(LANDING_PATH, only);
@@ -122,10 +117,5 @@ export function rememberableWeeks(raw: SearchValue): number | null {
 
 /** Build the cookie the selector writes before it navigates. */
 export function weeksCookie(weeks: number): string {
-  return [
-    `${WEEKS_COOKIE}=${weeks}`,
-    'path=/',
-    `max-age=${WEEKS_COOKIE_MAXIMUM_AGE}`,
-    'SameSite=Lax',
-  ].join('; ');
+  return [`${WEEKS_COOKIE}=${weeks}`, "path=/", `max-age=${WEEKS_COOKIE_MAXIMUM_AGE}`, "SameSite=Lax"].join("; ");
 }

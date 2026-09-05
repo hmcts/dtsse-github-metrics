@@ -11,30 +11,27 @@
  * column, but the list does not open ranked by findings, which would read as a league table.
  */
 
-import { matches } from '@/lib/filter';
-import { RAG_HEX, RAG_LABEL, RAG_STATES, distributionState, state } from '@/lib/rag';
-import { compare, type SortValue } from '@/lib/sort';
+import { matches } from "@/lib/filter";
+import { distributionState, RAG_HEX, RAG_LABEL, RAG_STATES, state } from "@/lib/rag";
+import { compare, type SortValue } from "@/lib/sort";
 import {
+  type Band,
   CHECKS_BANDS,
   COVERAGE_BANDS,
-  REVIEW_BANDS,
-  SECURITY_BANDS,
-  UNREVIEWED_BANDS,
   checksBand,
   coverageBand,
+  REVIEW_BANDS,
   reviewBand,
+  SECURITY_BANDS,
   securityBand,
-  unreviewedBand,
-  type Band,
-} from '@/lib/tone';
-import type { RepositoryRow } from '@/lib/types';
+  UNREVIEWED_BANDS,
+  unreviewedBand
+} from "@/lib/tone";
+import type { RepositoryRow } from "@/lib/types";
 
 /** The default order: one team's repositories together, alphabetically within the team. */
 export function orderRepositories(rows: readonly RepositoryRow[]): RepositoryRow[] {
-  return [...rows].sort(
-    (left, right) =>
-      compare(left.team, right.team) || compare(left.repository, right.repository),
-  );
+  return [...rows].sort((left, right) => compare(left.team, right.team) || compare(left.repository, right.repository));
 }
 
 /** A term matches a row on either name a reader would type: the repository or its team. */
@@ -43,7 +40,7 @@ export function matchesRepository(row: RepositoryRow, term: string): boolean {
 }
 
 /** The six dimensions the estate can be filtered by, one per donut and one per URL parameter. */
-export type FilterParameter = 'label' | 'review' | 'checks' | 'unreviewed' | 'coverage' | 'security';
+export type FilterParameter = "label" | "review" | "checks" | "unreviewed" | "coverage" | "security";
 
 /** One value a dimension can be filtered to: the slice a reader clicked, in the slice's own words. */
 export interface FilterOption {
@@ -85,54 +82,52 @@ function bandOptions(bands: readonly Band[]): FilterOption[] {
  */
 export const ESTATE_FILTERS: readonly EstateFilter[] = [
   {
-    parameter: 'label',
-    title: 'Readiness',
+    parameter: "label",
+    title: "Readiness",
     options: RAG_STATES.map((readiness) => ({
       key: readiness,
       name: RAG_LABEL[readiness],
-      color: RAG_HEX[readiness],
+      color: RAG_HEX[readiness]
     })),
     // Folded through `distributionState`, as the donut counts through it: a label this build does
     // not know is counted under "Not assessed" in the slice, so it has to be selected by that slice
     // too. Without the fold the row falls in no option and the table shows one row fewer than the
     // wedge said — the one divergence every other band function here is written to avoid.
-    band: (row) => distributionState(state(row.readiness)),
+    band: (row) => distributionState(state(row.readiness))
   },
   {
-    parameter: 'review',
-    title: 'Enforces review',
+    parameter: "review",
+    title: "Enforces review",
     options: bandOptions(REVIEW_BANDS),
-    band: (row) => reviewBand(row.required_approving_reviews),
+    band: (row) => reviewBand(row.required_approving_reviews)
   },
   {
-    parameter: 'checks',
-    title: 'Enforces CI',
+    parameter: "checks",
+    title: "Enforces CI",
     options: bandOptions(CHECKS_BANDS),
-    band: (row) => checksBand(row.required_status_checks),
+    band: (row) => checksBand(row.required_status_checks)
   },
   {
-    parameter: 'unreviewed',
-    title: 'Unreviewed substantial merges',
+    parameter: "unreviewed",
+    title: "Unreviewed substantial merges",
     options: bandOptions(UNREVIEWED_BANDS),
-    band: (row) => unreviewedBand(row.unreviewed_substantial),
+    band: (row) => unreviewedBand(row.unreviewed_substantial)
   },
   {
-    parameter: 'coverage',
-    title: 'Test coverage',
+    parameter: "coverage",
+    title: "Test coverage",
     options: bandOptions(COVERAGE_BANDS),
-    band: (row) => coverageBand(row.sonar_coverage),
+    band: (row) => coverageBand(row.sonar_coverage)
   },
   {
-    parameter: 'security',
-    title: 'Security issues',
+    parameter: "security",
+    title: "Security issues",
     options: bandOptions(SECURITY_BANDS),
-    band: (row) => securityBand(row),
-  },
+    band: (row) => securityBand(row)
+  }
 ];
 
-export const FILTER_PARAMETERS: readonly FilterParameter[] = ESTATE_FILTERS.map(
-  (filter) => filter.parameter,
-);
+export const FILTER_PARAMETERS: readonly FilterParameter[] = ESTATE_FILTERS.map((filter) => filter.parameter);
 
 /**
  * The production filter's parameter, DELIBERATELY OUTSIDE `ESTATE_FILTERS`.
@@ -144,7 +139,7 @@ export const FILTER_PARAMETERS: readonly FilterParameter[] = ESTATE_FILTERS.map(
  * × on it, which is the one control it must not have: the toggle is part of the bar rather than
  * something a reader has added to it.
  */
-export const PRODUCTION_PARAMETER = 'production';
+export const PRODUCTION_PARAMETER = "production";
 
 /**
  * The only value the toggle ever writes, and so the only one that reads back as on.
@@ -152,7 +147,7 @@ export const PRODUCTION_PARAMETER = 'production';
  * A two-state control needs no vocabulary, but it does need one spelling: matching on anything
  * truthy would make `?production=0` an odd way of saying yes.
  */
-export const PRODUCTION_VALUE = 'true';
+export const PRODUCTION_VALUE = "true";
 
 /** Whether the production filter is on, read off the URL the same way the six dimensions are. */
 export function parseProduction(read: (parameter: string) => string | null): boolean {
@@ -194,18 +189,11 @@ export function parseFilters(read: (parameter: string) => string | null): Reposi
  * repository nobody could classify is not an answer to that — leaving it in would put rows under a
  * count that did not count them, and letting it in as `false` would be the same guess in reverse.
  */
-export function filterRepositories(
-  rows: readonly RepositoryRow[],
-  term: string,
-  filters: RepositoryFilters,
-  production = false,
-): RepositoryRow[] {
+export function filterRepositories(rows: readonly RepositoryRow[], term: string, filters: RepositoryFilters, production = false): RepositoryRow[] {
   const active = ESTATE_FILTERS.filter((filter) => filters[filter.parameter] !== undefined);
   return rows.filter(
     (row) =>
-      matchesRepository(row, term) &&
-      (!production || row.production === true) &&
-      active.every((filter) => filter.band(row) === filters[filter.parameter]),
+      matchesRepository(row, term) && (!production || row.production === true) && active.every((filter) => filter.band(row) === filters[filter.parameter])
   );
 }
 
@@ -218,11 +206,7 @@ export function filterRepositories(
  * the click and `n` after it, which tells a reader nothing: the number is there to say what turning
  * the toggle on would leave.
  */
-export function productionCount(
-  rows: readonly RepositoryRow[],
-  term: string,
-  filters: RepositoryFilters,
-): number {
+export function productionCount(rows: readonly RepositoryRow[], term: string, filters: RepositoryFilters): number {
   return filterRepositories(rows, term, filters, true).length;
 }
 

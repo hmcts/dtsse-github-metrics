@@ -1,5 +1,5 @@
-import Link from 'next/link';
-import { BarChart3, Building2, FolderGit2, Users } from 'lucide-react';
+import { BarChart3, Building2, FolderGit2, Users } from "lucide-react";
+import Link from "next/link";
 
 /**
  * The bar every page sits under: the site name and the three estate lists.
@@ -31,44 +31,25 @@ export function Navigation() {
   return (
     <nav className="bg-slate-900 border-b border-slate-800 sticky top-0 z-50">
       <div className="max-w-screen-2xl mx-auto px-6 h-14 flex items-center gap-6">
-        <Link
-          href="/repositories"
-          className="flex items-center gap-2 font-semibold text-indigo-400 shrink-0"
-        >
+        <Link href="/repositories" className="flex items-center gap-2 font-semibold text-indigo-400 shrink-0">
           <BarChart3 className="w-5 h-5" />
           <span>GitHub Metrics</span>
         </Link>
 
         <div className="flex items-center gap-1">
-          <NavigationLink
-            href="/repositories"
-            icon={<FolderGit2 className="w-4 h-4" />}
-            label="Repositories"
-          />
+          <NavigationLink href="/repositories" icon={<FolderGit2 className="w-4 h-4" />} label="Repositories" />
           <NavigationLink href="/teams" icon={<Building2 className="w-4 h-4" />} label="Teams" />
           {/* The route is spelled the reader's way from 2026-09-02: `/contributors`, over a service
               that still calls the author of a merge an actor and still serves `/actors`. A
               `/contributors` list above an `/actors/[login]` detail was one thing with two names. */}
-          <NavigationLink
-            href="/contributors"
-            icon={<Users className="w-4 h-4" />}
-            label="Contributors"
-          />
+          <NavigationLink href="/contributors" icon={<Users className="w-4 h-4" />} label="Contributors" />
         </div>
       </div>
     </nav>
   );
 }
 
-function NavigationLink({
-  href,
-  icon,
-  label,
-}: {
-  href: string;
-  icon: React.ReactNode;
-  label: string;
-}) {
+function NavigationLink({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
   return (
     <Link
       href={href}

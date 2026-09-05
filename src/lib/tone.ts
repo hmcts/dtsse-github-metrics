@@ -27,7 +27,7 @@
  * reading them side by side.
  */
 
-import { RAG_HEX, type RAGState, state } from '@/lib/rag';
+import { RAG_HEX, type RAGState, state } from "@/lib/rag";
 import type {
   AlertFamily,
   OpenAlertCount,
@@ -37,13 +37,13 @@ import type {
   SonarGateLevel,
   SonarMeasures,
   SonarRating,
-  UnreviewedSubstantialOutcome,
-} from '@/lib/types';
+  UnreviewedSubstantialOutcome
+} from "@/lib/types";
 
 /** The four presentation states: reads well, worth weighing, reads badly, and carries no verdict. */
-export type Tone = 'good' | 'warn' | 'bad' | 'neutral';
+export type Tone = "good" | "warn" | "bad" | "neutral";
 
-export const TONES: readonly Tone[] = ['good', 'warn', 'bad', 'neutral'];
+export const TONES: readonly Tone[] = ["good", "warn", "bad", "neutral"];
 
 /**
  * The colour a toned VALUE is set in — never its label and never its detail.
@@ -54,10 +54,10 @@ export const TONES: readonly Tone[] = ['good', 'warn', 'bad', 'neutral'];
  * reading badly and a repository labelled red are the same colour on the same page.
  */
 export const TONE_VALUE: Record<Tone, string> = {
-  good: 'text-rag-green',
-  warn: 'text-rag-amber',
-  bad: 'text-rag-red',
-  neutral: 'text-slate-100',
+  good: "text-rag-green",
+  warn: "text-rag-amber",
+  bad: "text-rag-red",
+  neutral: "text-slate-100"
 };
 
 /**
@@ -68,10 +68,10 @@ export const TONE_VALUE: Record<Tone, string> = {
  * as the absence of a verdict, which is what it is.
  */
 export const TONE_BORDER: Record<Tone, string> = {
-  good: 'border-l-4 border-l-rag-green',
-  warn: 'border-l-4 border-l-rag-amber',
-  bad: 'border-l-4 border-l-rag-red',
-  neutral: 'border-l-4 border-l-slate-800',
+  good: "border-l-4 border-l-rag-green",
+  warn: "border-l-4 border-l-rag-amber",
+  bad: "border-l-4 border-l-rag-red",
+  neutral: "border-l-4 border-l-slate-800"
 };
 
 /**
@@ -86,7 +86,7 @@ export const TONE_HEX: Record<Tone, string> = {
   good: RAG_HEX.green,
   warn: RAG_HEX.amber,
   bad: RAG_HEX.red,
-  neutral: RAG_HEX.none,
+  neutral: RAG_HEX.none
 };
 
 /**
@@ -97,18 +97,18 @@ export const TONE_HEX: Record<Tone, string> = {
  * legend distinguishes them. It is a deeper shade of the same green, and it exists only where a
  * reader is looking at the whole estate at once and the distinction is the point of the picture.
  */
-export const STRONG_GOOD_HEX = '#16a34a';
+export const STRONG_GOOD_HEX = "#16a34a";
 
 export function valueClass(tone: Tone | undefined): string {
-  return TONE_VALUE[tone ?? 'neutral'];
+  return TONE_VALUE[tone ?? "neutral"];
 }
 
 export function borderClass(tone: Tone | undefined): string {
-  return TONE_BORDER[tone ?? 'neutral'];
+  return TONE_BORDER[tone ?? "neutral"];
 }
 
 /** The three sections `ReadinessAssessment` reports every checked condition in. */
-export type ConditionOutcome = 'blocking' | 'caution' | 'clear';
+export type ConditionOutcome = "blocking" | "caution" | "clear";
 
 /**
  * The tone one assessment row reads in, or `undefined` where the policy's own label answers.
@@ -128,22 +128,19 @@ export type ConditionOutcome = 'blocking' | 'caution' | 'clear';
  * reads the label itself — then needs no fallback for an answer it cannot receive, and a fallback
  * that cannot be reached is a branch no test can cover.
  */
-export function conditionTone(outcome: 'blocking', condition: ReadinessCondition): undefined;
-export function conditionTone(outcome: 'caution' | 'clear', condition: ReadinessCondition): Tone;
-export function conditionTone(
-  outcome: ConditionOutcome,
-  condition: ReadinessCondition,
-): Tone | undefined;
+export function conditionTone(outcome: "blocking", condition: ReadinessCondition): undefined;
+export function conditionTone(outcome: "caution" | "clear", condition: ReadinessCondition): Tone;
+export function conditionTone(outcome: ConditionOutcome, condition: ReadinessCondition): Tone | undefined;
 export function conditionTone(outcome: ConditionOutcome, condition: ReadinessCondition): Tone | undefined {
-  if (outcome === 'blocking') {
+  if (outcome === "blocking") {
     return undefined;
   }
   // Absent from a service older than the flag, which reads as a graded condition: the three that
   // carry it say so in their detail too, so an old service loses a colour, not a fact.
   if (condition.informational ?? false) {
-    return 'neutral';
+    return "neutral";
   }
-  return outcome === 'caution' ? 'warn' : 'good';
+  return outcome === "caution" ? "warn" : "good";
 }
 
 /**
@@ -158,11 +155,11 @@ export function conditionTone(outcome: ConditionOutcome, condition: ReadinessCon
  * read, and a warm figure would report a missing permission as a bad result.
  */
 export const LABEL_TONE: Record<RAGState, Tone> = {
-  green: 'good',
-  amber: 'warn',
-  red: 'bad',
-  cannot_assess: 'neutral',
-  none: 'neutral',
+  green: "good",
+  amber: "warn",
+  red: "bad",
+  cannot_assess: "neutral",
+  none: "neutral"
 };
 
 export function labelTone(label: ReadinessLabel | null | undefined): Tone {
@@ -172,7 +169,7 @@ export function labelTone(label: ReadinessLabel | null | undefined): Tone {
 /** Resolve a tri-state flag, where a value nobody disclosed carries no verdict either way. */
 function disclosed(value: boolean | null | undefined, present: Tone, absent: Tone): Tone {
   if (value == null) {
-    return 'neutral';
+    return "neutral";
   }
   return value ? present : absent;
 }
@@ -180,7 +177,7 @@ function disclosed(value: boolean | null | undefined, present: Tone, absent: Ton
 /** Resolve a count, where an uncounted figure carries no verdict — a dash is not a zero. */
 function counted(value: number | null | undefined, none: Tone, some: Tone): Tone {
   if (value == null) {
-    return 'neutral';
+    return "neutral";
   }
   return value === 0 ? none : some;
 }
@@ -193,7 +190,7 @@ function counted(value: number | null | undefined, none: Tone, some: Tone): Tone
  * rather than a finding — so the card cautions and the assessment above it decides.
  */
 export function directCommitTone(commits: number | null | undefined): Tone {
-  return counted(commits, 'good', 'warn');
+  return counted(commits, "good", "warn");
 }
 
 /**
@@ -206,7 +203,7 @@ export function directCommitTone(commits: number | null | undefined): Tone {
  * and nothing in this column grades the person.
  */
 export function unreviewedMergeTone(merges: number | null | undefined): Tone {
-  return counted(merges, 'good', 'warn');
+  return counted(merges, "good", "warn");
 }
 
 /**
@@ -217,67 +214,67 @@ export function unreviewedMergeTone(merges: number | null | undefined): Tone {
  * contents GitHub refused is not graded at all.
  */
 export function codeownersTone(files: number | null | undefined): Tone {
-  return counted(files, 'warn', 'good');
+  return counted(files, "warn", "good");
 }
 
 /** The twelve merge-gate fields, keyed on the field rather than on the words it renders as. */
 export type GateField =
-  | 'branch'
-  | 'protected'
-  | 'rules_observed'
-  | 'required_approving_review_count'
-  | 'required_status_checks'
-  | 'dismiss_stale_reviews_on_push'
-  | 'applies_to_administrators'
-  | 'restricts_deletions'
-  | 'blocks_force_pushes'
-  | 'requires_linear_history'
-  | 'restricts_branch_names'
-  | 'unmodelled_rules';
+  | "branch"
+  | "protected"
+  | "rules_observed"
+  | "required_approving_review_count"
+  | "required_status_checks"
+  | "dismiss_stale_reviews_on_push"
+  | "applies_to_administrators"
+  | "restricts_deletions"
+  | "blocks_force_pushes"
+  | "requires_linear_history"
+  | "restricts_branch_names"
+  | "unmodelled_rules";
 
 /** What a gate field arrives as: a flag, a count, or nothing where GitHub withheld it. */
 export type GateValue = boolean | number | null | undefined;
 
 /** Read a flag off a gate value; anything else is a field that was not disclosed as a flag. */
 function flag(value: GateValue): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined;
+  return typeof value === "boolean" ? value : undefined;
 }
 
 /** Read a count off a gate value; anything else is a field that was not disclosed as a count. */
 function tally(value: GateValue): number | undefined {
-  return typeof value === 'number' ? value : undefined;
+  return typeof value === "number" ? value : undefined;
 }
 
 const GATE_TONE: Record<GateField, (value: GateValue) => Tone> = {
   // The branch a gate is read on and the rules this build did not interpret are facts about what was
   // looked at, not answers about it. Neither has a better or a worse value.
-  branch: () => 'neutral',
-  unmodelled_rules: () => 'neutral',
+  branch: () => "neutral",
+  unmodelled_rules: () => "neutral",
   // `assessment.governance`: an unprotected default branch is the first veto, and red there.
-  protected: (value) => disclosed(flag(value), 'good', 'bad'),
+  protected: (value) => disclosed(flag(value), "good", "bad"),
   // `assessment.governance`: rules a protected branch did not disclose are cannot_assess, which is
   // slate in `rag.ts` for the reason it is neutral here — the answer could not be read, and warm
   // colour would blame a missing permission on the team that owns the repository.
-  rules_observed: (value) => (flag(value) === true ? 'good' : 'neutral'),
+  rules_observed: (value) => (flag(value) === true ? "good" : "neutral"),
   // `assessment.review_requirement`: no required approval is the second veto, and red there.
-  required_approving_review_count: (value) => counted(tally(value), 'bad', 'good'),
+  required_approving_review_count: (value) => counted(tally(value), "bad", "good"),
   // `assessment.status_checks`: a caution in the policy, because `checks-passing-at-merge` measures
   // what CI actually held at the merge point. Red here for the same reason the rule reads plainly:
   // a gate requiring no check cannot block anything, and the card states the configuration.
-  required_status_checks: (value) => counted(tally(value), 'bad', 'good'),
+  required_status_checks: (value) => counted(tally(value), "bad", "good"),
   // `assessment.stale_reviews`: a caution — reviewed and merged code can differ.
-  dismiss_stale_reviews_on_push: (value) => disclosed(flag(value), 'good', 'warn'),
+  dismiss_stale_reviews_on_push: (value) => disclosed(flag(value), "good", "warn"),
   // `assessment.administrators`: a caution, and undisclosed is a caution in the policy too. Neutral
   // here: the card can only say what was disclosed, and the condition above it does the weighing.
-  applies_to_administrators: (value) => disclosed(flag(value), 'good', 'warn'),
+  applies_to_administrators: (value) => disclosed(flag(value), "good", "warn"),
   // The neutral trio, from `ReadinessPolicy.neutral()`: reported in both states, bearing on the
   // label in neither. Colouring them would grade what the policy deliberately does not.
-  restricts_deletions: () => 'neutral',
-  requires_linear_history: () => 'neutral',
-  restricts_branch_names: () => 'neutral',
+  restricts_deletions: () => "neutral",
+  requires_linear_history: () => "neutral",
+  restricts_branch_names: () => "neutral",
   // `assessment.force_pushes` is a caution, so this field has a counterpart that the tone table in
   // the plan does not name — and an unnamed figure is neutral by that table's own default rule.
-  blocks_force_pushes: () => 'neutral',
+  blocks_force_pushes: () => "neutral"
 };
 
 /**
@@ -292,22 +289,18 @@ export function gateFieldTone(field: GateField, value?: GateValue): Tone {
 }
 
 /** The four open pull-request counts, keyed as the service's own summary fields. */
-export type OpenPullRequestField =
-  | 'opened_in_window'
-  | 'closed_without_merge'
-  | 'currently_open'
-  | 'stale_open';
+export type OpenPullRequestField = "opened_in_window" | "closed_without_merge" | "currently_open" | "stale_open";
 
 const OPEN_PULL_REQUEST_TONE: Record<OpenPullRequestField, (value: number | null | undefined) => Tone> = {
   // Throughput, not a verdict: a repository that opened forty pull requests is busier than one that
   // opened four, and neither figure is better. Closing without merging is how a proposal is
   // declined, and how many are open now is a queue depth rather than a shortfall.
-  opened_in_window: () => 'neutral',
-  closed_without_merge: () => 'neutral',
-  currently_open: () => 'neutral',
+  opened_in_window: () => "neutral",
+  closed_without_merge: () => "neutral",
+  currently_open: () => "neutral",
   // The one that ages: a pull request open past the staleness bound is work nobody is finishing.
   // No assessment condition grades it, which is why the threshold is stated here.
-  stale_open: (value) => counted(value, 'good', 'warn'),
+  stale_open: (value) => counted(value, "good", "warn")
 };
 
 export function openPullRequestTone(field: OpenPullRequestField, value: number | null | undefined): Tone {
@@ -315,7 +308,7 @@ export function openPullRequestTone(field: OpenPullRequestField, value: number |
 }
 
 /** The severities that make an open alert family read badly rather than merely warrant weighing. */
-const SEVERE = ['critical', 'high'] as const;
+const SEVERE = ["critical", "high"] as const;
 
 /**
  * One security alert family, from the count the report sent and its severity breakdown.
@@ -332,15 +325,15 @@ const SEVERE = ['critical', 'high'] as const;
 export function alertTone(family: AlertFamily, count: OpenAlertCount): Tone {
   const open = count.open;
   if (open == null) {
-    return 'neutral';
+    return "neutral";
   }
   if (open === 0) {
-    return 'good';
+    return "good";
   }
-  if (family === 'secret-scanning') {
-    return 'bad';
+  if (family === "secret-scanning") {
+    return "bad";
   }
-  return SEVERE.some((severity) => (count.by_severity[severity] ?? 0) > 0) ? 'bad' : 'warn';
+  return SEVERE.some((severity) => (count.by_severity[severity] ?? 0) > 0) ? "bad" : "warn";
 }
 
 /**
@@ -352,7 +345,7 @@ export function alertTone(family: AlertFamily, count: OpenAlertCount): Tone {
  * the repository rather than something ungoverned reaching its default branch.
  */
 export function maintenanceTone(committedWithin: boolean | null | undefined): Tone {
-  return disclosed(committedWithin, 'good', 'warn');
+  return disclosed(committedWithin, "good", "warn");
 }
 
 /**
@@ -362,10 +355,10 @@ export function maintenanceTone(committedWithin: boolean | null | undefined): To
  * rather than a pass — neutral, like a project whose measures could not be read at all.
  */
 export function sonarGateTone(level: SonarGateLevel | null | undefined): Tone {
-  if (level == null || level === 'NONE') {
-    return 'neutral';
+  if (level == null || level === "NONE") {
+    return "neutral";
   }
-  return level === 'OK' ? 'good' : 'bad';
+  return level === "OK" ? "good" : "bad";
 }
 
 /**
@@ -377,26 +370,26 @@ export function sonarGateTone(level: SonarGateLevel | null | undefined): Tone {
  */
 export function sonarRatingTone(rating: SonarRating | null | undefined): Tone {
   if (rating == null || !Number.isInteger(rating.value)) {
-    return 'neutral';
+    return "neutral";
   }
   if (rating.value === 1) {
-    return 'good';
+    return "good";
   }
   if (rating.value === 2 || rating.value === 3) {
-    return 'warn';
+    return "warn";
   }
-  return rating.value === 4 || rating.value === 5 ? 'bad' : 'neutral';
+  return rating.value === 4 || rating.value === 5 ? "bad" : "neutral";
 }
 
 /** The seven numeric Sonar measures, keyed as the fields `SonarMeasures` carries them in. */
 export type SonarMeasure =
-  | 'coverage'
-  | 'duplicated_lines_density'
-  | 'lines_of_code'
-  | 'violations'
-  | 'reliability_issues'
-  | 'maintainability_issues'
-  | 'security_issues';
+  | "coverage"
+  | "duplicated_lines_density"
+  | "lines_of_code"
+  | "violations"
+  | "reliability_issues"
+  | "maintainability_issues"
+  | "security_issues";
 
 /**
  * Grade one issue COUNT by the rating that covers it, never by the count on its own.
@@ -409,34 +402,34 @@ export type SonarMeasure =
  */
 function issueTone(count: number | undefined, rating: SonarRating | undefined): Tone {
   if (count == null) {
-    return 'neutral';
+    return "neutral";
   }
   if (count === 0) {
-    return 'good';
+    return "good";
   }
-  return sonarRatingTone(rating) === 'bad' ? 'bad' : 'warn';
+  return sonarRatingTone(rating) === "bad" ? "bad" : "warn";
 }
 
 /** Grade one measure against a boundary where lower is better, leaving an unreported one neutral. */
 function ceiling(value: number | undefined, good: number, warn: number): Tone {
   if (value == null) {
-    return 'neutral';
+    return "neutral";
   }
   if (value <= good) {
-    return 'good';
+    return "good";
   }
-  return value <= warn ? 'warn' : 'bad';
+  return value <= warn ? "warn" : "bad";
 }
 
 /** Grade one measure against a boundary where higher is better, leaving an unreported one neutral. */
 function floor(value: number | undefined, good: number, warn: number): Tone {
   if (value == null) {
-    return 'neutral';
+    return "neutral";
   }
   if (value >= good) {
-    return 'good';
+    return "good";
   }
-  return value >= warn ? 'warn' : 'bad';
+  return value >= warn ? "warn" : "bad";
 }
 
 /**
@@ -455,13 +448,12 @@ const SONAR_MEASURE_TONE: Record<SonarMeasure, (measures: SonarMeasures) => Tone
   // Sonar's default gate errors above 3% duplication; 5% is where it stops being a rounding matter.
   duplicated_lines_density: (measures) => ceiling(measures.duplicated_lines_density, 3, 5),
   // The size of the project, which is neither good nor bad and is the denominator for the rest.
-  lines_of_code: () => 'neutral',
+  lines_of_code: () => "neutral",
   // The only count with no rating of its own, so above zero it is worth weighing and never more.
-  violations: (measures) => counted(measures.violations, 'good', 'warn'),
+  violations: (measures) => counted(measures.violations, "good", "warn"),
   reliability_issues: (measures) => issueTone(measures.reliability_issues, measures.reliability_rating),
-  maintainability_issues: (measures) =>
-    issueTone(measures.maintainability_issues, measures.maintainability_rating),
-  security_issues: (measures) => issueTone(measures.security_issues, measures.security_rating),
+  maintainability_issues: (measures) => issueTone(measures.maintainability_issues, measures.maintainability_rating),
+  security_issues: (measures) => issueTone(measures.security_issues, measures.security_rating)
 };
 
 export function sonarMeasureTone(measure: SonarMeasure, measures: SonarMeasures): Tone {
@@ -485,13 +477,13 @@ export interface Band<Key extends string = string> {
 }
 
 /** How many approving reviews the merge gate requires, banded. */
-export type ReviewBand = 'multiple' | 'required' | 'none' | 'unknown';
+export type ReviewBand = "multiple" | "required" | "none" | "unknown";
 
 export const REVIEW_BANDS: readonly Band<ReviewBand>[] = [
-  { key: 'multiple', name: 'Multiple', mark: STRONG_GOOD_HEX },
-  { key: 'required', name: 'Enforced', mark: TONE_HEX.good },
-  { key: 'none', name: 'Unenforced', mark: TONE_HEX.bad },
-  { key: 'unknown', name: 'Unknown', mark: TONE_HEX.neutral },
+  { key: "multiple", name: "Multiple", mark: STRONG_GOOD_HEX },
+  { key: "required", name: "Enforced", mark: TONE_HEX.good },
+  { key: "none", name: "Unenforced", mark: TONE_HEX.bad },
+  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
 ];
 
 /**
@@ -505,21 +497,21 @@ export const REVIEW_BANDS: readonly Band<ReviewBand>[] = [
  */
 export function reviewBand(approvals: number | null | undefined): ReviewBand {
   if (approvals == null) {
-    return 'unknown';
+    return "unknown";
   }
   if (approvals >= 2) {
-    return 'multiple';
+    return "multiple";
   }
-  return approvals >= 1 ? 'required' : 'none';
+  return approvals >= 1 ? "required" : "none";
 }
 
 /** Whether the merge gate requires any status check, banded. */
-export type ChecksBand = 'required' | 'none' | 'unknown';
+export type ChecksBand = "required" | "none" | "unknown";
 
 export const CHECKS_BANDS: readonly Band<ChecksBand>[] = [
-  { key: 'required', name: 'Enforced', mark: TONE_HEX.good },
-  { key: 'none', name: 'Unenforced', mark: TONE_HEX.bad },
-  { key: 'unknown', name: 'Unknown', mark: TONE_HEX.neutral },
+  { key: "required", name: "Enforced", mark: TONE_HEX.good },
+  { key: "none", name: "Unenforced", mark: TONE_HEX.bad },
+  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
 ];
 
 /**
@@ -532,21 +524,21 @@ export const CHECKS_BANDS: readonly Band<ChecksBand>[] = [
  */
 export function checksBand(contexts: number | null | undefined): ChecksBand {
   if (contexts == null) {
-    return 'unknown';
+    return "unknown";
   }
-  return contexts >= 1 ? 'required' : 'none';
+  return contexts >= 1 ? "required" : "none";
 }
 
 /** The policy's verdict on unreviewed substantial merging, plus the window it graded nothing in. */
-export type UnreviewedBand = UnreviewedSubstantialOutcome | 'unknown';
+export type UnreviewedBand = UnreviewedSubstantialOutcome | "unknown";
 
 export const UNREVIEWED_BANDS: readonly Band<UnreviewedBand>[] = [
   // `none` stays as the key because `unreviewedBand` matches the policy's own outcome values against
   // it; only the words the legend reads change.
-  { key: 'none', name: 'Clear', mark: TONE_HEX.good },
-  { key: 'within', name: 'Within allowance', mark: TONE_HEX.warn },
-  { key: 'above', name: 'Above allowance', mark: TONE_HEX.bad },
-  { key: 'unknown', name: 'Unknown', mark: TONE_HEX.neutral },
+  { key: "none", name: "Clear", mark: TONE_HEX.good },
+  { key: "within", name: "Within allowance", mark: TONE_HEX.warn },
+  { key: "above", name: "Above allowance", mark: TONE_HEX.bad },
+  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
 ];
 
 /**
@@ -564,27 +556,27 @@ export const UNREVIEWED_BANDS: readonly Band<UnreviewedBand>[] = [
  * less than the estate rather than admitting it read something it did not understand.
  */
 export function unreviewedBand(outcome: UnreviewedSubstantialOutcome | null | undefined): UnreviewedBand {
-  return UNREVIEWED_BANDS.find((band) => band.key === outcome)?.key ?? 'unknown';
+  return UNREVIEWED_BANDS.find((band) => band.key === outcome)?.key ?? "unknown";
 }
 
 /** Test coverage, banded on the boundary `coverageTone` states. */
-export type CoverageBand = 'high' | 'moderate' | 'low' | 'unknown';
+export type CoverageBand = "high" | "moderate" | "low" | "unknown";
 
 export const COVERAGE_BANDS: readonly Band<CoverageBand>[] = [
-  { key: 'high', name: '90% or more', mark: TONE_HEX.good },
+  { key: "high", name: "90% or more", mark: TONE_HEX.good },
   // Not "80% to 90%": exactly 90 is graded good, so a legend naming 90 twice would put the boundary
   // in the band it is not in.
-  { key: 'moderate', name: '80% to under 90%', mark: TONE_HEX.warn },
-  { key: 'low', name: 'Below 80%', mark: TONE_HEX.bad },
-  { key: 'unknown', name: 'Unknown', mark: TONE_HEX.neutral },
+  { key: "moderate", name: "80% to under 90%", mark: TONE_HEX.warn },
+  { key: "low", name: "Below 80%", mark: TONE_HEX.bad },
+  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
 ];
 
 /** The band each tone `coverageTone` returns falls in, total over the four so no lookup can miss. */
 const COVERAGE_BAND: Record<Tone, CoverageBand> = {
-  good: 'high',
-  warn: 'moderate',
-  bad: 'low',
-  neutral: 'unknown',
+  good: "high",
+  warn: "moderate",
+  bad: "low",
+  neutral: "unknown"
 };
 
 /**
@@ -600,13 +592,13 @@ export function coverageBand(coverage: number | null | undefined): CoverageBand 
 }
 
 /** How badly a repository's security signals read, worst signal deciding. */
-export type SecurityBand = 'clear' | 'medium' | 'high' | 'unknown';
+export type SecurityBand = "clear" | "medium" | "high" | "unknown";
 
 export const SECURITY_BANDS: readonly Band<SecurityBand>[] = [
-  { key: 'clear', name: 'Clear', mark: TONE_HEX.good },
-  { key: 'medium', name: 'Medium', mark: TONE_HEX.warn },
-  { key: 'high', name: 'High', mark: TONE_HEX.bad },
-  { key: 'unknown', name: 'Unknown', mark: TONE_HEX.neutral },
+  { key: "clear", name: "Clear", mark: TONE_HEX.good },
+  { key: "medium", name: "Medium", mark: TONE_HEX.warn },
+  { key: "high", name: "High", mark: TONE_HEX.bad },
+  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
 ];
 
 /**
@@ -657,22 +649,16 @@ export interface SecuritySignals {
 export function securityBand(signals: SecuritySignals): SecurityBand {
   const alerts = signals.security;
   const families: Tone[] = alerts
-    ? [
-        alertTone('dependabot', alerts.dependabot),
-        alertTone('code-scanning', alerts.code_scanning),
-        alertTone('secret-scanning', alerts.secret_scanning),
-      ]
+    ? [alertTone("dependabot", alerts.dependabot), alertTone("code-scanning", alerts.code_scanning), alertTone("secret-scanning", alerts.secret_scanning)]
     : [];
-  const tones = [
-    ...families,
-    sonarRatingTone(signals.sonar_security_rating),
-    counted(signals.sonar_security_issues, 'good', 'warn'),
-  ].filter((tone) => tone !== 'neutral');
-  if (tones.includes('bad')) {
-    return 'high';
+  const tones = [...families, sonarRatingTone(signals.sonar_security_rating), counted(signals.sonar_security_issues, "good", "warn")].filter(
+    (tone) => tone !== "neutral"
+  );
+  if (tones.includes("bad")) {
+    return "high";
   }
-  if (tones.includes('warn')) {
-    return 'medium';
+  if (tones.includes("warn")) {
+    return "medium";
   }
-  return tones.length > 0 ? 'clear' : 'unknown';
+  return tones.length > 0 ? "clear" : "unknown";
 }

@@ -17,11 +17,11 @@
  *     percentage change both print as bare numbers and are different quantities.
  */
 
-import { day } from '@/lib/format';
-import type { DeltaBasis, Percentile, RepositoryTrend, TrendMetric, TrendWindow } from '@/lib/types';
+import { day } from "@/lib/format";
+import type { DeltaBasis, Percentile, RepositoryTrend, TrendMetric, TrendWindow } from "@/lib/types";
 
 /** The series colours: indigo for the pull-request route, sky for what bypassed it. */
-export const ROUTE_HEX = { pullRequests: '#818cf8', directCommits: '#38bdf8' } as const;
+export const ROUTE_HEX = { pullRequests: "#818cf8", directCommits: "#38bdf8" } as const;
 
 /** One period's two merge routes, keyed as the throughput chart reads them. */
 export type ThroughputRow = {
@@ -50,16 +50,16 @@ export type MetricChart = {
 };
 
 export const PERCENTILE_LABEL: Record<Percentile, string> = {
-  median: 'median',
-  percentile_75: '75th percentile',
+  median: "median",
+  percentile_75: "75th percentile"
 };
 
 export const BASIS_LABEL: Record<DeltaBasis, string> = {
-  percentage_points: 'compared in percentage points',
-  percentage_change: 'compared in percentage change',
+  percentage_points: "compared in percentage points",
+  percentage_change: "compared in percentage change"
 };
 
-export const NO_BASIS = 'no period could be compared with the baseline';
+export const NO_BASIS = "no period could be compared with the baseline";
 
 /** One window of a series beside the name its column and its reason are reported under. */
 export type NamedWindow = {
@@ -77,8 +77,8 @@ export type NamedWindow = {
  */
 export function namedWindows(series: RepositoryTrend): NamedWindow[] {
   return [
-    ...(series.baseline === undefined ? [] : [{ name: 'Baseline', window: series.baseline }]),
-    ...series.periods.map((period) => ({ name: `P${period.index}`, window: period })),
+    ...(series.baseline === undefined ? [] : [{ name: "Baseline", window: series.baseline }]),
+    ...series.periods.map((period) => ({ name: `P${period.index}`, window: period }))
   ];
 }
 
@@ -106,9 +106,7 @@ export function hasPeriods(series: RepositoryTrend | null): series is Repository
  * printed only "26 whole periods since <enablement>" would read as everything since that date.
  */
 export function cutDetail(series: RepositoryTrend, cut: number): string | undefined {
-  return series.periods.length < cut
-    ? undefined
-    : `— the first ${cut}, the most one request may ask for`;
+  return series.periods.length < cut ? undefined : `— the first ${cut}, the most one request may ask for`;
 }
 
 /**
@@ -131,25 +129,23 @@ export function throughputRows(series: RepositoryTrend): ThroughputRow[] {
   return resolvedWindows(series).map((window) => ({
     starts_at: window.starts_at,
     merged_pull_requests: window.throughput?.merged_pull_requests ?? null,
-    direct_commits: window.throughput?.direct_commits ?? null,
+    direct_commits: window.throughput?.direct_commits ?? null
   }));
 }
 
 /** Name one metric as the report names it, saying which percentile a distribution was read at. */
 export function metricLabel(metric: TrendMetric): string {
-  return metric.percentile === undefined
-    ? metric.metric
-    : `${metric.metric} (${PERCENTILE_LABEL[metric.percentile]})`;
+  return metric.percentile === undefined ? metric.metric : `${metric.metric} (${PERCENTILE_LABEL[metric.percentile]})`;
 }
 
 /** A rate is measured in per cent; a distribution in the unit its observation carries. */
 export function metricUnit(metric: TrendMetric): string {
-  return 'unit' in metric.summary ? metric.summary.unit : 'percent';
+  return "unit" in metric.summary ? metric.summary.unit : "percent";
 }
 
 /** The axis suffix for a percentage, and none for a unit no two-character suffix would say. */
 export function axisUnit(unit: string): string | undefined {
-  return unit === 'percent' ? '%' : undefined;
+  return unit === "percent" ? "%" : undefined;
 }
 
 /**
@@ -177,9 +173,7 @@ export function seriesMeasures(series: RepositoryTrend): TrendMetric[] {
  * period and an unobservable baseline both leave a series whose values are still worth reading.
  */
 export function deltaBasis(series: RepositoryTrend, measure: string): string {
-  const found = series.periods
-    .flatMap((period) => period.deltas)
-    .find((delta) => delta.measure === measure);
+  const found = series.periods.flatMap((period) => period.deltas).find((delta) => delta.measure === measure);
   return found === undefined ? NO_BASIS : BASIS_LABEL[found.basis];
 }
 
@@ -196,8 +190,8 @@ export function metricCharts(series: RepositoryTrend): MetricChart[] {
       basis: deltaBasis(series, metric.metric),
       rows: windows.map((window) => ({
         starts_at: window.starts_at,
-        value: window.metrics.find((item) => item.metric === metric.metric)?.value ?? null,
-      })),
+        value: window.metrics.find((item) => item.metric === metric.metric)?.value ?? null
+      }))
     };
   });
 }

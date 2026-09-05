@@ -1,5 +1,5 @@
-import { redirect } from 'next/navigation';
-import { landingTarget, type SearchValue } from '@/lib/weeks';
+import { redirect } from "next/navigation";
+import { landingTarget, type SearchValue } from "@/lib/weeks";
 
 /**
  * The old overview, which is now three routes: this redirects to the first of them.
@@ -14,12 +14,8 @@ import { landingTarget, type SearchValue } from '@/lib/weeks';
  * here: `/repositories` resolves it the same way every page does, and a span off the list falls back
  * there rather than being validated twice.
  */
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
-export default async function LandingPage({
-  searchParams,
-}: {
-  searchParams?: Promise<{ weeks?: SearchValue }>;
-}) {
+export default async function LandingPage({ searchParams }: { searchParams?: Promise<{ weeks?: SearchValue }> }) {
   redirect(landingTarget((await searchParams)?.weeks));
 }
