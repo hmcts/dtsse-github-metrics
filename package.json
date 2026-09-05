@@ -15,7 +15,7 @@
     "build:cli": "tsc -p tsconfig.cli.json",
     "clean": "rm -rf .next dist",
     "start": "node .next/standalone/server.js",
-    "cli": "tsx src/cli/index.ts",
+    "cli": "tsx src/cli/run.ts",
     "deps:up": "docker compose up -d",
     "deps:down": "docker compose down",
     "test": "vitest run",

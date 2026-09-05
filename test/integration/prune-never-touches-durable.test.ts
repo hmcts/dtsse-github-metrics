@@ -71,7 +71,7 @@ describe("pruneCache", () => {
   });
 
   it("should keep coverage and facts a report still reads", async () => {
-    await cachePullRequestFacts(COVERAGE, [{ identifier: 101, mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
+    await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
 
     // Nothing has gone unused since before the rows were written, so nothing is deleted.
     expect(await pruneCache(new Date(Date.UTC(2026, 0, 1)))).toBe(0);
@@ -79,7 +79,7 @@ describe("pruneCache", () => {
   });
 
   it("should delete unused coverage together with the facts it leaves unreachable", async () => {
-    await cachePullRequestFacts(COVERAGE, [{ identifier: 101, mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
+    await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
     await cacheDirectCommitFacts(
       { ...COVERAGE, source: EvidenceSource.DirectCommits },
       [{ sha: "abc123", committedAt: new Date(Date.UTC(2026, 6, 4)), payload: {} }],
@@ -96,10 +96,10 @@ describe("pruneCache", () => {
   });
 
   it("should keep facts whose coverage survives under a different signature", async () => {
-    await cachePullRequestFacts(COVERAGE, [{ identifier: 101, mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
+    await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
     await cachePullRequestFacts(
       { ...COVERAGE, queryHash: "other" },
-      [{ identifier: 202, mergedAt: new Date(Date.UTC(2026, 6, 5)), payload: { number: 22 } }],
+      [{ identifier: BigInt(202), mergedAt: new Date(Date.UTC(2026, 6, 5)), payload: { number: 22 } }],
       true
     );
     // Age only the first signature's coverage.
@@ -108,7 +108,7 @@ describe("pruneCache", () => {
     expect(await pruneCache(new Date(Date.UTC(2026, 6, 1)))).toBe(1);
 
     const remaining = await prisma.pullRequestFact.findMany({ select: { identifier: true } });
-    expect(remaining).toEqual([{ identifier: 202 }]);
+    expect(remaining).toEqual([{ identifier: BigInt(202) }]);
   });
 });
 
@@ -116,15 +116,23 @@ describe("cachePullRequestFacts", () => {
   it("should cache facts without claiming coverage when a collection was incomplete", async () => {
     // A partial collection must leave its facts for reuse but must not record the interval, or the next
     // run would skip the gap it left.
-    await cachePullRequestFacts(COVERAGE, [{ identifier: 101, mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], false);
+    await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], false);
 
     expect(await prisma.pullRequestFact.count()).toBe(1);
     expect(await prisma.sourceCoverage.count()).toBe(0);
   });
 
   it("should replace a fact collected again rather than duplicating it", async () => {
-    await cachePullRequestFacts(COVERAGE, [{ identifier: 101, mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11, title: "first" } }], true);
-    await cachePullRequestFacts(COVERAGE, [{ identifier: 101, mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11, title: "second" } }], true);
+    await cachePullRequestFacts(
+      COVERAGE,
+      [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11, title: "first" } }],
+      true
+    );
+    await cachePullRequestFacts(
+      COVERAGE,
+      [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11, title: "second" } }],
+      true
+    );
 
     const facts = await loadCachedPullRequestFacts(COVERAGE, COVERAGE.startsAt, COVERAGE.endsAt);
     expect(facts).toEqual([{ number: 11, title: "second" }]);
@@ -134,8 +142,8 @@ describe("cachePullRequestFacts", () => {
     await cachePullRequestFacts(
       COVERAGE,
       [
-        { identifier: 1, mergedAt: new Date(Date.UTC(2026, 6, 1)), payload: { n: "at the inclusive start" } },
-        { identifier: 2, mergedAt: new Date(Date.UTC(2026, 7, 1)), payload: { n: "at the exclusive end" } }
+        { identifier: BigInt(1), mergedAt: new Date(Date.UTC(2026, 6, 1)), payload: { n: "at the inclusive start" } },
+        { identifier: BigInt(2), mergedAt: new Date(Date.UTC(2026, 7, 1)), payload: { n: "at the exclusive end" } }
       ],
       true
     );
@@ -150,8 +158,8 @@ describe("cachePullRequestFacts", () => {
     await cachePullRequestFacts(
       COVERAGE,
       [
-        { identifier: 20, mergedAt, payload: { id: 20 } },
-        { identifier: 10, mergedAt, payload: { id: 10 } }
+        { identifier: BigInt(20), mergedAt, payload: { id: 20 } },
+        { identifier: BigInt(10), mergedAt, payload: { id: 10 } }
       ],
       true
     );

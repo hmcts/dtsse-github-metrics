@@ -63,7 +63,10 @@ model PullRequestFact {
   organization String
   repository   String
   queryHash    String   @map("query_hash")
-  identifier   Int
+  /// GitHub's own `databaseId`, which is a BIGINT and not an INTEGER: a real pcs-api pull request carries
+  /// 3977105018, comfortably past a 32-bit signed maximum of 2147483647. Prisma's `Int` maps to `integer` and
+  /// the insert was rejected outright — which is the good failure, but the column has to hold what GitHub sends.
+  identifier   BigInt
   mergedAt     DateTime @map("merged_at") @db.Timestamptz(6)
   payload      Json     @db.JsonB
 

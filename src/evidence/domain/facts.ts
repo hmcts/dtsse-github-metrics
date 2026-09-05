@@ -55,6 +55,11 @@ export interface Merge {
 
 /** One review event, reduced to the fields that classify it. */
 export interface ReviewFact {
+  /**
+   * GitHub's own id. A plain `number` is safe here where the stored pull-request column is a BIGINT: this one is
+   * only ever compared and sorted in memory, and a double holds an integer exactly to 2^53 - 1, far past the
+   * 32-bit limit that forced the column's type.
+   */
   identifier: number;
   submittedAt: Date;
   state: ReviewState;

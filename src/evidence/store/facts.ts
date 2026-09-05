@@ -125,7 +125,8 @@ export async function loadCachedDirectCommitFacts(key: CoverageKey, startsAt: Da
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
 export interface PullRequestFactRow {
-  identifier: number;
+  /** A BigInt, because GitHub's databaseId exceeds a 32-bit integer — see prisma/schema.prisma. */
+  identifier: bigint;
   mergedAt: Date;
   payload: { [key: string]: JsonValue };
 }

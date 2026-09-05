@@ -65,7 +65,9 @@ export function pullRequestCacheWriter(): (coverage: SourceCoverage, facts: Pull
   return (coverage, facts, complete) =>
     cachePullRequestFacts(
       coverage,
-      facts.map((fact) => ({ identifier: fact.identifier, mergedAt: fact.mergedAt, payload: serialise(fact) })),
+      // BigInt at the boundary: the column is a BIGINT because GitHub's databaseId exceeds a 32-bit integer,
+      // while the in-memory fact keeps a number, which holds it exactly.
+      facts.map((fact) => ({ identifier: BigInt(fact.identifier), mergedAt: fact.mergedAt, payload: serialise(fact) })),
       complete
     );
 }
