@@ -1,0 +1,46 @@
+node_modules/
+dist/
+.next/
+next-env.d.ts
+coverage/
+coverage-integration/
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/build-state.yml
+.yarn/unplugged/
+.yarn/sdks/
+.pnp.*
+*.tsbuildinfo
+
+# Test artefacts
+playwright-report/
+test-results/
+allure-results/
+allure-report/
+
+# Prisma generated client
+src/evidence/store/generated/
+
+# Local collector state (a config naming real repositories, and any imported SQLite cache)
+metrics.yaml
+*.sqlite3
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+config/local.json
+config/local-*.json
+
+# Helm rendered values
+charts/**/values.aat.yaml
+charts/**/values.preview.yaml

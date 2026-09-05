@@ -1,0 +1,30 @@
+{
+  "server": {
+    "port": "PORT"
+  },
+  "policy": {
+    "path": "METRICS_CONFIG"
+  },
+  "github": {
+    "appId": "GH_APP_ID",
+    "appInstallationId": "GH_APP_INSTALLATION_ID",
+    "appPrivateKey": "GH_APP_PRIVATE_KEY",
+    "appPrivateKeyPath": "GH_APP_PRIVATE_KEY_PATH",
+    "token": "GH_TOKEN"
+  },
+  "sonar": {
+    "token": "SONAR_TOKEN"
+  },
+  "reportCache": {
+    "warmIntervalMinutes": "WARM_INTERVAL_MINUTES",
+    "maximumBundleAgeMinutes": "MAXIMUM_BUNDLE_AGE_MINUTES"
+  },
+  "applicationInsights": {
+    "serviceName": "OTEL_SERVICE_NAME",
+    "connectionString": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+    "enabled": {
+      "__name": "OTEL_ENABLED",
+      "__format": "json"
+    }
+  }
+}

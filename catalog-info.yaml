@@ -1,0 +1,20 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: "dtsse-github-metrics"
+  description: "Collects and grades evidence of software delivery practice from GitHub."
+  annotations:
+    jenkins.io/job-full-name: cft:HMCTS_a_to_i/dtsse-github-metrics
+    github.com/project-slug: hmcts/dtsse-github-metrics
+  tags:
+    - nodejs
+    - nextjs
+    - dtsse
+  links:
+    - url: https://hmcts-reform.slack.com/app_redirect?channel=dtsse-tech
+      title: "#dtsse-tech on Slack"
+      icon: chat
+spec:
+  type: service
+  lifecycle: experimental
+  owner: dtsse

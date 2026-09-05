@@ -1,0 +1,25 @@
+{
+  // The CLI is a second build output from the same source tree: `next build` compiles the app,
+  // and this compiles `src/cli` + `src/evidence` to `dist/` for the collector image entrypoint
+  // (`node dist/cli/index.js`, which the Helm CronJob runs).
+  //
+  // `moduleResolution: nodenext` rather than the root's `bundler`, because this output is run by
+  // Node directly with no bundler to resolve extensionless specifiers. That is also why nothing
+  // under `src/evidence` may use the `@/*` alias — Node cannot resolve it, and there is no
+  // rewriter in this pipeline. Relative imports only, enforced by review.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["esnext"],
+    "jsx": "preserve",
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": "src",
+    "incremental": false,
+    "plugins": [],
+    "paths": {}
+  },
+  "include": ["src/cli/**/*.ts", "src/evidence/**/*.ts"],
+  "exclude": ["node_modules", "**/*.test.ts", "**/__tests__/**"]
+}

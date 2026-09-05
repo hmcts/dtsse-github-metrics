@@ -1,0 +1,136 @@
+// Ported from `metrics.storage`, which kept two SQLite files with different lifecycles:
+//
+//   metrics.sqlite3               a disposable CACHE — deleting it costs only a refetch
+//   metrics-observations.sqlite3  DURABLE state — alert history GitHub cannot be asked for again,
+//                                 and a Sonar project map costing tens of minutes of paced calls
+//
+// One Postgres database holds both, so the boundary is no longer a file path. It survives as an
+// invariant instead: `prune` may delete from the four cache tables and must never touch
+// `alert_observations` or `sonar_project_map`. That is enforced by
+// test/integration/prune-never-touches-durable.test.ts, not by convention.
+//
+// Facts are stored as `jsonb` payloads beside the few queryable columns, exactly as upstream stored
+// `model_dump_json()` text, so adding a field to a fact needs no migration.
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/evidence/store/generated"
+}
+
+// No `url` here: Prisma 7 rejects it in the schema. The connection string reaches Migrate through
+// prisma.config.ts and the runtime client through the `PrismaPg` adapter in store/prisma.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Cache: prunable, safe to delete, refetchable ────────────────────────────────────────────────
+
+/// The last observed state of a repository: metadata, merge gate, alerts, CODEOWNERS, maintenance,
+/// Sonar. One row per repository — a collection replaces it rather than appending.
+model RepositoryState {
+  organization String
+  repository   String
+  fetchedAt    DateTime @map("fetched_at") @db.Timestamptz(6)
+  payload      Json     @db.JsonB
+
+  @@id([organization, repository])
+  @@map("repository_state")
+}
+
+/// Which intervals of which source have been collected, keyed by a hash of the GraphQL documents
+/// that collected them. Widening a query changes the hash, which auto-invalidates the intervals
+/// gathered by the narrower one — so a new field cannot be silently reported as absent.
+///
+/// `ends_at > starts_at` is enforced by a CHECK constraint added in the initial migration; Prisma has
+/// no expression for it.
+model SourceCoverage {
+  organization String
+  repository   String
+  source       String
+  queryHash    String   @map("query_hash")
+  startsAt     DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt       DateTime @map("ends_at") @db.Timestamptz(6)
+  accessedAt   DateTime @map("accessed_at") @db.Timestamptz(6)
+
+  @@id([organization, repository, source, queryHash, startsAt])
+  @@index([accessedAt])
+  @@map("source_coverage")
+}
+
+/// One merged pull request, as collected. `merged_at` is a column because windows are selected on it;
+/// everything else lives in the payload.
+model PullRequestFact {
+  organization String
+  repository   String
+  queryHash    String   @map("query_hash")
+  identifier   Int
+  mergedAt     DateTime @map("merged_at") @db.Timestamptz(6)
+  payload      Json     @db.JsonB
+
+  @@id([organization, repository, queryHash, identifier])
+  @@index([organization, repository, queryHash, mergedAt])
+  @@map("pull_request_facts")
+}
+
+/// A commit on the default branch with no associated pull request. Counted in the merge cohort
+/// denominator, because a direct commit is a change that reached the branch without review.
+model DirectCommitFact {
+  organization String
+  repository   String
+  queryHash    String   @map("query_hash")
+  sha          String
+  committedAt  DateTime @map("committed_at") @db.Timestamptz(6)
+  payload      Json     @db.JsonB
+
+  @@id([organization, repository, queryHash, sha])
+  @@index([organization, repository, queryHash, committedAt])
+  @@map("direct_commit_facts")
+}
+
+// ─── Durable: never pruned ───────────────────────────────────────────────────────────────────────
+
+/// Open-alert counts as they stood at each collection. Append-only and keyed by `fetched_at`, because
+/// GitHub serves only the present: an alert closed since the last run cannot be asked about again, so
+/// a deleted row is a hole in the history for ever.
+model AlertObservation {
+  organization String
+  repository   String
+  family       String
+  fetchedAt    DateTime @map("fetched_at") @db.Timestamptz(6)
+  payload      Json     @db.JsonB
+
+  @@id([organization, repository, family, fetchedAt])
+  @@map("alert_observations")
+}
+
+/// Which GitHub repository each SonarCloud project analyses, and how that was decided.
+///
+/// A row with `repository` null and a `detail` set is a REMEMBERED NEGATIVE — somebody paid the
+/// quota to find out that this project could not be attributed, and storing the answer is what stops
+/// the next run paying it again. The `(repository IS NULL) <> (detail IS NULL)` CHECK constraint in
+/// the initial migration encodes that: exactly one of the two is always present.
+model SonarProjectMap {
+  sonarOrganization String    @map("sonar_organization")
+  projectKey        String    @map("project_key")
+  repository        String?
+  analysisAt        DateTime? @map("analysis_at") @db.Timestamptz(6)
+  revision          String?
+  method            String?
+  resolvedAt        DateTime  @map("resolved_at") @db.Timestamptz(6)
+  detail            String?
+
+  @@id([sonarOrganization, projectKey])
+  @@map("sonar_project_map")
+}
+
+/// Replaces upstream's `source_stamp`, which invalidated the served report by `stat()`ing the two
+/// SQLite files for `(mtime, size)`. There is no file here, so a collection stamps a row instead and
+/// the report cache polls `revision` — cheap, and it works across processes, which matters now that
+/// the collector is a CronJob in a different pod from the readers.
+model CollectionState {
+  id          Int      @id @default(1)
+  revision    BigInt   @default(1)
+  collectedAt DateTime @map("collected_at") @db.Timestamptz(6)
+
+  @@map("collection_state")
+}

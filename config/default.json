@@ -1,0 +1,30 @@
+{
+  "service": {
+    "name": "dtsse-github-metrics"
+  },
+  "server": {
+    "port": 3000
+  },
+  "policy": {
+    "path": "metrics.yaml"
+  },
+  "github": {
+    "appId": "",
+    "appInstallationId": "",
+    "appPrivateKey": "",
+    "appPrivateKeyPath": "",
+    "token": ""
+  },
+  "sonar": {
+    "token": ""
+  },
+  "reportCache": {
+    "warmIntervalMinutes": 10,
+    "maximumBundleAgeMinutes": 30
+  },
+  "applicationInsights": {
+    "serviceName": "dtsse-github-metrics",
+    "connectionString": "",
+    "enabled": false
+  }
+}

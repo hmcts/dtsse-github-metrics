@@ -1,0 +1,31 @@
+{
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "target": "es2022",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    // `src/evidence` and `src/cli` are compiled twice: by Turbopack for the app, and by `tsc` to
+    // `dist/` for the collector CronJob. Turbopack resolves extensionless and `.ts` specifiers but
+    // not a `.js` one pointing at a `.ts` file; Node, running the emitted `dist/`, needs a real
+    // extension. Writing `./prisma.ts` in the source satisfies the former, and
+    // `rewriteRelativeImportExtensions` turns it into `./prisma.js` on emit for the latter.
+    "allowImportingTsExtensions": true,
+    "rewriteRelativeImportExtensions": true,
+    "jsx": "react-jsx",
+    "incremental": true,
+    "plugins": [{ "name": "next" }],
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.mts", "**/*.tsx", ".next/types/**/*.ts", ".next/dev/types/**/*.ts"],
+  "exclude": ["node_modules", "dist", "test/e2e"]
+}
