@@ -30,6 +30,14 @@ const PRIVATE_KEY = generateKeyPairSync("rsa", {
   publicKeyEncoding: { type: "spki", format: "pem" }
 }).privateKey;
 
+// GitHub's "Generate a private key" button hands out PKCS#1. The PKCS#8 fixture above is what a converted key
+// looks like; both must sign, because the real downloaded key is the first kind.
+const PKCS1_PRIVATE_KEY = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs1", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" }
+}).privateKey;
+
 const NOW = new Date("2026-08-08T12:00:00Z");
 
 function responding(...responses: { status: number; body: unknown }[]): typeof globalThis.fetch {
@@ -161,6 +169,24 @@ describe("appInstallation", () => {
 
     await expect(installation({ fetch: fetchImpl }).token()).rejects.toThrow(CredentialsError);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("should sign with a PKCS#1 key, which is what GitHub actually downloads", async () => {
+    // Regression: importPKCS8 reads only `BEGIN PRIVATE KEY`, so the real App key — `BEGIN RSA PRIVATE KEY` —
+    // was rejected as unusable until this went through node:crypto instead.
+    expect(PKCS1_PRIVATE_KEY).toContain("BEGIN RSA PRIVATE KEY");
+
+    const fetchImpl = responding({ status: 201, body: { token: "ghs_minted", expires_at: "2026-08-08T13:00:00Z" } });
+
+    expect(await installation({ privateKey: PKCS1_PRIVATE_KEY, fetch: fetchImpl }).token()).toBe("ghs_minted");
+  });
+
+  it("should sign with a PKCS#8 key too, which is what a converted one looks like", async () => {
+    expect(PRIVATE_KEY).toContain("BEGIN PRIVATE KEY");
+
+    const fetchImpl = responding({ status: 201, body: { token: "ghs_minted", expires_at: "2026-08-08T13:00:00Z" } });
+
+    expect(await installation({ privateKey: PRIVATE_KEY, fetch: fetchImpl }).token()).toBe("ghs_minted");
   });
 
   it("should report an unusable private key in one line rather than a crypto traceback", async () => {

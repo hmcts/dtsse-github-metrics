@@ -41,6 +41,13 @@ Thumbs.db
 config/local.json
 config/local-*.json
 
+# Credentials
+*.pem
+*.pem.aes
+*.aes
+*.p12
+*.key
+
 # Helm rendered values
 charts/**/values.aat.yaml
 charts/**/values.preview.yaml

@@ -1,7 +1,8 @@
+import { createPrivateKey, type KeyObject } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { importPKCS8, SignJWT } from "jose";
+import { SignJWT } from "jose";
 import { redacted, refusal } from "./redact.ts";
 
 /**
@@ -14,10 +15,9 @@ import { redacted, refusal } from "./redact.ts";
  * supported because it is what a developer already has in their shell, and a run that reads less is
  * better than a run nobody can start.
  *
- * This port currently deploys with a PAT — the `dtsse-aat` vault holds `github-token` and no App
- * secrets — so in practice merge-gate and alert evidence will report as unavailable rather than as
- * numbers. The App path is ported anyway and selected the moment the three variables are set, so
- * switching is a Key Vault change and no code change.
+ * Measured on the HMCTS estate: authenticating as a PAT is refused on classic branch protection and on all
+ * three alert families, so those report as unavailable rather than as numbers. The same run as a GitHub App
+ * installation reads every one of them.
  *
  * App auth is selected only when the whole set — an App id, an installation id and a private key — is
  * configured, so a half-set left over from an experiment falls back to the token rather than failing the
@@ -139,11 +139,22 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
     return expiresAt !== undefined && now().getTime() + RENEWAL_MARGIN_MS >= expiresAt.getTime();
   }
 
+  /**
+   * Reads the App's key in either format GitHub hands out.
+   *
+   * GitHub's "Generate a private key" button downloads PKCS#1 (`BEGIN RSA PRIVATE KEY`), while a key converted
+   * for another tool is usually PKCS#8 (`BEGIN PRIVATE KEY`). `jose`'s `importPKCS8` reads only the second, so
+   * the real downloaded key was rejected as unusable. Node's own `createPrivateKey` reads both.
+   */
+  function importPrivateKey(pem: string): KeyObject {
+    return createPrivateKey(pem);
+  }
+
   /** Signs the short-lived JWT that proves this process holds the App's private key. */
   async function assertion(): Promise<string> {
     const issuedAt = Math.floor((now().getTime() - JWT_BACKDATE_MS) / 1000);
     try {
-      const key = await importPKCS8(privateKey, "RS256");
+      const key = importPrivateKey(privateKey);
       return await new SignJWT({})
         .setProtectedHeader({ alg: "RS256" })
         .setIssuedAt(issuedAt)
