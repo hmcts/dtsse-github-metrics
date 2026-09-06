@@ -1,0 +1,22 @@
+apiVersion: v2
+appVersion: "1.0"
+description: Collects and grades evidence of software delivery practice from GitHub
+name: dtsse-github-metrics
+home: https://github.com/hmcts/dtsse-github-metrics
+version: 0.0.1
+dependencies:
+  # The web pod: the Next.js server that reads the collected evidence and renders the dashboard.
+  - name: nodejs
+    version: 3.2.1
+    repository: "oci://hmctsprod.azurecr.io/helm"
+  # The collector, as a CronJob on the same image with a different command. `global.jobKind` selects CronJob
+  # over a one-shot Job.
+  - name: job
+    version: 2.2.1
+    repository: "oci://hmctsprod.azurecr.io/helm"
+    condition: job.enabled
+  # Preview only: AAT and prod read a Postgres provisioned outside this chart.
+  - name: postgresql
+    version: 16.7.31
+    repository: "oci://registry-1.docker.io/bitnamicharts"
+    condition: postgresql.enabled

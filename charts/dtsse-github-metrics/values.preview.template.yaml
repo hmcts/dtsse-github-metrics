@@ -1,0 +1,35 @@
+nodejs:
+  # Don't modify below here
+  image: ${IMAGE_NAME}
+  ingressHost: ${SERVICE_FQDN}
+  memoryRequests: 1Gi
+  memoryLimits: 2Gi
+  keyVaults:
+    dtsse:
+      secrets:
+        - name: app-insights-connection-string
+          alias: APPLICATIONINSIGHTS_CONNECTION_STRING
+  environment:
+    # The in-chart Postgres, so a preview provisions nothing outside itself.
+    DATABASE_URL: "postgresql://hmcts:hmcts@${SERVICE_NAME}-postgresql:5432/github_metrics"
+    METRICS_CONFIG: /app/metrics.example.yaml
+
+# A preview's CronJob is DISABLED. Nothing has collected for it, which is the state its smoke tests assert
+# against: the pages must render and health must be UP with an empty database, because that is what a pull
+# request deploys into. A collection here would also spend the App's quota on every preview.
+job:
+  enabled: false
+
+postgresql:
+  enabled: true
+  auth:
+    username: hmcts
+    password: hmcts
+    database: github_metrics
+  primary:
+    persistence:
+      enabled: false
+
+global:
+  security:
+    allowInsecureImages: true

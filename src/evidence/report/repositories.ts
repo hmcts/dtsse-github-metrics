@@ -5,7 +5,7 @@ import { sourceSignature } from "../behaviour/queries.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
 import type { Merges } from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
-import type { SecurityAlertEvidence } from "../domain/security-alerts.ts";
+import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import { configuredRepositories, repositoryOwners, teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
@@ -89,9 +89,27 @@ function storedGate(payload: unknown): MergeGateReport {
  */
 function reportedAlerts(alerts: SecurityAlertEvidence | undefined): Record<string, unknown> {
   return {
-    dependabot: alerts?.dependabot ?? { detail: "the alert families have not been collected" },
-    code_scanning: alerts?.codeScanning ?? { detail: "the alert families have not been collected" },
-    secret_scanning: alerts?.secretScanning ?? { detail: "the alert families have not been collected" }
+    dependabot: reportedFamily(alerts?.dependabot),
+    code_scanning: reportedFamily(alerts?.codeScanning),
+    secret_scanning: reportedFamily(alerts?.secretScanning)
+  };
+}
+
+/**
+ * One family, in the shape the UI declares.
+ *
+ * `by_severity` is REQUIRED and snake_case: `tone.ts` reads `by_severity.critical` without a guard, so an absent
+ * map throws. An empty object is the honest value for a family with nothing open and for one nobody could read —
+ * what separates those two is `open`, which stays absent when it was never measured.
+ */
+function reportedFamily(family: OpenAlertCount | undefined): Record<string, unknown> {
+  if (family === undefined) {
+    return { by_severity: {}, detail: "the alert families have not been collected" };
+  }
+  return {
+    ...(family.open === undefined ? {} : { open: family.open }),
+    by_severity: family.bySeverity ?? {},
+    ...(family.detail === undefined ? {} : { detail: family.detail })
   };
 }
 
