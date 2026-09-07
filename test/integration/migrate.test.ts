@@ -1,6 +1,6 @@
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { migrate } from "../../src/evidence/store/migrate.ts";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { migrate, migrationsDirectory } from "../../src/evidence/store/migrate.ts";
 
 /**
  * That the deployed image can bring an empty database up to the schema.
@@ -109,5 +109,50 @@ describe("migrate", () => {
     } finally {
       await client.end();
     }
+  });
+});
+
+describe("migrate waiting for the database", () => {
+  const original = process.env.DATABASE_URL;
+
+  afterAll(() => {
+    if (original === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = original;
+    }
+  });
+
+  it("should retry a refused connection while the database is still starting", async () => {
+    // Nothing listens on this port, so every attempt is refused. What is asserted is that it kept trying rather
+    // than exiting on the first refusal — the behaviour that stops a fresh deploy restarting its web pod.
+    process.env.DATABASE_URL = "postgresql://hmcts:hmcts@127.0.0.1:1/never_listening";
+    let waits = 0;
+
+    await expect(
+      migrate(migrationsDirectory(), async () => {
+        waits += 1;
+        if (waits > 2) {
+          // Stand in for the deadline, so the test does not spend two minutes proving the point.
+          throw new Error("stop waiting");
+        }
+      })
+    ).rejects.toThrow();
+
+    expect(waits).toBeGreaterThan(1);
+  });
+
+  it("should fail immediately when the database answers with a refusal of its own", async () => {
+    // A database that does not exist is not one that is starting up: Postgres is listening and has answered. That
+    // has to fail at once, because retrying it for two minutes would turn a clear misconfiguration into a slow
+    // one. Built from `original` rather than from whatever the previous test left in the environment.
+    const url = new URL(original ?? "postgresql://hmcts@localhost:5432/github_metrics");
+    url.pathname = "/no_such_database_here";
+    process.env.DATABASE_URL = url.toString();
+    const pause = vi.fn<(ms: number) => Promise<void>>();
+
+    await expect(migrate(migrationsDirectory(), pause)).rejects.toThrow();
+
+    expect(pause).not.toHaveBeenCalled();
   });
 });

@@ -47,6 +47,56 @@ interface Migration {
   readonly checksum: string;
 }
 
+/**
+ * How long to keep waiting for Postgres before giving up, and how long between attempts.
+ *
+ * Measured on a preview: Helm creates the database and the web pod at the same moment, the pod won by ten
+ * seconds, and `ECONNREFUSED` killed it. Kubernetes restarted it and the second attempt worked — so nothing was
+ * broken, but every fresh deploy showed a restart and a failed startup probe, which is indistinguishable at a
+ * glance from a pod that is actually crash-looping. Waiting here makes the first attempt the only attempt.
+ *
+ * Bounded rather than indefinite: a database that is not there in two minutes is not slow to start, it is
+ * misconfigured, and a pod that never exits never tells anybody that.
+ */
+const CONNECT_TIMEOUT_MS = 120_000;
+const CONNECT_RETRY_MS = 2_000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * A connected client, tolerating a database that has not finished starting.
+ *
+ * A FRESH client per attempt, which is not incidental: `pg.Client` is single-use, and calling `connect()` again
+ * on one whose first attempt failed throws "Client has already been connected. You cannot reuse a client" —
+ * an error with no errno, so a retry loop reusing the client treats it as final and gives up after one attempt.
+ * That is exactly the bug this function exists to avoid, and it is what the integration test pins.
+ *
+ * Only a refused or unresolvable connection is retried. Bad credentials, a missing database and anything else
+ * Postgres answers with are final: retrying those for two minutes would turn a clear failure into a slow one.
+ */
+async function connectWhenReady(connectionString: string, pause: (ms: number) => Promise<void>): Promise<pg.Client> {
+  const deadline = Date.now() + CONNECT_TIMEOUT_MS;
+
+  for (;;) {
+    const client = new pg.Client({ connectionString });
+    try {
+      await client.connect();
+      return client;
+    } catch (error) {
+      await client.end().catch(() => undefined);
+      const code = (error as { code?: string }).code;
+      const starting = code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "EAI_AGAIN";
+      if (!starting || Date.now() >= deadline) {
+        throw error;
+      }
+      console.info(`waiting for the database: ${error instanceof Error ? error.message : String(error)}`);
+      await pause(CONNECT_RETRY_MS);
+    }
+  }
+}
+
 /** Where the migrations live, relative to the working directory both the image and a local run use. */
 export function migrationsDirectory(cwd: string = process.cwd()): string {
   return path.join(cwd, "prisma", "migrations");
@@ -88,10 +138,9 @@ async function applied(client: pg.ClientBase): Promise<Set<string>> {
  * in its own transaction alongside its ledger row, so a failure half way leaves the ones before it applied and
  * recorded, which is what lets the next start resume rather than begin again.
  */
-export async function migrate(directory: string = migrationsDirectory()): Promise<string[]> {
+export async function migrate(directory: string = migrationsDirectory(), pause: (ms: number) => Promise<void> = sleep): Promise<string[]> {
   const migrations = await readMigrations(directory);
-  const client = new pg.Client({ connectionString: resolveDatabaseUrl() });
-  await client.connect();
+  const client = await connectWhenReady(resolveDatabaseUrl(), pause);
 
   try {
     await client.query("SELECT pg_advisory_lock($1)", [LOCK_KEY.toString()]);
