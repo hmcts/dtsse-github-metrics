@@ -3,14 +3,24 @@ import { CheckConclusion, type CheckFact, type DirectCommitFact, type PullReques
 import type { GitHubClient } from "../github/client.ts";
 import { githubTimestamp } from "../window/instant.ts";
 import type { ReportingWindow } from "../window/window.ts";
-import { checkQuery, commitHistoryQuery, mergedPullRequestQuery, openPullRequestQuery, openPullRequestSearchQueries, reviewQuery } from "./queries.ts";
 import {
+  abandonedPullRequestQuery,
+  checkQuery,
+  commitHistoryQuery,
+  createdPullRequestQuery,
+  mergedPullRequestQuery,
+  openPullRequestQuery,
+  reviewQuery
+} from "./queries.ts";
+import {
+  abandonedPullRequestSchema,
   type CheckConnection,
   type CheckContext,
   type CommitConnection,
   type CommitNode,
   checkPageSchema,
   commitHistorySchema,
+  createdPullRequestSchema,
   mergedPullRequestSchema,
   openPullRequestSchema,
   type PullRequestNode,
@@ -19,9 +29,11 @@ import {
   type ReviewNode,
   reviewPageSchema
 } from "./responses.ts";
+
 /**
  * Collecting behaviour facts from GitHub. Ported from `metrics.behaviour`'s collection half.
  */
+
 /** Open pull-request counts for one window, never cached. */
 export interface OpenPullRequestSummary {
   openedInWindow: number;
@@ -29,6 +41,7 @@ export interface OpenPullRequestSummary {
   currentlyOpen: number;
   staleOpen: number;
 }
+
 /** Maps a legacy commit-status state onto a check conclusion. */
 export function statusConclusion(state: string): CheckConclusion | undefined {
   const mapped: Record<string, CheckConclusion> = {
@@ -38,6 +51,7 @@ export function statusConclusion(state: string): CheckConclusion | undefined {
   };
   return mapped[state];
 }
+
 /**
  * Normalises a check run or a legacy status context into one compact fact.
  *
@@ -61,6 +75,7 @@ export function checkFact(context: CheckContext): CheckFact {
     ...(conclusion !== undefined && context.createdAt ? { completedAt: context.createdAt } : {})
   };
 }
+
 /** Converts one GitHub review into a compact internal fact. */
 export function reviewFact(review: ReviewNode): ReviewFact {
   return {
@@ -73,11 +88,13 @@ export function reviewFact(review: ReviewNode): ReviewFact {
     ...((review.body ?? "").trim() === "" ? {} : { body: review.body as string })
   };
 }
+
 /** The rollup contexts of a pull request's head commit, if it has any. */
 export function headCommitChecks(commits: CommitConnection): CheckConnection | undefined {
   const first = commits.nodes[0];
   return first?.commit.statusCheckRollup?.contexts ?? undefined;
 }
+
 /** Collects all review pages, issuing follow-ups only after a bounded connection overflows. */
 async function collectReviews(
   client: GitHubClient,
@@ -100,6 +117,7 @@ async function collectReviews(
   }
   return reviews;
 }
+
 /** Collects all rollup pages, issuing follow-ups only after a bounded connection overflows. */
 async function collectChecks(
   client: GitHubClient,
@@ -125,6 +143,7 @@ async function collectChecks(
   }
   return checks;
 }
+
 /** Converts one GitHub pull request and its complete reviews into a compact fact. */
 async function pullRequestFact(client: GitHubClient, organization: string, repository: string, node: PullRequestNode): Promise<PullRequestFact> {
   const readyForReviewAt = node.timelineItems.nodes.find((event) => event?.createdAt != null)?.createdAt ?? undefined;
@@ -147,14 +166,15 @@ async function pullRequestFact(client: GitHubClient, organization: string, repos
     checks: await collectChecks(client, organization, repository, node.number, headCommitChecks(node.commits))
   };
 }
+
 /**
- * Collects merged pull requests in date shards, deduplicating inclusive search boundaries.
+ * Collects the merged pull requests inside one window.
  *
- * TWO CONVENTIONS MEET HERE. Shard boundaries are inclusive, so consecutive shards overlap by one second and
- * a merge landing on a boundary is returned twice — hence the map keyed by identifier. The WINDOW is
- * half-open, which is why membership is decided again per page against `startsAt <= mergedAt < endsAt`.
+ * The WINDOW is half-open, so membership is `startsAt <= mergedAt < endsAt` and is decided per node rather than
+ * left to the query — the walk is ordered by last touch, which says nothing about when a change merged.
  *
- * Sorted by `(mergedAt, identifier)` at the end, so two merges at one instant cannot reorder between runs.
+ * Keyed by identifier while collecting, so a node returned twice cannot be counted twice, and sorted by
+ * `(mergedAt, identifier)` at the end so two merges at one instant cannot reorder between runs.
  */
 export async function collectMergedPullRequests(
   client: GitHubClient,
@@ -197,6 +217,7 @@ export async function collectMergedPullRequests(
   }
   return [...facts.values()].sort((left, right) => left.mergedAt.getTime() - right.mergedAt.getTime() || left.identifier - right.identifier);
 }
+
 /** Converts one default-branch commit into a compact fact. */
 export function directCommitFact(node: CommitNode, repository: string): DirectCommitFact {
   return {
@@ -212,6 +233,7 @@ export function directCommitFact(node: CommitNode, repository: string): DirectCo
     ...(node.statusCheckRollup?.state == null ? {} : { checkState: node.statusCheckRollup.state })
   };
 }
+
 /**
  * Collects the default-branch commits in a window that no pull request introduced.
  *
@@ -259,6 +281,7 @@ export async function collectDirectCommits(
   }
   return [...facts.values()].sort((left, right) => left.committedAt.getTime() - right.committedAt.getTime() || left.sha.localeCompare(right.sha));
 }
+
 /**
  * Fetches open pull-request counts in one call, fresh every time.
  *
@@ -277,16 +300,106 @@ export async function collectOpenPullRequestState(
   reference: Date
 ): Promise<OpenPullRequestSummary> {
   const staleCutoff = new Date(reference.getTime() - staleOpenDays * 86_400_000);
-  const queries = openPullRequestSearchQueries(organization, repository, window, staleCutoff);
-  const data = await client.graphql(openPullRequestQuery(), queries);
-  const parsed = parseResponse(openPullRequestSchema, data, "open pull-request data");
-  return {
-    openedInWindow: parsed.openedInWindow.issueCount,
-    closedWithoutMerge: parsed.closedWithoutMerge.issueCount,
-    currentlyOpen: parsed.currentlyOpen.issueCount,
-    staleOpen: parsed.staleOpen.issueCount
-  };
+  const variables = { organization, repository };
+
+  let currentlyOpen = 0;
+  let staleOpen = 0;
+  let cursor: string | null = null;
+  for (;;) {
+    const data: unknown = await client.graphql(openPullRequestQuery(), { ...variables, cursor });
+    const connection = parseResponse(openPullRequestSchema, data, "open pull-request data").repository?.pullRequests;
+    if (connection === undefined || connection === null) {
+      throw new GitHubError("GitHub omitted the repository while collecting open pull requests", AvailabilityReason.CollectionFailed);
+    }
+    currentlyOpen = connection.totalCount;
+    // Ascending, so the first pull request touched since the cutoff ends the walk: nothing after it is stale.
+    const quiet = connection.nodes.filter((node) => node != null).filter((node) => node.updatedAt.getTime() < staleCutoff.getTime());
+    staleOpen += quiet.length;
+    if (quiet.length < connection.nodes.filter((node) => node != null).length || !connection.pageInfo.hasNextPage) {
+      break;
+    }
+    cursor = connection.pageInfo.endCursor ?? null;
+  }
+
+  const openedInWindow = await countWithin(
+    client,
+    createdPullRequestQuery(),
+    variables,
+    (data) => {
+      const connection = parseResponse(createdPullRequestSchema, data, "created pull-request data").repository?.pullRequests;
+      if (connection === undefined || connection === null) {
+        throw new GitHubError("GitHub omitted the repository while collecting created pull requests", AvailabilityReason.CollectionFailed);
+      }
+      return {
+        pageInfo: connection.pageInfo,
+        instants: connection.nodes.filter((node) => node != null).map((node) => ({ ordered: node.createdAt, counted: node.createdAt }))
+      };
+    },
+    window
+  );
+
+  const closedWithoutMerge = await countWithin(
+    client,
+    abandonedPullRequestQuery(),
+    variables,
+    (data) => {
+      const connection = parseResponse(abandonedPullRequestSchema, data, "abandoned pull-request data").repository?.pullRequests;
+      if (connection === undefined || connection === null) {
+        throw new GitHubError("GitHub omitted the repository while collecting abandoned pull requests", AvailabilityReason.CollectionFailed);
+      }
+      return {
+        pageInfo: connection.pageInfo,
+        instants: connection.nodes
+          .filter((node) => node != null)
+          .filter((node) => node.closedAt != null)
+          .map((node) => ({ ordered: node.updatedAt, counted: node.closedAt as Date }))
+      };
+    },
+    window
+  );
+
+  return { openedInWindow, closedWithoutMerge, currentlyOpen, staleOpen };
 }
+
+/**
+ * Walks a descending connection counting the instants inside a window, and stops once it has passed the window.
+ *
+ * `ordered` is the field the connection is sorted by and `counted` is the one being tested, because they are not
+ * always the same: closed-without-merge is ordered by last touch and counted by close time. The walk terminates on
+ * `ordered`, which is sound as long as `counted <= ordered` — true for both callers.
+ */
+async function countWithin(
+  client: GitHubClient,
+  query: string,
+  variables: Record<string, unknown>,
+  read: (data: unknown) => { pageInfo: { hasNextPage: boolean; endCursor?: string | null }; instants: { ordered: Date; counted: Date }[] },
+  window: ReportingWindow
+): Promise<number> {
+  let total = 0;
+  let cursor: string | null = null;
+
+  for (;;) {
+    const data: unknown = await client.graphql(query, { ...variables, cursor });
+    const { pageInfo, instants } = read(data);
+
+    let passed = false;
+    for (const { ordered, counted } of instants) {
+      if (ordered.getTime() < window.startsAt.getTime()) {
+        passed = true;
+        break;
+      }
+      if (counted.getTime() >= window.startsAt.getTime() && counted.getTime() < window.endsAt.getTime()) {
+        total += 1;
+      }
+    }
+
+    if (passed || !pageInfo.hasNextPage) {
+      return total;
+    }
+    cursor = pageInfo.endCursor ?? null;
+  }
+}
+
 /**
  * The instant a window stops being settled history.
  *

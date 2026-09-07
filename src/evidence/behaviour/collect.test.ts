@@ -6,7 +6,7 @@ import { createGitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
 import { checkFact, collectDirectCommits, collectMergedPullRequests, collectOpenPullRequestState, mutableEdge, statusConclusion } from "./collect.ts";
 import { deserialise } from "./fill.ts";
-import { commitQuerySignature, dateShards, mergedSearchQuery, openPullRequestSearchQueries, querySignature, sourceSignature } from "./queries.ts";
+import { commitQuerySignature, querySignature, sourceSignature } from "./queries.ts";
 
 function replying(...bodies: unknown[]): { fetch: typeof globalThis.fetch; sent: { query: string; variables: Record<string, unknown> }[] } {
   const queue = [...bodies];
@@ -65,50 +65,6 @@ beforeEach(() => {
   vi.spyOn(console, "debug").mockImplementation(() => undefined);
 });
 
-describe("dateShards", () => {
-  it("should split a window into thirty-day intervals that meet exactly", () => {
-    const shards = [...dateShards(new Date("2026-05-10T00:00:00Z"), new Date("2026-08-08T00:00:00Z"))];
-
-    expect(shards).toHaveLength(3);
-    expect(shards[0]?.startsAt.toISOString()).toBe("2026-05-10T00:00:00.000Z");
-    expect(shards[0]?.endsAt.toISOString()).toBe("2026-06-09T00:00:00.000Z");
-    expect(shards[1]?.startsAt.toISOString()).toBe("2026-06-09T00:00:00.000Z");
-    expect(shards.at(-1)?.endsAt.toISOString()).toBe("2026-08-08T00:00:00.000Z");
-  });
-
-  it("should yield one shard for a window shorter than the shard length", () => {
-    expect([...dateShards(new Date("2026-08-01Z"), new Date("2026-08-05Z"))]).toHaveLength(1);
-  });
-
-  it("should yield nothing for an empty window", () => {
-    expect([...dateShards(new Date("2026-08-01Z"), new Date("2026-08-01Z"))]).toEqual([]);
-  });
-});
-
-describe("mergedSearchQuery", () => {
-  it("should use an inclusive range with second precision and no fractional part", () => {
-    const query = mergedSearchQuery("hmcts", "cath-service", new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-31T00:00:00.000Z"));
-
-    expect(query).toBe("repo:hmcts/cath-service is:pr is:merged merged:2026-08-01T00:00:00Z..2026-08-31T00:00:00Z");
-  });
-});
-
-describe("openPullRequestSearchQueries", () => {
-  it("should express the exclusive upper bound by ending the inclusive range one second early", () => {
-    const queries = openPullRequestSearchQueries(
-      "hmcts",
-      "cath-service",
-      { startsAt: new Date("2026-05-09T00:00:00Z"), endsAt: new Date("2026-08-08T00:00:00Z") },
-      new Date("2026-07-25T00:00:00Z")
-    );
-
-    expect(queries.openedQuery).toBe("repo:hmcts/cath-service is:pr created:2026-05-09T00:00:00Z..2026-08-07T23:59:59Z");
-    expect(queries.closedWithoutMergeQuery).toContain("is:closed -is:merged closed:2026-05-09T00:00:00Z..2026-08-07T23:59:59Z");
-    expect(queries.openQuery).toBe("repo:hmcts/cath-service is:pr is:open");
-    expect(queries.staleOpenQuery).toBe("repo:hmcts/cath-service is:pr is:open updated:<2026-07-25T00:00:00Z");
-  });
-});
-
 describe("signatures", () => {
   it("should give each independently cached source its own signature", () => {
     expect(querySignature()).not.toBe(commitQuerySignature());
@@ -125,7 +81,7 @@ describe("signatures", () => {
 });
 
 describe("collectMergedPullRequests", () => {
-  it("should convert a search page into facts", async () => {
+  it("should convert a page of merged pull requests into facts", async () => {
     const { fetch } = replying(merged([pullRequestNode()]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
@@ -439,45 +395,80 @@ describe("collectDirectCommits", () => {
 });
 
 describe("collectOpenPullRequestState", () => {
-  it("should read four counts from one round trip", async () => {
-    const { fetch, sent } = replying({
-      openedInWindow: { issueCount: 12 },
-      closedWithoutMerge: { issueCount: 3 },
-      currentlyOpen: { issueCount: 7 },
-      staleOpen: { issueCount: 2 }
-    });
+  const WINDOW = { startsAt: new Date("2026-08-01Z"), endsAt: new Date("2026-08-31Z") };
+  const REFERENCE = new Date("2026-08-31T00:00:00Z");
 
-    const summary = await collectOpenPullRequestState(
-      client(fetch),
-      "hmcts",
-      "cath-service",
-      { startsAt: new Date("2026-08-01Z"), endsAt: new Date("2026-08-31Z") },
-      14,
-      new Date("2026-08-31T00:00:00Z")
+  /** The three walks the summary is built from, in the order they are issued. */
+  function replyingWithState(open: unknown, created: unknown, abandoned: unknown) {
+    return replying(open, created, abandoned);
+  }
+
+  function openPage(totalCount: number, updatedAt: string[], hasNextPage = false) {
+    return {
+      repository: {
+        pullRequests: { totalCount, pageInfo: { hasNextPage, endCursor: hasNextPage ? "MORE" : null }, nodes: updatedAt.map((at) => ({ updatedAt: at })) }
+      }
+    };
+  }
+
+  function createdPage(createdAt: string[]) {
+    return { repository: { pullRequests: { pageInfo: PAGE_END, nodes: createdAt.map((at) => ({ createdAt: at })) } } };
+  }
+
+  function abandonedPage(nodes: { updatedAt: string; closedAt: string | null }[]) {
+    return { repository: { pullRequests: { pageInfo: PAGE_END, nodes } } };
+  }
+
+  it("should read the four counts off the repository rather than out of search", async () => {
+    const { fetch } = replyingWithState(
+      openPage(7, ["2026-08-01T00:00:00Z", "2026-08-30T00:00:00Z"]),
+      createdPage(["2026-08-10T00:00:00Z", "2026-08-05T00:00:00Z", "2026-07-01T00:00:00Z"]),
+      abandonedPage([
+        { updatedAt: "2026-08-20T00:00:00Z", closedAt: "2026-08-20T00:00:00Z" },
+        { updatedAt: "2026-07-01T00:00:00Z", closedAt: "2026-07-01T00:00:00Z" }
+      ])
     );
 
-    expect(summary).toEqual({ openedInWindow: 12, closedWithoutMerge: 3, currentlyOpen: 7, staleOpen: 2 });
-    expect(sent).toHaveLength(1);
+    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
+
+    // currentlyOpen is the connection total; the other three are counted from the nodes.
+    expect(summary).toEqual({ currentlyOpen: 7, staleOpen: 1, openedInWindow: 2, closedWithoutMerge: 1 });
   });
 
-  it("should measure staleness from the last update rather than from when a pull request was opened", async () => {
-    const { fetch, sent } = replying({
-      openedInWindow: { issueCount: 0 },
-      closedWithoutMerge: { issueCount: 0 },
-      currentlyOpen: { issueCount: 0 },
-      staleOpen: { issueCount: 0 }
-    });
+  it("should measure staleness from the last update, against the cutoff the reference implies", async () => {
+    // 14 days before 2026-08-31 is 2026-08-17: the first is stale, the second is not.
+    const { fetch } = replyingWithState(openPage(2, ["2026-08-16T23:59:59Z", "2026-08-17T00:00:01Z"]), createdPage([]), abandonedPage([]));
 
-    await collectOpenPullRequestState(
-      client(fetch),
-      "hmcts",
-      "cath-service",
-      { startsAt: new Date("2026-08-01Z"), endsAt: new Date("2026-08-31Z") },
-      14,
-      new Date("2026-08-31T00:00:00Z")
-    );
+    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
 
-    expect(sent[0]?.variables.staleOpenQuery).toContain("updated:<2026-08-17T00:00:00Z");
+    expect(summary.staleOpen).toBe(1);
+  });
+
+  it("should stop walking open pull requests at the first one touched since the cutoff", async () => {
+    // Ascending order, so a page whose last node is recent settles the answer and the next page is never asked for.
+    const { fetch, sent } = replyingWithState(openPage(50, ["2026-08-01T00:00:00Z", "2026-08-30T00:00:00Z"], true), createdPage([]), abandonedPage([]));
+
+    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
+
+    expect(summary.staleOpen).toBe(1);
+    // Three calls: one open page, then the created and abandoned walks. Not a second open page.
+    expect(sent).toHaveLength(3);
+  });
+
+  it("should ignore a closed pull request GitHub gave no close instant", async () => {
+    const { fetch } = replyingWithState(openPage(0, []), createdPage([]), abandonedPage([{ updatedAt: "2026-08-20T00:00:00Z", closedAt: null }]));
+
+    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
+
+    expect(summary.closedWithoutMerge).toBe(0);
+  });
+
+  it("should fail loudly when GitHub omits the repository", async () => {
+    const { fetch } = replying({ repository: null });
+
+    const error = await failing(collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE));
+
+    expect(error.message).toMatch(/omitted the repository while collecting open pull requests/);
   });
 });
 

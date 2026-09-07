@@ -1,7 +1,5 @@
 import { createHash } from "node:crypto";
 import { EvidenceSource } from "../domain/coverage.ts";
-import { githubTimestamp } from "../window/instant.ts";
-import type { ReportingWindow } from "../window/window.ts";
 
 /**
  * The GraphQL documents behaviour collection sends. Ported from `metrics.behaviour`.
@@ -180,50 +178,61 @@ export function commitHistoryQuery(): string {
  * CACHED, so keeping the shape cheap and constant matters more than for a source fetched once and reused.
  * `first: 1` is the minimum GitHub's search connection accepts; nothing under it is read.
  */
+/**
+ * Currently-open pull requests, oldest touch first.
+ *
+ * `totalCount` answers "how many are open" in one field. The nodes answer "how many have gone quiet", and
+ * ASCENDING order is what makes that cheap: the stalest sit on the first page, so the walk stops at the first
+ * pull request touched since the cutoff rather than reading every open one.
+ */
 export function openPullRequestQuery(): string {
   return `
-        query OpenPullRequests(
-          $openedQuery: String!
-          $closedWithoutMergeQuery: String!
-          $openQuery: String!
-          $staleOpenQuery: String!
-        ) {
-          openedInWindow: search(query: $openedQuery, type: ISSUE, first: 1) { issueCount }
-          closedWithoutMerge: search(query: $closedWithoutMergeQuery, type: ISSUE, first: 1) { issueCount }
-          currentlyOpen: search(query: $openQuery, type: ISSUE, first: 1) { issueCount }
-          staleOpen: search(query: $staleOpenQuery, type: ISSUE, first: 1) { issueCount }
+        query OpenPullRequests($organization: String!, $repository: String!, $cursor: String) {
+          repository(owner: $organization, name: $repository) {
+            pullRequests(states: OPEN, orderBy: { field: UPDATED_AT, direction: ASC }, first: 50, after: $cursor) {
+              totalCount
+              pageInfo { hasNextPage endCursor }
+              nodes { updatedAt }
+            }
+          }
+          rateLimit { cost limit remaining resetAt }
+        }
+    `;
+}
+
+/** Pull requests by creation, newest first, for the count opened inside a window. */
+export function createdPullRequestQuery(): string {
+  return `
+        query CreatedPullRequests($organization: String!, $repository: String!, $cursor: String) {
+          repository(owner: $organization, name: $repository) {
+            pullRequests(orderBy: { field: CREATED_AT, direction: DESC }, first: 50, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes { createdAt }
+            }
+          }
           rateLimit { cost limit remaining resetAt }
         }
     `;
 }
 
 /**
- * The four search qualifiers the open-pull-request query bundles into one call.
+ * Pull requests closed WITHOUT being merged, most recently touched first.
  *
- * Each bounded qualifier uses GitHub's inclusive `start..end` range, NOT a pair of `>=` / `<` comparisons.
- * Two comparisons on one qualifier read as a half-open window but GITHUB DOES NOT INTERSECT THEM: measured
- * against hmcts/cath-service, `created:>=2026-05-09T00:00:00Z created:<2026-08-08T00:00:00Z` returned 614
- * pull requests for a window whose merged, closed and still-open counts together account for roughly 240 —
- * the count of every pull request the repository has ever opened, i.e. only the last qualifier applied.
- *
- * The window's exclusive upper bound is therefore expressed by ending the inclusive range ONE SECOND EARLY;
- * GitHub search resolves timestamps to the second.
+ * `states: CLOSED` already excludes merged ones — GitHub's `PullRequestState` treats MERGED as its own state —
+ * so no negation is needed and none can be got wrong.
  */
-export function openPullRequestSearchQueries(organization: string, repository: string, window: ReportingWindow, staleCutoff: Date): Record<string, string> {
-  const base = `repo:${organization}/${repository} is:pr`;
-  const startsAt = githubTimestamp(window.startsAt);
-  const lastInstant = githubTimestamp(new Date(window.endsAt.getTime() - 1000));
-  return {
-    openedQuery: `${base} created:${startsAt}..${lastInstant}`,
-    closedWithoutMergeQuery: `${base} is:closed -is:merged closed:${startsAt}..${lastInstant}`,
-    openQuery: `${base} is:open`,
-    staleOpenQuery: `${base} is:open updated:<${githubTimestamp(staleCutoff)}`
-  };
-}
-
-/** The merged-pull-request search qualifier for one shard of a window. */
-export function mergedSearchQuery(organization: string, repository: string, startsAt: Date, endsAt: Date): string {
-  return `repo:${organization}/${repository} is:pr is:merged merged:${githubTimestamp(startsAt)}..${githubTimestamp(endsAt)}`;
+export function abandonedPullRequestQuery(): string {
+  return `
+        query AbandonedPullRequests($organization: String!, $repository: String!, $cursor: String) {
+          repository(owner: $organization, name: $repository) {
+            pullRequests(states: CLOSED, orderBy: { field: UPDATED_AT, direction: DESC }, first: 50, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes { updatedAt closedAt }
+            }
+          }
+          rateLimit { cost limit remaining resetAt }
+        }
+    `;
 }
 
 /**
@@ -259,25 +268,4 @@ export function commitQuerySignature(): string {
  */
 export function sourceSignature(source: EvidenceSource): string {
   return source === EvidenceSource.PullRequests ? querySignature() : commitQuerySignature();
-}
-
-const SHARD_DAYS = 30;
-
-/**
- * Splits a collection window into bounded search intervals.
- *
- * Thirty days, because GitHub's search caps any one query at 1000 results and a shard above that cap is
- * reported as incomplete history rather than silently truncated.
- *
- * NOTE the two conventions in play: shard boundaries are passed to GitHub as INCLUSIVE ranges, so
- * consecutive shards overlap by one second and a merge landing exactly on a boundary is returned twice. The
- * caller dedupes by identifier. The WINDOW itself stays half-open, and the caller filters on that too.
- */
-export function* dateShards(startsAt: Date, endsAt: Date): Generator<{ startsAt: Date; endsAt: Date }> {
-  let cursor = startsAt;
-  while (cursor.getTime() < endsAt.getTime()) {
-    const boundary = new Date(Math.min(cursor.getTime() + SHARD_DAYS * 86_400_000, endsAt.getTime()));
-    yield { startsAt: cursor, endsAt: boundary };
-    cursor = boundary;
-  }
 }

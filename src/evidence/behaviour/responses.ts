@@ -103,10 +103,17 @@ export const commitHistorySchema = z.object({
 });
 
 export const openPullRequestSchema = z.object({
-  openedInWindow: z.object({ issueCount: z.number() }),
-  closedWithoutMerge: z.object({ issueCount: z.number() }),
-  currentlyOpen: z.object({ issueCount: z.number() }),
-  staleOpen: z.object({ issueCount: z.number() })
+  repository: z.object({ pullRequests: z.object({ totalCount: z.number(), pageInfo, nodes: z.array(z.object({ updatedAt: instant }).nullish()) }) }).nullish()
+});
+
+export const createdPullRequestSchema = z.object({
+  repository: z.object({ pullRequests: z.object({ pageInfo, nodes: z.array(z.object({ createdAt: instant }).nullish()) }) }).nullish()
+});
+
+export const abandonedPullRequestSchema = z.object({
+  repository: z
+    .object({ pullRequests: z.object({ pageInfo, nodes: z.array(z.object({ updatedAt: instant, closedAt: instant.nullish() }).nullish()) }) })
+    .nullish()
 });
 
 /**
