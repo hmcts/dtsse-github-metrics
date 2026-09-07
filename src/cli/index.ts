@@ -1,7 +1,7 @@
 import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge } from "../evidence/behaviour/collect.ts";
 import { directCommitCacheWriter, fillCachedSource, loadCachedMerges, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
-import { sourceSignature } from "../evidence/behaviour/queries.ts";
+import { mergedSearchQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
 import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
@@ -151,12 +151,65 @@ async function runDoctor(configuration: Configuration): Promise<number> {
     }
   }
 
+  const searchable = await countSearchableMerges(client, configuration, repositories);
+
   const state = await collectionState();
   console.info(
     state === undefined ? "no collection has run yet" : `the last collection landed at ${state.collectedAt.toISOString()} (revision ${state.revision})`
   );
   console.info(`${repositories.length - unreadable} of ${repositories.length} configured repositories are readable`);
-  return unreadable === 0 ? EXIT_COMPLETE : EXIT_FAILED;
+  console.info(`search reports ${searchable} merged pull requests across them`);
+
+  if (unreadable > 0) {
+    return EXIT_FAILED;
+  }
+  if (searchable === 0) {
+    console.warn(
+      "search returned nothing for any configured repository, so a collection would record zero merges. " +
+        "Reading a repository does not prove the credential can search it: GitHub answers a search it will not " +
+        "serve with an empty result rather than a refusal. Check the token, and for a GitHub App check that the " +
+        "INSTALLATION still holds every permission the App declares — adding one to the App puts the installation " +
+        "into pending approval and it silently loses the rest until an organisation administrator accepts."
+    );
+    return EXIT_FAILED;
+  }
+  return EXIT_COMPLETE;
+}
+
+/**
+ * How many merged pull requests search can actually see.
+ *
+ * The collection is built on search, and a credential that reads a repository perfectly well may still be served
+ * an empty search over it. That failure is invisible to a metadata check and produces a report of zeroes rather
+ * than an error, which is the worst shape a fault can take here.
+ */
+async function countSearchableMerges(
+  client: ReturnType<typeof createGitHubClient>,
+  configuration: Configuration,
+  repositories: readonly string[]
+): Promise<number> {
+  const window = resolveWindow({ defaultDays: configuration.lookback.operational_days, reference: new Date() });
+  let total = 0;
+
+  for (const repository of repositories) {
+    const query = mergedSearchQuery(configuration.organization, repository, window.startsAt, window.endsAt);
+    try {
+      const data = await client.graphql<{ search?: { issueCount?: number } }>(
+        "query($q: String!) { search(query: $q, type: ISSUE, first: 1) { issueCount } }",
+        { q: query },
+        "search"
+      );
+      const count = data.search?.issueCount ?? 0;
+      if (count === 0) {
+        console.warn(`${repository}: search found no merged pull requests in the operational window`);
+      }
+      total += count;
+    } catch (error) {
+      console.warn(`${repository}: search failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return total;
 }
 
 async function runPrune(argv: Arguments): Promise<number> {
