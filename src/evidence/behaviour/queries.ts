@@ -27,7 +27,16 @@ export function checkContextSelection(): string {
 }
 
 /**
- * The shallow merged pull-request search query.
+ * Merged pull requests, walked off the REPOSITORY rather than found by search.
+ *
+ * Not search, because a GitHub App installation token is served an EMPTY search over repositories it reads
+ * perfectly well: measured, the same query returns 1807 rows with a personal access token and 0 with the App's,
+ * and GitHub reports that as success. A collection built on search therefore records zero merges and calls it a
+ * complete run. `repository.pullRequests` returns all 1807. This also retires search's 1,000-result cap.
+ *
+ * UPDATED_AT descending is what makes the walk terminable — `pullRequests` cannot be ordered by merge time, but
+ * `mergedAt <= updatedAt` always holds, so once `updatedAt` falls below the window start nothing later can be
+ * inside it. CREATED_AT would not do: a change opened long ago and merged yesterday would sit past the cut.
  *
  * `timelineItems` is filtered to `READY_FOR_REVIEW_EVENT` and to `first: 1`, so it returns the EARLIEST
  * instant the change left draft and asked to be reviewed — the anchor the two waiting-time metrics need.
@@ -36,15 +45,14 @@ export function checkContextSelection(): string {
  * later conversion back to draft is deliberately not read: rework after review has begun is part of the
  * cycle being measured, whereas the wait before anyone was asked to look is not.
  */
-export function pullRequestQuery(): string {
+export function mergedPullRequestQuery(): string {
   return `
-        query PullRequests($searchQuery: String!, $cursor: String) {
-          search(query: $searchQuery, type: ISSUE, first: 25, after: $cursor) {
-            issueCount
-            pageInfo { hasNextPage endCursor }
-            nodes {
-              ... on PullRequest {
-                databaseId number title body createdAt mergedAt isDraft
+        query MergedPullRequests($organization: String!, $repository: String!, $cursor: String) {
+          repository(owner: $organization, name: $repository) {
+            pullRequests(states: MERGED, orderBy: { field: UPDATED_AT, direction: DESC }, first: 25, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
+              nodes {
+                databaseId number title body createdAt mergedAt updatedAt isDraft
                 additions deletions changedFiles
                 timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], first: 1) {
                   nodes { ... on ReadyForReviewEvent { createdAt } }
@@ -227,7 +235,7 @@ export function mergedSearchQuery(organization: string, repository: string, star
  * cache — where the importer must rewrite the stored hash to this one or every imported row is unreadable.
  */
 export function querySignature(): string {
-  const documents = `${pullRequestQuery()}${reviewQuery()}${checkQuery()}`.split(/\s+/).join(" ");
+  const documents = `${mergedPullRequestQuery()}${reviewQuery()}${checkQuery()}`.split(/\s+/).join(" ");
   return createHash("sha256").update(documents).digest("hex").slice(0, 16);
 }
 

@@ -78,39 +78,49 @@ describe("doctor", () => {
     teams: [{ identifier: "team", repositories: ["repo-a", "repo-b"] }]
   };
 
-  function doctorEnvironment(issueCounts: number[]) {
+  /** Inside the operational window whenever this test runs, rather than a date that ages out of it. */
+  function recently(): string {
+    return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  function withMergeCounts(perRepository: number[]) {
     loadConfiguration.mockResolvedValue(CONFIG);
     configuredRepositories.mockReturnValue(["repo-a", "repo-b"]);
     collectionState.mockResolvedValue(undefined);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a personal access token" });
 
-    const counts = [...issueCounts];
+    const counts = [...perRepository];
     createGitHubClient.mockReturnValue({
       get: vi.fn().mockResolvedValue({ default_branch: "master" }),
-      graphql: vi.fn().mockImplementation(() => Promise.resolve({ search: { issueCount: counts.shift() ?? 0 } })),
+      graphql: vi.fn().mockImplementation(() => {
+        const count = counts.shift() ?? 0;
+        return Promise.resolve({
+          repository: { pullRequests: { nodes: Array.from({ length: count }, () => ({ mergedAt: recently() })) } }
+        });
+      }),
       requestsIssued: () => 0,
       callOutcomes: () => []
     });
   }
 
-  it("should pass when search can see merged pull requests", async () => {
-    doctorEnvironment([12, 30]);
+  it("should pass when the credential can see merged pull requests", async () => {
+    withMergeCounts([12, 30]);
 
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
-    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("search reports 42 merged pull requests"));
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("GitHub shows 42 merged pull requests"));
   });
 
-  it("should fail when every repository is readable but search sees nothing", async () => {
-    // The exact shape of the AAT failure: metadata reads fine, search is served an empty result, and a collection
-    // would therefore record zero merges without anything reporting an error.
-    doctorEnvironment([0, 0]);
+  it("should fail when every repository is readable but none yields a merge", async () => {
+    // The exact shape of the AAT failure: metadata reads fine, pull requests come back empty, and a collection
+    // would record zero merges without anything reporting an error.
+    withMergeCounts([0, 0]);
 
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("search returned nothing for any configured repository"));
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("would record none"));
   });
 
   it("should name the installation when it fails, since that is the usual cause", async () => {
-    doctorEnvironment([0, 0]);
+    withMergeCounts([0, 0]);
 
     await main(["doctor", "--config", "m.yaml"]);
 
@@ -118,12 +128,29 @@ describe("doctor", () => {
   });
 
   it("should still pass when only one repository has merges", async () => {
-    doctorEnvironment([0, 5]);
+    withMergeCounts([0, 5]);
 
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
   });
 
-  it("should treat a search that throws as zero rather than failing the command", async () => {
+  it("should not count a merge from outside the operational window", async () => {
+    loadConfiguration.mockResolvedValue(CONFIG);
+    configuredRepositories.mockReturnValue(["repo-a"]);
+    collectionState.mockResolvedValue(undefined);
+    resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
+    createGitHubClient.mockReturnValue({
+      get: vi.fn().mockResolvedValue({ default_branch: "master" }),
+      graphql: vi.fn().mockResolvedValue({ repository: { pullRequests: { nodes: [{ mergedAt: "2020-01-01T00:00:00Z" }] } } }),
+      requestsIssued: () => 0,
+      callOutcomes: () => []
+    });
+
+    // A repository with history but none of it recent reads as nothing to report, not as a broken credential.
+    expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("GitHub shows 0 merged pull requests"));
+  });
+
+  it("should treat a query that throws as zero rather than crashing the command", async () => {
     loadConfiguration.mockResolvedValue(CONFIG);
     configuredRepositories.mockReturnValue(["repo-a"]);
     collectionState.mockResolvedValue(undefined);
@@ -136,6 +163,6 @@ describe("doctor", () => {
     });
 
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
-    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("search failed: GraphQL refused"));
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("reading merged pull requests failed: GraphQL refused"));
   });
 });

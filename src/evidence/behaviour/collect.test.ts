@@ -33,6 +33,7 @@ function pullRequestNode(overrides: Record<string, unknown> = {}) {
     body: "a description",
     createdAt: "2026-08-01T00:00:00Z",
     mergedAt: "2026-08-02T00:00:00Z",
+    updatedAt: "2026-08-02T00:00:00Z",
     isDraft: false,
     additions: 10,
     deletions: 2,
@@ -45,8 +46,8 @@ function pullRequestNode(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function search(nodes: unknown[], overrides: Record<string, unknown> = {}) {
-  return { search: { issueCount: nodes.length, pageInfo: PAGE_END, nodes, ...overrides } };
+function merged(nodes: unknown[], overrides: Record<string, unknown> = {}) {
+  return { repository: { pullRequests: { pageInfo: PAGE_END, nodes, ...overrides } } };
 }
 
 async function failing(work: Promise<unknown>): Promise<GitHubError> {
@@ -125,7 +126,7 @@ describe("signatures", () => {
 
 describe("collectMergedPullRequests", () => {
   it("should convert a search page into facts", async () => {
-    const { fetch } = replying(search([pullRequestNode()]));
+    const { fetch } = replying(merged([pullRequestNode()]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
 
@@ -133,17 +134,47 @@ describe("collectMergedPullRequests", () => {
     expect(facts[0]).toMatchObject({ identifier: 101, number: 11, authorLogin: "alice", authorType: "User", additions: 10, deletions: 2, changedFiles: 3 });
   });
 
-  it("should refuse a shard above GitHub's 1,000-result cap rather than subdividing it", async () => {
-    const { fetch } = replying(search([pullRequestNode()], { issueCount: 1001 }));
+  it("should stop walking once a pull request was updated before the window opened", async () => {
+    // The termination condition, and the reason the walk is ordered by updatedAt rather than createdAt: mergedAt is
+    // never later than updatedAt, so a node updated before the window opened cannot have merged inside it and
+    // neither can anything after it. Without this the walk would read a repository's whole history every run.
+    const { fetch, sent } = replying(
+      merged([pullRequestNode(), pullRequestNode({ databaseId: 99, number: 9, mergedAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z" })], {
+        pageInfo: { hasNextPage: true, endCursor: "MORE" }
+      }),
+      merged([pullRequestNode({ databaseId: 98, number: 8 })])
+    );
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts.map((fact) => fact.number)).toEqual([11]);
+    // One call only: the second page is never asked for, even though the first said there was one.
+    expect(sent).toHaveLength(1);
+  });
+
+  it("should keep walking while pull requests are still being updated inside the window", async () => {
+    const { fetch, sent } = replying(
+      merged([pullRequestNode()], { pageInfo: { hasNextPage: true, endCursor: "MORE" } }),
+      merged([pullRequestNode({ databaseId: 102, number: 12 })])
+    );
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts.map((fact) => fact.number)).toEqual([11, 12]);
+    expect(sent).toHaveLength(2);
+  });
+
+  it("should fail loudly when GitHub omits the repository", async () => {
+    const { fetch } = replying({ repository: null });
 
     const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
 
-    expect(error.reason).toBe(AvailabilityReason.IncompleteHistory);
-    expect(error.message).toMatch(/1,000-result limit/);
+    expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
+    expect(error.message).toMatch(/omitted the repository/);
   });
 
   it("should exclude a merge outside the half-open window even though the shard range is inclusive", async () => {
-    const { fetch } = replying(search([pullRequestNode({ mergedAt: "2026-08-31T00:00:00Z" })]));
+    const { fetch } = replying(merged([pullRequestNode({ mergedAt: "2026-08-31T00:00:00Z" })]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
 
@@ -152,7 +183,7 @@ describe("collectMergedPullRequests", () => {
 
   it("should deduplicate a merge two overlapping shards both returned", async () => {
     const onBoundary = pullRequestNode({ mergedAt: "2026-06-09T00:00:00Z" });
-    const { fetch } = replying(search([onBoundary]), search([onBoundary]), search([]), search([]));
+    const { fetch } = replying(merged([onBoundary]), merged([onBoundary]), merged([]), merged([]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-05-10Z"), new Date("2026-08-08Z"));
 
@@ -161,7 +192,7 @@ describe("collectMergedPullRequests", () => {
 
   it("should sort stably by merge instant and then identifier", async () => {
     const mergedAt = "2026-08-02T00:00:00Z";
-    const { fetch } = replying(search([pullRequestNode({ databaseId: 20, mergedAt }), pullRequestNode({ databaseId: 10, mergedAt })]));
+    const { fetch } = replying(merged([pullRequestNode({ databaseId: 20, mergedAt }), pullRequestNode({ databaseId: 10, mergedAt })]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
 
@@ -170,8 +201,8 @@ describe("collectMergedPullRequests", () => {
 
   it("should follow a search page cursor to the end", async () => {
     const { fetch, sent } = replying(
-      search([pullRequestNode({ databaseId: 1 })], { pageInfo: { hasNextPage: true, endCursor: "CURSOR" } }),
-      search([pullRequestNode({ databaseId: 2 })])
+      merged([pullRequestNode({ databaseId: 1 })], { pageInfo: { hasNextPage: true, endCursor: "CURSOR" } }),
+      merged([pullRequestNode({ databaseId: 2 })])
     );
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
@@ -181,7 +212,7 @@ describe("collectMergedPullRequests", () => {
   });
 
   it("should read the ready-for-review event as the anchor a waiting time is measured from", async () => {
-    const { fetch } = replying(search([pullRequestNode({ timelineItems: { nodes: [{ createdAt: "2026-08-01T12:00:00Z" }] } })]));
+    const { fetch } = replying(merged([pullRequestNode({ timelineItems: { nodes: [{ createdAt: "2026-08-01T12:00:00Z" }] } })]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
 
@@ -190,7 +221,7 @@ describe("collectMergedPullRequests", () => {
 
   it("should page an overflowing review connection with a focused follow-up", async () => {
     const { fetch, sent } = replying(
-      search([
+      merged([
         pullRequestNode({
           reviews: {
             pageInfo: { hasNextPage: true, endCursor: "REVIEWS" },
@@ -235,7 +266,7 @@ describe("collectMergedPullRequests", () => {
   it("should page an overflowing status-check rollup with a focused follow-up", async () => {
     const contexts = (nodes: unknown[], hasNextPage: boolean, endCursor: string | null) => ({ pageInfo: { hasNextPage, endCursor }, nodes });
     const { fetch } = replying(
-      search([
+      merged([
         pullRequestNode({
           commits: {
             nodes: [
@@ -512,7 +543,7 @@ describe("collecting through a hole in GitHub's answer", () => {
   }
 
   it("should skip a null node in a merged-pull-request search rather than fail the repository", async () => {
-    const { fetch } = replying(search([null, pullRequestNode()]));
+    const { fetch } = replying(merged([null, pullRequestNode()]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
 
@@ -529,7 +560,7 @@ describe("collecting through a hole in GitHub's answer", () => {
 
   it("should fail loudly when a review follow-up page has lost its pull request", async () => {
     const { fetch } = replying(
-      search([
+      merged([
         pullRequestNode({
           reviews: {
             pageInfo: { hasNextPage: true, endCursor: "REVIEWS" },
@@ -556,7 +587,7 @@ describe("collecting through a hole in GitHub's answer", () => {
 
   it("should fail loudly when a status-check follow-up page has lost its pull request", async () => {
     const { fetch } = replying(
-      search([
+      merged([
         pullRequestNode({
           commits: {
             nodes: [
@@ -587,7 +618,7 @@ describe("collecting through a hole in GitHub's answer", () => {
 describe("collecting a fact whose optional fields GitHub omitted", () => {
   it("should build a pull-request fact with no author, body or size", async () => {
     const { fetch } = replying(
-      search([
+      merged([
         pullRequestNode({
           author: null,
           body: null,
@@ -695,8 +726,8 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
 
   it("should page a merged-pull-request search that reports no cursor with its next page", async () => {
     const { fetch, sent } = replying(
-      search([pullRequestNode()], { pageInfo: { hasNextPage: true, endCursor: null } }),
-      search([pullRequestNode({ databaseId: 102, number: 12 })])
+      merged([pullRequestNode()], { pageInfo: { hasNextPage: true, endCursor: null } }),
+      merged([pullRequestNode({ databaseId: 102, number: 12 })])
     );
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));

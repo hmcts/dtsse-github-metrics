@@ -69,8 +69,10 @@ const pullRequestNode = z.object({
   commits: commitConnection
 });
 
-export const searchSchema = z.object({
-  search: z.object({ issueCount: z.number(), pageInfo, nodes: z.array(pullRequestNode.nullish()) })
+const mergedPullRequestNode = pullRequestNode.extend({ updatedAt: instant });
+
+export const mergedPullRequestSchema = z.object({
+  repository: z.object({ pullRequests: z.object({ pageInfo, nodes: z.array(mergedPullRequestNode.nullish()) }) }).nullish()
 });
 
 export const reviewPageSchema = z.object({
@@ -124,7 +126,7 @@ export function parseResponse<Schema extends z.ZodTypeAny>(schema: Schema, data:
 
 // The OUTPUT types, which is what collection works with: `instant` transforms a string into a `Date`, so
 // these carry `Date` where the wire carries text.
-export type SearchResponse = z.infer<typeof searchSchema>;
+export type MergedPullRequestNode = z.infer<typeof mergedPullRequestNode>;
 export type PullRequestNode = z.infer<typeof pullRequestNode>;
 export type ReviewNode = z.infer<typeof reviewNode>;
 export type ReviewConnection = z.infer<typeof reviewConnection>;

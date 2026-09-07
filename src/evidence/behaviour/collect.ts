@@ -3,16 +3,7 @@ import { CheckConclusion, type CheckFact, type DirectCommitFact, type PullReques
 import type { GitHubClient } from "../github/client.ts";
 import { githubTimestamp } from "../window/instant.ts";
 import type { ReportingWindow } from "../window/window.ts";
-import {
-  checkQuery,
-  commitHistoryQuery,
-  dateShards,
-  mergedSearchQuery,
-  openPullRequestQuery,
-  openPullRequestSearchQueries,
-  pullRequestQuery,
-  reviewQuery
-} from "./queries.ts";
+import { checkQuery, commitHistoryQuery, mergedPullRequestQuery, openPullRequestQuery, openPullRequestSearchQueries, reviewQuery } from "./queries.ts";
 import {
   type CheckConnection,
   type CheckContext,
@@ -20,29 +11,17 @@ import {
   type CommitNode,
   checkPageSchema,
   commitHistorySchema,
+  mergedPullRequestSchema,
   openPullRequestSchema,
   type PullRequestNode,
   parseResponse,
   type ReviewConnection,
   type ReviewNode,
-  reviewPageSchema,
-  searchSchema
+  reviewPageSchema
 } from "./responses.ts";
-
 /**
  * Collecting behaviour facts from GitHub. Ported from `metrics.behaviour`'s collection half.
  */
-
-/**
- * GitHub's own cap on any one search.
- *
- * A shard above it is REPORTED AS INCOMPLETE HISTORY rather than subdivided. That is deliberate and must not
- * be "improved" into recursive bisection: subdividing would change both the numbers and the availability
- * reasons a report carries, and a window whose history cannot be read completely is a fact worth surfacing
- * rather than one to work around.
- */
-const SEARCH_RESULT_LIMIT = 1000;
-
 /** Open pull-request counts for one window, never cached. */
 export interface OpenPullRequestSummary {
   openedInWindow: number;
@@ -50,7 +29,6 @@ export interface OpenPullRequestSummary {
   currentlyOpen: number;
   staleOpen: number;
 }
-
 /** Maps a legacy commit-status state onto a check conclusion. */
 export function statusConclusion(state: string): CheckConclusion | undefined {
   const mapped: Record<string, CheckConclusion> = {
@@ -60,7 +38,6 @@ export function statusConclusion(state: string): CheckConclusion | undefined {
   };
   return mapped[state];
 }
-
 /**
  * Normalises a check run or a legacy status context into one compact fact.
  *
@@ -84,7 +61,6 @@ export function checkFact(context: CheckContext): CheckFact {
     ...(conclusion !== undefined && context.createdAt ? { completedAt: context.createdAt } : {})
   };
 }
-
 /** Converts one GitHub review into a compact internal fact. */
 export function reviewFact(review: ReviewNode): ReviewFact {
   return {
@@ -97,13 +73,11 @@ export function reviewFact(review: ReviewNode): ReviewFact {
     ...((review.body ?? "").trim() === "" ? {} : { body: review.body as string })
   };
 }
-
 /** The rollup contexts of a pull request's head commit, if it has any. */
 export function headCommitChecks(commits: CommitConnection): CheckConnection | undefined {
   const first = commits.nodes[0];
   return first?.commit.statusCheckRollup?.contexts ?? undefined;
 }
-
 /** Collects all review pages, issuing follow-ups only after a bounded connection overflows. */
 async function collectReviews(
   client: GitHubClient,
@@ -126,7 +100,6 @@ async function collectReviews(
   }
   return reviews;
 }
-
 /** Collects all rollup pages, issuing follow-ups only after a bounded connection overflows. */
 async function collectChecks(
   client: GitHubClient,
@@ -152,7 +125,6 @@ async function collectChecks(
   }
   return checks;
 }
-
 /** Converts one GitHub pull request and its complete reviews into a compact fact. */
 async function pullRequestFact(client: GitHubClient, organization: string, repository: string, node: PullRequestNode): Promise<PullRequestFact> {
   const readyForReviewAt = node.timelineItems.nodes.find((event) => event?.createdAt != null)?.createdAt ?? undefined;
@@ -175,7 +147,6 @@ async function pullRequestFact(client: GitHubClient, organization: string, repos
     checks: await collectChecks(client, organization, repository, node.number, headCommitChecks(node.commits))
   };
 }
-
 /**
  * Collects merged pull requests in date shards, deduplicating inclusive search boundaries.
  *
@@ -193,42 +164,39 @@ export async function collectMergedPullRequests(
   endsAt: Date
 ): Promise<PullRequestFact[]> {
   const facts = new Map<number, PullRequestFact>();
-
-  for (const shard of dateShards(startsAt, endsAt)) {
-    let cursor: string | null = null;
-    for (;;) {
-      // Annotated `unknown` deliberately: without it the inferred type of `data` flows through
-      // `parseResponse` and back into this loop's own initializer, which TypeScript reports as circular.
-      const data: unknown = await client.graphql(pullRequestQuery(), {
-        searchQuery: mergedSearchQuery(organization, repository, shard.startsAt, shard.endsAt),
-        cursor
-      });
-      const { search } = parseResponse(searchSchema, data, "pull-request behaviour data");
-
-      if (search.issueCount > SEARCH_RESULT_LIMIT) {
-        throw new GitHubError("GitHub pull-request search exceeded its 1,000-result limit", AvailabilityReason.IncompleteHistory);
+  let cursor: string | null = null;
+  for (;;) {
+    // Annotated `unknown` deliberately: without it the inferred type of `data` flows through
+    // `parseResponse` and back into this loop's own initializer, which TypeScript reports as circular.
+    const data: unknown = await client.graphql(mergedPullRequestQuery(), { organization, repository, cursor });
+    const parsed = parseResponse(mergedPullRequestSchema, data, "pull-request behaviour data");
+    const connection = parsed.repository?.pullRequests;
+    if (connection === undefined || connection === null) {
+      throw new GitHubError("GitHub omitted the repository while collecting merged pull requests", AvailabilityReason.CollectionFailed);
+    }
+    let reachedTheWindow = false;
+    for (const node of connection.nodes) {
+      if (node == null) {
+        continue;
       }
-
-      for (const node of search.nodes) {
-        if (node == null) {
-          continue;
-        }
-        if (node.mergedAt.getTime() >= startsAt.getTime() && node.mergedAt.getTime() < endsAt.getTime()) {
-          const fact = await pullRequestFact(client, organization, repository, node);
-          facts.set(fact.identifier, fact);
-        }
-      }
-
-      if (!search.pageInfo.hasNextPage) {
+      // `mergedAt <= updatedAt` always, and the walk is ordered by `updatedAt` descending, so a node updated
+      // before the window opened cannot have been merged inside it and neither can anything after it.
+      if (node.updatedAt.getTime() < startsAt.getTime()) {
+        reachedTheWindow = true;
         break;
       }
-      cursor = search.pageInfo.endCursor ?? null;
+      if (node.mergedAt.getTime() >= startsAt.getTime() && node.mergedAt.getTime() < endsAt.getTime()) {
+        const fact = await pullRequestFact(client, organization, repository, node);
+        facts.set(fact.identifier, fact);
+      }
     }
+    if (reachedTheWindow || !connection.pageInfo.hasNextPage) {
+      break;
+    }
+    cursor = connection.pageInfo.endCursor ?? null;
   }
-
   return [...facts.values()].sort((left, right) => left.mergedAt.getTime() - right.mergedAt.getTime() || left.identifier - right.identifier);
 }
-
 /** Converts one default-branch commit into a compact fact. */
 export function directCommitFact(node: CommitNode, repository: string): DirectCommitFact {
   return {
@@ -244,7 +212,6 @@ export function directCommitFact(node: CommitNode, repository: string): DirectCo
     ...(node.statusCheckRollup?.state == null ? {} : { checkState: node.statusCheckRollup.state })
   };
 }
-
 /**
  * Collects the default-branch commits in a window that no pull request introduced.
  *
@@ -260,7 +227,6 @@ export async function collectDirectCommits(
 ): Promise<DirectCommitFact[]> {
   const facts = new Map<string, DirectCommitFact>();
   let cursor: string | null = null;
-
   for (;;) {
     // `unknown` for the same circularity reason as the pull-request loop above.
     const data: unknown = await client.graphql(commitHistoryQuery(), {
@@ -276,7 +242,6 @@ export async function collectDirectCommits(
       // An empty repository, or one whose default branch nobody has pushed to: no history is not a failure.
       break;
     }
-
     for (const node of history.nodes) {
       if (node == null) {
         continue;
@@ -287,16 +252,13 @@ export async function collectDirectCommits(
         facts.set(node.oid, directCommitFact(node, repository));
       }
     }
-
     if (!history.pageInfo.hasNextPage) {
       break;
     }
     cursor = history.pageInfo.endCursor ?? null;
   }
-
   return [...facts.values()].sort((left, right) => left.committedAt.getTime() - right.committedAt.getTime() || left.sha.localeCompare(right.sha));
 }
-
 /**
  * Fetches open pull-request counts in one call, fresh every time.
  *
@@ -325,7 +287,6 @@ export async function collectOpenPullRequestState(
     staleOpen: parsed.staleOpen.issueCount
   };
 }
-
 /**
  * The instant a window stops being settled history.
  *
