@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { CollectionStatus } from "../evidence/domain/availability.ts";
-import { EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE, runStatus } from "./exit-status.ts";
+import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { COHORT_COMMANDS, parseArguments, UsageError, usage } from "./parse-arguments.ts";
 
 describe("parseArguments", () => {
@@ -143,5 +143,26 @@ describe("--tolerate-partial", () => {
 
   it("should be read as a flag", () => {
     expect(parseArguments(["collect", "--config", "m.yaml", "--tolerate-partial"]).toleratePartial).toBe(true);
+  });
+});
+
+describe("collectionStatus", () => {
+  it("should report a partial run as incomplete when nobody asked to tolerate it", () => {
+    expect(collectionStatus(CollectionStatus.Partial, false)).toBe(EXIT_INCOMPLETE);
+  });
+
+  it("should report a partial run as success for a scheduled caller", () => {
+    // What the CronJob needs: something always refuses across an estate this size, so exit 3 would make every
+    // weekly run read as Failed to Kubernetes and the alert would mean nothing.
+    expect(collectionStatus(CollectionStatus.Partial, true)).toBe(EXIT_COMPLETE);
+  });
+
+  it("should never tolerate a run that produced nothing usable", () => {
+    expect(collectionStatus(CollectionStatus.Failed, true)).toBe(EXIT_FAILED);
+  });
+
+  it("should leave a complete run alone either way", () => {
+    expect(collectionStatus(CollectionStatus.Complete, true)).toBe(EXIT_COMPLETE);
+    expect(collectionStatus(CollectionStatus.Complete, false)).toBe(EXIT_COMPLETE);
   });
 });
