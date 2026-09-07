@@ -58,6 +58,35 @@ yarn cli doctor --config metrics.yaml
 `doctor` mints a token at startup, so a wrong key fails while somebody is still watching rather than 1,850
 repositories in. Either PKCS#1 (`BEGIN RSA PRIVATE KEY`, what GitHub's download gives you) or PKCS#8 will do.
 
+It also counts the merged pull requests the credential can actually see, and fails if that is zero everywhere.
+That check exists because of a fault it would otherwise have hidden: GitHub answers a request it will not serve
+with an EMPTY RESULT rather than a refusal, so a credential that reads every repository and sees none of their
+pull requests produces a report full of zeroes and a run that claims to have succeeded.
+
+### Nothing here uses GitHub search
+
+Collection walks `repository.pullRequests`, never `search`. A GitHub App installation token is served an empty
+search over repositories it reads perfectly well — measured, the same query returns 1807 rows with a personal
+access token and 0 with the App's — so every figure derived from search came back as zero while the run reported
+success. The walk is ordered by `updatedAt` descending, which is what lets it stop: `mergedAt <= updatedAt`
+always, so once `updatedAt` falls below the window start nothing later can be inside it.
+
+### The installation must hold every permission the App declares
+
+`hmcts/github-metrics` is refused today, and it is the only INTERNAL repository in `metrics.yaml`. That is the
+tell: a public repository's pull requests are readable with `contents` and `metadata`, a private one's need
+`pull_requests: read`, and installation 158738568 does not have it even though the App does. Adding a permission
+to a GitHub App puts existing installations into pending approval and they silently lose it until an
+organisation administrator accepts, so the two lists drift apart without anything failing loudly.
+
+Compare them when a private repository reports no evidence:
+
+```bash
+# both lists, from a JWT signed with the App key — the difference is the pending request
+curl -H "authorization: Bearer $JWT" https://api.github.com/app | jq .permissions
+curl -H "authorization: Bearer $JWT" https://api.github.com/app/installations/$GH_APP_INSTALLATION_ID | jq .permissions
+```
+
 ## Deployed credentials
 
 The `dtsse-aat` Key Vault lives in
