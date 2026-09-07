@@ -15,7 +15,9 @@ nodejs:
   keyVaults:
     dtsse:
       secrets:
-        - name: app-insights-connection-string
+        # `AppInsightsConnectionString`, not the kebab-case name every CFT product uses: the dtsse vault predates
+        # that convention and holds this one in Pascal case. Checked against the vault, not assumed.
+        - name: AppInsightsConnectionString
           alias: APPLICATIONINSIGHTS_CONNECTION_STRING
         - name: postgres-host
           alias: POSTGRES_HOST
@@ -25,14 +27,16 @@ nodejs:
           alias: POSTGRES_USER
         - name: postgres-password
           alias: POSTGRES_PASSWORD
-        - name: postgres-database
-          alias: POSTGRES_DATABASE
   environment:
     NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
     OTEL_SERVICE_NAME: dtsse-github-metrics
     OTEL_ENABLED: true
     METRICS_CONFIG: /app/metrics.yaml
     NODE_OPTIONS: --max-old-space-size=3072
+    # A database NAME on the shared dtsse flexible server, not a secret, so it is declared here rather than
+    # mounted: the vault holds the server's host and credentials, and every consumer of it names its own
+    # database. This one must exist on that server before an AAT deploy can start.
+    POSTGRES_DATABASE: github_metrics
   # The web pod holds NO GitHub credential. It never contacts GitHub — that is what makes the serving path
   # read-only — and a credential it cannot use is only a credential that can leak.
 
@@ -73,8 +77,6 @@ job:
           alias: POSTGRES_USER
         - name: postgres-password
           alias: POSTGRES_PASSWORD
-        - name: postgres-database
-          alias: POSTGRES_DATABASE
         # `github-token` is deliberately NOT mounted. `resolveCredentials` prefers the App, so a PAT beside it is
         # dead weight that would quietly take over if the App key were ever rotated badly — reporting the whole
         # estate's merge gates and alerts as unavailable rather than failing loudly.
@@ -82,6 +84,7 @@ job:
     NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
     METRICS_CONFIG: /app/metrics.yaml
     NODE_OPTIONS: --max-old-space-size=3072
+    POSTGRES_DATABASE: github_metrics
 
 postgresql:
   enabled: false

@@ -10,7 +10,7 @@ import { parseInstant } from "../evidence/window/instant.ts";
  * cost.
  */
 
-export const COMMANDS = ["doctor", "collect", "prune", "map-sonar", "evidence", "trend"] as const;
+export const COMMANDS = ["doctor", "collect", "prune", "map-sonar", "evidence", "trend", "migrate"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
@@ -100,7 +100,10 @@ export function parseArguments(argv: readonly string[]): Arguments {
   }
 
   const config = (values.config as string[] | undefined) ?? [];
-  if (config.length === 0) {
+  // `migrate` reads no policy: it brings the schema up to date and knows nothing about which repositories are
+  // reported on. Requiring a configuration file would mean the deployed image could not migrate before it has
+  // one, which is the order the web pod actually starts in.
+  if (config.length === 0 && command !== "migrate") {
     throw new UsageError("--config is required, and may be repeated to layer a policy file with a team file");
   }
 
@@ -168,6 +171,7 @@ commands:
   map-sonar   resolve each SonarCloud project to the repository it analyses
   evidence    explain cached behaviour evidence without GitHub access
   trend       report each repository's periods since it was enabled
+  migrate     apply any pending database migrations (takes no --config)
 
 options:
   --config <file>       path to the YAML configuration; repeat to layer files, later files winning

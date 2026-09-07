@@ -25,6 +25,12 @@ describe("parseArguments", () => {
     expect(() => parseArguments(["collect"])).toThrow(/--config is required/);
   });
 
+  it("should take migrate without a configuration", () => {
+    // The web pod migrates at start, before anything has read a policy — and the schema is the same whichever
+    // repositories are being reported on, so requiring one would only be an obstacle.
+    expect(parseArguments(["migrate"]).command).toBe("migrate");
+  });
+
   it("should refuse an unknown command, naming the ones it takes", () => {
     expect(() => parseArguments(["invent", "--config", "metrics.yaml"])).toThrow(/unknown command "invent"/);
   });

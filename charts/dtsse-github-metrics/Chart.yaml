@@ -16,7 +16,11 @@ dependencies:
     repository: "oci://hmctsprod.azurecr.io/helm"
     condition: job.enabled
   # Preview only: AAT and prod read a Postgres provisioned outside this chart.
+  #
+  # 16.7.27, not the 16.7.31 the sibling DTSSE charts pin: Bitnami withdrew that version from the public OCI
+  # registry, so `helm dependency build` cannot resolve it and the preview deploy fails before it starts. Check
+  # a version still resolves before raising it.
   - name: postgresql
-    version: 16.7.31
+    version: 16.7.27
     repository: "oci://registry-1.docker.io/bitnamicharts"
     condition: postgresql.enabled

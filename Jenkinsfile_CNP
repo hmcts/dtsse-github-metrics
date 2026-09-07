@@ -20,7 +20,7 @@ static Map<String, Object> secret(String secretName, String envVariable) {
 // chart's own keyVaults block.
 def secrets = [
   'dtsse-${env}': [
-    secret('app-insights-connection-string', 'APPLICATIONINSIGHTS_CONNECTION_STRING')
+    secret('AppInsightsConnectionString', 'APPLICATIONINSIGHTS_CONNECTION_STRING')
   ]
 ]
 
@@ -28,6 +28,13 @@ withPipeline(type, product, component) {
   loadVaultSecrets(secrets)
 
   env.NODE_CONFIG_ENV = 'test'
+
+  // The Prisma client is generated rather than committed, and `store/prisma.ts` imports it — so `yarn test`
+  // cannot even load without this. The Docker build generates it in its own stage; the agent runs the unit tests
+  // outside Docker, where nothing has.
+  before('test') {
+    sh 'yarn db:generate'
+  }
 
   onPR() {
     // Smoke only on a preview. Its CronJob is disabled and its database is empty, so anything asserting a

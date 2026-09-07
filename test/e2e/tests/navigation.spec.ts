@@ -14,9 +14,9 @@ const ROUTES = [
   { path: "/contributors", heading: "Contributors" }
 ];
 
-test.describe("navigation @smoke", () => {
+test.describe("navigation @smoke @regression", () => {
   for (const route of ROUTES) {
-    test(`should render ${route.path} @smoke`, async ({ page }) => {
+    test(`should render ${route.path} @smoke @regression`, async ({ page }) => {
       const response = await page.goto(route.path);
 
       expect(response?.status()).toBe(200);
@@ -24,13 +24,13 @@ test.describe("navigation @smoke", () => {
     });
   }
 
-  test("should redirect the root to repositories @smoke", async ({ page }) => {
+  test("should redirect the root to repositories @smoke @regression", async ({ page }) => {
     await page.goto("/");
 
     await expect(page).toHaveURL(/\/repositories/);
   });
 
-  test("should carry the chosen span across a navigation @smoke", async ({ page }) => {
+  test("should carry the chosen span across a navigation @smoke @regression", async ({ page }) => {
     // The nav links are rendered by the layout, which Next.js hands no search parameters, so they carry no
     // `?weeks=`. The span survives through the cookie `src/proxy.ts` writes — and that middleware running in a
     // standalone build is exactly what this asserts.
@@ -42,7 +42,7 @@ test.describe("navigation @smoke", () => {
     await expect(page.getByRole("button", { name: "26 week window" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("should offer every configured span @smoke", async ({ page }) => {
+  test("should offer every configured span @smoke @regression", async ({ page }) => {
     await page.goto("/repositories");
 
     const selector = page.getByRole("group", { name: "Reporting window" });

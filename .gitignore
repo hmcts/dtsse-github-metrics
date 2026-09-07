@@ -21,8 +21,15 @@ allure-report/
 # Prisma generated client
 src/evidence/store/generated/
 
-# Local collector state (a config naming real repositories, and any imported SQLite cache)
-metrics.yaml
+# Resolved Helm subcharts. `helm dependency build` fetches these, in the pipeline and locally alike, so the
+# packaged copies are build output rather than source.
+charts/*/charts/
+charts/*/Chart.lock
+
+# Local collector state (an imported SQLite cache from the Python collector)
+#
+# `metrics.yaml` is NOT ignored: it is the deployed estate, and the image needs it. A scratch config for a local
+# run belongs somewhere that is not the repository's own policy document.
 *.sqlite3
 
 # Editors

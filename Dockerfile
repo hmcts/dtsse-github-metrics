@@ -72,13 +72,28 @@ COPY --from=build --chown=hmcts:hmcts /app/.next/static ./.next/static
 COPY --from=build --chown=hmcts:hmcts /app/dist ./dist
 COPY --from=build --chown=hmcts:hmcts /app/config ./config
 COPY --from=build --chown=hmcts:hmcts /app/prisma ./prisma
-# The generated client is imported by `dist/`, whose modules were compiled rather than bundled.
+# The generated client, in BOTH places that resolve it, because the two entry points reach it differently.
+#
+# The web server's traced modules keep their source paths, so it looks under `src/`. The CLI was compiled by
+# `tsc`, which rewrites nothing and copies no assets, so `dist/evidence/store/prisma.js` requires
+# `./generated/client.js` beside itself. Copying only one of the two leaves the other entry point failing at its
+# first import — and since the CronJob is the one that runs weekly, that failure would surface days later.
 COPY --from=build --chown=hmcts:hmcts /app/src/evidence/store/generated ./src/evidence/store/generated
+COPY --from=build --chown=hmcts:hmcts /app/src/evidence/store/generated ./dist/evidence/store/generated
 # Read at runtime by `getPropertiesVolumeSecrets`, which parses the chart's own `keyVaults:` block.
 COPY --chown=hmcts:hmcts charts ./charts
-COPY --chown=hmcts:hmcts metrics.example.yaml ./
+# The deployed estate, and the example beside it: AAT reads `metrics.yaml`, a preview reads the example, whose
+# placeholder cohort is the right thing to report on when nothing has been collected anyway.
+COPY --chown=hmcts:hmcts metrics.yaml metrics.example.yaml ./
 
 EXPOSE 3000
 
 # The web pod's entry point. The CronJob overrides it with `node dist/cli/run.js collect`.
-CMD ["node", "server.js"]
+#
+# Migrating first, because a fresh environment has a database and no schema, and every page queries a table: a
+# preview would otherwise deploy green probes over an app whose every route is an error. `migrate` is idempotent
+# and takes a session advisory lock, so a restart costs one query and two pods cannot both apply.
+#
+# `exec` so the server, not the shell, is PID 1 and receives SIGTERM — without it a rolling update would wait
+# out the grace period on every pod.
+CMD ["sh", "-c", "node dist/cli/run.js migrate && exec node server.js"]

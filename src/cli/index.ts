@@ -15,6 +15,7 @@ import { configuredRepositories, repositoryOwners, sonarOrganizationName } from 
 import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection } from "../evidence/store/collection-state.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
+import { migrate } from "../evidence/store/migrate.ts";
 import { prisma } from "../evidence/store/prisma.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
 import { recordRepositoryState, storedRepositoryState } from "../evidence/store/repository-state.ts";
@@ -184,6 +185,12 @@ async function runPrune(argv: Arguments): Promise<number> {
   return EXIT_COMPLETE;
 }
 
+async function runMigrate(): Promise<number> {
+  const applied = await migrate();
+  console.info(applied.length === 0 ? "the database schema is already up to date" : `applied ${applied.length} migrations: ${applied.join(", ")}`);
+  return EXIT_COMPLETE;
+}
+
 async function runEvidence(configuration: Configuration, argv: Arguments): Promise<number> {
   const organization = configuration.organization;
   const reference = new Date();
@@ -275,6 +282,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 
   try {
+    // Before `loadPolicy`, because migrating is the one command that reads no policy — and because it is what
+    // the web pod runs at start, when a fresh environment has a database but no schema.
+    if (parsed.command === "migrate") {
+      return await runMigrate();
+    }
+
     const configuration = await loadPolicy(parsed);
     switch (parsed.command) {
       case "collect":
