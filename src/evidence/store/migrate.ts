@@ -55,10 +55,15 @@ export function migrationsDirectory(cwd: string = process.cwd()): string {
 /** Every migration on disk, in the order Prisma applies them — its directory names sort chronologically. */
 async function readMigrations(directory: string): Promise<Migration[]> {
   const entries = await readdir(directory, { withFileTypes: true });
+  // Compared by code unit, deliberately, and NOT with `localeCompare`. Prisma names a migration directory
+  // `<utc timestamp>_<label>`, so a plain code-unit ordering is chronological. Locale collation is not: it can
+  // treat punctuation as insignificant and varies with the runtime's locale, which would make the order
+  // migrations are applied in depend on where the container happens to run. Written out rather than left as a
+  // bare `.sort()` so the choice reads as one.
   const names = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort();
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
 
   const migrations: Migration[] = [];
   for (const name of names) {
