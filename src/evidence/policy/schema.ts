@@ -89,6 +89,12 @@ const orgGraph = z
     // not read as a claim. A quarter is far past any team that could be said to own what it holds: on 3,277
     // repositories that is over 800, which no service team reaches.
     maximum_team_share: z.number().min(0).max(1).default(0.25),
+    // Above this many members a team is a population rather than an owner — an "all developers" group, which
+    // neither of the other two filters catches: it is not named, and it may hold an unremarkable number of
+    // repositories. Measured on this estate, 50 would disown about 44 repositories belonging to ordinary
+    // product teams that are simply large, and the distribution jumps from 92 members to 217, so the ceiling
+    // sits in that gap. See DefaultMaximumTeamMembers for the figures.
+    maximum_team_members: positiveInt.default(100),
     // Handles that are not owners BY IDENTITY rather than by size. `all-org-members` is the organisation
     // wearing a team's clothes: attributing a repository to it says only that the repository is in the
     // organisation, which the graph already says by listing it, and no threshold makes that an owner.

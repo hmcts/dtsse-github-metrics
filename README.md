@@ -69,7 +69,14 @@ decided by the first of these that answers, and every stored row names the rung 
 
 A sole `admin` team outranks CODEOWNERS, but a sole CODEOWNERS team outranks any contested API claim: access
 says who *can* merge and CODEOWNERS says who is *expected* to review, and where the two disagree the less
-ambiguous is the better guess. The graph is change-versioned rather than overwritten, because GitHub serves
+ambiguous is the better guess.
+
+Three filters keep a handle from being read as an owner, and each answers a question the others cannot:
+`excluded_teams` by **identity** (`all-org-members` is the organisation wearing a team's clothes),
+`maximum_team_share` by **breadth** (a team holding access across the estate holds it administratively), and
+`maximum_team_members` by **size** (an "all developers" group is everyone, whatever it holds). Every team an
+exclusion removes is named in the run's output beside the figure that removed it, because a filter quietly
+turning a well-owned repository into an `unowned` row is the one thing here that should never be silent. The graph is change-versioned rather than overwritten, because GitHub serves
 only the present — nobody can ask it who was in a team last June.
 
 The walk is about 250 API calls and a few minutes, so it runs as its own CronJob at 01:00 Monday, two hours

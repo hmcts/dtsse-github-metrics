@@ -106,6 +106,18 @@ org_graph:
   # answer. It deliberately does not apply to CODEOWNERS, where naming a team in one repository is a
   # per-repository act rather than a blanket grant.
   maximum_team_share: 0.25
+  # Above this many members, a team is a population rather than an owner — an "all developers" group. This is
+  # the filter neither of the others can replace: such a team is not named, and it may hold a perfectly
+  # unremarkable number of repositories, so only its size gives it away. Counted over immediate membership,
+  # and a team whose members could not be listed counts as zero, because being refused the membership is not
+  # evidence of being large.
+  #
+  # 100 is measured, not chosen. Only eight of HMCTS's 336 teams hold more than 50 members and half of those
+  # are ordinary product teams that are simply large — `opal` at 69 members and 24 repositories,
+  # `possession-claim-service` at 65 and 8 — so a ceiling of 50 would disown about 44 well-owned
+  # repositories. The distribution then jumps from 92 members to 217, and above that gap everything is a
+  # population or a blanket grant.
+  maximum_team_members: 100
   # Handles that are not owners by IDENTITY rather than by size. `all-org-members` is the organisation
   # wearing a team's clothes: attributing a repository to it says only that the repository is in the
   # organisation, which the graph already says by listing it, and no threshold makes that an owner.

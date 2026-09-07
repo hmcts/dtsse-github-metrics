@@ -297,6 +297,14 @@ async function countVisibleMerges(
 async function runCollectOrg(configuration: Configuration, argv: Arguments): Promise<number> {
   const graph = configuration.org_graph;
   const organization = configuration.organization;
+
+  // Refused rather than quietly skipped, and named so the reason is in the CronJob's log. A run that did
+  // nothing and exited 0 is the failure mode this check exists to avoid: the graph would go stale for weeks
+  // while every dashboard kept serving the last good one, and nothing anywhere would say why.
+  if (!graph.enabled) {
+    throw new UsageError("collect-org is turned off: set org_graph.enabled to true in the configuration to walk the organisation");
+  }
+
   const credentials = await resolveCredentials();
   progress(`authenticating as ${credentials.describe()}`);
   const client = createGitHubClient({ credentials });
@@ -317,13 +325,26 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     prefixSupport: graph.prefix_support,
     prefixDominance: graph.prefix_dominance,
     maximumTeamShare: graph.maximum_team_share,
+    maximumTeamMembers: graph.maximum_team_members,
     excludedTeams: new Set(graph.excluded_teams.map(canonical)),
     configured: repositoryOwners(configuration)
   };
 
   // Resolved once from the free rungs to find the residue, then again once the paid rungs have answered.
   const free: OrgFacts = { organization, ...teamFacts, repositories, people, codeowners: new Map(), directAdmins: new Map() };
-  const unresolved = unresolvedRepositories(free, ownershipEvidence(free, options), options.configured);
+  const evidence = ownershipEvidence(free, options);
+
+  // Named, not just counted. A filter that quietly stops a team being an owner is the one thing in this walk
+  // that could turn a well-owned repository into an `unowned` row without anybody noticing, so each excluded
+  // team is reported with the figure that excluded it and a reader can disagree with the threshold.
+  for (const slug of [...evidence.populousTeams].sort()) {
+    progress(`  ${slug} has ${evidence.memberCounts.get(slug)} members, over the ${graph.maximum_team_members} ceiling, so is not read as an owner`);
+  }
+  for (const slug of [...evidence.broadTeams].sort()) {
+    progress(`  ${slug} holds ${evidence.teamSizes.get(slug)} repositories, over the ${graph.maximum_team_share * 100}% ceiling, so is not read as an owner`);
+  }
+
+  const unresolved = unresolvedRepositories(free, evidence, options.configured);
   const limit = argv.unresolvedLimit ?? graph.unresolved_repository_limit;
   const scoped = unresolved.slice(0, limit);
   const truncated = unresolved.length - scoped.length;

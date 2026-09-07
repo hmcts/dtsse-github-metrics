@@ -319,6 +319,43 @@ describe("ownedRepositories", () => {
   });
 });
 
+describe("org_graph", () => {
+  it("should be off unless a configuration turns it on, so no existing file changes meaning", () => {
+    expect(parseConfiguration(VALID).org_graph.enabled).toBe(false);
+  });
+
+  it("should carry the measured defaults for every threshold", () => {
+    const graph = parseConfiguration(VALID).org_graph;
+
+    expect(graph).toMatchObject({
+      prefix_support: 3,
+      prefix_dominance: 0.8,
+      maximum_team_share: 0.25,
+      maximum_team_members: 100,
+      excluded_teams: ["all-org-members"],
+      unresolved_repository_limit: 500
+    });
+  });
+
+  it("should read a lowered member ceiling", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_members: 50\n`;
+
+    expect(parseConfiguration(document).org_graph.maximum_team_members).toBe(50);
+  });
+
+  it("should refuse a member ceiling of zero, which would disown every team", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_members: 0\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
+  });
+
+  it("should refuse a misspelled threshold rather than silently reporting the default as a choice", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_member: 50\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
+  });
+});
+
 describe("repositoryOwners", () => {
   it("should name the teams that own each repository", () => {
     expect([...repositoryOwners(parseConfiguration(POPULATION))]).toEqual([

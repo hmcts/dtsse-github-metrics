@@ -3,6 +3,7 @@ import {
   type AccessLevel,
   type CodeownersFact,
   DefaultExcludedTeams,
+  DefaultMaximumTeamMembers,
   DefaultMaximumTeamShare,
   DefaultPrefixDominance,
   DefaultPrefixSupport,
@@ -70,17 +71,20 @@ function orgFacts(overrides: Partial<OrgFacts> = {}): OrgFacts {
 }
 
 /**
- * Options with the share ceiling disabled by default.
+ * Options with both ceilings disabled by default.
  *
  * These populations are a handful of repositories, and a 25% ceiling over four of them suppresses any team
  * holding two — so left at its default it would silently take over every test that is about something else.
- * The tests that are about the ceiling set it themselves.
+ * `maximumTeamMembers` is `Infinity` for the same reason, from the other direction: these fixtures name one or
+ * two members per team, so a real ceiling would never fire and a test that forgot to set it would pass
+ * vacuously. The tests that are about either ceiling set it themselves.
  */
 function ownershipOptions(overrides: Partial<OwnershipOptions> = {}): OwnershipOptions {
   return {
     prefixSupport: DefaultPrefixSupport,
     prefixDominance: DefaultPrefixDominance,
     maximumTeamShare: 1,
+    maximumTeamMembers: Number.POSITIVE_INFINITY,
     excludedTeams: new Set(DefaultExcludedTeams),
     configured: new Map(),
     ...overrides
@@ -93,6 +97,11 @@ function primaryOf(resolved: ResolvedOwnership[], repository: string): ResolvedO
     throw new Error(`${repository} was not attributed at all`);
   }
   return found.primary;
+}
+
+/** `count` distinct members of one team, for the tests that are about how large a team is. */
+function membersOf(team: string, count: number): OrgFacts["memberships"] {
+  return Array.from({ length: count }, (_unused, at) => ({ teamSlug: team, login: `person-${at}`, role: "MEMBER" }));
 }
 
 /** A family of repositories each held by one admin team, which is the cheapest way to make evidence. */
@@ -160,6 +169,78 @@ describe("ownershipEvidence", () => {
     // The size is kept even though the claims are gone: the tie-breaks index into it by slug, and a
     // suppressed team is still a team of that size.
     expect(evidence.teamSizes.get("platform")).toBe(4);
+  });
+
+  it("should not read a team with more members than the ceiling as an owner", () => {
+    // The "all developers" case: a coherent handful of repositories held by a team that is really the whole
+    // engineering department. Neither other filter catches it — it is not named, and it holds too little of
+    // the estate to be broad — so size is the only thing that gives it away.
+    const facts = orgFacts({
+      repositories: repositories("one", "two"),
+      teamRepositories: [owns("all-developers", "one", "admin"), owns("all-developers", "two", "admin")],
+      memberships: membersOf("all-developers", 101)
+    });
+
+    const evidence = ownershipEvidence(facts, ownershipOptions({ maximumTeamMembers: DefaultMaximumTeamMembers }));
+
+    expect([...evidence.populousTeams]).toEqual(["all-developers"]);
+    expect(evidence.claims.size).toBe(0);
+    expect(evidence.memberCounts.get("all-developers")).toBe(101);
+  });
+
+  it("should keep a team exactly at the member ceiling, since the ceiling is a maximum it may reach", () => {
+    const facts = orgFacts({
+      repositories: repositories("one"),
+      teamRepositories: [owns("large-but-real", "one", "admin")],
+      memberships: membersOf("large-but-real", DefaultMaximumTeamMembers)
+    });
+
+    const evidence = ownershipEvidence(facts, ownershipOptions({ maximumTeamMembers: DefaultMaximumTeamMembers }));
+
+    expect([...evidence.populousTeams]).toEqual([]);
+    expect(evidence.claims.get("one")).toEqual(new Map([["large-but-real", "admin"]]));
+  });
+
+  it("should not read a populous team named in CODEOWNERS as an owner either, unlike a broad one", () => {
+    // The two filters part company here. Breadth is a fact about a blanket GRANT, so an explicit per-repository
+    // mention still counts. Size is a fact about the TEAM: everyone is everyone wherever the handle is written.
+    const facts = orgFacts({
+      repositories: repositories("one"),
+      memberships: membersOf("all-developers", 101),
+      codeowners: codeownersFor([{ repository: "one", teams: ["all-developers"] }])
+    });
+
+    const resolved = attributeOwnership(facts, ownershipOptions({ maximumTeamMembers: DefaultMaximumTeamMembers }));
+
+    expect(primaryOf(resolved, "one")).toMatchObject({ kind: OwnerKind.None, rung: OwnershipRung.Unowned });
+  });
+
+  it("should never exclude a team by size when its membership could not be listed", () => {
+    // A team whose members were refused counts as zero, and being refused the membership is not evidence of
+    // being large. Read the other way round, one 403 disowns every repository that team holds.
+    const facts = orgFacts({
+      repositories: repositories("one"),
+      teamRepositories: [owns("unlistable", "one", "admin")],
+      memberships: []
+    });
+
+    const evidence = ownershipEvidence(facts, ownershipOptions({ maximumTeamMembers: 1 }));
+
+    expect([...evidence.populousTeams]).toEqual([]);
+    expect(evidence.claims.get("one")).toEqual(new Map([["unlistable", "admin"]]));
+  });
+
+  it("should count a team's members case-insensitively, so one team is not two half-sized ones", () => {
+    const facts = orgFacts({
+      repositories: repositories("one"),
+      teamRepositories: [owns("mixed", "one", "admin")],
+      memberships: [...membersOf("Mixed", 2), ...membersOf("mixed", 1).map((m) => ({ ...m, login: "person-9" }))]
+    });
+
+    const evidence = ownershipEvidence(facts, ownershipOptions({ maximumTeamMembers: 2 }));
+
+    expect(evidence.memberCounts.get("mixed")).toBe(3);
+    expect([...evidence.populousTeams]).toEqual(["mixed"]);
   });
 
   it("should still count a broad team named in one repository's CODEOWNERS", () => {

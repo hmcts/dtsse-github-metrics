@@ -52,6 +52,17 @@ export interface Evidence {
   codeownerSizes: Map<string, number>;
   /** Teams holding access across more of the estate than `maximumTeamShare` allows, kept for reporting. */
   broadTeams: Set<string>;
+  /**
+   * Teams with more members than `maximumTeamMembers` allows, so read as populations rather than owners.
+   *
+   * Kept apart from `broadTeams` rather than merged into one "not an owner" set, because they are excluded
+   * from different things — see the CODEOWNERS filter in `ownershipEvidence` — and because a run reports the
+   * two separately: "holds access across half the estate" and "has 757 members" are different findings and a
+   * reader fixes them differently.
+   */
+  populousTeams: Set<string>;
+  /** How many members each team was observed to have, so a report can name the size that excluded it. */
+  memberCounts: Map<string, number>;
   /** Bare `@login` handles CODEOWNERS names, per repository. */
   codeownerPeople: Map<string, string[]>;
 }
@@ -141,9 +152,19 @@ export function ownershipEvidence(facts: OrgFacts, options: OwnershipOptions): E
   const ceiling = options.maximumTeamShare * population.size;
   const broadTeams = new Set([...teamSizes].filter(([, size]) => size > ceiling).map(([slug]) => slug));
 
+  // Counted from the memberships actually collected, not from a team's own `totalCount`, so the ceiling
+  // weighs the same rows the graph stores. A team whose members could not be listed counts as zero and is
+  // therefore never excluded by size: being refused the membership is not evidence of being large.
+  const memberCounts = new Map<string, number>();
+  for (const membership of facts.memberships) {
+    const slug = canonical(membership.teamSlug);
+    memberCounts.set(slug, (memberCounts.get(slug) ?? 0) + 1);
+  }
+  const populousTeams = new Set([...memberCounts].filter(([, size]) => size > options.maximumTeamMembers).map(([slug]) => slug));
+
   const claims = new Map<string, Map<string, AccessLevel>>();
   for (const [slug, held] of owning) {
-    if (broadTeams.has(slug)) {
+    if (broadTeams.has(slug) || populousTeams.has(slug)) {
       continue;
     }
     for (const [repository, access] of held) {
@@ -165,7 +186,14 @@ export function ownershipEvidence(facts: OrgFacts, options: OwnershipOptions): E
     }
     // Deduplicated AFTER folding, because a file naming both `@hmcts/AppReg` and `@hmcts/appreg` names ONE
     // team twice, and left as two the sole-owner rule would not fire.
-    const teams = [...new Set(fact.teams.map(canonical))].filter((slug) => !options.excludedTeams.has(slug));
+    //
+    // `populousTeams` is filtered here and `broadTeams` deliberately is NOT, because the two filters answer
+    // different questions. Breadth of access is a fact about a blanket grant, and naming a team in one
+    // repository's CODEOWNERS is the opposite — a per-repository act — so a broad team's explicit mention
+    // still counts. Size is a fact about the team ITSELF: a 757-member group is everyone wherever it is
+    // written, and `@hmcts/all-developers` on a review line means "somebody should look", never "this is
+    // whose repository it is". That is the same argument `excludedTeams` makes, so it is filtered the same way.
+    const teams = [...new Set(fact.teams.map(canonical))].filter((slug) => !options.excludedTeams.has(slug) && !populousTeams.has(slug));
     // An empty list is kept rather than dropped: "read, and names nobody" is an answer, and the row is what
     // keeps it distinguishable from a repository nobody was allowed to look at.
     codeowners.set(repository, teams);
@@ -175,7 +203,7 @@ export function ownershipEvidence(facts: OrgFacts, options: OwnershipOptions): E
     }
   }
 
-  return { claims, teamSizes, codeowners, codeownerSizes, broadTeams, codeownerPeople };
+  return { claims, teamSizes, codeowners, codeownerSizes, broadTeams, populousTeams, memberCounts, codeownerPeople };
 }
 
 /** Name the one team holding admin, or nothing when none or several do. */

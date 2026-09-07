@@ -229,6 +229,8 @@ export interface OwnershipOptions {
   prefixDominance: number;
   /** Above this share of the estate, a team holds access administratively and is not read as a claim. */
   maximumTeamShare: number;
+  /** Above this many members, a team is a population rather than an owner. */
+  maximumTeamMembers: number;
   /** Handles that are not teams in the sense this file means, by identity rather than by size. */
   excludedTeams: Set<string>;
   /** Reviewed `metrics.yaml` ownership, which outranks every collected rung. */
@@ -264,6 +266,28 @@ export const DefaultMaximumTeamShare = 0.25;
  * makes an org-wide membership group into an owner.
  */
 export const DefaultExcludedTeams: readonly string[] = ["all-org-members"];
+
+/**
+ * Above how many members a team is read as a population rather than as an owner.
+ *
+ * The third filter, and it answers a question neither of the others can. `excludedTeams` catches a population
+ * BY NAME, which only works for the ones somebody thought to name; `maximumTeamShare` catches a team holding
+ * access across the estate, which misses a large team holding a normal number of repositories. An
+ * "all developers" group is neither: it is a coherent set of repositories held by a team that is really the
+ * whole engineering department, and its size is the only thing that gives it away.
+ *
+ * MEASURED ON THIS ESTATE, which is why the number is 100 and not the 50 first proposed. Only eight of 336
+ * teams hold more than 50 immediate members, and half of those are ordinary product teams that are simply
+ * large — `opal` at 69 members and 24 repositories, `possession-claim-service` at 65 and 8,
+ * `enforcement-service` at 57 and 2. A ceiling of 50 would disown about 44 repositories that have a perfectly
+ * good owning team. The distribution then jumps from 92 to 217, and everything above that gap is a population
+ * or a blanket grant: `all-org-members` at 757 and `cpp-development` at 217, whose 318 repositories come from
+ * one Terraform `for_each` granting `maintain` across every CPP repository.
+ *
+ * Counted over IMMEDIATE membership, matching what is collected and stored. A parent team's descendants are
+ * not folded in, because the access being weighed was granted to the team named, not to its subtree.
+ */
+export const DefaultMaximumTeamMembers = 100;
 
 /**
  * CODEOWNERS handles that are not people, however they are written.
