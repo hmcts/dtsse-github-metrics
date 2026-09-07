@@ -507,3 +507,252 @@ describe("deserialise", () => {
     expect(deserialise<{ title: string }>({ title: "2026-08-01T00:00:00Z is in the title" }).title).toBe("2026-08-01T00:00:00Z is in the title");
   });
 });
+
+/**
+ * The defensive branches: what a collection does when GitHub answers with a hole in it.
+ *
+ * Every case here is a response that is valid GraphQL and structurally short of what was asked for — a null
+ * node in a connection, or a follow-up page that has lost the pull request it was paging. They were the
+ * uncovered half of this module's branches, and they are worth holding: at 1850 repositories the difference
+ * between skipping a null node and throwing on it is the difference between a quietly short count and a run
+ * that says what went wrong.
+ */
+describe("collecting through a hole in GitHub's answer", () => {
+  function commitNode(overrides: Record<string, unknown> = {}) {
+    return {
+      oid: "abc123",
+      committedDate: "2026-08-02T00:00:00Z",
+      additions: 5,
+      deletions: 1,
+      changedFilesIfAvailable: 2,
+      author: { user: { login: "alice", __typename: "User" }, name: "Alice" },
+      associatedPullRequests: { nodes: [] },
+      statusCheckRollup: { state: "SUCCESS" },
+      ...overrides
+    };
+  }
+
+  function history(nodes: unknown[], overrides: Record<string, unknown> = {}) {
+    return { repository: { defaultBranchRef: { target: { history: { pageInfo: PAGE_END, nodes, ...overrides } } } } };
+  }
+
+  it("should skip a null node in a merged-pull-request search rather than fail the repository", async () => {
+    // GraphQL types connection nodes as nullable, and a node the viewer may not read comes back null. One
+    // unreadable pull request is not a reason to abandon the other nine hundred in the shard.
+    const { fetch } = replying(search([null, pullRequestNode()]));
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts.map((fact) => fact.number)).toEqual([11]);
+  });
+
+  it("should skip a null node in commit history rather than fail the repository", async () => {
+    const { fetch } = replying(history([null, commitNode()]));
+
+    const facts = await collectDirectCommits(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts.map((fact) => fact.sha)).toEqual(["abc123"]);
+  });
+
+  it("should fail loudly when a review follow-up page has lost its pull request", async () => {
+    // Not skipped, unlike a null node: the first page said there were more reviews, so continuing would record
+    // a merge as having fewer reviews than it has — and review coverage is a graded figure.
+    const { fetch } = replying(
+      search([
+        pullRequestNode({
+          reviews: {
+            pageInfo: { hasNextPage: true, endCursor: "REVIEWS" },
+            nodes: [
+              {
+                databaseId: 1,
+                submittedAt: "2026-08-01T06:00:00Z",
+                state: "APPROVED",
+                author: { login: "bob", __typename: "User" },
+                comments: { totalCount: 0 }
+              }
+            ]
+          }
+        })
+      ]),
+      { repository: { pullRequest: null } }
+    );
+
+    const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
+
+    expect(error.message).toMatch(/omitted a pull request while collecting reviews/);
+    expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
+  });
+
+  it("should fail loudly when a status-check follow-up page has lost its pull request", async () => {
+    const { fetch } = replying(
+      search([
+        pullRequestNode({
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      pageInfo: { hasNextPage: true, endCursor: "CHECKS" },
+                      nodes: [{ __typename: "CheckRun", name: "build", conclusion: "SUCCESS", completedAt: "2026-08-02T00:00:00Z" }]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        })
+      ]),
+      // `null` rather than `{}`: the schema requires `commits` on a present pull request, so an empty object
+      // is a schema failure and never reaches the check below. A null pull request is what GitHub actually
+      // sends, and it is what the optional chain reads as an absent connection.
+      { repository: { pullRequest: null } }
+    );
+
+    const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
+
+    expect(error.message).toMatch(/omitted a pull request while collecting status checks/);
+    expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
+  });
+});
+
+/**
+ * Collecting when every optional field is absent.
+ *
+ * GraphQL types most of these as nullable and GitHub genuinely omits them — a bot with no `login`, a check run
+ * that has not finished so has no `conclusion`, a commit whose `changedFilesIfAvailable` GitHub declines to
+ * compute on a large diff. Each one is a spread that either contributes a field or contributes nothing, and the
+ * contributes-nothing side is what these cover.
+ *
+ * The assertion in every case is the same shape: the fact comes back, and the field is ABSENT rather than
+ * present-and-null. That is the absent-means-unmeasured rule at the collection boundary, and it has to hold
+ * here or the report layer is normalising a null it should never have been handed.
+ */
+describe("collecting a fact whose optional fields GitHub omitted", () => {
+  it("should build a pull-request fact with no author, body or size", async () => {
+    const { fetch } = replying(
+      search([
+        pullRequestNode({
+          author: null,
+          body: null,
+          additions: null,
+          deletions: null,
+          changedFiles: null,
+          reviews: {
+            pageInfo: PAGE_END,
+            // A review with no author: a deleted account still leaves its review on the pull request.
+            nodes: [{ databaseId: 1, submittedAt: "2026-08-01T06:00:00Z", state: "APPROVED", author: null, comments: { totalCount: 0 } }]
+          },
+          commits: {
+            nodes: [
+              {
+                commit: {
+                  statusCheckRollup: {
+                    contexts: {
+                      pageInfo: PAGE_END,
+                      nodes: [
+                        // A check run still in flight, and a commit status with no context name.
+                        { __typename: "CheckRun", name: null, conclusion: null, completedAt: null, status: "IN_PROGRESS" },
+                        { __typename: "StatusContext", context: null, state: null, createdAt: null }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        })
+      ])
+    );
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    const fact = facts[0];
+    expect(fact).toBeDefined();
+    expect(fact).not.toHaveProperty("authorLogin");
+    expect(fact).not.toHaveProperty("additions");
+    expect(fact?.reviews[0]).not.toHaveProperty("authorLogin");
+    // Named "" rather than absent: a check's name is how the merge gate matches a required context, and the
+    // gate compares strings, so an unnamed check has to be a string that matches nothing.
+    expect(fact?.checks.map((check) => check.name)).toEqual(["", ""]);
+  });
+
+  it("should build a direct-commit fact with no author, size or rollup", async () => {
+    const { fetch } = replying({
+      repository: {
+        defaultBranchRef: {
+          target: {
+            history: {
+              pageInfo: PAGE_END,
+              nodes: [
+                {
+                  oid: "abc123",
+                  committedDate: "2026-08-02T00:00:00Z",
+                  additions: null,
+                  deletions: null,
+                  changedFilesIfAvailable: null,
+                  author: null,
+                  associatedPullRequests: { nodes: [] },
+                  statusCheckRollup: null
+                }
+              ]
+            }
+          }
+        }
+      }
+    });
+
+    const facts = await collectDirectCommits(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts[0]?.sha).toBe("abc123");
+    expect(facts[0]).not.toHaveProperty("authorLogin");
+    expect(facts[0]).not.toHaveProperty("authorName");
+    expect(facts[0]).not.toHaveProperty("additions");
+  });
+
+  it("should build a direct-commit fact whose author has a name but no account", async () => {
+    // The common shape for a commit authored by an email address git never matched to a GitHub user.
+    const { fetch } = replying({
+      repository: {
+        defaultBranchRef: {
+          target: {
+            history: {
+              pageInfo: PAGE_END,
+              nodes: [
+                {
+                  oid: "def456",
+                  committedDate: "2026-08-02T00:00:00Z",
+                  additions: 1,
+                  deletions: 0,
+                  changedFilesIfAvailable: 1,
+                  author: { user: null, name: "Alice Unmatched" },
+                  associatedPullRequests: { nodes: [null] },
+                  statusCheckRollup: { state: null }
+                }
+              ]
+            }
+          }
+        }
+      }
+    });
+
+    const facts = await collectDirectCommits(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts[0]?.authorName).toBe("Alice Unmatched");
+    expect(facts[0]).not.toHaveProperty("authorLogin");
+  });
+
+  it("should page a merged-pull-request search that reports no cursor with its next page", async () => {
+    // `hasNextPage` true with a null `endCursor` is contradictory but GraphQL permits it; the collector reads
+    // the cursor as null and asks again from the start rather than looping on an undefined.
+    const { fetch, sent } = replying(
+      search([pullRequestNode()], { pageInfo: { hasNextPage: true, endCursor: null } }),
+      search([pullRequestNode({ databaseId: 102, number: 12 })])
+    );
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts.map((fact) => fact.number)).toEqual([11, 12]);
+    expect(sent[1]?.variables.cursor).toBeNull();
+  });
+});

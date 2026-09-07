@@ -66,13 +66,11 @@ function exactFraction(value: number): { numerator: bigint; denominator: bigint 
   const mantissa = rawExponent === 0 ? rawMantissa : rawMantissa | 0x10000000000000n;
   const exponent = (rawExponent === 0 ? 1 : rawExponent) - 1075;
 
-  let numerator = mantissa;
-  let denominator = 1n;
-  if (exponent >= 0) {
-    numerator = mantissa << BigInt(exponent);
-  } else {
-    denominator = 1n << BigInt(-exponent);
-  }
+  // `exponent` is always negative here, so there is no positive case to handle: a double is
+  // `mantissa * 2^exponent` with an integer mantissa, so a non-negative exponent makes the value an integer —
+  // and the `Number.isInteger` return above has already taken every one of those. The branch that used to
+  // shift the numerator left was unreachable, which is how it came to be the one uncovered line in this file.
+  const denominator = 1n << BigInt(-exponent);
 
-  return { numerator: negative ? -numerator : numerator, denominator };
+  return { numerator: negative ? -mantissa : mantissa, denominator };
 }

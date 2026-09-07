@@ -50,13 +50,36 @@ export default defineConfig({
       // omitted from it — vitest 4 removed the `all` flag that used to say this.
       include: ["src/**"],
       exclude: [
+        // The Prisma client, which `prisma generate` writes and .gitignore keeps out of the repository.
+        // 9MB of generated code, and it dominated every global figure it was counted in: it alone took
+        // statements to 22% against lines at 78%, because a generated client is thousands of tiny
+        // accessors nothing calls. Not ours to test, and not ours to measure.
+        "src/evidence/store/generated/**",
         // Type-only module: `tsc` erases it entirely, so there is no runtime code to instrument and
         // v8 reports it as an unreachable 0% that no test could ever raise.
         "src/lib/types.ts",
         // Framework entry points, exercised by Playwright rather than unit tests.
         "src/instrumentation.ts",
         "src/app/**/layout.tsx",
-        "src/app/**/loading.tsx"
+        "src/app/**/loading.tsx",
+        // Everything below opens Postgres, so it is covered by `test/integration/**` under
+        // vitest.integration.config.mts — a SEPARATE run whose report lands in coverage-integration/ and
+        // is never merged into this one. Measured here they all read 0%, which is what took
+        // `src/evidence/report/**` to 50% and `behaviour/**` to 86%, and it says nothing true: the
+        // integration run has store/coverage.ts at 89%, migrate.ts at 92% and prune.ts at 86%.
+        //
+        // Excluded rather than gated at a lower number, because the alternative is mocking Prisma until
+        // the figure moves, and a test that asserts a mocked query is a test of the mock. Their gate is
+        // the thresholds in the integration config; the CNP unit-test stage has no database, which is why
+        // the two runs are split in the first place.
+        "src/evidence/store/**",
+        "src/evidence/report/repositories.ts",
+        "src/evidence/behaviour/fill.ts",
+        // `import "server-only"` — vitest cannot load it. Resolving `server-only` through the
+        // `react-server` condition to get around that makes React refuse to load in every other file, so
+        // its own test asserts the source text instead and the module is exercised end to end by the
+        // Playwright suite, which renders the pages that call it.
+        "src/lib/api.ts"
       ],
       // `text` alone in the gate, which writes to stdout and creates no files. The `html` reporter
       // is the one worth having when a figure drops, but on a virtiofs mount it intermittently dies
@@ -75,7 +98,6 @@ export default defineConfig({
         "src/evidence/assessment/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         "src/evidence/window/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         "src/evidence/report/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
-        "src/evidence/store/coverage.ts": { statements: 95, lines: 95, branches: 90, functions: 95 },
         statements: 80,
         lines: 80,
         branches: 75,

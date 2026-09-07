@@ -297,3 +297,54 @@ describe("behaviourMetrics", () => {
     expect(behaviourMetricIdentifiers()).toHaveLength(9);
   });
 });
+
+/**
+ * Every metric's PER-PULL-REQUEST accessors, across the whole registry.
+ *
+ * The suite above asserts each metric's `summary` over a cohort, which is the figure the dashboard reads. It
+ * does not call `classification`, `value` or `commitClassification` on most of them — and those are what the
+ * drill-down renders, one row per merge. They were the registry's uncovered half: seven of them were never
+ * invoked, including the two `defineMetric` supplies as defaults.
+ *
+ * Driven off `behaviourMetrics` rather than a list written out here, so a metric added later is covered by
+ * these the day it is added rather than the day somebody remembers to extend the table.
+ */
+describe("every behaviour metric's per-merge accessors", () => {
+  const metrics = behaviourMetrics(TRACEABILITY);
+
+  for (const metric of metrics) {
+    describe(metric.identifier, () => {
+      it("should classify a merge as a non-empty label", () => {
+        // A label, always: the drill-down groups rows by it, and an empty string would render a nameless group.
+        expect(metric.classification(pullRequest({ reviews: [review()] }))).toMatch(/\S/);
+      });
+
+      it("should classify a bare merge as a non-empty label", () => {
+        // No reviews and no checks — the shape that makes every "was it reviewed" branch take its other path.
+        expect(metric.classification(pullRequest())).toMatch(/\S/);
+      });
+
+      it("should return a finite value or nothing at all", () => {
+        // Never NaN. A NaN would propagate through the distribution and render as a dash indistinguishable
+        // from an honestly absent figure, which is the one thing the absent-means-unmeasured rule forbids.
+        const value = metric.value(pullRequest({ reviews: [review()] }));
+        if (value !== undefined) {
+          expect(Number.isFinite(value)).toBe(true);
+        }
+      });
+
+      it("should answer for a direct commit with a label or nothing", () => {
+        // `undefined` is the flow metrics' answer and a label is the compliance metrics'; both are valid, and
+        // what is asserted is that it answers at all rather than throwing on a commit with no pull request.
+        const label = metric.commitClassification(commit());
+        expect(label === undefined || label.length > 0).toBe(true);
+      });
+    });
+  }
+
+  it("should give every metric a percentile to read its distribution at", () => {
+    for (const metric of metrics) {
+      expect(Object.values(Percentile)).toContain(metric.percentile);
+    }
+  });
+});

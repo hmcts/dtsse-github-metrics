@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { githubTimestamp, midnight, parseInstant } from "./instant.ts";
-import { baselineWindow, collectedAnchor, collectionIsStale, days, periodWindows, resolveWindow } from "./window.ts";
+import { baselineWindow, collectedAnchor, collectionIsStale, days, hours, periodWindows, resolveWindow } from "./window.ts";
 
 // Ported from tests/test_window.py. A fixed mid-afternoon instant anchors every relative window, so
 // nothing here depends on when the suite runs.
@@ -171,5 +171,18 @@ describe("periodWindows", () => {
 
   it.each(["2026-08-08T00:00:00Z", "2026-09-01T00:00:00Z"])("should report nothing when %s is too recent or in the future", (anchor) => {
     expect(periodWindows(new Date(anchor), days(28), undefined, REFERENCE)).toEqual([]);
+  });
+});
+
+describe("days and hours", () => {
+  it("should convert a count of days to milliseconds", () => {
+    expect(days(1)).toBe(86_400_000);
+  });
+
+  it("should convert a count of hours to milliseconds", () => {
+    // `hours` is the unit the flow metrics are expressed in — merge cycle time and time to first review are
+    // both reported in hours — so it is read every time a threshold in the policy is compared against one.
+    expect(hours(1)).toBe(3_600_000);
+    expect(hours(24)).toBe(days(1));
   });
 });
