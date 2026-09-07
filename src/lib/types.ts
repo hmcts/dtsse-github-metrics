@@ -437,7 +437,16 @@ export interface OverviewSummary {
  */
 export interface RepositoryRow {
   repository: string;
+  /**
+   * The team that leads this repository's ownership — the first in the reporting order.
+   *
+   * A STATED CONVENTION rather than a claim that there is only one owner. Where a repository is shared,
+   * `teams` carries the full set and this field carries its head; absent `teams` means the convention and the
+   * fact agree, which is the ordinary case.
+   */
   team: string;
+  /** Every owning team, present only where a repository has more than one. */
+  teams?: string[];
   readiness?: ReadinessLabel;
   merged_pull_requests?: number;
   direct_commits?: number;

@@ -63,6 +63,46 @@ job:
     METRICS_CONFIG: /app/metrics.yaml
     NODE_OPTIONS: --max-old-space-size=3072
 
+orgJob:
+  enabled: true
+  image: hmctsprod.azurecr.io/dtsse/github-metrics:latest
+  aadIdentityName: dtsse
+  command: ["node"]
+  args: ["dist/cli/run.js", "collect-org", "--config", "/app/metrics.yaml"]
+  # 01:00 Monday, two hours ahead of `collect` at 03:00. Ordering rather than coincidence: ownership is what
+  # the behaviour figures are attributed to, so a week's figures should be read against the same week's graph.
+  schedule: "0 1 * * 1"
+  concurrencyPolicy: Forbid
+  backoffLimit: 1
+  # One hour, not the six `job` allows. The walk is about 250 API calls and finishes in single-digit minutes,
+  # so a run still going after an hour has found something the estimate did not and should fail where somebody
+  # will see it rather than grind on.
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  keyVaults:
+    dtsse:
+      secrets:
+        - name: github-app-id
+          alias: GH_APP_ID
+        - name: github-app-installation-id
+          alias: GH_APP_INSTALLATION_ID
+        - name: github-app-private-key
+          alias: GH_APP_PRIVATE_KEY
+        - name: github-metrics-postgres-host
+          alias: POSTGRES_HOST
+        - name: github-metrics-postgres-port
+          alias: POSTGRES_PORT
+        - name: github-metrics-postgres-user
+          alias: POSTGRES_USER
+        - name: github-metrics-postgres-password
+          alias: POSTGRES_PASSWORD
+        - name: github-metrics-postgres-database
+          alias: POSTGRES_DATABASE
+  environment:
+    NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
+    METRICS_CONFIG: /app/metrics.yaml
+    NODE_OPTIONS: --max-old-space-size=3072
+
 postgresql:
   enabled: false
 

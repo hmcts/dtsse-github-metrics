@@ -166,10 +166,16 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration(document).enablement["some-repo"]?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
   });
 
-  it("should reject a repository owned by more than one team", () => {
+  it("should accept a repository owned by more than one team", () => {
     const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
 
-    expect(() => parseConfiguration(document)).toThrow(/repositories may belong to only one team: nfdiv-case-api/);
+    expect(parseConfiguration(document).teams.map((team) => team.identifier)).toContain("shared");
+  });
+
+  it("should reject a repository listed twice under one team", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - other-api\n      - other-api\n`;
+
+    expect(() => parseConfiguration(document)).toThrow(/shared lists a repository twice: other-api/);
   });
 
   it("should reject duplicate team identifiers", () => {
@@ -314,12 +320,24 @@ describe("ownedRepositories", () => {
 });
 
 describe("repositoryOwners", () => {
-  it("should name the team that owns each repository", () => {
+  it("should name the teams that own each repository", () => {
     expect([...repositoryOwners(parseConfiguration(POPULATION))]).toEqual([
-      ["nfdiv-case-api", "divorce"],
-      ["opal-common-lib", "opal"],
-      ["opal-logging-service", "opal"]
+      ["nfdiv-case-api", ["divorce"]],
+      ["opal-common-lib", ["opal"]],
+      ["opal-logging-service", ["opal"]]
     ]);
+  });
+
+  it("should name every team that owns a shared repository, in the reporting order", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
+
+    expect(repositoryOwners(parseConfiguration(document)).get("nfdiv-case-api")).toEqual(["divorce", "shared"]);
+  });
+
+  it("should list a shared repository once, so nothing collects or counts it twice", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
+
+    expect(configuredRepositories(parseConfiguration(document))).toEqual(["nfdiv-case-api", "opal-common-lib", "opal-logging-service"]);
   });
 });
 

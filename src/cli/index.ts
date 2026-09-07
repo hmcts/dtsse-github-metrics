@@ -10,18 +10,41 @@ import { resolveCredentials } from "../evidence/github/credentials.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
 import { collectSecurityAlerts } from "../evidence/inventory/security-alerts.ts";
+import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
+import { canonical, type OrgFacts, OwnerKind, type OwnershipOptions, type ResolvedOwnership } from "../evidence/org/graph.ts";
+import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
 import { configuredRepositories, repositoryOwners, sonarOrganizationName } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
-import { collectionState, stampCollection } from "../evidence/store/collection-state.ts";
+import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
 import { migrate } from "../evidence/store/migrate.ts";
+import {
+  recordOrgPeople,
+  recordOrgRepositories,
+  recordOrgTeamMemberships,
+  recordOrgTeamRepositories,
+  recordOrgTeams,
+  recordRepositoryOwnership
+} from "../evidence/store/org-graph.ts";
 import { prisma } from "../evidence/store/prisma.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
 import { recordRepositoryState, storedRepositoryState } from "../evidence/store/repository-state.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
 import { EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { type Arguments, COHORT_COMMANDS, parseArguments, UsageError } from "./parse-arguments.ts";
+
+/**
+ * One line of human progress, on STDERR.
+ *
+ * `collect-org --propose-teams` puts a YAML document on stdout for somebody to redirect into a file and
+ * review, so every line that is not that document has to go somewhere else. `console.info` writes to stdout,
+ * which would land the walk's commentary in the middle of the file. Upstream stated this rule — "writes the
+ * report to stdout and progress to stderr, so stdout can be redirected into a file" — and the port lost it.
+ */
+function progress(line: string): void {
+  process.stderr.write(`${line}\n`);
+}
 
 async function loadPolicy(argv: Arguments): Promise<Configuration> {
   const configuration = await loadConfiguration(...argv.config);
@@ -153,6 +176,25 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   return runStatus(status);
 }
 
+/**
+ * Whether this credential may list the organisation's teams, and how many it sees.
+ *
+ * Reported by `doctor` because it is exactly the kind of invisible failure `doctor` exists for: a token that
+ * reads every repository perfectly well can still be refused the team list, and `collect-org` would then fall
+ * back to CODEOWNERS and names and produce a plausible-looking graph missing its strongest evidence. Checked
+ * rather than assumed, and never fatal — `collect` does not need it.
+ */
+async function describeTeamAccess(client: ReturnType<typeof createGitHubClient>, organization: string): Promise<string> {
+  try {
+    const teams = await client.get<unknown[]>(`/orgs/${organization}/teams`, { per_page: "1" });
+    return Array.isArray(teams)
+      ? `the organisation's teams are readable, so collect-org can use team access as evidence`
+      : `the teams endpoint answered something unexpected, so collect-org would rest on CODEOWNERS and names`;
+  } catch (error) {
+    return `the organisation's teams are NOT readable (${error instanceof Error ? error.message : String(error)}), so collect-org would rest on CODEOWNERS and names alone`;
+  }
+}
+
 async function runDoctor(configuration: Configuration): Promise<number> {
   const credentials = await resolveCredentials();
   console.info(`authenticating as ${credentials.describe()}`);
@@ -177,6 +219,7 @@ async function runDoctor(configuration: Configuration): Promise<number> {
   );
   console.info(`${repositories.length - unreadable} of ${repositories.length} configured repositories are readable`);
   console.info(`GitHub shows ${visible} merged pull requests across them in the operational window`);
+  console.info(await describeTeamAccess(client, configuration.organization));
 
   if (unreadable > 0) {
     return EXIT_FAILED;
@@ -236,6 +279,148 @@ async function countVisibleMerges(
   return total;
 }
 
+/**
+ * Collects the organisation graph: its teams, who is in them, and who owns what.
+ *
+ * Its own command rather than a step inside `collect`, because the two have different units of failure.
+ * `collect` catches per repository, counts, and carries on — one repository refusing says nothing about the
+ * next. This writes ONE organisation-wide graph, and a partial write must not be mistaken for a complete
+ * one, which is what the `complete` flag threaded into every store call is for: a run that could not list
+ * the teams writes what it saw and supersedes nothing.
+ *
+ * The expensive rungs are scoped, and that is the whole cost control. Team access and the configured
+ * override are free — the data is already in hand after the team walk — so CODEOWNERS and direct
+ * collaborators are read only for the repositories those rungs left unresolved. At 3,277 repositories the
+ * residue is not knowable in advance, so `unresolved_repository_limit` caps it and a run that hits the cap
+ * exits INCOMPLETE rather than pretending it walked the estate.
+ */
+async function runCollectOrg(configuration: Configuration, argv: Arguments): Promise<number> {
+  const graph = configuration.org_graph;
+  const organization = configuration.organization;
+  const credentials = await resolveCredentials();
+  progress(`authenticating as ${credentials.describe()}`);
+  const client = createGitHubClient({ credentials });
+  const observedAt = new Date();
+
+  const teamFacts = await collectOrgTeams(client, organization);
+  if (!teamFacts.teamsRead && teamFacts.teams.length === 0) {
+    progress("the teams could not be listed, so ownership will rest on CODEOWNERS and names alone");
+  }
+  const repositories = await collectOrgRepositories(client, organization);
+  if (repositories.length === 0) {
+    console.error(`no repositories could be listed for ${organization}`);
+    return runStatus(CollectionStatus.Failed);
+  }
+  const people = await collectOrgPeople(client, organization);
+
+  const options: OwnershipOptions = {
+    prefixSupport: graph.prefix_support,
+    prefixDominance: graph.prefix_dominance,
+    maximumTeamShare: graph.maximum_team_share,
+    excludedTeams: new Set(graph.excluded_teams.map(canonical)),
+    configured: repositoryOwners(configuration)
+  };
+
+  // Resolved once from the free rungs to find the residue, then again once the paid rungs have answered.
+  const free: OrgFacts = { organization, ...teamFacts, repositories, people, codeowners: new Map(), directAdmins: new Map() };
+  const unresolved = unresolvedRepositories(free, ownershipEvidence(free, options), options.configured);
+  const limit = argv.unresolvedLimit ?? graph.unresolved_repository_limit;
+  const scoped = unresolved.slice(0, limit);
+  const truncated = unresolved.length - scoped.length;
+  progress(`${unresolved.length} repositories unresolved by team access; reading CODEOWNERS for ${scoped.length}`);
+
+  const codeowners = await collectCodeowners(client, organization, scoped);
+  const stillOpen = scoped.filter((repository) => {
+    const fact = codeowners.get(repository);
+    return fact === undefined || (fact.teams.length === 0 && fact.people.length === 0);
+  });
+  const directAdmins = await collectDirectAdmins(client, organization, stillOpen);
+
+  const facts: OrgFacts = { ...free, codeowners, directAdmins };
+  const resolved = attributeOwnership(facts, options);
+
+  for (const [rung, count] of rungCounts(resolved)) {
+    progress(`  ${rung}: ${count}`);
+  }
+
+  if (argv.proposeTeams) {
+    // Printed for review rather than written, because `metrics.yaml` is tracked so that adding a team is a
+    // reviewed change. The graph is evidence about ownership; it does not get to redefine the cohort behind
+    // somebody's back.
+    process.stdout.write(`${proposeTeamsBlock(resolved)}\n`);
+    return truncated === 0 ? EXIT_COMPLETE : runStatus(CollectionStatus.Partial);
+  }
+
+  // `complete` is false where the ladder was cut short: the graph is missing answers it would have had, so
+  // nothing absent from it may be read as deleted.
+  const complete = truncated === 0 && teamFacts.teamsRead;
+  const written = [
+    await recordOrgTeams(organization, observedAt, teamFacts.teams, complete),
+    await recordOrgTeamMemberships(organization, observedAt, teamFacts.memberships, complete),
+    await recordOrgTeamRepositories(organization, observedAt, teamFacts.teamRepositories, complete),
+    await recordOrgRepositories(organization, observedAt, repositories, complete),
+    await recordOrgPeople(organization, observedAt, people, complete),
+    await recordRepositoryOwnership(organization, observedAt, resolved, complete)
+  ];
+  await stampRevision();
+
+  const totals = written.reduce(
+    (sum, one) => ({
+      inserted: sum.inserted + one.inserted,
+      unchanged: sum.unchanged + one.unchanged,
+      changed: sum.changed + one.changed,
+      superseded: sum.superseded + one.superseded
+    }),
+    { inserted: 0, unchanged: 0, changed: 0, superseded: 0 }
+  );
+  progress(
+    `walked ${teamFacts.teams.length} teams, ${repositories.length} repositories and ${people.length} people in ${client.requestsIssued()} GitHub calls`
+  );
+  progress(`  ${totals.inserted} new, ${totals.changed} changed, ${totals.superseded} ended, ${totals.unchanged} unchanged`);
+  if (truncated > 0) {
+    progress(`${truncated} repositories were left unresolved by --unresolved-limit, so nothing was superseded`);
+  }
+
+  return complete ? EXIT_COMPLETE : runStatus(CollectionStatus.Partial);
+}
+
+/**
+ * A reviewable `teams:` block, one team per owning slug with the repositories it was attributed.
+ *
+ * Repositories nothing owns are grouped under `unknown`, which carries NO `github_team_slugs` because it is
+ * not a GitHub team — naming a slug there would invent one. The rung behind each team is written as a comment
+ * so a reviewer can weigh a `name-prefix` guess differently from a `teams-api-admin` fact.
+ */
+function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
+  const grouped = new Map<string, { repositories: string[]; rungs: Set<string> }>();
+  for (const entry of resolved) {
+    for (const owner of entry.owners) {
+      const key = owner.kind === OwnerKind.None ? "unknown" : owner.owner;
+      const group = grouped.get(key) ?? { repositories: [], rungs: new Set<string>() };
+      group.repositories.push(entry.repository);
+      group.rungs.add(owner.rung);
+      grouped.set(key, group);
+    }
+  }
+
+  const lines = ["teams:"];
+  for (const key of [...grouped.keys()].sort((left, right) => (left === "unknown" ? 1 : right === "unknown" ? -1 : left < right ? -1 : 1))) {
+    const group = grouped.get(key) as { repositories: string[]; rungs: Set<string> };
+    lines.push(`  # attributed by ${[...group.rungs].sort().join(", ")}`);
+    lines.push(`  - identifier: ${key}`);
+    lines.push(`    display_name: ${key === "unknown" ? "Unknown (team not established)" : key}`);
+    if (key !== "unknown") {
+      lines.push("    github_team_slugs:");
+      lines.push(`      - ${key}`);
+    }
+    lines.push("    repositories:");
+    for (const repository of [...new Set(group.repositories)].sort()) {
+      lines.push(`      - ${repository}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 async function runPrune(argv: Arguments): Promise<number> {
   const unusedSince = new Date(Date.now() - days(argv.days ?? 30));
   const deleted = await pruneCache(unusedSince);
@@ -275,7 +460,10 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
 
     rows.push({
       repository,
-      team: owners.get(repository),
+      // The first owner in the reporting order, with the rest beside it: a shared repository must not be
+      // reported as belonging to whichever team sorted first and to nobody else.
+      team: owners.get(repository)?.[0],
+      teams: (owners.get(repository)?.length ?? 0) > 1 ? owners.get(repository) : undefined,
       merged_pull_requests: merges.pullRequests.length,
       direct_commits: merges.directCommits.length,
       readiness: assessment?.label,
@@ -335,6 +523,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     switch (parsed.command) {
       case "collect":
         return await runCollect(configuration, parsed);
+      case "collect-org":
+        return await runCollectOrg(configuration, parsed);
       case "doctor":
         return await runDoctor(configuration);
       case "prune":

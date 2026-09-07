@@ -2,10 +2,17 @@ import { parseArgs } from "node:util";
 import { behaviourMetricIdentifiers } from "../evidence/behaviour/metrics.ts";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-export const COMMANDS = ["doctor", "collect", "prune", "map-sonar", "evidence", "trend", "migrate"] as const;
+export const COMMANDS = ["doctor", "collect", "collect-org", "prune", "map-sonar", "evidence", "trend", "migrate"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
+/**
+ * The commands whose subject is the cohort, and which therefore refuse an empty `teams:`.
+ *
+ * `collect-org` is deliberately NOT one of them, for the reason `map-sonar` and `prune` are not: the
+ * organisation graph is not about any repository a team owns — it is what establishes who owns them — so
+ * obliging a team file to be layered in would make the answer depend on the question.
+ */
 export const COHORT_COMMANDS: ReadonlySet<Command> = new Set(["collect", "evidence", "trend"]);
 
 export class UsageError extends Error {
@@ -32,6 +39,10 @@ export interface Arguments {
   format: "json" | "report";
   periodDays: number;
   periods?: number;
+  /** Emit a paste-ready `teams:` block instead of writing the graph (collect-org). */
+  proposeTeams: boolean;
+  /** Override the configured ceiling on repositories one run may pay the per-repository rungs for. */
+  unresolvedLimit?: number;
 }
 
 const OPTIONS = {
@@ -49,7 +60,9 @@ const OPTIONS = {
   identities: { type: "boolean" },
   format: { type: "string" },
   "period-days": { type: "string" },
-  periods: { type: "string" }
+  periods: { type: "string" },
+  "propose-teams": { type: "boolean" },
+  "unresolved-limit": { type: "string" }
 } as const;
 
 function integer(value: string | undefined, name: string): number | undefined {
@@ -115,6 +128,11 @@ export function parseArguments(argv: readonly string[]): Arguments {
     throw new UsageError("--period-days must be at least one day");
   }
 
+  const unresolvedLimit = integer(values["unresolved-limit"] as string | undefined, "unresolved-limit");
+  if (unresolvedLimit !== undefined && unresolvedLimit < 0) {
+    throw new UsageError("--unresolved-limit may not be negative; zero skips the per-repository rungs entirely");
+  }
+
   const startsAt = instant(values.from as string | undefined, "from");
   const endsAt = instant(values.to as string | undefined, "to");
   if (startsAt !== undefined && endsAt !== undefined && days !== undefined) {
@@ -141,7 +159,9 @@ export function parseArguments(argv: readonly string[]): Arguments {
     periodDays,
     ...(integer(values.periods as string | undefined, "periods") === undefined
       ? {}
-      : { periods: integer(values.periods as string | undefined, "periods") as number })
+      : { periods: integer(values.periods as string | undefined, "periods") as number }),
+    proposeTeams: values["propose-teams"] === true,
+    ...(unresolvedLimit === undefined ? {} : { unresolvedLimit })
   };
 }
 
@@ -151,6 +171,7 @@ export function usage(): string {
 commands:
   doctor      validate configuration and GitHub access
   collect     collect repository inventory and behaviour evidence
+  collect-org collect the organisation's teams, people and repository ownership
   prune       delete cached intervals that have not been used recently
   map-sonar   resolve each SonarCloud project to the repository it analyses
   evidence    explain cached behaviour evidence without GitHub access
@@ -173,6 +194,8 @@ options:
   --period-days <n>     span each trend period this many days (default: 28)
   --periods <n>         report at most this many whole periods since enablement
   --format json         emit the machine-readable contract (the only supported format)
+  --propose-teams       print a reviewable teams: block instead of writing the graph (collect-org)
+  --unresolved-limit <n>  cap the repositories one run reads CODEOWNERS for (collect-org)
 
 exit status:
   0  every configured repository was observed

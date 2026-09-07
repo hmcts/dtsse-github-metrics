@@ -13,6 +13,7 @@ One Next.js application and one image, with two entry points:
 | --- | --- | --- |
 | `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
 | `node dist/cli/run.js collect` | a weekly CronJob | contacts GitHub, caches facts, stamps the collection |
+| `node dist/cli/run.js collect-org` | a second weekly CronJob | walks the organisation's teams, people and repository ownership |
 
 The web pod holds **no GitHub credential**. It never contacts GitHub, which is what makes the serving path
 read-only and the credential the collector's alone.
@@ -38,6 +39,41 @@ export GH_TOKEN=...                                  # or the App variables belo
 yarn cli collect --config metrics.yaml --days 90
 yarn cli evidence --config metrics.yaml --days 90    # the same figures as JSON
 ```
+
+## Who owns what
+
+`metrics.yaml`'s `teams:` block is the cohort the dashboard reports on, and it is hand-maintained so that
+adding a team stays a reviewed change. `collect-org` is how that block stops being guesswork: it walks the
+organisation's teams, their members and their repository access, and attributes every repository in the
+organisation — not only the configured ones — to the teams or people that own it.
+
+```bash
+yarn cli collect-org --config metrics.yaml                     # walk it and store the graph
+yarn cli collect-org --config metrics.yaml --propose-teams     # print a reviewable teams: block instead
+```
+
+**Attribution is best effort and some of it is wrong.** GitHub has no field for "owner", so each repository is
+decided by the first of these that answers, and every stored row names the rung that decided it:
+
+| Rung | What it reads |
+| --- | --- |
+| `configured` | a reviewed `metrics.yaml` entry, which short-circuits everything below |
+| `teams-api-admin` | the teams holding `admin` — the closest thing to a declared owner the API has |
+| `codeowners-sole` | CODEOWNERS names exactly one team, so there is nothing to choose between |
+| `teams-api-write` | several teams hold write-or-better: most permissive wins, ties to the smallest team |
+| `codeowners-first` | CODEOWNERS names several teams: the one owning fewest wins, then alphabetically |
+| `codeowners-person` | a bare `@login`, once no team rung has answered — the individual-owner outlier |
+| `direct-collaborator-admin` | a direct collaborator holding admin, once CODEOWNERS names nobody |
+| `name-prefix` | the name shares a family prefix with repositories the rungs above agreed on |
+| `unowned` | nothing answered. A normal outcome, stored as a row rather than left as a silence |
+
+A sole `admin` team outranks CODEOWNERS, but a sole CODEOWNERS team outranks any contested API claim: access
+says who *can* merge and CODEOWNERS says who is *expected* to review, and where the two disagree the less
+ambiguous is the better guess. The graph is change-versioned rather than overwritten, because GitHub serves
+only the present — nobody can ask it who was in a team last June.
+
+The walk is about 250 API calls and a few minutes, so it runs as its own CronJob at 01:00 Monday, two hours
+ahead of `collect`, and a repository may have several owners.
 
 ### Authenticating
 
