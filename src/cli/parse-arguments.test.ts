@@ -135,3 +135,13 @@ describe("usage", () => {
     expect(text).toMatch(/exit status/);
   });
 });
+
+describe("--tolerate-partial", () => {
+  it("should be off unless asked for", () => {
+    expect(parseArguments(["collect", "--config", "m.yaml"]).toleratePartial).toBe(false);
+  });
+
+  it("should be read as a flag", () => {
+    expect(parseArguments(["collect", "--config", "m.yaml", "--tolerate-partial"]).toleratePartial).toBe(true);
+  });
+});

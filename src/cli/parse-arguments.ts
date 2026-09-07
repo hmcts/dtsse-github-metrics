@@ -26,6 +26,7 @@ export interface Arguments {
   repository?: string;
   metric?: string;
   refresh: boolean;
+  toleratePartial: boolean;
   offline: boolean;
   identities: boolean;
   format: "json" | "report";
@@ -43,6 +44,7 @@ const OPTIONS = {
   repository: { type: "string" },
   metric: { type: "string" },
   refresh: { type: "boolean" },
+  "tolerate-partial": { type: "boolean" },
   offline: { type: "boolean" },
   identities: { type: "boolean" },
   format: { type: "string" },
@@ -132,6 +134,7 @@ export function parseArguments(argv: readonly string[]): Arguments {
     ...(values.repository === undefined ? {} : { repository: values.repository as string }),
     ...(metric === undefined ? {} : { metric }),
     refresh: values.refresh === true,
+    toleratePartial: values["tolerate-partial"] === true,
     offline: values.offline === true,
     identities: values.identities === true,
     format,
@@ -165,6 +168,7 @@ options:
   --metric <id>         show one raw metric
   --identities          include raw pull-request, author and reviewer references
   --refresh             contact GitHub to collect missing history (evidence)
+  --tolerate-partial    exit 0 when some repositories refused, for a scheduled run (collect)
   --offline             never contact GitHub, and refuse a period the cache does not cover (trend)
   --period-days <n>     span each trend period this many days (default: 28)
   --periods <n>         report at most this many whole periods since enablement
