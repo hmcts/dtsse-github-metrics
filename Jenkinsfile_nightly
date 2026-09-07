@@ -26,7 +26,7 @@ static Map<String, Object> secret(String secretName, String envVariable) {
 
 def secrets = [
   'dtsse-${env}': [
-    secret('app-insights-connection-string', 'APPLICATIONINSIGHTS_CONNECTION_STRING')
+    secret('AppInsightsConnectionString', 'APPLICATIONINSIGHTS_CONNECTION_STRING')
   ]
 ]
 
@@ -38,9 +38,9 @@ withNightlyPipeline(type, product, component) {
     ? "https://dtsse-github-metrics-pr-${params.PR_NUMBER}.preview.platform.hmcts.net"
     : "https://dtsse-github-metrics.${params.ENVIRONMENT}.platform.hmcts.net"
 
-  // @nightly is where the accessibility specs run: a dark dashboard with colour-coded RAG bars is exactly where
-  // a contrast regression hides, and axe is too slow to run on every pull request.
   env.E2E_TEST_SCOPE = params.E2E_TEST_TAG
+
+  enableFullFunctionalTest(60)
 
   enableFortifyScan()
 

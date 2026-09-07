@@ -6,6 +6,8 @@ def type = "nodejs"
 def product = "dtsse"
 def component = "github-metrics"
 
+def yarnBuilder = new uk.gov.hmcts.contino.YarnBuilder(this)
+
 static Map<String, Object> secret(String secretName, String envVariable) {
   [
     $class: 'AzureKeyVaultSecret',
@@ -15,12 +17,9 @@ static Map<String, Object> secret(String secretName, String envVariable) {
   ]
 }
 
-// Only what a BUILD needs. The GitHub App credentials are deliberately absent: nothing in the pipeline
-// contacts GitHub as the App — the CronJob does that, in the cluster, reading the same vault through the
-// chart's own keyVaults block.
 def secrets = [
   'dtsse-${env}': [
-    secret('app-insights-connection-string', 'APPLICATIONINSIGHTS_CONNECTION_STRING')
+    secret('AppInsightsConnectionString', 'APPLICATIONINSIGHTS_CONNECTION_STRING')
   ]
 ]
 
@@ -29,9 +28,11 @@ withPipeline(type, product, component) {
 
   env.NODE_CONFIG_ENV = 'test'
 
+  before('test') {
+    yarnBuilder.yarn('db:generate')
+  }
+
   onPR() {
-    // Smoke only on a preview. Its CronJob is disabled and its database is empty, so anything asserting a
-    // figure would be asserting against a collection that has not run.
     env.E2E_TEST_SCOPE = '@smoke'
     env.TEST_URL = "https://dtsse-github-metrics-pr-${CHANGE_ID}.preview.platform.hmcts.net"
 
@@ -47,7 +48,6 @@ withPipeline(type, product, component) {
   }
 
   onMaster() {
-    // AAT has run a real collection, so the data-dependent assertions can run here.
     env.E2E_TEST_SCOPE = '@regression'
     env.TEST_URL = "https://dtsse-github-metrics.aat.platform.hmcts.net"
 

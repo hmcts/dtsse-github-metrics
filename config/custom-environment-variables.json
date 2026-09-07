@@ -18,13 +18,5 @@
   "reportCache": {
     "warmIntervalMinutes": "WARM_INTERVAL_MINUTES",
     "maximumBundleAgeMinutes": "MAXIMUM_BUNDLE_AGE_MINUTES"
-  },
-  "applicationInsights": {
-    "serviceName": "OTEL_SERVICE_NAME",
-    "connectionString": "APPLICATIONINSIGHTS_CONNECTION_STRING",
-    "enabled": {
-      "__name": "OTEL_ENABLED",
-      "__format": "json"
-    }
   }
 }

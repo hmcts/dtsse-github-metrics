@@ -29,8 +29,6 @@ import {
   traceabilityReference
 } from "./metrics.ts";
 
-// Ported from tests/test_behaviour.py's metric cases.
-
 const TRACEABILITY: TraceabilityConfiguration = { minimum_description: 30, reference_patterns: ["#\\d+", "[A-Z][A-Z0-9]+-\\d+"] };
 
 function review(overrides: Partial<ReviewFact> = {}): ReviewFact {
@@ -77,7 +75,6 @@ describe("independentReviewCoverage", () => {
   });
 
   it("should count a direct commit in the denominator, so bypassing review cannot improve the rate", () => {
-    // A direct commit bypassed the process rather than followed it badly.
     const summary = independentReviewCoverage.summary(cohort([pullRequest({ reviews: [review()] })], [commit()])) as RateObservation;
 
     expect(summary).toMatchObject({ numerator: 1, denominator: 2 });
@@ -98,7 +95,6 @@ describe("approvalCoverage", () => {
   });
 
   it("should distinguish a review that never approved, which review coverage alone would pass", () => {
-    // The team that reviews diligently and never approves is exactly what this second rate adds.
     const reviewed = pullRequest({ reviews: [review({ state: ReviewState.Commented })] });
 
     expect(independentReviewCoverage.classification(reviewed)).toBe("included");
@@ -120,8 +116,6 @@ describe("independentReviewClassification", () => {
 
 describe("reviewDepth", () => {
   it("should credit an approval whose reviewer commented elsewhere on the pull request", () => {
-    // Approving is a click; the common way to review is to leave the remarks first as COMMENTED reviews and
-    // come back to approve. Reading only the approval scores that reviewer as a rubber stamp.
     const fact = pullRequest({
       reviews: [
         review({ identifier: 1, state: ReviewState.Commented, commentCount: 3, submittedAt: new Date("2026-08-01T12:00:00Z") }),
@@ -143,8 +137,6 @@ describe("reviewDepth", () => {
   });
 
   it("should attribute per reviewer, so a silent second approval is still reported", () => {
-    // Where two approvals are required and one reviewer argues the change through while the second clicks
-    // approve in silence, crediting the second with the first's comments would hide the rubber stamp.
     const fact = pullRequest({
       reviews: [
         review({ identifier: 1, authorLogin: "first", state: ReviewState.Approved, commentCount: 4 }),
@@ -163,7 +155,6 @@ describe("reviewDepth", () => {
 
 describe("mergeCycleTime", () => {
   it("should measure from entering review rather than from creation", () => {
-    // Anchoring on creation made this report how long a branch existed.
     const fact = pullRequest({ readyForReviewAt: new Date("2026-08-02T00:00:00Z") });
 
     expect(mergeCycleTime.value(fact)).toBe(24);
@@ -205,7 +196,6 @@ describe("pullRequestSize", () => {
   });
 
   it("should keep meaning pull-request size, excluding direct commits from the sample", () => {
-    // Folding a direct commit in would rename the metric without saying so.
     const summary = pullRequestSize.summary(
       cohort([pullRequest({ additions: 10, deletions: 0 })], [commit({ additions: 900, deletions: 0, changedFiles: 9 })])
     ) as DistributionObservation;
@@ -219,7 +209,6 @@ describe("checksPassingAtMerge", () => {
     [[], "no-checks"],
     [[{ name: "build", conclusion: CheckConclusion.Success, completedAt: new Date("2026-08-02T00:00:00Z") }], "passing"],
     [[{ name: "build", conclusion: CheckConclusion.Failure, completedAt: new Date("2026-08-02T00:00:00Z") }], "failing"],
-    // A check still running at the merge instant is not evidence the gate saw it pass.
     [[{ name: "build", conclusion: undefined, completedAt: undefined }], "incomplete-at-merge"]
   ])("should classify checks %o as %s", (checks, expected) => {
     expect(checksPassingAtMerge.classification(pullRequest({ checks }))).toBe(expected);
@@ -232,8 +221,6 @@ describe("checksPassingAtMerge", () => {
     ["ERROR", "failing"],
     ["PENDING", "checks-unfinished"]
   ])("should judge a direct commit whose rollup is %s as %s", (checkState, expected) => {
-    // Judged by conclusion rather than as at an instant: nothing gated the push, so there is no merge point
-    // to measure against.
     expect(checksPassingAtMerge.commitClassification(commit({ checkState }))).toBe(expected);
   });
 });
@@ -295,5 +282,39 @@ describe("behaviourMetrics", () => {
 
   it("should list every accepted identifier for the CLI to choose from", () => {
     expect(behaviourMetricIdentifiers()).toHaveLength(9);
+  });
+});
+
+describe("every behaviour metric's per-merge accessors", () => {
+  const metrics = behaviourMetrics(TRACEABILITY);
+
+  for (const metric of metrics) {
+    describe(metric.identifier, () => {
+      it("should classify a merge as a non-empty label", () => {
+        expect(metric.classification(pullRequest({ reviews: [review()] }))).toMatch(/\S/);
+      });
+
+      it("should classify a bare merge as a non-empty label", () => {
+        expect(metric.classification(pullRequest())).toMatch(/\S/);
+      });
+
+      it("should return a finite value or nothing at all", () => {
+        const value = metric.value(pullRequest({ reviews: [review()] }));
+        if (value !== undefined) {
+          expect(Number.isFinite(value)).toBe(true);
+        }
+      });
+
+      it("should answer for a direct commit with a label or nothing", () => {
+        const label = metric.commitClassification(commit());
+        expect(label === undefined || label.length > 0).toBe(true);
+      });
+    });
+  }
+
+  it("should give every metric a percentile to read its distribution at", () => {
+    for (const metric of metrics) {
+      expect(Object.values(Percentile)).toContain(metric.percentile);
+    }
   });
 });

@@ -29,8 +29,9 @@ yarn db:migrate:dev
 yarn dev                     # http://localhost:3000
 ```
 
-Nothing renders until something has been collected. Write a `metrics.yaml` naming the repositories to report on
-— `metrics.example.yaml` is a documented starting point — then:
+Nothing renders until something has been collected. `metrics.yaml` is the estate this deployment reports on, and
+is tracked here so that adding a team is a reviewed change; `metrics.example.yaml` documents every option beside
+it. To collect against it:
 
 ```bash
 export GH_TOKEN=...                                  # or the App variables below

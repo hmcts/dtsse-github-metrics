@@ -1,0 +1,49 @@
+version: 1
+organization: hmcts
+lookback:
+  operational_days: 90
+  maximum_days: 365
+  stale_open_days: 14
+  stale_collection_days: 8
+triviality:
+  maximum_lines: 10
+  maximum_files: 1
+assessment:
+  enabled: true
+  minimum_merges: 10
+  independent-review-coverage:
+    green_percentage: 90
+    amber_percentage: 70
+  approval-coverage:
+    green_percentage: 90
+    amber_percentage: 70
+  checks-passing-at-merge:
+    green_percentage: 90
+    amber_percentage: 70
+  pull-request-size:
+    maximum: 400
+  merge-cycle-time:
+    maximum: 24
+  time-to-first-review:
+    maximum: 8
+  unreviewed-substantial-merges:
+    maximum_count: 0
+    maximum_percentage: 1
+  review-depth-minimum-percentage: 50
+traceability:
+  minimum_description: 30
+  reference_patterns:
+    - '#\d+'
+    - '[A-Z][A-Z0-9]+-\d+'
+excluded_repositories: []
+teams:
+  - identifier: dtsse
+    display_name: Developer Tools & Shared Services Engineering
+    repositories:
+      - cms-template
+      - dtsse-dashboard-ingestion
+      - dtsse-github-metrics
+      - expressjs-monorepo-template
+      - github-metrics
+sonar_organization: hmcts
+production_list_url: https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml

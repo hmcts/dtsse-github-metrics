@@ -2,19 +2,10 @@ import { parseArgs } from "node:util";
 import { behaviourMetricIdentifiers } from "../evidence/behaviour/metrics.ts";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-/**
- * Parsing the collector's command line. Ported from `metrics.cli`'s argument parser.
- *
- * `node:util`'s `parseArgs` rather than a dependency: the surface is six subcommands and a dozen options, all of
- * them strings, numbers or booleans, and pinning another package to format a help message would be the larger
- * cost.
- */
-
-export const COMMANDS = ["doctor", "collect", "prune", "map-sonar", "evidence", "trend"] as const;
+export const COMMANDS = ["doctor", "collect", "prune", "map-sonar", "evidence", "trend", "migrate"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
-/** The commands whose subject is the reported cohort, and which therefore need a team file layered in. */
 export const COHORT_COMMANDS: ReadonlySet<Command> = new Set(["collect", "evidence", "trend"]);
 
 export class UsageError extends Error {
@@ -26,7 +17,6 @@ export class UsageError extends Error {
 
 export interface Arguments {
   command: Command;
-  /** Repeatable, and read as ONE document in the order given: a policy file, then a team file. */
   config: string[];
   logging: string;
   startsAt?: Date;
@@ -100,7 +90,7 @@ export function parseArguments(argv: readonly string[]): Arguments {
   }
 
   const config = (values.config as string[] | undefined) ?? [];
-  if (config.length === 0) {
+  if (config.length === 0 && command !== "migrate") {
     throw new UsageError("--config is required, and may be repeated to layer a policy file with a team file");
   }
 
@@ -109,9 +99,6 @@ export function parseArguments(argv: readonly string[]): Arguments {
     throw new UsageError(`--format must be json or report, and is ${JSON.stringify(format)}`);
   }
   if (format === "report") {
-    // render.py was deliberately not ported: it was presentation-only, and the dashboard computes its own
-    // presentation figures. The flag is recognised so the failure names its replacement rather than reading as
-    // an unknown option.
     throw new UsageError("--format report was not carried over from the Python collector; use --format json and filter it with jq");
   }
 
@@ -123,9 +110,6 @@ export function parseArguments(argv: readonly string[]): Arguments {
   const days = integer(values.days as string | undefined, "days");
   const periodDays = integer(values["period-days"] as string | undefined, "period-days") ?? 28;
   if (periodDays < 1) {
-    // Checked here rather than at the first repository carrying an enablement date: a configuration where
-    // nobody is enabled yet must still refuse `--period-days 0` rather than report an empty series as though
-    // the request were fine.
     throw new UsageError("--period-days must be at least one day");
   }
 
@@ -168,6 +152,7 @@ commands:
   map-sonar   resolve each SonarCloud project to the repository it analyses
   evidence    explain cached behaviour evidence without GitHub access
   trend       report each repository's periods since it was enabled
+  migrate     apply any pending database migrations (takes no --config)
 
 options:
   --config <file>       path to the YAML configuration; repeat to layer files, later files winning

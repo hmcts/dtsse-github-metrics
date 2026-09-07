@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { githubTimestamp, midnight, parseInstant } from "./instant.ts";
-import { baselineWindow, collectedAnchor, collectionIsStale, days, periodWindows, resolveWindow } from "./window.ts";
+import { baselineWindow, collectedAnchor, collectionIsStale, days, hours, periodWindows, resolveWindow } from "./window.ts";
 
-// Ported from tests/test_window.py. A fixed mid-afternoon instant anchors every relative window, so
-// nothing here depends on when the suite runs.
 const REFERENCE = new Date("2026-08-08T14:58:46Z");
 
-// An enablement instant sitting a whole number of 28-day periods before the reference.
 const ENABLEMENT = new Date("2026-05-03T00:00:00Z");
 
 describe("parseInstant", () => {
@@ -21,7 +18,6 @@ describe("parseInstant", () => {
   });
 
   it("should read a naive datetime as UTC when no offset is given", () => {
-    // The reason this module does not use `new Date`: it would read this as local time.
     expect(parseInstant("2026-08-01T14:30").toISOString()).toBe("2026-08-01T14:30:00.000Z");
   });
 
@@ -30,8 +26,6 @@ describe("parseInstant", () => {
   });
 
   it("should reject a date that does not exist rather than rolling it over", () => {
-    // `Date.UTC` would turn month 13 into January of the next year. PyYAML raises for this value
-    // before pydantic sees it, so a configuration naming an impossible date is reported, not fixed.
     expect(() => parseInstant("2026-13-05")).toThrow();
   });
 });
@@ -44,7 +38,6 @@ describe("midnight", () => {
 
 describe("githubTimestamp", () => {
   it("should emit second precision with no fraction when formatting a search qualifier", () => {
-    // `toISOString()` would append `.000`, changing both the query text and the hash keyed on it.
     expect(githubTimestamp(new Date("2026-08-01T00:00:00.000Z"))).toBe("2026-08-01T00:00:00Z");
   });
 
@@ -98,7 +91,6 @@ describe("collectedAnchor", () => {
     ["2026-08-08T06:00:00Z", "2026-08-08T00:00:00.000Z"],
     ["2026-08-07T09:15:00Z", "2026-08-07T00:00:00.000Z"],
     ["2026-08-01T00:00:00Z", "2026-08-01T00:00:00.000Z"],
-    // Clamped: a `--to` in the future must not anchor a report ahead of today.
     ["2026-08-12T00:00:00Z", "2026-08-08T00:00:00.000Z"]
   ])("should floor the collected edge to %s when anchoring an offline report", (collected, expected) => {
     expect(collectedAnchor(new Date(collected), REFERENCE).toISOString()).toBe(expected);
@@ -139,8 +131,6 @@ describe("periodWindows", () => {
   });
 
   it("should exclude the trailing partial period when it is not comparable with a full one", () => {
-    // 97 days separate this enablement from the reference midnight: three whole 28-day periods, and
-    // 13 days that are not a period at all.
     const windows = periodWindows(ENABLEMENT, days(28), undefined, REFERENCE);
 
     expect(windows).toHaveLength(3);
@@ -171,5 +161,16 @@ describe("periodWindows", () => {
 
   it.each(["2026-08-08T00:00:00Z", "2026-09-01T00:00:00Z"])("should report nothing when %s is too recent or in the future", (anchor) => {
     expect(periodWindows(new Date(anchor), days(28), undefined, REFERENCE)).toEqual([]);
+  });
+});
+
+describe("days and hours", () => {
+  it("should convert a count of days to milliseconds", () => {
+    expect(days(1)).toBe(86_400_000);
+  });
+
+  it("should convert a count of hours to milliseconds", () => {
+    expect(hours(1)).toBe(3_600_000);
+    expect(hours(24)).toBe(days(1));
   });
 });
