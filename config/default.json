@@ -21,10 +21,5 @@
   "reportCache": {
     "warmIntervalMinutes": 10,
     "maximumBundleAgeMinutes": 30
-  },
-  "applicationInsights": {
-    "serviceName": "dtsse-github-metrics",
-    "connectionString": "",
-    "enabled": false
   }
 }

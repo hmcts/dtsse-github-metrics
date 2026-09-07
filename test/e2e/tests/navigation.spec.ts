@@ -1,13 +1,5 @@
 import { expect, test } from "@playwright/test";
 
-/**
- * That every route renders at all, and that the week selector's span survives a navigation.
- *
- * NOTHING HERE ASSERTS A FIGURE. A preview deploys with its CronJob disabled and an empty database, so a test
- * expecting a non-zero count would fail on a perfectly good deployment. What is asserted is structure: the page
- * came back, its heading is there, and the span the reader chose is the span the next page reads.
- */
-
 const ROUTES = [
   { path: "/repositories", heading: "Repositories" },
   { path: "/teams", heading: "Teams" },
@@ -31,9 +23,6 @@ test.describe("navigation @smoke @regression", () => {
   });
 
   test("should carry the chosen span across a navigation @smoke @regression", async ({ page }) => {
-    // The nav links are rendered by the layout, which Next.js hands no search parameters, so they carry no
-    // `?weeks=`. The span survives through the cookie `src/proxy.ts` writes — and that middleware running in a
-    // standalone build is exactly what this asserts.
     await page.goto("/repositories?weeks=26");
     await page.getByRole("link", { name: "Teams" }).first().click();
     await expect(page).toHaveURL(/\/teams/);

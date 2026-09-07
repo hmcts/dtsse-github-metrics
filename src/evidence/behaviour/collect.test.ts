@@ -8,8 +8,6 @@ import { checkFact, collectDirectCommits, collectMergedPullRequests, collectOpen
 import { deserialise } from "./fill.ts";
 import { commitQuerySignature, dateShards, mergedSearchQuery, openPullRequestSearchQueries, querySignature, sourceSignature } from "./queries.ts";
 
-// Ported from tests/test_behaviour.py's collection cases.
-
 function replying(...bodies: unknown[]): { fetch: typeof globalThis.fetch; sent: { query: string; variables: Record<string, unknown> }[] } {
   const queue = [...bodies];
   const sent: { query: string; variables: Record<string, unknown> }[] = [];
@@ -51,7 +49,6 @@ function search(nodes: unknown[], overrides: Record<string, unknown> = {}) {
   return { search: { issueCount: nodes.length, pageInfo: PAGE_END, nodes, ...overrides } };
 }
 
-/** Awaits a call that must fail, and hands back the GitHubError it failed with. */
 async function failing(work: Promise<unknown>): Promise<GitHubError> {
   const outcome = await work.then(
     () => undefined,
@@ -69,8 +66,6 @@ beforeEach(() => {
 
 describe("dateShards", () => {
   it("should split a window into thirty-day intervals that meet exactly", () => {
-    // The default 90-day window is exactly three shards; each shard's end is the next one's start, so no
-    // instant falls in a gap between them.
     const shards = [...dateShards(new Date("2026-05-10T00:00:00Z"), new Date("2026-08-08T00:00:00Z"))];
 
     expect(shards).toHaveLength(3);
@@ -91,7 +86,6 @@ describe("dateShards", () => {
 
 describe("mergedSearchQuery", () => {
   it("should use an inclusive range with second precision and no fractional part", () => {
-    // A `.000Z` here would change both what GitHub is asked and the hash keyed on the document.
     const query = mergedSearchQuery("hmcts", "cath-service", new Date("2026-08-01T00:00:00.000Z"), new Date("2026-08-31T00:00:00.000Z"));
 
     expect(query).toBe("repo:hmcts/cath-service is:pr is:merged merged:2026-08-01T00:00:00Z..2026-08-31T00:00:00Z");
@@ -100,8 +94,6 @@ describe("mergedSearchQuery", () => {
 
 describe("openPullRequestSearchQueries", () => {
   it("should express the exclusive upper bound by ending the inclusive range one second early", () => {
-    // GitHub does not intersect two comparisons on one qualifier: a measured `created:>=..created:<` pair
-    // returned 614 pull requests for a window accounting for roughly 240.
     const queries = openPullRequestSearchQueries(
       "hmcts",
       "cath-service",
@@ -118,7 +110,6 @@ describe("openPullRequestSearchQueries", () => {
 
 describe("signatures", () => {
   it("should give each independently cached source its own signature", () => {
-    // Widening one source must not discard the other's settled history.
     expect(querySignature()).not.toBe(commitQuerySignature());
   });
 
@@ -143,8 +134,6 @@ describe("collectMergedPullRequests", () => {
   });
 
   it("should refuse a shard above GitHub's 1,000-result cap rather than subdividing it", async () => {
-    // Reported as incomplete history: subdividing would change both the numbers and the availability
-    // reasons a report carries.
     const { fetch } = replying(search([pullRequestNode()], { issueCount: 1001 }));
 
     const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
@@ -154,7 +143,6 @@ describe("collectMergedPullRequests", () => {
   });
 
   it("should exclude a merge outside the half-open window even though the shard range is inclusive", async () => {
-    // The shard is inclusive at both ends; the window is not.
     const { fetch } = replying(search([pullRequestNode({ mergedAt: "2026-08-31T00:00:00Z" })]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
@@ -163,7 +151,6 @@ describe("collectMergedPullRequests", () => {
   });
 
   it("should deduplicate a merge two overlapping shards both returned", async () => {
-    // Consecutive shards overlap by one second, so a merge on a boundary comes back twice.
     const onBoundary = pullRequestNode({ mergedAt: "2026-06-09T00:00:00Z" });
     const { fetch } = replying(search([onBoundary]), search([onBoundary]), search([]), search([]));
 
@@ -194,7 +181,6 @@ describe("collectMergedPullRequests", () => {
   });
 
   it("should read the ready-for-review event as the anchor a waiting time is measured from", async () => {
-    // isDraft alone could never answer this: it is the state at merge, false for every merged pull request.
     const { fetch } = replying(search([pullRequestNode({ timelineItems: { nodes: [{ createdAt: "2026-08-01T12:00:00Z" }] } })]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
@@ -384,7 +370,6 @@ describe("collectDirectCommits", () => {
   }
 
   it("should keep only commits no pull request introduced", async () => {
-    // The commits a merge brought in carry their pull request; only a direct push is left without one.
     const { fetch } = replying(history([commitNode(), commitNode({ oid: "def456", associatedPullRequests: { nodes: [{ number: 11 }] } })]));
 
     const facts = await collectDirectCommits(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
@@ -399,7 +384,6 @@ describe("collectDirectCommits", () => {
   });
 
   it("should carry the bare rollup state, which is what makes this query cheap", async () => {
-    // Fetching the contexts connection per commit was 92% of a window's calls, for detail nothing reads.
     const { fetch } = replying(history([commitNode()]));
 
     const facts = await collectDirectCommits(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
@@ -508,15 +492,6 @@ describe("deserialise", () => {
   });
 });
 
-/**
- * The defensive branches: what a collection does when GitHub answers with a hole in it.
- *
- * Every case here is a response that is valid GraphQL and structurally short of what was asked for — a null
- * node in a connection, or a follow-up page that has lost the pull request it was paging. They were the
- * uncovered half of this module's branches, and they are worth holding: at 1850 repositories the difference
- * between skipping a null node and throwing on it is the difference between a quietly short count and a run
- * that says what went wrong.
- */
 describe("collecting through a hole in GitHub's answer", () => {
   function commitNode(overrides: Record<string, unknown> = {}) {
     return {
@@ -537,8 +512,6 @@ describe("collecting through a hole in GitHub's answer", () => {
   }
 
   it("should skip a null node in a merged-pull-request search rather than fail the repository", async () => {
-    // GraphQL types connection nodes as nullable, and a node the viewer may not read comes back null. One
-    // unreadable pull request is not a reason to abandon the other nine hundred in the shard.
     const { fetch } = replying(search([null, pullRequestNode()]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
@@ -555,8 +528,6 @@ describe("collecting through a hole in GitHub's answer", () => {
   });
 
   it("should fail loudly when a review follow-up page has lost its pull request", async () => {
-    // Not skipped, unlike a null node: the first page said there were more reviews, so continuing would record
-    // a merge as having fewer reviews than it has — and review coverage is a graded figure.
     const { fetch } = replying(
       search([
         pullRequestNode({
@@ -603,9 +574,6 @@ describe("collecting through a hole in GitHub's answer", () => {
           }
         })
       ]),
-      // `null` rather than `{}`: the schema requires `commits` on a present pull request, so an empty object
-      // is a schema failure and never reaches the check below. A null pull request is what GitHub actually
-      // sends, and it is what the optional chain reads as an absent connection.
       { repository: { pullRequest: null } }
     );
 
@@ -616,18 +584,6 @@ describe("collecting through a hole in GitHub's answer", () => {
   });
 });
 
-/**
- * Collecting when every optional field is absent.
- *
- * GraphQL types most of these as nullable and GitHub genuinely omits them — a bot with no `login`, a check run
- * that has not finished so has no `conclusion`, a commit whose `changedFilesIfAvailable` GitHub declines to
- * compute on a large diff. Each one is a spread that either contributes a field or contributes nothing, and the
- * contributes-nothing side is what these cover.
- *
- * The assertion in every case is the same shape: the fact comes back, and the field is ABSENT rather than
- * present-and-null. That is the absent-means-unmeasured rule at the collection boundary, and it has to hold
- * here or the report layer is normalising a null it should never have been handed.
- */
 describe("collecting a fact whose optional fields GitHub omitted", () => {
   it("should build a pull-request fact with no author, body or size", async () => {
     const { fetch } = replying(
@@ -640,7 +596,6 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
           changedFiles: null,
           reviews: {
             pageInfo: PAGE_END,
-            // A review with no author: a deleted account still leaves its review on the pull request.
             nodes: [{ databaseId: 1, submittedAt: "2026-08-01T06:00:00Z", state: "APPROVED", author: null, comments: { totalCount: 0 } }]
           },
           commits: {
@@ -651,7 +606,6 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
                     contexts: {
                       pageInfo: PAGE_END,
                       nodes: [
-                        // A check run still in flight, and a commit status with no context name.
                         { __typename: "CheckRun", name: null, conclusion: null, completedAt: null, status: "IN_PROGRESS" },
                         { __typename: "StatusContext", context: null, state: null, createdAt: null }
                       ]
@@ -672,8 +626,6 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
     expect(fact).not.toHaveProperty("authorLogin");
     expect(fact).not.toHaveProperty("additions");
     expect(fact?.reviews[0]).not.toHaveProperty("authorLogin");
-    // Named "" rather than absent: a check's name is how the merge gate matches a required context, and the
-    // gate compares strings, so an unnamed check has to be a string that matches nothing.
     expect(fact?.checks.map((check) => check.name)).toEqual(["", ""]);
   });
 
@@ -711,7 +663,6 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
   });
 
   it("should build a direct-commit fact whose author has a name but no account", async () => {
-    // The common shape for a commit authored by an email address git never matched to a GitHub user.
     const { fetch } = replying({
       repository: {
         defaultBranchRef: {
@@ -743,8 +694,6 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
   });
 
   it("should page a merged-pull-request search that reports no cursor with its next page", async () => {
-    // `hasNextPage` true with a null `endCursor` is contradictory but GraphQL permits it; the collector reads
-    // the cursor as null and asks again from the start rather than looping on an undefined.
     const { fetch, sent } = replying(
       search([pullRequestNode()], { pageInfo: { hasNextPage: true, endCursor: null } }),
       search([pullRequestNode({ databaseId: 102, number: 12 })])

@@ -3,9 +3,6 @@ import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { COHORT_COMMANDS, parseArguments, UsageError, usage } from "./parse-arguments.ts";
 
-// Ported from the argument-parsing and exit-status cases of tests/test_cli.py. The output-formatting cases are
-// deliberately not ported: render.py was dropped, so there is no ASCII layout to assert.
-
 describe("parseArguments", () => {
   it("should parse a command with its configuration", () => {
     const parsed = parseArguments(["collect", "--config", "metrics.yaml"]);
@@ -15,7 +12,6 @@ describe("parseArguments", () => {
   });
 
   it("should keep a repeated --config in the order given, so a later file wins", () => {
-    // The files are read as ONE document, which is how a team file restates a shared policy key.
     const parsed = parseArguments(["collect", "--config", "policy.yaml", "--config", "teams.yaml"]);
 
     expect(parsed.config).toEqual(["policy.yaml", "teams.yaml"]);
@@ -26,8 +22,6 @@ describe("parseArguments", () => {
   });
 
   it("should take migrate without a configuration", () => {
-    // The web pod migrates at start, before anything has read a policy — and the schema is the same whichever
-    // repositories are being reported on, so requiring one would only be an obstacle.
     expect(parseArguments(["migrate"]).command).toBe("migrate");
   });
 
@@ -74,8 +68,6 @@ describe("parseArguments", () => {
   });
 
   it("should refuse a period that cannot describe a window, before any repository is read", () => {
-    // A configuration where nobody is enabled yet must still refuse this rather than report an empty series as
-    // though the request were fine.
     expect(() => parseArguments(["trend", "--config", "m.yaml", "--period-days", "0"])).toThrow(/--period-days must be at least one day/);
   });
 
@@ -92,7 +84,6 @@ describe("parseArguments", () => {
   });
 
   it("should name the replacement when the dropped report format is asked for", () => {
-    // Recognised rather than unknown, so the failure explains itself instead of reading as a typo.
     expect(() => parseArguments(["evidence", "--config", "m.yaml", "--format", "report"])).toThrow(/use --format json and filter it with jq/);
   });
 
@@ -113,8 +104,6 @@ describe("parseArguments", () => {
 
 describe("COHORT_COMMANDS", () => {
   it("should name the commands whose subject is the reported cohort", () => {
-    // map-sonar resolves every project an organisation lists and prune deletes cache rows: neither is about a
-    // repository a team owns, so neither should oblige a team file to be layered in.
     expect([...COHORT_COMMANDS].sort()).toEqual(["collect", "evidence", "trend"]);
     expect(COHORT_COMMANDS.has("prune")).toBe(false);
     expect(COHORT_COMMANDS.has("map-sonar")).toBe(false);
@@ -125,14 +114,12 @@ describe("runStatus", () => {
   it.each([
     [CollectionStatus.Complete, EXIT_COMPLETE],
     [CollectionStatus.Failed, EXIT_FAILED],
-    // Its own status: neither 0 nor 1 describes twelve of fourteen repositories.
     [CollectionStatus.Partial, EXIT_INCOMPLETE]
   ])("should map %s onto exit status %i", (status, expected) => {
     expect(runStatus(status)).toBe(expected);
   });
 
   it("should keep a usage error apart from a partial run", () => {
-    // A caller must be able to tell "you invoked me wrongly" from "part of the org would not answer".
     expect(EXIT_USAGE).toBe(2);
     expect(EXIT_INCOMPLETE).toBe(3);
   });

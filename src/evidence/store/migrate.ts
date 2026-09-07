@@ -4,20 +4,6 @@ import path from "node:path";
 import pg from "pg";
 import { resolveDatabaseUrl } from "./database-url.ts";
 
-/**
- * Applying the migrations in `prisma/migrations` from inside the deployed image.
- *
- * The Prisma CLI cannot do this here. It is a devDependency, so `yarn workspaces focus --production` leaves it
- * out of the runtime stage, and it reads its connection string from `prisma.config.ts` — a TypeScript file that
- * is only present in the build stage. Adding both back to the runtime image to run two files of SQL costs more
- * than reading them with the `pg` client that is already there.
- *
- * What this must not do is invent its own bookkeeping. It writes `_prisma_migrations` rows in Prisma's own
- * shape, with Prisma's own checksum (sha256 of the file, hex), so a database migrated here is one
- * `prisma migrate status` still understands and `prisma migrate dev` will not offer to reset.
- */
-
-/** Prisma's own ledger table, created exactly as its migration engine creates it. */
 const LEDGER = `
   CREATE TABLE IF NOT EXISTS "_prisma_migrations" (
     "id"                    VARCHAR(36)  PRIMARY KEY NOT NULL,
@@ -31,33 +17,14 @@ const LEDGER = `
   )
 `;
 
-/**
- * The lock every migrating process contends for.
- *
- * A session-level advisory lock rather than a transaction-level one, because the migrations are applied in
- * separate transactions and the lock has to span all of them. Two pods starting together therefore migrate one
- * after the other, and the second finds the ledger already written and applies nothing.
- */
 const LOCK_KEY = 0x67686d65_74726963n;
 
-/** One migration on disk: the directory Prisma names it by, and the SQL inside it. */
 interface Migration {
   readonly name: string;
   readonly sql: string;
   readonly checksum: string;
 }
 
-/**
- * How long to keep waiting for Postgres before giving up, and how long between attempts.
- *
- * Measured on a preview: Helm creates the database and the web pod at the same moment, the pod won by ten
- * seconds, and `ECONNREFUSED` killed it. Kubernetes restarted it and the second attempt worked — so nothing was
- * broken, but every fresh deploy showed a restart and a failed startup probe, which is indistinguishable at a
- * glance from a pod that is actually crash-looping. Waiting here makes the first attempt the only attempt.
- *
- * Bounded rather than indefinite: a database that is not there in two minutes is not slow to start, it is
- * misconfigured, and a pod that never exits never tells anybody that.
- */
 const CONNECT_TIMEOUT_MS = 120_000;
 const CONNECT_RETRY_MS = 2_000;
 
@@ -65,17 +32,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * A connected client, tolerating a database that has not finished starting.
- *
- * A FRESH client per attempt, which is not incidental: `pg.Client` is single-use, and calling `connect()` again
- * on one whose first attempt failed throws "Client has already been connected. You cannot reuse a client" —
- * an error with no errno, so a retry loop reusing the client treats it as final and gives up after one attempt.
- * That is exactly the bug this function exists to avoid, and it is what the integration test pins.
- *
- * Only a refused or unresolvable connection is retried. Bad credentials, a missing database and anything else
- * Postgres answers with are final: retrying those for two minutes would turn a clear failure into a slow one.
- */
 async function connectWhenReady(connectionString: string, pause: (ms: number) => Promise<void>): Promise<pg.Client> {
   const deadline = Date.now() + CONNECT_TIMEOUT_MS;
 
@@ -97,19 +53,12 @@ async function connectWhenReady(connectionString: string, pause: (ms: number) =>
   }
 }
 
-/** Where the migrations live, relative to the working directory both the image and a local run use. */
 export function migrationsDirectory(cwd: string = process.cwd()): string {
   return path.join(cwd, "prisma", "migrations");
 }
 
-/** Every migration on disk, in the order Prisma applies them — its directory names sort chronologically. */
 async function readMigrations(directory: string): Promise<Migration[]> {
   const entries = await readdir(directory, { withFileTypes: true });
-  // Compared by code unit, deliberately, and NOT with `localeCompare`. Prisma names a migration directory
-  // `<utc timestamp>_<label>`, so a plain code-unit ordering is chronological. Locale collation is not: it can
-  // treat punctuation as insignificant and varies with the runtime's locale, which would make the order
-  // migrations are applied in depend on where the container happens to run. Written out rather than left as a
-  // bare `.sort()` so the choice reads as one.
   const names = entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -123,7 +72,6 @@ async function readMigrations(directory: string): Promise<Migration[]> {
   return migrations;
 }
 
-/** The migrations the ledger already records as finished. */
 async function applied(client: pg.ClientBase): Promise<Set<string>> {
   const { rows } = await client.query<{ migration_name: string }>(
     `SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`
@@ -131,13 +79,6 @@ async function applied(client: pg.ClientBase): Promise<Set<string>> {
   return new Set(rows.map((row) => row.migration_name));
 }
 
-/**
- * Brings the database up to the schema in `prisma/migrations`, and reports which migrations that took.
- *
- * Idempotent: the common case is that everything is already applied and this is one query. Each migration runs
- * in its own transaction alongside its ledger row, so a failure half way leaves the ones before it applied and
- * recorded, which is what lets the next start resume rather than begin again.
- */
 export async function migrate(directory: string = migrationsDirectory(), pause: (ms: number) => Promise<void> = sleep): Promise<string[]> {
   const migrations = await readMigrations(directory);
   const client = await connectWhenReady(resolveDatabaseUrl(), pause);

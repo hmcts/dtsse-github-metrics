@@ -6,10 +6,6 @@ def type = "nodejs"
 def product = "dtsse"
 def component = "github-metrics"
 
-// Used for the one yarn task the pipeline does not run for us. Going through the builder rather than a bare
-// `sh 'yarn ...'` is load-bearing: the agent's global yarn is 1.22, which refuses a project declaring
-// `packageManager: yarn@4`, and it is `YarnBuilder` that enables corepack, sources nvm for .nvmrc and puts the
-// shim on PATH.
 def yarnBuilder = new uk.gov.hmcts.contino.YarnBuilder(this)
 
 static Map<String, Object> secret(String secretName, String envVariable) {
@@ -21,9 +17,6 @@ static Map<String, Object> secret(String secretName, String envVariable) {
   ]
 }
 
-// Only what a BUILD needs. The GitHub App credentials are deliberately absent: nothing in the pipeline
-// contacts GitHub as the App — the CronJob does that, in the cluster, reading the same vault through the
-// chart's own keyVaults block.
 def secrets = [
   'dtsse-${env}': [
     secret('AppInsightsConnectionString', 'APPLICATIONINSIGHTS_CONNECTION_STRING')
@@ -35,16 +28,11 @@ withPipeline(type, product, component) {
 
   env.NODE_CONFIG_ENV = 'test'
 
-  // The Prisma client is generated rather than committed, and `store/prisma.ts` imports it — so `yarn test`
-  // cannot even load without this. The Docker build generates it in its own stage; the agent runs the unit tests
-  // outside Docker, where nothing has.
   before('test') {
     yarnBuilder.yarn('db:generate')
   }
 
   onPR() {
-    // Smoke only on a preview. Its CronJob is disabled and its database is empty, so anything asserting a
-    // figure would be asserting against a collection that has not run.
     env.E2E_TEST_SCOPE = '@smoke'
     env.TEST_URL = "https://dtsse-github-metrics-pr-${CHANGE_ID}.preview.platform.hmcts.net"
 
@@ -60,7 +48,6 @@ withPipeline(type, product, component) {
   }
 
   onMaster() {
-    // AAT has run a real collection, so the data-dependent assertions can run here.
     env.E2E_TEST_SCOPE = '@regression'
     env.TEST_URL = "https://dtsse-github-metrics.aat.platform.hmcts.net"
 

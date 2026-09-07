@@ -23,19 +23,8 @@ import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.
 import { EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { type Arguments, COHORT_COMMANDS, parseArguments, UsageError } from "./parse-arguments.ts";
 
-/**
- * The collector's entry point. Ported from `metrics.cli`.
- *
- * `render.py` was deliberately not carried over — see the `--format report` refusal in
- * `parse-arguments.ts` — so every command that reports emits JSON, which is both the machine contract and
- * what a human filters with `jq`.
- */
-
 async function loadPolicy(argv: Arguments): Promise<Configuration> {
   const configuration = await loadConfiguration(...argv.config);
-  // Optional at the schema, required by the commands whose subject IS the cohort. `map-sonar` resolves every
-  // project an organisation lists and `prune` deletes stale cache rows: neither is about any repository a team
-  // owns, so neither should oblige a team file to be layered in to say something it never reads.
   if (COHORT_COMMANDS.has(argv.command) && configuration.teams.length === 0) {
     throw new UsageError(
       `${argv.command} reports the configured cohort, so at least one team must be configured; layer in the team file with a second --config`
@@ -44,7 +33,6 @@ async function loadPolicy(argv: Arguments): Promise<Configuration> {
   return configuration;
 }
 
-/** Collects one repository's evidence, reporting what could not be observed rather than failing the run. */
 async function collectRepository(
   configuration: Configuration,
   client: ReturnType<typeof createGitHubClient>,
@@ -58,15 +46,9 @@ async function collectRepository(
 
   const metadata = await client.get<{ default_branch?: string }>(`/repos/${organization}/${repository}`).catch(() => undefined);
   if (metadata === undefined) {
-    // The one failure that costs the whole repository: without its metadata there is no default branch to ask
-    // any of the other questions about.
     console.warn(`${repository}: could not be read at all, so nothing was collected for it`);
     return { observed: false, failures: 1 };
   }
-  // NOT defaulted. GitHub returns `default_branch` on every repository it will answer for at all, and guessing
-  // one would be worse than failing: HMCTS repositories are a mix of `master` and `main` — pcs-api is `master` —
-  // so a wrong guess collects a branch that may not exist and reports the merge gate of one that does not gate
-  // anything. A repository whose metadata carries no branch is a repository nothing can be asked about.
   const defaultBranch = metadata.default_branch;
   if (defaultBranch === undefined || defaultBranch === "") {
     console.warn(`${repository}: GitHub named no default branch, so nothing was collected for it`);
@@ -141,7 +123,6 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
     failures += result.failures;
   }
 
-  // The stamp is what tells a serving process its held report describes a cache that has moved on.
   await stampCollection(reference);
   console.info(`collected ${observed} of ${repositories.length} repositories in ${client.requestsIssued()} GitHub calls`);
   for (const { outcome, count } of client.callOutcomes()) {
@@ -194,8 +175,6 @@ async function runMigrate(): Promise<number> {
 async function runEvidence(configuration: Configuration, argv: Arguments): Promise<number> {
   const organization = configuration.organization;
   const reference = new Date();
-  // Anchored where the caches END rather than at today's midnight, so a report served the day after a
-  // collection reports the same figures it did the day the run landed.
   const collectedThrough = await prevailingCachedCoverage(organization, EvidenceSource.PullRequests, sourceSignature(EvidenceSource.PullRequests));
   const anchor = collectedAnchor(collectedThrough, reference);
   const window = resolveWindow({
@@ -213,9 +192,6 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
   const rows = [];
   for (const repository of repositories) {
     const merges = await loadCachedMerges(organization, repository, window);
-    // The gate is CURRENT STATE stored by the last collection, read back rather than re-fetched: this command
-    // contacts nothing, and grading against a placeholder would report cannot_assess for every repository whose
-    // gate was collected perfectly well.
     const state = await storedRepositoryState(organization, repository);
     const gate = readStoredGate(state?.payload);
     const assessment = policy.enabled ? policy.assess(merges, gate) : undefined;
@@ -237,12 +213,6 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
   return EXIT_COMPLETE;
 }
 
-/**
- * Reads the merge gate one collection stored, or says why there is none to grade.
- *
- * Instants come back out of `jsonb` as ISO strings, so the one field the assessment reads as a date is revived
- * here. Everything else the assessment touches is a boolean, a number or a string.
- */
 function readStoredGate(payload: unknown): MergeGateReport {
   if (typeof payload !== "object" || payload === null) {
     return { detail: "the merge gate has not been collected" };
@@ -260,8 +230,6 @@ function readStoredGate(payload: unknown): MergeGateReport {
 
 async function runMapSonar(configuration: Configuration): Promise<number> {
   console.info(`resolving SonarCloud projects for the ${sonarOrganizationName(configuration)} organisation`);
-  // The paced resolution walk is a long, quota-bound job; it is wired up here so the command exists and
-  // reports honestly rather than pretending to have run.
   console.warn("map-sonar is not yet wired to the resolution ladder in this build");
   return EXIT_FAILED;
 }
@@ -282,8 +250,6 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 
   try {
-    // Before `loadPolicy`, because migrating is the one command that reads no policy — and because it is what
-    // the web pod runs at start, when a fresh environment has a database but no schema.
     if (parsed.command === "migrate") {
       return await runMigrate();
     }
@@ -310,7 +276,3 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     await prisma.$disconnect();
   }
 }
-
-// No self-executing guard here. `main` is exported for the tests and for `src/cli/run.ts`, which is the
-// entry point the Docker image and the Helm CronJob invoke — keeping the two apart means this module has no
-// `import.meta` in it, which `tsconfig.cli.json`'s Node output cannot carry.

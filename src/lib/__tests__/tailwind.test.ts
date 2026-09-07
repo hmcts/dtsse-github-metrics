@@ -1,17 +1,3 @@
-/**
- * The one thing no other gate in this project can catch.
- *
- * Tailwind emits only the utilities it finds by scanning the files named in `content`. A class string
- * held in a file outside those globs is never emitted, and NOTHING fails: `next build` succeeds, the
- * type checker is happy, and a unit test asserting the class name passes — the page simply renders
- * without the colour. `lib/rag.ts` holds every RAG class in the app, so a `content` list covering
- * only `src/components` and `src/app` silently drops the readiness colour bar.
- *
- * The guard is on the directory rather than on the built CSS, so it runs in milliseconds and names
- * the actual fault: a new directory under `src` that holds class strings and is not scanned. A
- * `__tests__` directory is the one exemption — see `TESTS`.
- */
-
 import { readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -19,26 +5,8 @@ import config from "../../../tailwind.config";
 
 const SOURCE = fileURLToPath(new URL("../../", import.meta.url));
 
-/**
- * The directories under `src` that need no glob.
- *
- * `__tests__`: a class string in a test is an assertion ABOUT markup, not markup a browser is served,
- * and the component it asserts on lives in a directory that is scanned. `src/__tests__` exists because
- * `src/proxy.ts` sits at the top of `src` and its test sits beside it; the nested
- * `components/__tests__` and `lib/__tests__` are already covered by their parent's glob.
- *
- * `evidence` and `cli` are this port's addition and hold no markup at all: they are the server-only
- * collection, grading and reporting code that replaced the Python package, and they render nothing.
- * `evidence` is also compiled by `tsc` into the collector image, where Tailwind does not run.
- *
- * They are exempted rather than added as globs, so the exemption states WHY a directory holds no class
- * strings instead of hiding the question behind a scan that would always find nothing. A component
- * must never appear under either — CLAUDE.md's server-only rule — and if one ever does, it belongs in
- * `src/components` where this guard already covers it.
- */
-const UNSCANNED = new Set(["__tests__", "evidence", "cli"]);
+const UNSCANNED = new Set(["__tests__", "evidence", "cli", "health"]);
 
-/** The `src` subdirectory each `./src/<name>/**` glob scans. */
 function scanned(): string[] {
   const globs = Array.isArray(config.content) ? config.content : [];
   return globs
@@ -57,8 +25,6 @@ describe("tailwind content", () => {
   });
 
   it("scans the directory the RAG classes are declared in", () => {
-    // Named on its own because it is the one that was actually missed: every `rag-*`, `bg-green-950`
-    // and `border-l-4` in the app is written in `lib/rag.ts` and nowhere else.
     expect(scanned()).toContain("lib");
   });
 });

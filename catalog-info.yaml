@@ -4,8 +4,6 @@ metadata:
   name: "dtsse-github-metrics"
   description: "Collects and grades evidence of software delivery practice from GitHub."
   annotations:
-    # The folder the organisation scan actually places this in, selected by the repository's
-    # `jenkins-cft-d-i` GitHub topic.
     jenkins.io/job-full-name: cft:HMCTS_d_to_i/dtsse-github-metrics
     github.com/project-slug: hmcts/dtsse-github-metrics
   tags:

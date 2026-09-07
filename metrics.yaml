@@ -1,11 +1,5 @@
 version: 1
 organization: hmcts
-# The estate this deployment reports on, and the only file in the repository that says which repositories those
-# are. `metrics.example.yaml` remains the documented reference for every option — the tuning below is its
-# defaults unchanged, so what is worth reading here is `teams:`.
-#
-# It is a policy document, deliberately kept in the repository rather than in a ConfigMap, so that adding a team
-# to the dashboard is a reviewed change with a history rather than an edit somebody made to a live cluster.
 lookback:
   operational_days: 90
   maximum_days: 365
@@ -42,8 +36,6 @@ traceability:
     - '#\d+'
     - '[A-Z][A-Z0-9]+-\d+'
 excluded_repositories: []
-# DTSSE's own repositories first, because the team that owns this tool should be the first cohort measured by
-# it. Other teams are added by pull request as they opt in.
 teams:
   - identifier: dtsse
     display_name: Developer Tools & Shared Services Engineering
@@ -53,8 +45,5 @@ teams:
       - dtsse-github-metrics
       - expressjs-monorepo-template
       - github-metrics
-# No `enablement:` block yet. A repository with no date reports that it has no date and gets no trend series,
-# which is the honest answer until somebody records when agentic tooling was actually turned on for it —
-# inventing a date would give every series a baseline that never happened.
 sonar_organization: hmcts
 production_list_url: https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml

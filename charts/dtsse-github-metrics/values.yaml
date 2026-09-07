@@ -3,20 +3,14 @@ nodejs:
   aadIdentityName: dtsse
   image: hmctsprod.azurecr.io/dtsse/github-metrics:latest
   ingressHost: dtsse-github-metrics.{{ .Values.global.environment }}.platform.hmcts.net
-  # A report over the whole estate is held in memory as JS objects, which the chart's 512Mi default will not
-  # hold. Measure before lowering.
   memoryRequests: 2Gi
   memoryLimits: 4Gi
   cpuRequests: 500m
   cpuLimits: "1"
-  # One replica while the report cache is per-process: each would otherwise warm its own copy of the same
-  # estate, for no gain and twice the memory.
   replicas: 1
   keyVaults:
     dtsse:
       secrets:
-        # `AppInsightsConnectionString`, not the kebab-case name every CFT product uses: the dtsse vault predates
-        # that convention and holds this one in Pascal case. Checked against the vault, not assumed.
         - name: AppInsightsConnectionString
           alias: APPLICATIONINSIGHTS_CONNECTION_STRING
         - name: postgres-host
@@ -29,40 +23,24 @@ nodejs:
           alias: POSTGRES_PASSWORD
   environment:
     NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
-    OTEL_SERVICE_NAME: dtsse-github-metrics
-    OTEL_ENABLED: true
     METRICS_CONFIG: /app/metrics.yaml
     NODE_OPTIONS: --max-old-space-size=3072
-    # A database NAME on the shared dtsse flexible server, not a secret, so it is declared here rather than
-    # mounted: the vault holds the server's host and credentials, and every consumer of it names its own
-    # database. This one must exist on that server before an AAT deploy can start.
     POSTGRES_DATABASE: github_metrics
-  # The web pod holds NO GitHub credential. It never contacts GitHub — that is what makes the serving path
-  # read-only — and a credential it cannot use is only a credential that can leak.
 
 job:
   enabled: true
-  # The SAME image as the web pod, with the collector's entry point instead of the server's.
   image: hmctsprod.azurecr.io/dtsse/github-metrics:latest
   aadIdentityName: dtsse
   command: ["node"]
   args: ["dist/cli/run.js", "collect", "--config", "/app/metrics.yaml", "--days", "90"]
-  # Weekly, early Monday. Collection runs to the estate's whole 90-day window, so a missed run is a hole in the
-  # series rather than a gap that heals.
   schedule: "0 3 * * 1"
-  # A run that is still going when the next is due must not have a second one join it: they would write the same
-  # coverage rows.
   concurrencyPolicy: Forbid
-  # One attempt. A 1850-repository collection must not silently retry six times, and its own exit status already
-  # distinguishes a partial run from a failed one.
   backoffLimit: 1
   activeDeadlineSeconds: 21600
   ttlSecondsAfterFinished: 86400
   keyVaults:
     dtsse:
       secrets:
-        # Set by hand rather than by Terraform: a GitHub App private key is not a value Terraform generates, and
-        # putting it in a public repository's state is not an option. See the README.
         - name: github-app-id
           alias: GH_APP_ID
         - name: github-app-installation-id
@@ -77,9 +55,6 @@ job:
           alias: POSTGRES_USER
         - name: postgres-password
           alias: POSTGRES_PASSWORD
-        # `github-token` is deliberately NOT mounted. `resolveCredentials` prefers the App, so a PAT beside it is
-        # dead weight that would quietly take over if the App key were ever rotated badly — reporting the whole
-        # estate's merge gates and alerts as unavailable rather than failing loudly.
   environment:
     NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
     METRICS_CONFIG: /app/metrics.yaml

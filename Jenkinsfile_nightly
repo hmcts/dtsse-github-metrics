@@ -38,12 +38,8 @@ withNightlyPipeline(type, product, component) {
     ? "https://dtsse-github-metrics-pr-${params.PR_NUMBER}.preview.platform.hmcts.net"
     : "https://dtsse-github-metrics.${params.ENVIRONMENT}.platform.hmcts.net"
 
-  // @nightly is where the accessibility specs run: a dark dashboard with colour-coded RAG bars is exactly where
-  // a contrast regression hides, and axe is too slow to run on every pull request.
   env.E2E_TEST_SCOPE = params.E2E_TEST_TAG
 
-  // Without this the nightly pipeline runs only a build and a dependency check: every test stage in
-  // `sectionNightlyTests` is opt-in, so `E2E_TEST_SCOPE` above would be set and then read by nothing.
   enableFullFunctionalTest(60)
 
   enableFortifyScan()

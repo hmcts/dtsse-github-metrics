@@ -1,5 +1,4 @@
 nodejs:
-  # Don't modify below here
   image: ${IMAGE_NAME}
   ingressHost: ${SERVICE_FQDN}
   memoryRequests: 1Gi
@@ -9,35 +8,29 @@ nodejs:
       secrets:
         - name: AppInsightsConnectionString
           alias: APPLICATIONINSIGHTS_CONNECTION_STRING
+  secrets:
+    POSTGRES_HOST:
+      secretRef: postgres
+      key: HOST
+    POSTGRES_PORT:
+      secretRef: postgres
+      key: PORT
+    POSTGRES_USER:
+      secretRef: postgres
+      key: USER
+    POSTGRES_PASSWORD:
+      secretRef: postgres
+      key: PASSWORD
   environment:
-    # The in-chart Postgres, so a preview provisions nothing outside itself.
-    DATABASE_URL: "postgresql://hmcts:hmcts@${SERVICE_NAME}-postgresql:5432/github_metrics"
+    POSTGRES_DATABASE: "{{ .Release.Name }}"
     METRICS_CONFIG: /app/metrics.example.yaml
 
-# A preview's CronJob is DISABLED. Nothing has collected for it, which is the state its smoke tests assert
-# against: the pages must render and health must be UP with an empty database, because that is what a pull
-# request deploys into. A collection here would also spend the App's quota on every preview.
 job:
   enabled: false
 
 postgresql:
   enabled: true
-  # Through HMCTS's ACR mirror rather than Docker Hub, both for the pull-rate limit and because Bitnami no longer
-  # publishes the tag this chart version defaults to. The tag is pinned to one the mirror actually holds — the
-  # chart's own default (17.6.0-debian-12-r4) is not there, and an unpullable image is an ImagePullBackOff that
-  # reads as a broken deployment rather than a missing mirror.
-  image:
-    registry: hmctsprod.azurecr.io
-    repository: imported/bitnami/postgresql
-    tag: 17.5.0-debian-12-r20
-  auth:
-    username: hmcts
-    password: hmcts
-    database: github_metrics
-  primary:
-    persistence:
-      enabled: false
-
-global:
-  security:
-    allowInsecureImages: true
+  flexibleserver: dtsse-preview
+  setup:
+    databases:
+      - name: "{{ .Release.Name }}"
