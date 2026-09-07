@@ -13,19 +13,20 @@ nodejs:
       secrets:
         - name: AppInsightsConnectionString
           alias: APPLICATIONINSIGHTS_CONNECTION_STRING
-        - name: postgres-host
+        - name: github-metrics-postgres-host
           alias: POSTGRES_HOST
-        - name: postgres-port
+        - name: github-metrics-postgres-port
           alias: POSTGRES_PORT
-        - name: postgres-user
+        - name: github-metrics-postgres-user
           alias: POSTGRES_USER
-        - name: postgres-password
+        - name: github-metrics-postgres-password
           alias: POSTGRES_PASSWORD
+        - name: github-metrics-postgres-database
+          alias: POSTGRES_DATABASE
   environment:
     NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
     METRICS_CONFIG: /app/metrics.yaml
     NODE_OPTIONS: --max-old-space-size=3072
-    POSTGRES_DATABASE: github_metrics
 
 job:
   enabled: true
@@ -47,19 +48,20 @@ job:
           alias: GH_APP_INSTALLATION_ID
         - name: github-app-private-key
           alias: GH_APP_PRIVATE_KEY
-        - name: postgres-host
+        - name: github-metrics-postgres-host
           alias: POSTGRES_HOST
-        - name: postgres-port
+        - name: github-metrics-postgres-port
           alias: POSTGRES_PORT
-        - name: postgres-user
+        - name: github-metrics-postgres-user
           alias: POSTGRES_USER
-        - name: postgres-password
+        - name: github-metrics-postgres-password
           alias: POSTGRES_PASSWORD
+        - name: github-metrics-postgres-database
+          alias: POSTGRES_DATABASE
   environment:
     NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
     METRICS_CONFIG: /app/metrics.yaml
     NODE_OPTIONS: --max-old-space-size=3072
-    POSTGRES_DATABASE: github_metrics
 
 postgresql:
   enabled: false

@@ -22,6 +22,12 @@ src/evidence/store/generated/
 charts/*/charts/
 charts/*/Chart.lock
 
+infrastructure/.terraform/
+infrastructure/.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+tfplan
+
 *.sqlite3
 
 .vscode/
