@@ -53,10 +53,11 @@ const lookback = z
     mutable_hours: positiveInt.default(6),
     // Measured from an open pull request's last update, not from when it was opened.
     stale_open_days: positiveInt.default(14),
-    // How old the last collection may be before reporting says so. Collection runs weekly, so eight
-    // days is one missed run rather than one missed day: a warning raised the morning after every run
-    // would say nothing about whether the figures can still be trusted.
-    stale_collection_days: positiveInt.default(8)
+    // How old the last collection may be before reporting says so. Collection runs daily, so two days
+    // is one missed run rather than one missed day: a warning raised the morning after every run would
+    // say nothing about whether the figures can still be trusted. Keep this a run behind the cadence —
+    // it was eight while collection was weekly.
+    stale_collection_days: positiveInt.default(2)
   })
   .strict();
 

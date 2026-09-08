@@ -12,7 +12,7 @@ One Next.js application and one image, with two entry points:
 | Entry point | Runs as | Does |
 | --- | --- | --- |
 | `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
-| `node dist/cli/run.js collect` | a weekly CronJob | contacts GitHub, caches facts, stamps the collection |
+| `node dist/cli/run.js collect` | a daily CronJob | contacts GitHub, caches facts, stamps the collection |
 
 The web pod holds **no GitHub credential**. It never contacts GitHub, which is what makes the serving path
 read-only and the credential the collector's alone.

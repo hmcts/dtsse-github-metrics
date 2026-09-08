@@ -64,7 +64,7 @@ describe("parseConfiguration", () => {
       maximum_days: 365,
       mutable_hours: 6,
       stale_open_days: 14,
-      stale_collection_days: 8
+      stale_collection_days: 2
     });
   });
 

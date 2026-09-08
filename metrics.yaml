@@ -4,7 +4,7 @@ lookback:
   operational_days: 90
   maximum_days: 365
   stale_open_days: 14
-  stale_collection_days: 8
+  stale_collection_days: 2
 triviality:
   maximum_lines: 10
   maximum_files: 1

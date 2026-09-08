@@ -40,8 +40,8 @@ export function runStatus(status: CollectionStatus): number {
  * Both readings of a partial run are right. A person wants to know that twelve of fourteen repositories answered,
  * which is what `EXIT_INCOMPLETE` says. Kubernetes has no third state: a CronJob exiting 3 is Failed, it retries to
  * its backoff limit, and anything watching pod status alerts. Across an estate this size something always refuses —
- * a disabled alert family, a permission not granted — so partial is the NORMAL outcome, and a weekly job reporting
- * failure every week is an alert that means nothing.
+ * a disabled alert family, a permission not granted — so partial is the NORMAL outcome, and a daily job reporting
+ * failure every day is an alert that means nothing.
  *
  * `toleratePartial` therefore belongs to the caller rather than to the run: the collection is unchanged and the
  * true status still reaches Application Insights as `collector.exit_status`. Nothing tolerates `Failed`, because
