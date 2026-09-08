@@ -68,10 +68,12 @@ orgJob:
   image: hmctsprod.azurecr.io/dtsse/github-metrics:latest
   aadIdentityName: dtsse
   command: ["node"]
-  args: ["dist/cli/run.js", "collect-org", "--config", "/app/metrics.yaml"]
-  # 01:00 Monday, two hours ahead of `collect` at 03:00. Ordering rather than coincidence: ownership is what
-  # the behaviour figures are attributed to, so a week's figures should be read against the same week's graph.
-  schedule: "0 1 * * 1"
+  args: ["dist/cli/run.js", "collect-org", "--config", "/app/metrics.yaml", "--tolerate-partial"]
+  # 14:00 daily, an hour ahead of `collect` at 15:00. Ordering rather than coincidence: ownership is what the
+  # behaviour figures are attributed to, so each day's figures should be read against the same day's graph.
+  # Daily rather than weekly because it follows `collect`, and because at ~250 calls the walk is cheap enough
+  # that the finer drift resolution costs nothing worth saving.
+  schedule: "0 14 * * *"
   concurrencyPolicy: Forbid
   backoffLimit: 1
   # One hour, not the six `job` allows. The walk is about 250 API calls and finishes in single-digit minutes,

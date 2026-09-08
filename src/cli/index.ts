@@ -355,7 +355,7 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     // reviewed change. The graph is evidence about ownership; it does not get to redefine the cohort behind
     // somebody's back.
     process.stdout.write(`${proposeTeamsBlock(resolved)}\n`);
-    return truncated === 0 ? EXIT_COMPLETE : runStatus(CollectionStatus.Partial);
+    return truncated === 0 ? EXIT_COMPLETE : collectionStatus(CollectionStatus.Partial, argv.toleratePartial);
   }
 
   // `complete` is false where the ladder was cut short: the graph is missing answers it would have had, so
@@ -388,7 +388,14 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     progress(`${truncated} repositories were left unresolved by --unresolved-limit, so nothing was superseded`);
   }
 
-  return complete ? EXIT_COMPLETE : runStatus(CollectionStatus.Partial);
+  // `--tolerate-partial` for the same reason `collect` takes it, and the reason applies harder here: this walk
+  // touches every team in the organisation, so something always refuses — a team whose membership is not
+  // visible, a repository the App is not installed on. Exiting 3 daily would make the CronJob Failed every day
+  // and the alert would mean nothing. The true status still reaches Application Insights.
+  if (!complete && argv.toleratePartial) {
+    progress("part of the organisation would not answer, which a scheduled run reports as success; see collector.exit_status");
+  }
+  return complete ? EXIT_COMPLETE : collectionStatus(CollectionStatus.Partial, argv.toleratePartial);
 }
 
 /**

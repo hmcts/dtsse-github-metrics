@@ -13,7 +13,7 @@ One Next.js application and one image, with two entry points:
 | --- | --- | --- |
 | `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
 | `node dist/cli/run.js collect` | a daily CronJob | contacts GitHub, caches facts, stamps the collection |
-| `node dist/cli/run.js collect-org` | a second weekly CronJob | walks the organisation's teams, people and repository ownership |
+| `node dist/cli/run.js collect-org` | a second daily CronJob | walks the organisation's teams, people and repository ownership |
 
 The web pod holds **no GitHub credential**. It never contacts GitHub, which is what makes the serving path
 read-only and the credential the collector's alone.
@@ -76,11 +76,13 @@ Three filters keep a handle from being read as an owner, and each answers a ques
 `maximum_team_share` by **breadth** (a team holding access across the estate holds it administratively), and
 `maximum_team_members` by **size** (an "all developers" group is everyone, whatever it holds). Every team an
 exclusion removes is named in the run's output beside the figure that removed it, because a filter quietly
-turning a well-owned repository into an `unowned` row is the one thing here that should never be silent. The graph is change-versioned rather than overwritten, because GitHub serves
-only the present — nobody can ask it who was in a team last June.
+turning a well-owned repository into an `unowned` row is the one thing here that should never be silent.
 
-The walk is about 250 API calls and a few minutes, so it runs as its own CronJob at 01:00 Monday, two hours
-ahead of `collect`, and a repository may have several owners.
+The graph is change-versioned rather than overwritten, because GitHub serves only the present — nobody can ask
+it who was in a team last June. A run that sees a fact unchanged moves `last_observed_at` and writes no row.
+
+The walk is about 250 API calls and a few minutes, so it runs as its own CronJob at 14:00, an hour ahead of
+`collect`, so each day's figures are read against the same day's ownership. A repository may have several owners.
 
 ### Authenticating
 
