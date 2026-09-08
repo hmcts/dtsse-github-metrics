@@ -76,8 +76,19 @@ always, so once `updatedAt` falls below the window start nothing later can be in
 `hmcts/github-metrics` is refused today, and it is the only INTERNAL repository in `metrics.yaml`. That is the
 tell: a public repository's pull requests are readable with `contents` and `metadata`, a private one's need
 `pull_requests: read`, and installation 158738568 does not have it even though the App does. Adding a permission
-to a GitHub App puts existing installations into pending approval and they silently lose it until an
-organisation administrator accepts, so the two lists drift apart without anything failing loudly.
+to a GitHub App puts existing installations into pending approval and they lose it until an organisation
+administrator accepts, so the two lists drift apart with nothing announcing it.
+
+The refusal itself is loud, which is the second reason the walk beats search:
+
+```
+GitHub errors 403 (equivalent) POST https://api.github.com/graphql: FORBIDDEN: Resource not accessible by integration
+github-metrics: merged pull requests were not collected: GitHub refused part of a GraphQL query
+```
+
+Search answered the same missing permission with an empty result and a 200, so the repository reported zero
+merges and the run reported success. `repository.pullRequests` refuses outright, the repository is counted as a
+failure, and only `--tolerate-partial` keeps the exit status at 0.
 
 Compare them when a private repository reports no evidence:
 
