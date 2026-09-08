@@ -12,7 +12,7 @@ One Next.js application and one image, with two entry points:
 | Entry point | Runs as | Does |
 | --- | --- | --- |
 | `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
-| `node dist/cli/run.js collect` | a weekly CronJob | contacts GitHub, caches facts, stamps the collection |
+| `node dist/cli/run.js collect` | a daily CronJob | contacts GitHub, caches facts, stamps the collection |
 | `node dist/cli/run.js collect-org` | a second weekly CronJob | walks the organisation's teams, people and repository ownership |
 
 The web pod holds **no GitHub credential**. It never contacts GitHub, which is what makes the serving path
@@ -119,8 +119,19 @@ always, so once `updatedAt` falls below the window start nothing later can be in
 `hmcts/github-metrics` is refused today, and it is the only INTERNAL repository in `metrics.yaml`. That is the
 tell: a public repository's pull requests are readable with `contents` and `metadata`, a private one's need
 `pull_requests: read`, and installation 158738568 does not have it even though the App does. Adding a permission
-to a GitHub App puts existing installations into pending approval and they silently lose it until an
-organisation administrator accepts, so the two lists drift apart without anything failing loudly.
+to a GitHub App puts existing installations into pending approval and they lose it until an organisation
+administrator accepts, so the two lists drift apart with nothing announcing it.
+
+The refusal itself is loud, which is the second reason the walk beats search:
+
+```
+GitHub errors 403 (equivalent) POST https://api.github.com/graphql: FORBIDDEN: Resource not accessible by integration
+github-metrics: merged pull requests were not collected: GitHub refused part of a GraphQL query
+```
+
+Search answered the same missing permission with an empty result and a 200, so the repository reported zero
+merges and the run reported success. `repository.pullRequests` refuses outright, the repository is counted as a
+failure, and only `--tolerate-partial` keeps the exit status at 0.
 
 Compare them when a private repository reports no evidence:
 
@@ -151,6 +162,16 @@ az keyvault secret set --vault-name dtsse-aat --name github-app-private-key --fi
 `github-token` is in the same vault but is **deliberately not mounted on the CronJob**. Credential resolution
 prefers the App, so a PAT beside it would quietly take over if the App key were ever rotated badly — reporting
 the whole estate's merge gates and alerts as unavailable instead of failing loudly.
+
+## Changing the Helm chart
+
+**Bump `version:` in `charts/dtsse-github-metrics/Chart.yaml` in the same commit.** The chart is published to
+ACR once per version and never overwritten, and the flux HelmRelease asks for `>=0.0.2` — so a values change
+committed without a version bump builds green, promotes green, and deploys the *previous* chart. Nothing
+reports an error; the environment simply keeps running the old values.
+
+This is not the same as an application change, which needs no bump: the image tag is a commit SHA, and flux
+image automation moves the HelmRelease onto the new tag on its own.
 
 ## Tests
 

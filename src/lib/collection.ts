@@ -1,8 +1,8 @@
 /**
  * What the pages say about the collection every figure on them is anchored to.
  *
- * A reporting window ends where the caches end, not at today's midnight, so a page read on Thursday
- * shows the window the Monday collection covers. That is the honest window — the figures are the
+ * A reporting window ends where the caches end, not at today's midnight, so a page read this afternoon
+ * shows the window last night's collection covers. That is the honest window — the figures are the
  * ones the collection actually supports — but it is only honest if the page SAYS so, otherwise a
  * reader takes a fortnight-old window for this morning's.
  *

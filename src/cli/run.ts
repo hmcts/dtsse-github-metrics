@@ -32,14 +32,15 @@ async function run(): Promise<number> {
    * Imported HERE, after the secrets are loaded, and deliberately not at the top of the file.
    *
    * `store/prisma.ts` resolves its connection string at module scope, so a static import would run that during
-   * this file's own imports — before `startPlatform` had put anything in the environment. The CronJob is the half
-   * that depends on that ordering: the `job` chart mounts the vault as FILES under /mnt/secrets and injects no
-   * environment variables, so `POSTGRES_*` exists only once `getPropertiesVolumeSecrets` has read the mount.
+   * this file's own imports — before `startPlatform` had put anything in the environment. Neither chart injects
+   * `POSTGRES_*`: both mount the vault as FILES under /mnt/secrets, named after the alias, so those variables
+   * exist only once `getPropertiesVolumeSecrets` has read the mount and set them.
    *
    * Observed in a real cluster before this moved: the collector authenticated to GitHub and made every call
    * successfully, then failed every cache read and write, because Prisma had already been handed the local
-   * fallback connection string. The web pod was unaffected — the `nodejs` chart aliases its secrets straight into
-   * the environment — which is exactly what made it look like a database problem rather than an ordering one.
+   * fallback connection string. The web pod was unaffected because Next.js awaits `instrumentation.ts`'s
+   * `register()` before it loads any route module, so there the secrets are always in place first. This file is
+   * the collector's equivalent of that hook, and the ordering has to be just as deliberate.
    */
   const { main } = await import("./index.ts");
 

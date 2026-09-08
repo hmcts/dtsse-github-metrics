@@ -31,7 +31,7 @@ import { prisma } from "../evidence/store/prisma.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
 import { recordRepositoryState, storedRepositoryState } from "../evidence/store/repository-state.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
-import { EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
+import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { type Arguments, COHORT_COMMANDS, parseArguments, UsageError } from "./parse-arguments.ts";
 
 /**
@@ -156,24 +156,10 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
     return runStatus(CollectionStatus.Failed);
   }
   const status = observed === repositories.length && failures === 0 ? CollectionStatus.Complete : CollectionStatus.Partial;
-
-  /**
-   * A scheduled run reports a partial collection as SUCCESS, which the three-valued exit status otherwise does not.
-   *
-   * Both readings are right for different callers. A person running this wants to know that twelve of fourteen
-   * repositories answered, and exit 3 says so. Kubernetes has no third state: a CronJob exiting 3 is Failed, it
-   * retries to its backoff limit and anything watching pod status alerts. Across an estate this size some
-   * repository always refuses — a disabled alert family, a permission not granted — so partial is the NORMAL
-   * outcome, and without this the weekly job would report failure every week and the alert would mean nothing.
-   *
-   * What is not lost: the real status still reaches Application Insights as `collector.exit_status`, which is
-   * where a partial run should be noticed, and `--tolerate-partial` is off unless a caller asks for it.
-   */
   if (status === CollectionStatus.Partial && argv.toleratePartial) {
     console.info("some repositories refused, which a scheduled run reports as success; see collector.exit_status");
-    return EXIT_COMPLETE;
   }
-  return runStatus(status);
+  return collectionStatus(status, argv.toleratePartial);
 }
 
 /**
