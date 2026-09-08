@@ -109,6 +109,16 @@ az keyvault secret set --vault-name dtsse-aat --name github-app-private-key --fi
 prefers the App, so a PAT beside it would quietly take over if the App key were ever rotated badly — reporting
 the whole estate's merge gates and alerts as unavailable instead of failing loudly.
 
+## Changing the Helm chart
+
+**Bump `version:` in `charts/dtsse-github-metrics/Chart.yaml` in the same commit.** The chart is published to
+ACR once per version and never overwritten, and the flux HelmRelease asks for `>=0.0.2` — so a values change
+committed without a version bump builds green, promotes green, and deploys the *previous* chart. Nothing
+reports an error; the environment simply keeps running the old values.
+
+This is not the same as an application change, which needs no bump: the image tag is a commit SHA, and flux
+image automation moves the HelmRelease onto the new tag on its own.
+
 ## Tests
 
 ```bash
