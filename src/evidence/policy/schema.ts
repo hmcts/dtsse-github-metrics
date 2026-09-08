@@ -299,7 +299,11 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
   // What is still refused is a repository listed TWICE UNDER ONE TEAM, which cannot mean anything other than a
   // copy-paste, and which would double that repository in `ownedRepositories` and in every count taken over it.
   for (const entry of value.teams) {
-    const repeated = [...new Set(entry.repositories.filter((name, index) => entry.repositories.indexOf(name) !== index))].sort();
+    // Sorted only so the message reads the same twice, which is why this one collates rather than comparing by
+    // code point: nothing downstream decides anything from the order.
+    const repeated = [...new Set(entry.repositories.filter((name, index) => entry.repositories.indexOf(name) !== index))].sort((left, right) =>
+      left.localeCompare(right)
+    );
     if (repeated.length > 0) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["teams"], message: `${entry.identifier} lists a repository twice: ${repeated.join(", ")}` });
     }

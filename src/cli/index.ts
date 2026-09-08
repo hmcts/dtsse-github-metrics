@@ -11,7 +11,7 @@ import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
 import { collectSecurityAlerts } from "../evidence/inventory/security-alerts.ts";
 import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
-import { canonical, type OrgFacts, OwnerKind, type OwnershipOptions, type ResolvedOwnership } from "../evidence/org/graph.ts";
+import { byCodePoint, canonical, type OrgFacts, OwnerKind, type OwnershipOptions, type ResolvedOwnership } from "../evidence/org/graph.ts";
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
 import { configuredRepositories, repositoryOwners, sonarOrganizationName } from "../evidence/policy/repositories.ts";
@@ -323,10 +323,10 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   // Named, not just counted. A filter that quietly stops a team being an owner is the one thing in this walk
   // that could turn a well-owned repository into an `unowned` row without anybody noticing, so each excluded
   // team is reported with the figure that excluded it and a reader can disagree with the threshold.
-  for (const slug of [...evidence.populousTeams].sort()) {
+  for (const slug of [...evidence.populousTeams].sort(byCodePoint)) {
     progress(`  ${slug} has ${evidence.memberCounts.get(slug)} members, over the ${graph.maximum_team_members} ceiling, so is not read as an owner`);
   }
-  for (const slug of [...evidence.broadTeams].sort()) {
+  for (const slug of [...evidence.broadTeams].sort(byCodePoint)) {
     progress(`  ${slug} holds ${evidence.teamSizes.get(slug)} repositories, over the ${graph.maximum_team_share * 100}% ceiling, so is not read as an owner`);
   }
 
@@ -418,9 +418,9 @@ function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
   }
 
   const lines = ["teams:"];
-  for (const key of [...grouped.keys()].sort((left, right) => (left === "unknown" ? 1 : right === "unknown" ? -1 : left < right ? -1 : 1))) {
+  for (const key of [...grouped.keys()].sort((left, right) => (left === "unknown" ? 1 : right === "unknown" ? -1 : byCodePoint(left, right)))) {
     const group = grouped.get(key) as { repositories: string[]; rungs: Set<string> };
-    lines.push(`  # attributed by ${[...group.rungs].sort().join(", ")}`);
+    lines.push(`  # attributed by ${[...group.rungs].sort(byCodePoint).join(", ")}`);
     lines.push(`  - identifier: ${key}`);
     lines.push(`    display_name: ${key === "unknown" ? "Unknown (team not established)" : key}`);
     if (key !== "unknown") {
@@ -428,7 +428,7 @@ function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
       lines.push(`      - ${key}`);
     }
     lines.push("    repositories:");
-    for (const repository of [...new Set(group.repositories)].sort()) {
+    for (const repository of [...new Set(group.repositories)].sort(byCodePoint)) {
       lines.push(`      - ${repository}`);
     }
   }

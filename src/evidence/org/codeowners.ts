@@ -1,4 +1,4 @@
-import { canonical, PlaceholderLogins } from "./graph.ts";
+import { byCodePoint, canonical, PlaceholderLogins } from "./graph.ts";
 
 /**
  * Reading a CODEOWNERS file. Ported from `build_team_configuration.py`'s `parse_codeowners`.
@@ -94,7 +94,7 @@ export function parseCodeowners(document: string, organization: string): Codeown
 
   // Sorted so two runs over one unchanged file produce byte-identical facts, which is what makes the digest
   // comparison downstream able to say "nothing changed" rather than "the order changed".
-  return { teams: [...teams].sort(), people: [...people].sort() };
+  return { teams: [...teams].sort(byCodePoint), people: [...people].sort(byCodePoint) };
 }
 
 /** Merges the owners of the several CODEOWNERS paths one repository may carry, keeping the output stable. */
@@ -109,5 +109,5 @@ export function mergeCodeowners(files: CodeownersOwners[]): CodeownersOwners {
       people.add(person);
     }
   }
-  return { teams: [...teams].sort(), people: [...people].sort() };
+  return { teams: [...teams].sort(byCodePoint), people: [...people].sort(byCodePoint) };
 }

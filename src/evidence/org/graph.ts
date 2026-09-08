@@ -334,3 +334,21 @@ export function mostPermissiveAccess(existing: AccessLevel | undefined, access: 
 export function isOwningAccess(access: string): access is AccessLevel {
   return (OwningAccessLevels as readonly string[]).includes(access);
 }
+
+/**
+ * Compare two handles by code point, which is what Python's `min` over a tuple does.
+ *
+ * DELIBERATELY NOT `localeCompare`, and stated as a comparator rather than left to a bare `sort()` so that the
+ * choice is visible to a reader and to a linter. A locale collation ignores or reorders the hyphen, so
+ * `sscs-api` and `sscsapi` sort differently under the two rules — and this is the tie-break that decides which
+ * team owns a contested repository, so a different order is a different answer.
+ *
+ * It is also what makes two runs over an unchanged organisation produce byte-identical facts, which is what
+ * lets the stored digest say "nothing changed" rather than "the order changed".
+ */
+export function byCodePoint(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+  return left < right ? -1 : 1;
+}

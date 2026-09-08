@@ -1,6 +1,7 @@
 import {
   type AccessLevel,
   AccessLevels,
+  byCodePoint,
   canonical,
   EvidenceRungs,
   isOwningAccess,
@@ -89,20 +90,6 @@ export interface NameInference {
   prefix: string;
   agreeing: number;
   total: number;
-}
-
-/**
- * Compare two slugs by code point, which is what Python's `min` over a tuple does.
- *
- * NOT `localeCompare`. A locale collation ignores or reorders the hyphen, so `sscs-api` and `sscsapi` sort
- * differently under the two rules — and this comparator is a tie-break that decides which team owns a
- * contested repository, so a different order is a different answer.
- */
-function byCodePoint(left: string, right: string): number {
-  if (left === right) {
-    return 0;
-  }
-  return left < right ? -1 : 1;
 }
 
 /**
@@ -230,7 +217,15 @@ export function adminTeams(claims: ReadonlyMap<string, AccessLevel>): string[] {
  * Swapping two of these three keys changes which team owns a contested repository.
  */
 export function mostSpecificClaim(claims: ReadonlyMap<string, AccessLevel>, teamSizes: ReadonlyMap<string, number>): string {
-  return [...claims.keys()].reduce((best, slug) => {
+  // Seeded with the first claim rather than reducing without one, so the precondition is stated instead of
+  // arriving as `reduce of empty array with no initial value`. There is nothing to choose between no claims,
+  // and the ladder only reaches here having found some — a caller that got that wrong wants to be told which
+  // rung it was in, not to see a TypeError from inside the comparator.
+  const [first, ...rest] = [...claims.keys()];
+  if (first === undefined) {
+    throw new Error("mostSpecificClaim was given no claims to choose between");
+  }
+  return rest.reduce((best, slug) => {
     const left = claims.get(slug) as AccessLevel;
     const right = claims.get(best) as AccessLevel;
     const byAccess = AccessLevels.indexOf(left) - AccessLevels.indexOf(right);
@@ -242,18 +237,22 @@ export function mostSpecificClaim(claims: ReadonlyMap<string, AccessLevel>, team
       return bySize < 0 ? slug : best;
     }
     return byCodePoint(slug, best) < 0 ? slug : best;
-  });
+  }, first);
 }
 
 /** Choose between the teams CODEOWNERS names: the one named in fewest repositories, then alphabetically. */
 export function mostSpecificOwner(owners: readonly string[], codeownerSizes: ReadonlyMap<string, number>): string {
-  return [...owners].reduce((best, slug) => {
+  const [first, ...rest] = owners;
+  if (first === undefined) {
+    throw new Error("mostSpecificOwner was given no owners to choose between");
+  }
+  return rest.reduce((best, slug) => {
     const bySize = (codeownerSizes.get(slug) ?? 0) - (codeownerSizes.get(best) ?? 0);
     if (bySize !== 0) {
       return bySize < 0 ? slug : best;
     }
     return byCodePoint(slug, best) < 0 ? slug : best;
-  });
+  }, first);
 }
 
 /** The CODEOWNERS paths a row cites, or a stated absence rather than an empty string. */
@@ -438,13 +437,20 @@ export function prefixIndex(decisions: Iterable<ResolvedOwnership>, knownTeams: 
  * happened to be listed in and so is not reproducible in a port. A stated order is used instead: most
  * repositories, then the earlier slug.
  */
-function dominantTeam(counts: ReadonlyMap<string, number>): [string, number] {
-  return [...counts].reduce((best, entry) => {
+function dominantTeam(counts: ReadonlyMap<string, number>): [string, number] | undefined {
+  // `undefined` for an empty index rather than a throw, because unlike the two choosers above this one has a
+  // legitimate empty case: a prefix nothing was attributed to has no entry, and `inferFromName` walks prefixes
+  // it does not know will answer.
+  const [first, ...rest] = [...counts];
+  if (first === undefined) {
+    return undefined;
+  }
+  return rest.reduce((best, entry) => {
     if (entry[1] !== best[1]) {
       return entry[1] > best[1] ? entry : best;
     }
     return byCodePoint(entry[0], best[0]) < 0 ? entry : best;
-  });
+  }, first);
 }
 
 /**
@@ -460,11 +466,17 @@ export function inferFromName(
 ): NameInference | undefined {
   for (const prefix of prefixesOf(repository)) {
     const counts = index.get(prefix);
-    if (counts === undefined || counts.size === 0) {
+    if (counts === undefined) {
       continue;
     }
     const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
-    const [team, agreeing] = dominantTeam(counts);
+    // One guard, not two: an empty count map and a prefix nobody agreed on are the same "this prefix cannot
+    // speak", and `dominantTeam` is where that is decided.
+    const dominant = dominantTeam(counts);
+    if (dominant === undefined) {
+      continue;
+    }
+    const [team, agreeing] = dominant;
     if (total >= options.prefixSupport && agreeing / total >= options.prefixDominance) {
       return { team, prefix, agreeing, total };
     }

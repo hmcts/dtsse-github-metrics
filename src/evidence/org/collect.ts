@@ -3,6 +3,7 @@ import { parseResponse } from "../behaviour/responses.ts";
 import type { GitHubClient } from "../github/client.ts";
 import { type CodeownersOwners, mergeCodeowners, parseCodeowners } from "./codeowners.ts";
 import {
+  byCodePoint,
   type CodeownersFact,
   CodeownersPaths,
   canonical,
@@ -530,7 +531,7 @@ export async function collectDirectAdmins(client: GitHubClient, organization: st
       console.warn(`Could not list the direct collaborators of ${organization}/${repository}: ${reason(error)}`);
       continue;
     }
-    admins.set(repository, [...logins].sort());
+    admins.set(repository, [...logins].sort(byCodePoint));
   }
 
   return admins;

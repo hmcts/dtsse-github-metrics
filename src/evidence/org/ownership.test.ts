@@ -374,6 +374,27 @@ describe("mostSpecificClaim", () => {
   });
 });
 
+describe("choosing between nothing", () => {
+  // The ladder only reaches these having found something to choose between, so an empty call is a caller bug.
+  // Naming it beats `reduce of empty array with no initial value`, which says nothing about which rung was
+  // wrong.
+  it("should name itself when asked to choose between no claims", () => {
+    expect(() => mostSpecificClaim(new Map(), new Map())).toThrow(/no claims to choose between/);
+  });
+
+  it("should name itself when asked to choose between no owners", () => {
+    expect(() => mostSpecificOwner([], new Map())).toThrow(/no owners to choose between/);
+  });
+
+  it("should let a prefix nobody agreed on decline to speak rather than throwing", () => {
+    // Unlike the two above, an empty count map is a legitimate state: `inferFromName` walks prefixes without
+    // knowing which will answer.
+    const index = new Map([["sscs", new Map<string, number>()]]);
+
+    expect(inferFromName("sscs-api", index, ownershipOptions())).toBeUndefined();
+  });
+});
+
 describe("mostSpecificOwner", () => {
   it("should prefer the team named in fewest repositories, then the earlier slug", () => {
     const sizes = new Map([
