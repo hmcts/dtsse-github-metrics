@@ -65,34 +65,27 @@ pull requests produces a report full of zeroes and a run that claims to have suc
 
 ### Nothing here uses GitHub search
 
-Collection walks `repository.pullRequests`, never `search`. A GitHub App installation token is served an empty
-search over repositories it reads perfectly well — measured, the same query returns 1807 rows with a personal
-access token and 0 with the App's — so every figure derived from search came back as zero while the run reported
-success. The walk is ordered by `updatedAt` descending, which is what lets it stop: `mergedAt <= updatedAt`
-always, so once `updatedAt` falls below the window start nothing later can be inside it.
+Collection walks `repository.pullRequests`, never `search`. An App installation token is served an **empty search**
+over repositories it reads perfectly well — the same query returns 1807 rows with a personal access token and 0
+with the App's — so anything derived from search reports zero and claims to have succeeded.
+
+The walk is ordered by `updatedAt` descending, which is what lets it stop: `mergedAt <= updatedAt` always, so
+once `updatedAt` falls below the window start nothing later can be inside it.
 
 ### The installation must hold every permission the App declares
 
-Adding a permission to a GitHub App puts existing installations into **pending approval**, and they lose it
-until an organisation administrator accepts — so the App's list and the installation's list drift apart with
-nothing announcing it.
+Adding a permission to a GitHub App puts existing installations into **pending approval**, and they lose it until
+an organisation administrator accepts — so the App's list and the installation's list drift apart with nothing
+announcing it.
 
-That happened here and is now resolved: `hmcts/github-metrics`, the only INTERNAL repository in `metrics.yaml`,
-was refused for a fortnight because installation 158738568 lacked the `pull_requests: read` the App declared.
-A public repository's pull requests are readable with `contents` and `metadata`; a private or internal one's are
-not. Since the approval, `doctor` reports 5 of 5 repositories readable and 52 merged pull requests where it
-previously found 42.
-
-The refusal was loud, which is the second reason the walk beats search:
+A public repository's pull requests are readable with `contents` and `metadata`; a private or internal one's need
+`pull_requests: read`. A repository missing that is refused outright rather than answered emptily, so it is
+counted as a failure and only `--tolerate-partial` keeps the exit status at 0:
 
 ```
 GitHub errors 403 (equivalent) POST https://api.github.com/graphql: FORBIDDEN: Resource not accessible by integration
 github-metrics: merged pull requests were not collected: GitHub refused part of a GraphQL query
 ```
-
-Search answered the same missing permission with an empty result and a 200, so the repository reported zero
-merges and the run reported success. `repository.pullRequests` refuses outright, the repository is counted as a
-failure, and only `--tolerate-partial` keeps the exit status at 0.
 
 Compare the two lists whenever a private or internal repository reports no evidence:
 
