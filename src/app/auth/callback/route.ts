@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { clearedSignInCookie, SIGN_IN_COOKIE, sessionCookie } from "@/auth/cookies";
 import { completeSignIn, readSignIn, SignInFailed } from "@/auth/entra";
 import { safeReturnTo } from "@/auth/guard";
-import { permitted, sealSession } from "@/auth/session";
+import { sealSession } from "@/auth/session";
 import { authRequired, authSettings } from "@/auth/settings";
 
 export const dynamic = "force-dynamic";
@@ -35,11 +35,6 @@ export async function GET(request: NextRequest): Promise<Response> {
   } catch (error) {
     console.warn(`a sign-in could not be completed: ${error instanceof SignInFailed ? error.message : String(error)}`);
     return signInRefused(request, "We could not complete your sign-in.");
-  }
-
-  if (!permitted(session, settings.allowedGroupIds)) {
-    console.warn(`${session.subject} signed in but holds none of the permitted groups`);
-    return signInRefused(request, "Your account is not a member of a group with access to this dashboard.");
   }
 
   console.info(`${session.name} signed in`);

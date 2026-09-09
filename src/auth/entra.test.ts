@@ -25,8 +25,7 @@ const SETTINGS: AuthSettings = {
   clientId: "a-client",
   clientSecret: "a-secret",
   redirectUri: "https://metrics.example/auth/callback",
-  sessionSecret: "a-session-secret-long-enough-to-be-plausible",
-  allowedGroupIds: []
+  sessionSecret: "a-session-secret-long-enough-to-be-plausible"
 };
 
 /** A discovered configuration carrying whatever server metadata a case needs. */
@@ -140,13 +139,12 @@ describe("completeSignIn", () => {
   });
 
   it("should build a session from the id token claims", async () => {
-    granted({ sub: "0000", name: "A Reader", email: "a.reader@justice.gov.uk", groups: ["group-a"] });
+    granted({ sub: "0000", name: "A Reader", email: "a.reader@justice.gov.uk" });
 
     expect(await completeSignIn(SETTINGS, CURRENT, beginSignIn("/"))).toEqual({
       subject: "0000",
       name: "A Reader",
-      email: "a.reader@justice.gov.uk",
-      groups: ["group-a"]
+      email: "a.reader@justice.gov.uk"
     });
   });
 
@@ -154,18 +152,6 @@ describe("completeSignIn", () => {
     granted({ sub: "0000" });
 
     expect((await completeSignIn(SETTINGS, CURRENT, beginSignIn("/"))).name).toBe("0000");
-  });
-
-  it("should read an absent groups claim as no groups, which is what a registration without the claim sends", async () => {
-    granted({ sub: "0000", name: "A Reader" });
-
-    expect((await completeSignIn(SETTINGS, CURRENT, beginSignIn("/"))).groups).toEqual([]);
-  });
-
-  it("should keep only the string entries of a groups claim", async () => {
-    granted({ sub: "0000", name: "A Reader", groups: ["group-a", 7, null, "group-b"] });
-
-    expect((await completeSignIn(SETTINGS, CURRENT, beginSignIn("/"))).groups).toEqual(["group-a", "group-b"]);
   });
 
   it("should refuse a response with no id token subject, since there is no identity to hold a session for", async () => {

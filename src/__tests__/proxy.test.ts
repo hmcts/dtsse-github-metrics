@@ -97,7 +97,7 @@ describe("proxy sign-in guard", () => {
   });
 
   it("should let a reader with a valid session through", async () => {
-    const cookie = await sealSession({ subject: "abc", name: "A Reader", groups: [] }, SECRET);
+    const cookie = await sealSession({ subject: "abc", name: "A Reader" }, SECRET);
 
     const response = await proxy(ask("/repositories", { [SESSION_COOKIE]: cookie }));
 
@@ -105,7 +105,7 @@ describe("proxy sign-in guard", () => {
   });
 
   it("should still remember the span for a reader with a session", async () => {
-    const cookie = await sealSession({ subject: "abc", name: "A Reader", groups: [] }, SECRET);
+    const cookie = await sealSession({ subject: "abc", name: "A Reader" }, SECRET);
 
     const response = await proxy(ask("/repositories?weeks=26", { [SESSION_COOKIE]: cookie }));
 
@@ -113,7 +113,7 @@ describe("proxy sign-in guard", () => {
   });
 
   it("should refuse a session sealed under a different secret", async () => {
-    const cookie = await sealSession({ subject: "abc", name: "A Reader", groups: [] }, "a-different-secret-entirely");
+    const cookie = await sealSession({ subject: "abc", name: "A Reader" }, "a-different-secret-entirely");
 
     const response = await proxy(ask("/repositories", { [SESSION_COOKIE]: cookie }));
 

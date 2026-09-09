@@ -91,10 +91,8 @@ export class SignInFailed extends Error {}
 /**
  * The session a completed callback establishes.
  *
- * `groups` comes from the id token, which means it is only populated once the app registration declares
- * `groupMembershipClaims`. Absent, this is an empty list and `permitted` falls back to admitting any
- * authenticated reader — so a registration missing that claim WIDENS access rather than breaking sign-in. That
- * is the quiet failure worth knowing about, and it is why the group ids are configured beside the claim.
+ * The claims are read for identity only — a name to show and a subject to log. Nothing here decides whether the
+ * reader may read the dashboard, because having signed in is what decides that.
  */
 export async function completeSignIn(settings: AuthSettings, currentUrl: URL, signIn: SignInState): Promise<Session> {
   let tokens: Awaited<ReturnType<typeof client.authorizationCodeGrant>>;
@@ -113,12 +111,10 @@ export async function completeSignIn(settings: AuthSettings, currentUrl: URL, si
     throw new SignInFailed("Entra returned no id token subject, so there is no identity to hold a session for");
   }
 
-  const groups = claims.groups;
   return {
     subject: claims.sub,
     name: typeof claims.name === "string" ? claims.name : claims.sub,
-    ...(typeof claims.email === "string" ? { email: claims.email } : {}),
-    groups: Array.isArray(groups) ? groups.filter((group): group is string => typeof group === "string") : []
+    ...(typeof claims.email === "string" ? { email: claims.email } : {})
   };
 }
 

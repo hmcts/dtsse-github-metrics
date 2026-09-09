@@ -32,7 +32,6 @@ describe("authSettings", () => {
     expect(settings.tenantId).toBe(COMPLETE.ENTRA_TENANT_ID);
     expect(settings.clientId).toBe("a-client-id");
     expect(settings.redirectUri).toBe(COMPLETE.ENTRA_REDIRECT_URI);
-    expect(settings.allowedGroupIds).toEqual([]);
   });
 
   it.each(Object.keys(COMPLETE))("should refuse a configuration missing %s, naming it", (missing) => {
@@ -48,20 +47,6 @@ describe("authSettings", () => {
 
   it("should treat a whitespace-only value as missing", () => {
     expect(() => authSettings({ ...COMPLETE, ENTRA_CLIENT_ID: "   " })).toThrow(AuthConfigurationError);
-  });
-
-  it("should read a comma-separated group list, trimming each", () => {
-    const settings = authSettings({ ...COMPLETE, ENTRA_ALLOWED_GROUP_IDS: "group-a, group-b ,group-c" });
-
-    expect(settings.allowedGroupIds).toEqual(["group-a", "group-b", "group-c"]);
-  });
-
-  it.each([
-    ["an empty string", ""],
-    ["only separators", ",,"],
-    ["only whitespace", "  "]
-  ])("should read %s as no group restriction", (_label, value) => {
-    expect(authSettings({ ...COMPLETE, ENTRA_ALLOWED_GROUP_IDS: value }).allowedGroupIds).toEqual([]);
   });
 });
 

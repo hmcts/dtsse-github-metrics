@@ -35,7 +35,6 @@ nodejs:
     NODE_OPTIONS: --max-old-space-size=3072
     ENTRA_TENANT_ID: "{{ .Values.global.tenantId }}"
     ENTRA_REDIRECT_URI: https://github-metrics.{{ .Values.global.environment }}.platform.hmcts.net/auth/callback
-    ENTRA_ALLOWED_GROUP_IDS: ""
 
 job:
   enabled: true

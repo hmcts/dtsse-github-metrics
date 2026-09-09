@@ -153,14 +153,21 @@ AUTH_DISABLED=true yarn dev
 ### The app registration
 
 Created through [`hmcts/central-app-registration`](https://github.com/hmcts/central-app-registration) by adding
-an entry to `apps.yaml`. It needs `redirectUris` containing exactly
-`https://github-metrics.aat.platform.hmcts.net/auth/callback`, and `groupMembershipClaims` if access is to be
-restricted to a group.
+an entry to `apps.yaml`. It needs `signInAudience: AzureADMyOrg` and `redirectUris` containing exactly
+`https://github-metrics.aat.platform.hmcts.net/auth/callback`. Nothing else — no Graph permissions, because
+`openid`, `profile` and `email` are identity-platform scopes and this service calls no Graph API.
 
-**Without `groupMembershipClaims` the id token carries no `groups` claim, and that WIDENS access rather than
-breaking sign-in** — `permitted()` falls back to admitting any reader the tenant authenticated. That is the
-quiet failure worth knowing about, and it is why `ENTRA_ALLOWED_GROUP_IDS` sits in the chart beside the claim it
-depends on.
+### Signing in IS the authorisation
+
+There is no group or role check anywhere, deliberately. The dashboard is for the organisation, not for
+engineers: many of the people who should read it — managers among them — hold no engineering group, so
+restricting by group would have locked out part of the intended audience.
+
+Two consequences, both decided rather than overlooked. The tenant holds around 5,600 guest accounts, some from
+other government departments, and they can read it too. And should we ever want to narrow it, prefer **app
+roles** over group claims: the only DTSSE group in the directory is a Microsoft 365 group rather than a security
+group, so a `SecurityGroup` claim would never carry it, and past roughly 200 group memberships Entra replaces
+the `groups` claim with a pointer to Graph — which would lock out the longest-serving staff first.
 
 That repository writes the client id and secret to `central-app-reg-kv`, not to `dtsse-aat`. Like the GitHub App
 key, they are then set by hand and are in no Terraform:

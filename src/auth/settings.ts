@@ -6,6 +6,16 @@
  * for the same job would be a place for the two to disagree.
  */
 
+/**
+ * SIGNING IN IS THE WHOLE CONTROL. There is deliberately no group or role check anywhere in this module.
+ *
+ * The registration is single tenant, so Entra refuses everybody outside HMCTS before a request reaches us, and
+ * that is the intended audience: the dashboard is for the organisation rather than for engineers, and many of
+ * the people who should read it hold no engineering group. Narrowing by group would have locked them out.
+ *
+ * The consequence, decided rather than overlooked: the tenant holds several thousand guest accounts, including
+ * some from other government departments, and they can read the dashboard too.
+ */
 export interface AuthSettings {
   tenantId: string;
   clientId: string;
@@ -13,13 +23,6 @@ export interface AuthSettings {
   /** Absolute, and must match a redirect URI on the app registration exactly — Entra compares the whole string. */
   redirectUri: string;
   sessionSecret: string;
-  /**
-   * Entra group object ids allowed to read the dashboard, or empty for "anyone the tenant authenticated".
-   *
-   * Empty is not open: the app registration is `AzureADMyOrg`, so the tenant has already refused everybody
-   * outside HMCTS before a request reaches us. Naming groups narrows that further.
-   */
-  allowedGroupIds: string[];
 }
 
 /** Only the named keys are read, so this is deliberately narrower than the augmented `NodeJS.ProcessEnv`. */
@@ -53,11 +56,7 @@ export function authSettings(env: Environment = process.env): AuthSettings {
     clientId: required(env, "ENTRA_CLIENT_ID"),
     clientSecret: required(env, "ENTRA_CLIENT_SECRET"),
     redirectUri: required(env, "ENTRA_REDIRECT_URI"),
-    sessionSecret: required(env, "SESSION_SECRET"),
-    allowedGroupIds: (env.ENTRA_ALLOWED_GROUP_IDS ?? "")
-      .split(",")
-      .map((id) => id.trim())
-      .filter((id) => id.length > 0)
+    sessionSecret: required(env, "SESSION_SECRET")
   };
 }
 
