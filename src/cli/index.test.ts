@@ -9,6 +9,9 @@ const collectionState = vi.hoisted(() => vi.fn());
 const resolveCredentials = vi.hoisted(() => vi.fn());
 const createGitHubClient = vi.hoisted(() => vi.fn());
 const stampRevision = vi.hoisted(() => vi.fn());
+// Granted by default so the collect cases test orchestration, and overridable so the stand-down branch — the
+// one that fires on whichever cluster loses the lock, every day — is reachable without a database.
+const asSoleCollector = vi.hoisted(() => vi.fn(async (run: () => Promise<unknown>) => run()));
 
 const collectOrgTeams = vi.hoisted(() => vi.fn());
 const collectOrgRepositories = vi.hoisted(() => vi.fn());
@@ -31,7 +34,7 @@ vi.mock("../evidence/store/prisma.ts", () => ({ prisma: { $disconnect: vi.fn().m
 // Postgres running and failed every one of them in CI, which is the whole reason the lock is exercised against a
 // real database in `test/integration/collector-lock.test.ts` and mocked out here.
 vi.mock("../evidence/store/collector-lock.ts", () => ({
-  asSoleCollector: (run: () => Promise<unknown>) => run(),
+  asSoleCollector,
   takeCollectorLock: async () => ({ held: true, release: async () => undefined })
 }));
 vi.mock("../evidence/policy/load.ts", () => ({ loadConfiguration }));
@@ -221,6 +224,21 @@ describe("doctor", () => {
 
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("reading merged pull requests failed: GraphQL refused"));
+  });
+});
+
+describe("the collector lock", () => {
+  it.each([["collect"], ["collect-org"]])("should stand %s down as SUCCESS when another run holds the lock", async (command) => {
+    // Both AAT clusters run the same schedule against one database, so one of them loses the lock EVERY DAY.
+    // Reporting that as failure would make a CronJob show Failed daily for a system behaving exactly as designed,
+    // and an alert that always fires is one nobody reads. The estate was collected — by the peer.
+    loadConfiguration.mockResolvedValue({ organization: "hmcts", lookback: { operational_days: 90 }, teams: [], org_graph: { enabled: true } });
+    asSoleCollector.mockResolvedValueOnce(undefined);
+
+    expect(await main([command, "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("stood down"));
+    // Nothing was collected by THIS run: no credential resolved, so no GitHub call was made either.
+    expect(resolveCredentials).not.toHaveBeenCalled();
   });
 });
 
