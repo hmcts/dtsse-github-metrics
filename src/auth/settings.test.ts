@@ -1,0 +1,72 @@
+import { describe, expect, it } from "vitest";
+import { AuthConfigurationError, authRequired, authSettings, issuerUrl } from "./settings.ts";
+
+const COMPLETE = {
+  ENTRA_TENANT_ID: "531ff96d-0ae9-462a-8d2d-bec7c0b42082",
+  ENTRA_CLIENT_ID: "a-client-id",
+  ENTRA_CLIENT_SECRET: "a-client-secret",
+  ENTRA_REDIRECT_URI: "https://github-metrics.aat.platform.hmcts.net/auth/callback",
+  SESSION_SECRET: "a-session-secret"
+};
+
+describe("authRequired", () => {
+  it("should require a sign-in when nothing says otherwise", () => {
+    // Fail closed. A deployment that lost its variables must refuse readers, not serve the estate to anybody.
+    expect(authRequired({})).toBe(true);
+  });
+
+  it("should only skip the sign-in when asked exactly", () => {
+    expect(authRequired({ AUTH_DISABLED: "true" })).toBe(false);
+  });
+
+  it.each(["", "false", "TRUE", "1", "yes"])("should still require a sign-in for AUTH_DISABLED=%s", (value) => {
+    // Anything but the exact string is a typo, and a typo must not open the dashboard.
+    expect(authRequired({ AUTH_DISABLED: value })).toBe(true);
+  });
+});
+
+describe("authSettings", () => {
+  it("should read a complete configuration", () => {
+    const settings = authSettings(COMPLETE);
+
+    expect(settings.tenantId).toBe(COMPLETE.ENTRA_TENANT_ID);
+    expect(settings.clientId).toBe("a-client-id");
+    expect(settings.redirectUri).toBe(COMPLETE.ENTRA_REDIRECT_URI);
+    expect(settings.allowedGroupIds).toEqual([]);
+  });
+
+  it.each(Object.keys(COMPLETE))("should refuse a configuration missing %s, naming it", (missing) => {
+    const partial = { ...COMPLETE, [missing]: "" };
+
+    expect(() => authSettings(partial)).toThrow(AuthConfigurationError);
+    expect(() => authSettings(partial)).toThrow(new RegExp(missing));
+  });
+
+  it("should name the escape hatch in the error, so the fix is discoverable", () => {
+    expect(() => authSettings({})).toThrow(/AUTH_DISABLED=true/);
+  });
+
+  it("should treat a whitespace-only value as missing", () => {
+    expect(() => authSettings({ ...COMPLETE, ENTRA_CLIENT_ID: "   " })).toThrow(AuthConfigurationError);
+  });
+
+  it("should read a comma-separated group list, trimming each", () => {
+    const settings = authSettings({ ...COMPLETE, ENTRA_ALLOWED_GROUP_IDS: "group-a, group-b ,group-c" });
+
+    expect(settings.allowedGroupIds).toEqual(["group-a", "group-b", "group-c"]);
+  });
+
+  it.each([
+    ["an empty string", ""],
+    ["only separators", ",,"],
+    ["only whitespace", "  "]
+  ])("should read %s as no group restriction", (_label, value) => {
+    expect(authSettings({ ...COMPLETE, ENTRA_ALLOWED_GROUP_IDS: value }).allowedGroupIds).toEqual([]);
+  });
+});
+
+describe("issuerUrl", () => {
+  it("should point at the tenant's v2 endpoint, which is what discovery is performed against", () => {
+    expect(issuerUrl("a-tenant").toString()).toBe("https://login.microsoftonline.com/a-tenant/v2.0");
+  });
+});

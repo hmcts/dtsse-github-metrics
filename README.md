@@ -120,6 +120,60 @@ az keyvault secret set --vault-name dtsse-aat --name github-app-private-key --fi
 prefers the App, so a PAT beside it would quietly take over if the App key were ever rotated badly — reporting
 the whole estate's merge gates and alerts as unavailable instead of failing loudly.
 
+## Signing in
+
+Readers sign in with their HMCTS account through Microsoft Entra ID. The flow is the OIDC authorization code
+flow with PKCE, and the session is an encrypted cookie — there is no session store, so nothing to provision and
+nothing to revoke, which is why a session lasts a working day rather than a month.
+
+**Authentication fails closed.** It is required unless `AUTH_DISABLED=true` is set explicitly, so a deployment
+that loses its Entra variables refuses readers rather than serving the estate's alert counts and merge-gate
+posture to anybody who finds the hostname.
+
+Two deployments run without a sign-in, both deliberately:
+
+| | Why |
+| --- | --- |
+| preview | the hostname contains the pull request number, and Entra matches redirect URIs by whole string with no wildcard |
+| the pipeline's temporary AAT `-staging` release | same reason, and every smoke and functional test would otherwise fail on a redirect to Microsoft |
+
+So **the guard is not exercised by the pipeline**. What readers reach is the persistent AAT release flux deploys
+from `charts/dtsse-github-metrics/values.yaml`, where it is on; `test/e2e/tests/auth.spec.ts` checks it against
+that hostname.
+
+`/health` and its children are served without a session. That is load-bearing rather than an oversight: the
+chart's probes and the pipeline's `HealthChecker` both read `/health`, and a 302 to Microsoft is not `UP`.
+
+Locally, `yarn dev` needs no Entra registration:
+
+```bash
+AUTH_DISABLED=true yarn dev
+```
+
+### The app registration
+
+Created through [`hmcts/central-app-registration`](https://github.com/hmcts/central-app-registration) by adding
+an entry to `apps.yaml`. It needs `redirectUris` containing exactly
+`https://github-metrics.aat.platform.hmcts.net/auth/callback`, and `groupMembershipClaims` if access is to be
+restricted to a group.
+
+**Without `groupMembershipClaims` the id token carries no `groups` claim, and that WIDENS access rather than
+breaking sign-in** — `permitted()` falls back to admitting any reader the tenant authenticated. That is the
+quiet failure worth knowing about, and it is why `ENTRA_ALLOWED_GROUP_IDS` sits in the chart beside the claim it
+depends on.
+
+That repository writes the client id and secret to `central-app-reg-kv`, not to `dtsse-aat`. Like the GitHub App
+key, they are then set by hand and are in no Terraform:
+
+```bash
+az keyvault secret set --vault-name dtsse-aat --name entra-client-id --value <application id>
+az keyvault secret set --vault-name dtsse-aat --name entra-client-secret --value <client secret>
+az keyvault secret set --vault-name dtsse-aat --name session-secret --value "$(openssl rand -base64 48)"
+```
+
+`session-secret` is ours rather than Microsoft's, and rotating it signs everybody out — which is the only
+revocation a cookie-borne session has.
+
 ## Changing the Helm chart
 
 **Bump `version:` in `charts/dtsse-github-metrics/Chart.yaml` in the same commit.** The chart is published to

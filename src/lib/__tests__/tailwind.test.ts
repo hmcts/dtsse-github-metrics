@@ -5,7 +5,7 @@ import config from "../../../tailwind.config";
 
 const SOURCE = fileURLToPath(new URL("../../", import.meta.url));
 
-const UNSCANNED = new Set(["__tests__", "evidence", "cli", "health"]);
+const UNSCANNED = new Set(["__tests__", "evidence", "cli", "health", "auth"]);
 
 function scanned(): string[] {
   const globs = Array.isArray(config.content) ? config.content : [];
