@@ -289,22 +289,6 @@ az keyvault secret set --vault-name dtsse-aat --name session-secret --value "$(o
 `session-secret` is ours rather than Microsoft's, and rotating it signs everybody out — which is the only
 revocation a cookie-borne session has.
 
-## Changing the Helm chart
-
-The chart is published to ACR **once per version and never overwritten**, and the flux HelmRelease asks for
-`>=0.0.2`. A values change that reaches master without a version bump therefore builds green, promotes green, and
-leaves the environment running the *previous* chart, with nothing reporting an error.
-
-**Change the chart through a pull request and the bump is automatic** — the pipeline commits it to the branch
-(`Bumping chart version/ fixing aliases`), which is why `Chart.yaml` is a routine merge conflict when two
-branches touch the chart. Resolve it upwards: the version has to exceed whatever master now holds.
-
-**Push a chart change straight to master and nothing bumps it.** That is how this chart sat at `0.0.2` while
-three master builds published no chart at all.
-
-An application change needs no bump either way: the image tag is a commit SHA, and flux image automation moves
-the HelmRelease onto the new tag on its own.
-
 ## Tests
 
 ```bash
