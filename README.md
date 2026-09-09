@@ -123,6 +123,33 @@ CODEOWNERS requests per unresolved repository and one collaborator listing after
 12,500 GraphQL), so it runs as its own CronJob at 14:00, an hour ahead of `collect`, and each day's figures are
 read against the same day's ownership. A repository may have several owners.
 
+### Only one collector runs at a time, and the database enforces it
+
+AAT runs this application on **two clusters** — `cft-aat-00` and `cft-aat-01` — and both mount the same
+`dtsse-aat` Key Vault, so both resolve the same `POSTGRES_*` and the same GitHub App installation. Two clusters,
+one database, one rate-limit budget. `concurrencyPolicy: Forbid` does not help: it stops a CronJob overlapping
+*itself* in *one* cluster and says nothing about its twin next door.
+
+Two concurrent collectors do more than duplicate work:
+
+- The GitHub budget is per **installation**. A full `collect` is ~15,500 calls against 15,000 core and 12,500
+  GraphQL an hour, so one run fits and two do not — both degrade to partial and the estate ends up *less* well
+  collected than if one had run alone.
+- Each run stamps `observed_at` at its own start instant, so the later-starting run committing first makes the
+  other close a row at an instant *before* it was observed, which `<table>_interval_ordered` rejects.
+- The live-row partial unique indexes catch two writers inserting one key — as a unique violation, which rolls
+  back the whole transaction. A colliding run writes **no graph at all**.
+
+So `collect` and `collect-org` both take one Postgres advisory lock, the same mechanism `migrate` uses for the
+same reason. A run that does not get it stands down and **exits 0**: on an estate where both clusters share a
+schedule one of them loses every day, and a CronJob reporting Failed daily for correct behaviour is an alert
+nobody reads.
+
+This replaced suspending the CronJob on one cluster by hand. That worked, but the chart never sets `suspend`, so
+Helm does not manage the field — the decision lived only in the cluster, invisible to git and undone by anyone
+who re-enabled it, and it did not generalise: `collect-org` arrived enabled on both clusters with nothing to
+explain why its neighbour was not.
+
 ### Authenticating
 
 A run authenticates **either as a GitHub App installation or with a personal access token**, and the two do not

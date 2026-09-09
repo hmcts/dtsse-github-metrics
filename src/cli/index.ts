@@ -18,6 +18,7 @@ import { loadConfiguration } from "../evidence/policy/load.ts";
 import { configuredTeamSlugs, sonarOrganizationName } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
+import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
 import { migrate } from "../evidence/store/migrate.ts";
 import {
@@ -45,6 +46,23 @@ import { type Arguments, COHORT_COMMANDS, parseArguments, UsageError } from "./p
  */
 function progress(line: string): void {
   process.stderr.write(`${line}\n`);
+}
+
+/**
+ * Runs a collection only if this process is the one collector, and reports a stand-down as success.
+ *
+ * SUCCESS, not failure, and that is the load-bearing decision. Both AAT clusters run the same schedule against
+ * one database, so one of them loses the lock every single day. Exiting non-zero would make a CronJob report
+ * Failed daily for a system behaving exactly as designed, and an alert that always fires is one nobody reads.
+ * The estate was collected — by the peer — which is the outcome anybody watching actually cares about.
+ */
+async function onlyCollector(command: string, run: () => Promise<number>): Promise<number> {
+  const status = await asSoleCollector(run);
+  if (status === undefined) {
+    progress(`another ${command} run holds the collector lock, so this one stood down; the estate is being collected elsewhere`);
+    return EXIT_COMPLETE;
+  }
+  return status;
 }
 
 async function loadPolicy(argv: Arguments): Promise<Configuration> {
@@ -679,10 +697,15 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       await assertCohortCollected(configuration, parsed.command);
     }
     switch (parsed.command) {
+      // BOTH COLLECTORS TAKE THE SAME LOCK, so exactly one of them writes the database whatever the deployment
+      // topology is. AAT runs this application on two clusters against one database and one App installation;
+      // see `collector-lock.ts` for what two concurrent collectors do to each other. `--propose-teams` is not
+      // excluded from the lock even though it writes nothing: it makes the same GitHub calls, so it would still
+      // be competing for the rate-limit budget a real run needs.
       case "collect":
-        return await runCollect(configuration, parsed);
+        return await onlyCollector(parsed.command, () => runCollect(configuration, parsed));
       case "collect-org":
-        return await runCollectOrg(configuration, parsed);
+        return await onlyCollector(parsed.command, () => runCollectOrg(configuration, parsed));
       case "doctor":
         return await runDoctor(configuration);
       case "prune":
