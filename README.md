@@ -73,13 +73,17 @@ always, so once `updatedAt` falls below the window start nothing later can be in
 
 ### The installation must hold every permission the App declares
 
-`hmcts/github-metrics` is refused today, and it is the only INTERNAL repository in `metrics.yaml`. That is the
-tell: a public repository's pull requests are readable with `contents` and `metadata`, a private one's need
-`pull_requests: read`, and installation 158738568 does not have it even though the App does. Adding a permission
-to a GitHub App puts existing installations into pending approval and they lose it until an organisation
-administrator accepts, so the two lists drift apart with nothing announcing it.
+Adding a permission to a GitHub App puts existing installations into **pending approval**, and they lose it
+until an organisation administrator accepts — so the App's list and the installation's list drift apart with
+nothing announcing it.
 
-The refusal itself is loud, which is the second reason the walk beats search:
+That happened here and is now resolved: `hmcts/github-metrics`, the only INTERNAL repository in `metrics.yaml`,
+was refused for a fortnight because installation 158738568 lacked the `pull_requests: read` the App declared.
+A public repository's pull requests are readable with `contents` and `metadata`; a private or internal one's are
+not. Since the approval, `doctor` reports 5 of 5 repositories readable and 52 merged pull requests where it
+previously found 42.
+
+The refusal was loud, which is the second reason the walk beats search:
 
 ```
 GitHub errors 403 (equivalent) POST https://api.github.com/graphql: FORBIDDEN: Resource not accessible by integration
@@ -90,7 +94,7 @@ Search answered the same missing permission with an empty result and a 200, so t
 merges and the run reported success. `repository.pullRequests` refuses outright, the repository is counted as a
 failure, and only `--tolerate-partial` keeps the exit status at 0.
 
-Compare them when a private repository reports no evidence:
+Compare the two lists whenever a private or internal repository reports no evidence:
 
 ```bash
 # both lists, from a JWT signed with the App key — the difference is the pending request
