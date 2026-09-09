@@ -61,6 +61,18 @@ const lookback = z
   })
   .strict();
 
+/**
+ * One OWNERSHIP OVERRIDE, which is all `teams:` is now.
+ *
+ * It used to be the cohort — the estate was whatever this block listed. It is not any more: the cohort comes
+ * from the collected graph and `cohort:` selects from it. What survives is the override, feeding the ladder's
+ * `configured` rung so a hand-set owner still beats every inferred one. `display_name` still names a team that
+ * the graph only knows by slug.
+ *
+ * `repositories` may therefore be SHORT, and listing a repository here no longer puts it in the estate — if the
+ * cohort policy excludes it, an override says who would own it and nothing reports it. That is the right way
+ * round: an override is an answer to "whose is this", not to "does this count".
+ */
 const team = z
   .object({
     identifier: nonEmpty,
@@ -107,11 +119,34 @@ const orgGraph = z
   })
   .strict();
 
+/**
+ * WHICH REPOSITORIES THE ESTATE IS, and which authors count inside it.
+ *
+ * The repository half is new, and it replaces `teams:` as the answer to "what is reported on". The cohort is now
+ * read from the collected graph and this block selects from it, because a hand-maintained list of 1,872 names is
+ * stale the day it lands — a repository created on Tuesday stays invisible and one archived on Wednesday keeps
+ * being collected. Policy is reviewable; membership at that scale is not.
+ */
 const cohort = z
   .object({
     // Dependency bots raise mechanical version bumps; agent-authored code stays in the cohort
     // deliberately.
-    excluded_authors: z.array(z.string()).default(["renovate", "dependabot"])
+    excluded_authors: z.array(z.string()).default(["renovate", "dependabot"]),
+    // Which visibilities count. All three by default, because narrowing the estate is a decision a deployment
+    // should have to state. Worth stating on this one: 830 of 1,796 active repositories are private or internal,
+    // and every one is refused until the App's pending `pull_requests: read` is approved — so a deployment that
+    // wants figures rather than `unavailable` rows narrows this to `[public]` until that lands.
+    visibilities: z
+      .array(z.enum(["public", "internal", "private"]))
+      .min(1)
+      .default(["public", "internal", "private"]),
+    // Archived repositories are out by default: nobody is working in one, so every figure it carries is a fact
+    // about the past that no team can act on.
+    include_archived: z.boolean().default(false),
+    // How recently a repository must have been pushed to. The cheapest lever on both cost and noise — 90 days
+    // takes 1,872 repositories to roughly 1,210, and what it drops would report "no merges in the window"
+    // anyway. `null` turns the window off and reports every repository the other rules admit.
+    active_within_days: positiveInt.nullable().default(90)
   })
   .strict();
 
@@ -254,12 +289,14 @@ export const configurationSchema = z
     traceability: traceability.default({}),
     practices: practices.default({}),
     org_graph: orgGraph.default({}),
+    // Removed from the cohort outright, whatever the graph says. Kept from the file era unchanged: the graph
+    // can say what a repository IS but not that somebody decided it should not be reported, and that decision
+    // is exactly the kind that belongs in a reviewed file.
     excluded_repositories: z.array(z.string()).default([]),
-    // Optional at the schema, required by the commands whose subject is the cohort. `map-sonar`
-    // resolves every project a SonarCloud organisation lists and `prune` deletes stale cache rows:
-    // neither is about any repository a team owns, so neither should oblige a team file to be layered
-    // in. A run that DOES report the cohort refuses an empty one where the message can name the
-    // command.
+    // OWNERSHIP OVERRIDES, not the cohort — see `team`. Empty is now the normal case rather than the thing a
+    // cohort command refuses: the estate comes from the graph, so a file naming no team is a file that simply
+    // disagrees with no inference. What a cohort command refuses is an EMPTY GRAPH, which is checked where the
+    // graph is read rather than here.
     teams: z.array(team).default([]),
     // When agentic tooling was turned on for a repository. The tool cannot observe it — GitHub cannot
     // be asked — so it is an input fact like every other policy input. A repository with no date gets
@@ -332,34 +369,15 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sonar_projects"], message: `sonar project keys may not be empty: ${blank.join(", ")}` });
   }
 
-  // The cross-checks below are conditional, and only on there being a cohort to check against: a
-  // policy file read on its own for `map-sonar` or `prune` owns no repository, so every name in it
-  // would be "unconfigured" and the load would fail over a key neither command reads.
-  if (value.teams.length === 0) {
-    return;
-  }
-
-  const unconfiguredSonar = Object.keys(value.sonar_projects)
-    .filter((repository) => !owned.has(repository))
-    .sort();
-  if (unconfiguredSonar.length > 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["sonar_projects"],
-      message: `sonar projects must name a configured repository: ${unconfiguredSonar.join(", ")}`
-    });
-  }
-
-  const unconfiguredEnablement = Object.keys(value.enablement)
-    .filter((repository) => !owned.has(repository))
-    .sort();
-  if (unconfiguredEnablement.length > 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["enablement"],
-      message: `enablement dates must name a configured repository: ${unconfiguredEnablement.join(", ")}`
-    });
-  }
+  // TWO CROSS-CHECKS WERE REMOVED HERE, and their absence is a consequence of the cohort moving to the graph
+  // rather than an oversight. They required every `sonar_projects` and `enablement` key to name a repository
+  // that `teams:` listed. `teams:` no longer lists the estate — it holds ownership overrides — so that check
+  // now rejects the ordinary case: a Sonar override for a repository nobody has overridden the OWNER of.
+  //
+  // Nothing replaces them at load time, because nothing here can: the file cannot know the cohort without
+  // reading the database, and a schema that opened a connection would make `--help` need Postgres. The
+  // mistake they caught — a typo anchoring nothing — is now caught where the answer lives, by the report
+  // naming a key that matched no repository in the cohort.
 }
 
 // Declared for `validateCrossReferences`'s parameter type only: `configurationSchema` cannot name its

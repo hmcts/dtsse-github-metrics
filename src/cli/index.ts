@@ -10,11 +10,12 @@ import { resolveCredentials } from "../evidence/github/credentials.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
 import { collectSecurityAlerts } from "../evidence/inventory/security-alerts.ts";
+import { CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } from "../evidence/org/cohort.ts";
 import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
 import { byCodePoint, canonical, type OrgFacts, OwnerKind, type OwnershipOptions, type ResolvedOwnership } from "../evidence/org/graph.ts";
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
-import { configuredRepositories, repositoryOwners, sonarOrganizationName } from "../evidence/policy/repositories.ts";
+import { configuredOwners, sonarOrganizationName } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
@@ -47,13 +48,32 @@ function progress(line: string): void {
 }
 
 async function loadPolicy(argv: Arguments): Promise<Configuration> {
-  const configuration = await loadConfiguration(...argv.config);
-  if (COHORT_COMMANDS.has(argv.command) && configuration.teams.length === 0) {
-    throw new UsageError(
-      `${argv.command} reports the configured cohort, so at least one team must be configured; layer in the team file with a second --config`
-    );
+  return await loadConfiguration(...argv.config);
+}
+
+/**
+ * Refuses a cohort command before it does any work, when the graph it would report has not been collected.
+ *
+ * THIS CHECK MOVED FROM THE FILE TO THE GRAPH. It used to refuse an empty `teams:`, which was the right question
+ * while the file listed the estate. Now the estate comes from `collect-org`, so the thing that can be missing is
+ * the graph — and `collect` genuinely depends on `collect-org` having run, which the chart sequences at 14:00 and
+ * 15:00.
+ *
+ * Checked HERE rather than left to the first read so the refusal lands before credentials are resolved and the
+ * first GitHub call is made. `readCohort` raises the same error either way; this only makes it early.
+ *
+ * `collect-org` is deliberately not a cohort command: it is what fills the graph, so requiring one would make it
+ * unable to bootstrap an empty database.
+ */
+async function assertCohortCollected(configuration: Configuration, command: string): Promise<void> {
+  try {
+    await readCohort(configuration);
+  } catch (error) {
+    if (error instanceof CohortUncollectedError) {
+      throw new UsageError(`${command} reports the collected cohort, but ${error.message}`);
+    }
+    throw error;
   }
-  return configuration;
 }
 
 async function collectRepository(
@@ -136,7 +156,7 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
 
   const production = configuration.production_list_url === null ? undefined : await fetchProductionRepositories(configuration.production_list_url);
 
-  const repositories = argv.repository === undefined ? configuredRepositories(configuration) : [argv.repository];
+  const repositories = argv.repository === undefined ? await cohortRepositories(configuration, reference) : [argv.repository];
   let observed = 0;
   let failures = 0;
 
@@ -186,7 +206,19 @@ async function runDoctor(configuration: Configuration): Promise<number> {
   console.info(`authenticating as ${credentials.describe()}`);
   const client = createGitHubClient({ credentials });
 
-  const repositories = configuredRepositories(configuration);
+  // DIAGNOSES AN UNCOLLECTED GRAPH RATHER THAN FAILING ON ONE. `doctor` is the command somebody runs against a
+  // database they are unsure about, so the one state it must not crash on is the empty one — it reports that the
+  // cohort has not been collected, checks everything that does not need it, and leaves the exit status to the
+  // findings. This is why it is not a cohort command: those refuse up front, and this one is the tool for
+  // finding out why they would.
+  const cohort = await cohortRepositories(configuration).catch((error: unknown) => {
+    if (error instanceof CohortUncollectedError) {
+      console.warn(error.message);
+      return undefined;
+    }
+    throw error;
+  });
+  const repositories = cohort ?? [];
   let unreadable = 0;
   for (const repository of repositories) {
     try {
@@ -203,7 +235,7 @@ async function runDoctor(configuration: Configuration): Promise<number> {
   console.info(
     state === undefined ? "no collection has run yet" : `the last collection landed at ${state.collectedAt.toISOString()} (revision ${state.revision})`
   );
-  console.info(`${repositories.length - unreadable} of ${repositories.length} configured repositories are readable`);
+  console.info(`${repositories.length - unreadable} of ${repositories.length} cohort repositories are readable`);
   console.info(`GitHub shows ${visible} merged pull requests across them in the operational window`);
   console.info(await describeTeamAccess(client, configuration.organization));
 
@@ -313,7 +345,7 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     maximumTeamShare: graph.maximum_team_share,
     maximumTeamMembers: graph.maximum_team_members,
     excludedTeams: new Set(graph.excluded_teams.map(canonical)),
-    configured: repositoryOwners(configuration)
+    configured: configuredOwners(configuration)
   };
 
   // Resolved once from the free rungs to find the residue, then again once the paid rungs have answered.
@@ -462,8 +494,8 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
   });
 
   const policy = readinessPolicy(configuration);
-  const owners = repositoryOwners(configuration);
-  const repositories = argv.repository === undefined ? configuredRepositories(configuration) : [argv.repository];
+  const owners = await cohortOwners(configuration, reference);
+  const repositories = argv.repository === undefined ? await cohortRepositories(configuration, reference) : [argv.repository];
 
   const rows = [];
   for (const repository of repositories) {
@@ -534,6 +566,9 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     }
 
     const configuration = await loadPolicy(parsed);
+    if (COHORT_COMMANDS.has(parsed.command)) {
+      await assertCohortCollected(configuration, parsed.command);
+    }
     switch (parsed.command) {
       case "collect":
         return await runCollect(configuration, parsed);

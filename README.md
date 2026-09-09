@@ -30,27 +30,57 @@ yarn db:migrate:dev
 yarn dev                     # http://localhost:3000
 ```
 
-Nothing renders until something has been collected. `metrics.yaml` is the estate this deployment reports on, and
-is tracked here so that adding a team is a reviewed change; `metrics.example.yaml` documents every option beside
-it. To collect against it:
+Nothing renders until something has been collected. `metrics.yaml` is the POLICY this deployment reports under —
+which repositories count, and the thresholds they are graded against — and `metrics.example.yaml` documents every
+option beside it. The estate itself comes from the graph, so `collect-org` runs first:
 
 ```bash
 export GH_TOKEN=...                                  # or the App variables below
+yarn cli collect-org --config metrics.yaml           # the estate, which `collect` reads
 yarn cli collect --config metrics.yaml --days 90
 yarn cli evidence --config metrics.yaml --days 90    # the same figures as JSON
 ```
 
+## What the estate is
+
+**The cohort comes from the collected graph, not from `metrics.yaml`.** `collect-org` walks the organisation
+and stores every repository it holds; `metrics.yaml` then states which of them count:
+
+```yaml
+cohort:
+  visibilities: [public]     # narrow to what the credential can actually read
+  include_archived: false    # nobody is working in an archived repository
+  active_within_days: 90     # 1,872 repositories becomes roughly 1,210
+excluded_repositories: []    # removed outright, whatever the graph says
+```
+
+`teams:` used to list the estate one repository at a time. It doesn't any more — at 1,872 repositories a
+committed list is stale the day it lands, because a repository created on Tuesday stays invisible and one
+archived on Wednesday keeps being collected. What `teams:` still does is **override ownership**, feeding the
+`configured` rung below so a hand-set owner beats every inferred one.
+
+The trade is deliberate: adding a team is no longer a reviewed change. A stale list is the worse failure, and
+because the graph tables are change-versioned, "what joined the cohort this week" is a query rather than a
+diff of a file nobody updated. **Review the policy, not the membership.**
+
+One consequence worth knowing: **`collect` now depends on `collect-org` having run.** The chart sequences them
+at 14:00 and 15:00, and on an empty database `collect` refuses and says no graph has been collected rather
+than reporting an estate of zero repositories. `doctor` is the exception — it reports an uncollected graph as
+a finding, because it is the command you run to find out why the others are refusing.
+
 ## Who owns what
 
-`metrics.yaml`'s `teams:` block is the cohort the dashboard reports on, and it is hand-maintained so that
-adding a team stays a reviewed change. `collect-org` is how that block stops being guesswork: it walks the
-organisation's teams, their members and their repository access, and attributes every repository in the
-organisation — not only the configured ones — to the teams or people that own it.
+`collect-org` attributes every repository in the organisation — not only the ones in the cohort — to the teams
+or people that own it, by walking the organisation's teams, their members and their repository access.
 
 ```bash
 yarn cli collect-org --config metrics.yaml                     # walk it and store the graph
-yarn cli collect-org --config metrics.yaml --propose-teams     # print a reviewable teams: block instead
+yarn cli collect-org --config metrics.yaml --propose-teams     # print the attribution without storing it
 ```
+
+`--propose-teams` no longer exists to be committed — the cohort is read from the graph, so there is nothing to
+paste. It prints the same block as a way of READING the attribution: which team got which repository, and by
+which rung, in a form that diffs against last week's.
 
 **Attribution is best effort and some of it is wrong.** GitHub has no field for "owner", so each repository is
 decided by the first of these that answers, and every stored row names the rung that decided it:

@@ -210,6 +210,40 @@ describe("recordOrgRepositories", () => {
     ]);
   });
 
+  it("should store pushed_at, which the cohort's activity window is read from", async () => {
+    const pushed = new Date(Date.UTC(2026, 4, 20));
+
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("cath-service", { pushedAt: pushed })], true);
+
+    expect((await liveOrgRepositories(ORGANIZATION))[0]?.pushedAt?.toISOString()).toBe(pushed.toISOString());
+  });
+
+  it("should leave pushed_at absent where GitHub named no last push", async () => {
+    // Absent is not the same answer as very old, and the window treats it as not active — so it must round-trip
+    // as absent rather than as an epoch or a zero.
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("never-pushed")], true);
+
+    expect((await liveOrgRepositories(ORGANIZATION))[0]?.pushedAt).toBeUndefined();
+  });
+
+  it("should move pushed_at WITHOUT superseding the row, which is the whole reason it is not in the digest", async () => {
+    // THE LOAD-BEARING CASE. `pushedAt` moves on every push, so if it were versioned every active repository in
+    // the estate would supersede and re-insert on every run — turning a change history into a weekly snapshot.
+    // The row must be updated in place, exactly as `lastObservedAt` is.
+    const first = new Date(Date.UTC(2026, 4, 20));
+    const later = new Date(Date.UTC(2026, 5, 20));
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("cath-service", { pushedAt: first })], true);
+
+    const summary = await recordOrgRepositories(ORGANIZATION, SECOND, [repository("cath-service", { pushedAt: later })], true);
+
+    expect(summary).toMatchObject({ inserted: 0, changed: 0, unchanged: 1, superseded: 0 });
+    const live = await liveOrgRepositories(ORGANIZATION);
+    expect(live).toHaveLength(1);
+    expect(live[0]?.pushedAt?.toISOString()).toBe(later.toISOString());
+    // Still the original interval: the fact never stopped being true, so nothing opened a second row.
+    expect(live[0]?.observedAt.toISOString()).toBe(FIRST.toISOString());
+  });
+
   it("should version archival, because an archived unowned repository is a different finding", async () => {
     await recordOrgRepositories(ORGANIZATION, FIRST, [repository("cath-service")], true);
 

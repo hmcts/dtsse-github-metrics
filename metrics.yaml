@@ -36,19 +36,24 @@ traceability:
     - '#\d+'
     - '[A-Z][A-Z0-9]+-\d+'
 excluded_repositories: []
-teams:
-  - identifier: dtsse
-    display_name: Developer Tools & Shared Services Engineering
-    repositories:
-      - cms-template
-      - dtsse-dashboard-ingestion
-      - dtsse-github-metrics
-      - expressjs-monorepo-template
-      - github-metrics
-# The organisation graph `collect-org` walks. Thresholds are left at their defaults, which are documented
-# with the measurements behind them in metrics.example.yaml; only `enabled` is stated, because it is the
-# switch that decides whether the weekly walk runs at all and that belongs in a reviewed file rather than
-# in a chart value.
+# WHICH REPOSITORIES THE ESTATE IS. This block replaced the `teams:` list that used to name them one by one:
+# the cohort now comes from the graph `collect-org` walks, and this selects from it. Review the policy here,
+# not the membership — at 1,872 repositories a committed list of names was stale the day it landed.
+cohort:
+  # Narrowed to public deliberately, and this is the one line to revisit first. 830 of 1,796 active
+  # repositories are private or internal, and every one is refused until the App's pending
+  # `pull_requests: read` is approved — so admitting them today would fill the dashboard with
+  # `unavailable` rows rather than figures. Widen this to all three the day that permission lands, and
+  # expect the estate to roughly double.
+  visibilities:
+    - public
+  # 90 days. Takes the estate from 1,872 repositories to roughly 1,210, and what it drops would report
+  # "no merges in the window" anyway.
+  active_within_days: 90
+# The organisation graph `collect-org` walks, which is now what the cohort is read from. Thresholds are left
+# at their defaults, documented with the measurements behind them in metrics.example.yaml; only `enabled` is
+# stated, because it is the switch that decides whether the daily walk runs at all and that belongs in a
+# reviewed file rather than in a chart value.
 org_graph:
   enabled: true
 sonar_organization: hmcts
