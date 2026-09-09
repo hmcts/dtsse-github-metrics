@@ -1,18 +1,15 @@
 const nextConfig = {
   output: "standalone",
   /**
-   * Front door hangs on origin-compressed .css and .js, so this server must not compress at all.
+   * The front door never completes a response for an origin-compressed .css or .js, so do not compress here.
    *
-   * The platform's front door attaches a caching rule matching url_file_extension in
-   * ["jpg","png","css","ico","js"] whose override sets `compression_enabled = false` with
-   * `cache_behavior = "HonorOrigin"`. Given a gzip body on one of those paths it never completes the
-   * response: the request stays pending until the client gives up. Measured — identical request, only the
-   * path differing: /repositories returns 200 gzip, and a .css returns nothing at all. Every browser sends
-   * `Accept-Encoding: gzip`, so every page rendered unstyled while curl without that header looked fine.
+   * It attaches a caching rule matching `url_file_extension` in ["jpg","png","css","ico","js"] whose override
+   * sets `compression_enabled = false` with `cache_behavior = "HonorOrigin"`. Handed a gzip body on one of those
+   * paths the request simply stays pending, which renders every page unstyled. Turning Next's default back on
+   * breaks the dashboard in AAT while looking fine locally.
    *
-   * Leaving Next's default `compress: true` on would therefore break the dashboard for everyone. The cost is
-   * that HTML is no longer compressed either; the front door can be told to compress these routes instead,
-   * which is the better end state and needs a change to the frontends entry rather than to this file.
+   * The cost is uncompressed HTML too. Telling the front door to compress these routes is the better end state
+   * and is a change to the frontends entry, not to this file.
    */
   compress: false,
   serverExternalPackages: ["@hmcts-cft/cloud-native-platform", "applicationinsights", "@prisma/client", "pg", "config"],

@@ -176,32 +176,29 @@ pull requests produces a report full of zeroes and a run that claims to have suc
 
 ### Nothing here uses GitHub search
 
-Collection walks `repository.pullRequests`, never `search`. A GitHub App installation token is served an empty
-search over repositories it reads perfectly well — measured, the same query returns 1807 rows with a personal
-access token and 0 with the App's — so every figure derived from search came back as zero while the run reported
-success. The walk is ordered by `updatedAt` descending, which is what lets it stop: `mergedAt <= updatedAt`
-always, so once `updatedAt` falls below the window start nothing later can be inside it.
+Collection walks `repository.pullRequests`, never `search`. An App installation token is served an **empty search**
+over repositories it reads perfectly well — the same query returns 1807 rows with a personal access token and 0
+with the App's — so anything derived from search reports zero and claims to have succeeded.
+
+The walk is ordered by `updatedAt` descending, which is what lets it stop: `mergedAt <= updatedAt` always, so
+once `updatedAt` falls below the window start nothing later can be inside it.
 
 ### The installation must hold every permission the App declares
 
-`hmcts/github-metrics` is refused today, and it is the only INTERNAL repository in `metrics.yaml`. That is the
-tell: a public repository's pull requests are readable with `contents` and `metadata`, a private one's need
-`pull_requests: read`, and installation 158738568 does not have it even though the App does. Adding a permission
-to a GitHub App puts existing installations into pending approval and they lose it until an organisation
-administrator accepts, so the two lists drift apart with nothing announcing it.
+Adding a permission to a GitHub App puts existing installations into **pending approval**, and they lose it until
+an organisation administrator accepts — so the App's list and the installation's list drift apart with nothing
+announcing it.
 
-The refusal itself is loud, which is the second reason the walk beats search:
+A public repository's pull requests are readable with `contents` and `metadata`; a private or internal one's need
+`pull_requests: read`. A repository missing that is refused outright rather than answered emptily, so it is
+counted as a failure and only `--tolerate-partial` keeps the exit status at 0:
 
 ```
 GitHub errors 403 (equivalent) POST https://api.github.com/graphql: FORBIDDEN: Resource not accessible by integration
 github-metrics: merged pull requests were not collected: GitHub refused part of a GraphQL query
 ```
 
-Search answered the same missing permission with an empty result and a 200, so the repository reported zero
-merges and the run reported success. `repository.pullRequests` refuses outright, the repository is counted as a
-failure, and only `--tolerate-partial` keeps the exit status at 0.
-
-Compare them when a private repository reports no evidence:
+Compare the two lists whenever a private or internal repository reports no evidence:
 
 ```bash
 # both lists, from a JWT signed with the App key — the difference is the pending request
@@ -231,15 +228,66 @@ az keyvault secret set --vault-name dtsse-aat --name github-app-private-key --fi
 prefers the App, so a PAT beside it would quietly take over if the App key were ever rotated badly — reporting
 the whole estate's merge gates and alerts as unavailable instead of failing loudly.
 
-## Changing the Helm chart
+## Signing in
 
-**Bump `version:` in `charts/dtsse-github-metrics/Chart.yaml` in the same commit.** The chart is published to
-ACR once per version and never overwritten, and the flux HelmRelease asks for `>=0.0.2` — so a values change
-committed without a version bump builds green, promotes green, and deploys the *previous* chart. Nothing
-reports an error; the environment simply keeps running the old values.
+Readers sign in with their HMCTS account through Microsoft Entra ID. The flow is the OIDC authorization code
+flow with PKCE, and the session is an encrypted cookie — there is no session store, so nothing to provision and
+nothing to revoke, which is why a session lasts a working day rather than a month.
 
-This is not the same as an application change, which needs no bump: the image tag is a commit SHA, and flux
-image automation moves the HelmRelease onto the new tag on its own.
+**Authentication fails closed.** It is required unless `AUTH_DISABLED=true` is set explicitly, so a deployment
+that loses its Entra variables refuses readers rather than serving the estate's alert counts and merge-gate
+posture to anybody who finds the hostname.
+
+Two deployments run without a sign-in, both deliberately:
+
+| | Why |
+| --- | --- |
+| preview | the hostname contains the pull request number, and Entra matches redirect URIs by whole string with no wildcard |
+| the pipeline's temporary AAT `-staging` release | same reason, and every smoke and functional test would otherwise fail on a redirect to Microsoft |
+
+So **the guard is not exercised by the pipeline**. What readers reach is the persistent AAT release flux deploys
+from `charts/dtsse-github-metrics/values.yaml`, where it is on; `test/e2e/tests/auth.spec.ts` checks it against
+that hostname.
+
+`/health` and its children are served without a session. That is load-bearing rather than an oversight: the
+chart's probes and the pipeline's `HealthChecker` both read `/health`, and a 302 to Microsoft is not `UP`.
+
+Locally, `yarn dev` needs no Entra registration:
+
+```bash
+AUTH_DISABLED=true yarn dev
+```
+
+### The app registration
+
+Created through [`hmcts/central-app-registration`](https://github.com/hmcts/central-app-registration) by adding
+an entry to `apps.yaml`. It needs `signInAudience: AzureADMyOrg` and `redirectUris` containing exactly
+`https://github-metrics.aat.platform.hmcts.net/auth/callback`. Nothing else — no Graph permissions, because
+`openid`, `profile` and `email` are identity-platform scopes and this service calls no Graph API.
+
+### Signing in IS the authorisation
+
+There is no group or role check anywhere, deliberately. The dashboard is for the organisation, not for
+engineers: many of the people who should read it — managers among them — hold no engineering group, so
+restricting by group would have locked out part of the intended audience.
+
+Two consequences, both decided rather than overlooked. The tenant holds around 5,600 guest accounts, some from
+other government departments, and they can read it too. And should we ever want to narrow it, prefer **app
+roles** over group claims: the only DTSSE group in the directory is a Microsoft 365 group rather than a security
+group, so a `SecurityGroup` claim would never carry it, and past roughly 200 group memberships Entra replaces
+the `groups` claim with a pointer to Graph — which would lock out the longest-serving staff first.
+
+That repository writes the client id and secret to `central-app-reg-kv`, not to `dtsse-aat`. Like the GitHub App
+key, they are then set by hand and are in no Terraform:
+
+```bash
+az keyvault secret set --vault-name dtsse-aat --name entra-client-id --value <application id>
+az keyvault secret set --vault-name dtsse-aat --name entra-client-secret --value <client secret>
+az keyvault secret set --vault-name dtsse-aat --name session-secret --value "$(openssl rand -base64 48)"
+```
+
+`session-secret` is ours rather than Microsoft's, and rotating it signs everybody out — which is the only
+revocation a cookie-borne session has.
 
 ## Tests
 
