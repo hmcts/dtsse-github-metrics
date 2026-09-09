@@ -168,16 +168,30 @@ describe("completeSignIn", () => {
 });
 
 describe("signOutUrl", () => {
-  it("should send the reader to Entra's end session endpoint, and back afterwards", async () => {
+  it("should send the reader to Entra's end session endpoint, with no return uri to be ignored", async () => {
     discovery.mockResolvedValue(discovered({ end_session_endpoint: "https://login.microsoftonline.com/a-tenant/oauth2/v2.0/logout" }));
 
-    const url = await signOutUrl(SETTINGS, "https://metrics.example/repositories");
+    const url = await signOutUrl(SETTINGS);
 
     expect(url?.origin).toBe("https://login.microsoftonline.com");
-    expect(url?.searchParams.get("post_logout_redirect_uri")).toBe("https://metrics.example/repositories");
+    expect(url?.searchParams.get("post_logout_redirect_uri")).toBeNull();
   });
 
   it("should say so when the tenant advertises no end session endpoint, rather than inventing one", async () => {
-    expect(await signOutUrl(SETTINGS, "https://metrics.example/repositories")).toBeUndefined();
+    expect(await signOutUrl(SETTINGS)).toBeUndefined();
+  });
+});
+
+describe("discovery failure", () => {
+  it("should not cache a rejection, or one blip poisons every later sign-in", async () => {
+    // A bare `??=` memoises the rejected promise for the life of the process. Nothing would recover it: /health
+    // never touches Entra, so the pod is never restarted for it.
+    discovery.mockRejectedValueOnce(new Error("getaddrinfo EAI_AGAIN login.microsoftonline.com"));
+
+    await expect(configuration(SETTINGS)).rejects.toThrow("EAI_AGAIN");
+
+    discovery.mockResolvedValue(discovered());
+    await expect(configuration(SETTINGS)).resolves.toBeDefined();
+    expect(discovery).toHaveBeenCalledTimes(2);
   });
 });

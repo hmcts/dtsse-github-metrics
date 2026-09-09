@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AuthConfigurationError, authRequired, authSettings, issuerUrl } from "./settings.ts";
+import { AuthConfigurationError, authRequired, authSettings, issuerUrl, sessionSecret } from "./settings.ts";
 
 const COMPLETE = {
   ENTRA_TENANT_ID: "531ff96d-0ae9-462a-8d2d-bec7c0b42082",
@@ -53,5 +53,27 @@ describe("authSettings", () => {
 describe("issuerUrl", () => {
   it("should point at the tenant's v2 endpoint, which is what discovery is performed against", () => {
     expect(issuerUrl("a-tenant").toString()).toBe("https://login.microsoftonline.com/a-tenant/v2.0");
+  });
+});
+
+describe("sessionSecret", () => {
+  it("should trim the value, because a vault secret stored from a file carries a trailing newline", () => {
+    expect(sessionSecret({ SESSION_SECRET: "  a-secret\n" })).toBe("a-secret");
+  });
+
+  it.each([
+    ["unset", {}],
+    ["empty", { SESSION_SECRET: "" }],
+    ["only whitespace", { SESSION_SECRET: "  \n" }]
+  ])("should report %s as no secret rather than throwing, so the guard can refuse without taking /health down", (_label, env) => {
+    expect(sessionSecret(env)).toBeUndefined();
+  });
+
+  it("should give authSettings the same trimmed value the guard uses", () => {
+    // The bug this exists for: the guard trimmed and the callback did not, so a cookie sealed under one key was
+    // verified under another and a successful sign-in bounced straight back to Entra, forever, silently.
+    const env = { ...COMPLETE, SESSION_SECRET: " a-secret\n" };
+
+    expect(authSettings(env).sessionSecret).toBe(sessionSecret(env));
   });
 });

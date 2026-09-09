@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { exempt } from "@/auth/guard";
 import { readSession, SESSION_COOKIE } from "@/auth/session";
-import { authRequired } from "@/auth/settings";
+import { authRequired, sessionSecret } from "@/auth/settings";
 import { rememberableWeeks, WEEKS_COOKIE, weeksCookie } from "@/lib/weeks";
 
 /**
@@ -41,7 +41,7 @@ async function guarded(request: NextRequest): Promise<NextResponse | undefined> 
   if (!authRequired() || exempt(request.nextUrl.pathname)) {
     return undefined;
   }
-  const secret = process.env.SESSION_SECRET;
+  const secret = sessionSecret();
   if (!secret) {
     return NextResponse.redirect(new URL("/auth/login", request.nextUrl.origin), 307);
   }

@@ -50,13 +50,32 @@ function required(env: Environment, name: string): string {
   return value;
 }
 
+/**
+ * The sealing secret, read through here by EVERY caller.
+ *
+ * The middleware guard used to read `process.env.SESSION_SECRET` directly while the callback got it from
+ * `authSettings()`, which trims. A vault value with a trailing newline — which is how a secret stored from a file
+ * usually arrives, and these arrive as mounted files — would then be trimmed on the sealing side and not on the
+ * verifying side. The two SHA-256 keys differ, `readSession` returns undefined for a cookie that was just
+ * written, and the reader bounces between the dashboard and Entra forever with nothing logged as an error.
+ *
+ * Returning `undefined` rather than throwing, because the guard's answer to a missing secret is to refuse the
+ * request, and throwing from middleware would take `/health` down with it.
+ */
+export function sessionSecret(env: Environment = process.env): string | undefined {
+  const value = env.SESSION_SECRET?.trim();
+  return value ? value : undefined;
+}
+
 export function authSettings(env: Environment = process.env): AuthSettings {
   return {
     tenantId: required(env, "ENTRA_TENANT_ID"),
     clientId: required(env, "ENTRA_CLIENT_ID"),
     clientSecret: required(env, "ENTRA_CLIENT_SECRET"),
     redirectUri: required(env, "ENTRA_REDIRECT_URI"),
-    sessionSecret: required(env, "SESSION_SECRET")
+    // Through the same accessor the guard uses, so there is one place the value is trimmed rather than two that
+    // could drift. `required` supplies the message for the missing case.
+    sessionSecret: sessionSecret(env) ?? required(env, "SESSION_SECRET")
   };
 }
 

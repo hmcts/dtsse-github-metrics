@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readSession, SESSION_MAX_AGE, type Session, sealSession } from "./session.ts";
+import { authSettings, sessionSecret } from "./settings.ts";
 
 const SECRET = "a-test-session-secret-long-enough-to-be-plausible";
 
@@ -47,5 +48,23 @@ describe("sealSession and readSession", () => {
     ["a value that is not a token at all", "not-a-jwe"]
   ])("should refuse %s", async (_label, cookie) => {
     expect(await readSession(cookie, SECRET)).toBeUndefined();
+  });
+});
+
+describe("sealing and verifying across the two readers", () => {
+  it("should verify a cookie the callback sealed, given an untrimmed environment value", async () => {
+    // The endless-loop bug end to end: the callback seals with authSettings().sessionSecret and the guard
+    // verifies with sessionSecret(). Both must resolve the same key from the same untrimmed vault value.
+    const env = {
+      ENTRA_TENANT_ID: "t",
+      ENTRA_CLIENT_ID: "c",
+      ENTRA_CLIENT_SECRET: "s",
+      ENTRA_REDIRECT_URI: "https://metrics.example/auth/callback",
+      SESSION_SECRET: "  a-vault-secret-with-surrounding-space\n"
+    };
+
+    const sealed = await sealSession(READER, authSettings(env).sessionSecret);
+
+    expect(await readSession(sealed, sessionSecret(env) as string)).toEqual(READER);
   });
 });

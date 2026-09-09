@@ -37,7 +37,18 @@ export function forgetDiscovery(): void {
 }
 
 export function configuration(settings: AuthSettings): Promise<client.Configuration> {
-  discovered ??= client.discovery(issuerUrl(settings.tenantId), settings.clientId, settings.clientSecret);
+  /**
+   * Cached on success only.
+   *
+   * A bare `??=` would memoise a REJECTED promise for the life of the process, so one transient failure on the
+   * first sign-in after a deploy — DNS, an egress blip, an Entra 5xx — would poison every later sign-in with the
+   * same stale error. Nothing would recover it either: `/health` never touches Entra, so the pod is never
+   * restarted for it.
+   */
+  discovered ??= client.discovery(issuerUrl(settings.tenantId), settings.clientId, settings.clientSecret).catch((error: unknown) => {
+    discovered = undefined;
+    throw error;
+  });
   return discovered;
 }
 
@@ -121,15 +132,12 @@ export async function completeSignIn(settings: AuthSettings, currentUrl: URL, si
 /**
  * Where to send a reader who has signed out, so Entra forgets them too.
  *
- * Clearing our own cookie alone would let the next visit sign straight back in without a prompt, which on a
- * shared machine reads as "sign out did nothing".
+ * No `post_logout_redirect_uri`. Entra only honours one that is registered on the application, and the
+ * registration holds the callback and nothing else — so passing the dashboard's address would be ignored, and
+ * registering a second URI to save one click is not worth another platform PR. The reader lands on Microsoft's
+ * signed-out page, which at least says plainly what happened.
  */
-export async function signOutUrl(settings: AuthSettings, returnTo: string): Promise<URL | undefined> {
+export async function signOutUrl(settings: AuthSettings): Promise<URL | undefined> {
   const endpoint = (await configuration(settings)).serverMetadata().end_session_endpoint;
-  if (endpoint === undefined) {
-    return undefined;
-  }
-  const url = new URL(endpoint);
-  url.searchParams.set("post_logout_redirect_uri", returnTo);
-  return url;
+  return endpoint === undefined ? undefined : new URL(endpoint);
 }
