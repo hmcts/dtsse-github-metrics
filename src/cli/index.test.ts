@@ -25,6 +25,15 @@ const recordRepositoryOwnership = vi.hoisted(() => vi.fn());
 
 vi.mock("../evidence/store/migrate.ts", () => ({ migrate }));
 vi.mock("../evidence/store/prisma.ts", () => ({ prisma: { $disconnect: vi.fn().mockResolvedValue(undefined) } }));
+// Stubbed to ALWAYS grant, so these cases test the orchestration rather than the lock. `collector-lock.ts` opens
+// its own `pg.Client` — it has to, because a session-scoped advisory lock lives on the connection that took it —
+// so leaving it real would make the unit suite need a database. It briefly did: these tests passed locally with
+// Postgres running and failed every one of them in CI, which is the whole reason the lock is exercised against a
+// real database in `test/integration/collector-lock.test.ts` and mocked out here.
+vi.mock("../evidence/store/collector-lock.ts", () => ({
+  asSoleCollector: (run: () => Promise<unknown>) => run(),
+  takeCollectorLock: async () => ({ held: true, release: async () => undefined })
+}));
 vi.mock("../evidence/policy/load.ts", () => ({ loadConfiguration }));
 vi.mock("../evidence/policy/repositories.ts", () => ({
   configuredTeamSlugs: () => new Map(),
