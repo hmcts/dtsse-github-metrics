@@ -249,6 +249,16 @@ model OrgRepository {
   repository     String
   archived       Boolean
   visibility     String
+  /// When the repository was last pushed to. CURRENT STATE, NOT A VERSIONED FACT — see below.
+  ///
+  /// Stored as a column and deliberately kept OUT of `digest`, which is what lets the cohort's activity
+  /// window read it without the cost the writer's comment warns about: it moves on every push, so versioning
+  /// on it would supersede and re-insert every active repository in the estate on every run. Updated in place
+  /// beside `last_observed_at` instead, so a push changes this row rather than ending it and opening another.
+  ///
+  /// Nullable because GitHub omits it for a repository that has never been pushed to, and an absent last push
+  /// is not the same answer as a very old one.
+  pushedAt       DateTime? @map("pushed_at") @db.Timestamptz(6)
   payload        Json      @db.JsonB
   observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
   lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)

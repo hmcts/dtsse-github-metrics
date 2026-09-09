@@ -48,7 +48,49 @@ traceability:
   reference_patterns:
     - '#\d+'
     - '[A-Z][A-Z0-9]+-\d+'
+# Removed from the cohort outright, whatever the graph says about them. The graph can say what a
+# repository IS but not that somebody decided it should not be reported, so this stays in the file.
 excluded_repositories: []
+# WHICH REPOSITORIES THE ESTATE IS.
+#
+# This replaced `teams:` as the answer. The cohort is read from the graph `collect-org` collects —
+# `org_repositories` joined to `repository_ownership` on the rows that are still current — and this block
+# selects from it. A hand-maintained list of 1,872 names went stale the day it landed: a repository created
+# on Tuesday stayed invisible until somebody noticed, and one archived on Wednesday kept being collected.
+#
+# What that gives up, deliberately: adding a team is no longer a reviewed change. A stale list is the worse
+# failure, and the change-versioned tables make "what joined the cohort this week" a query rather than a
+# diff of a file nobody updated.
+#
+# `collect` therefore DEPENDS ON `collect-org` HAVING RUN. On an empty database it refuses and says so
+# rather than reporting an estate of zero repositories; the chart sequences the two at 14:00 and 15:00.
+cohort:
+  # Dependency bots raise mechanical version bumps. Agent-authored code stays in the cohort deliberately.
+  excluded_authors:
+    - renovate
+    - dependabot
+  # Which visibilities count. All three is the default. Narrowing to `[public]` is what a deployment does
+  # when the credential cannot read the others: 830 of HMCTS's 1,796 active repositories are private or
+  # internal, and each is refused until the App's pending `pull_requests: read` is approved, so admitting
+  # them early fills the dashboard with `unavailable` rows instead of figures.
+  visibilities:
+    - public
+    - internal
+    - private
+  # Archived repositories are out by default: nobody is working in one, so every figure it carries is a
+  # fact about the past that no team can act on.
+  include_archived: false
+  # How recently a repository must have been pushed to. The cheapest lever on both cost and noise — 90 days
+  # takes 1,872 repositories to roughly 1,210, and what it drops would report "no merges in the window"
+  # anyway. `null` turns the window off and reports every repository the other rules admit.
+  #
+  # A repository GitHub reports NO last push for is not active. That matters for one run after the column
+  # was added, when it is null everywhere: treating absence as active would select the whole organisation.
+  active_within_days: 90
+# OWNERSHIP OVERRIDES, and no longer the cohort. Listing a repository here does not put it in the estate —
+# it says who owns it, feeding the ladder's `configured` rung so a hand-set owner beats every inferred one.
+# `display_name` names a team the graph only knows by slug. Empty is the normal case: most teams come from
+# the graph and are reported under their slug.
 teams:
   - identifier: example
     display_name: Example Team
@@ -56,8 +98,10 @@ teams:
       - example-service
 # When agentic tooling was turned on for each repository, which the tool cannot observe. It anchors
 # the `trend` baseline and periods, and parses exactly as a window edge does: a bare date is UTC
-# midnight, a naive datetime is UTC, an offset is honoured. Every name must be a configured
-# repository; a repository listed here gets a series, one omitted reports that it has no date.
+# midnight, a naive datetime is UTC, an offset is honoured. A repository listed here gets a series, one
+# omitted reports that it has no date. No longer cross-checked against the cohort at load time: the file
+# cannot know the cohort without opening a database, so a name that matches nothing is reported by the
+# report rather than refused by the schema.
 enablement:
   example-service: 2026-06-01
 # The SonarCloud organisation key. Omit it when it matches `organization`, as it does at HMCTS; it is

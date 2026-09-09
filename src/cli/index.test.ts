@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { CohortUncollectedError } from "../evidence/org/cohort.ts";
 import { EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE } from "./exit-status.ts";
 
 const migrate = vi.hoisted(() => vi.fn<() => Promise<string[]>>());
 const loadConfiguration = vi.hoisted(() => vi.fn());
-const configuredRepositories = vi.hoisted(() => vi.fn());
+const cohortRepositories = vi.hoisted(() => vi.fn());
 const collectionState = vi.hoisted(() => vi.fn());
 const resolveCredentials = vi.hoisted(() => vi.fn());
 const createGitHubClient = vi.hoisted(() => vi.fn());
@@ -26,10 +27,17 @@ vi.mock("../evidence/store/migrate.ts", () => ({ migrate }));
 vi.mock("../evidence/store/prisma.ts", () => ({ prisma: { $disconnect: vi.fn().mockResolvedValue(undefined) } }));
 vi.mock("../evidence/policy/load.ts", () => ({ loadConfiguration }));
 vi.mock("../evidence/policy/repositories.ts", () => ({
-  configuredRepositories,
   configuredTeamSlugs: () => new Map(),
-  repositoryOwners: () => new Map(),
   sonarOrganizationName: () => "hmcts"
+}));
+// The cohort comes from the graph now, so this is where the estate is stubbed. `CohortUncollectedError` is
+// re-exported real rather than faked: `doctor` branches on `instanceof`, and a stubbed class would make that
+// branch untestable.
+vi.mock("../evidence/org/cohort.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/org/cohort.ts")>("../evidence/org/cohort.ts")),
+  cohortRepositories,
+  cohortOwners: async () => new Map(),
+  readCohort: async () => [{ repository: "repo-a", owners: ["team"], archived: false, visibility: "public" }]
 }));
 vi.mock("../evidence/store/collection-state.ts", () => ({ collectionState, stampCollection: vi.fn(), stampRevision }));
 vi.mock("../evidence/github/credentials.ts", () => ({ resolveCredentials }));
@@ -113,7 +121,7 @@ describe("doctor", () => {
 
   function withMergeCounts(perRepository: number[]) {
     loadConfiguration.mockResolvedValue(CONFIG);
-    configuredRepositories.mockReturnValue(["repo-a", "repo-b"]);
+    cohortRepositories.mockResolvedValue(["repo-a", "repo-b"]);
     collectionState.mockResolvedValue(undefined);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a personal access token" });
 
@@ -130,6 +138,18 @@ describe("doctor", () => {
       callOutcomes: () => []
     });
   }
+
+  it("should diagnose an uncollected graph rather than crashing on it", async () => {
+    // The one state `doctor` must survive: it is the command somebody runs against a database they are unsure
+    // about, so an empty graph is a finding to report, not an exception to raise.
+    withMergeCounts([12, 30]);
+    cohortRepositories.mockRejectedValue(new CohortUncollectedError("no organisation graph has been collected for hmcts"));
+
+    await main(["doctor", "--config", "m.yaml"]);
+
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("no organisation graph has been collected"));
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("0 of 0 cohort repositories are readable"));
+  });
 
   it("should pass when the credential can see merged pull requests", async () => {
     withMergeCounts([12, 30]);
@@ -163,7 +183,7 @@ describe("doctor", () => {
 
   it("should not count a merge from outside the operational window", async () => {
     loadConfiguration.mockResolvedValue(CONFIG);
-    configuredRepositories.mockReturnValue(["repo-a"]);
+    cohortRepositories.mockResolvedValue(["repo-a"]);
     collectionState.mockResolvedValue(undefined);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
     createGitHubClient.mockReturnValue({
@@ -180,7 +200,7 @@ describe("doctor", () => {
 
   it("should treat a query that throws as zero rather than crashing the command", async () => {
     loadConfiguration.mockResolvedValue(CONFIG);
-    configuredRepositories.mockReturnValue(["repo-a"]);
+    cohortRepositories.mockResolvedValue(["repo-a"]);
     collectionState.mockResolvedValue(undefined);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
     createGitHubClient.mockReturnValue({

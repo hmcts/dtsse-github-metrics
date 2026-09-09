@@ -23,6 +23,14 @@ import { StorageError } from "./storage-error.ts";
  * driven by A SINGLE READ of the live rows for that organisation — see `planGraphWrite`.
  */
 
+/**
+ * The transaction handle Prisma hands an interactive `$transaction` callback.
+ *
+ * Derived from the client rather than named, because Prisma generates the type and it carries the `$executeRaw`
+ * the bulk `pushedAt` update needs — which `Omit`ing it off `PrismaClient` by hand would drop.
+ */
+type GraphTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
 /** What one reconcile did, so a run can report what it actually changed rather than that it ran. */
 export interface GraphWriteSummary {
   /** Keys that were not live, now inserted. */
@@ -392,10 +400,15 @@ export async function recordOrgTeamRepositories(
 /**
  * Records every repository the organisation holds, which is what makes "unowned" answerable at all.
  *
- * `pushedAt` IS DELIBERATELY NOT STORED, though `RepositoryFact` carries it. It moves on every push, so
- * versioning on it would supersede and re-insert every active repository in the estate weekly — which
- * turns a change history into the snapshot series this table exists not to be, for a value that is current
- * state and already has a home in `repository_state`.
+ * `pushedAt` IS STORED BUT NOT VERSIONED, and the distinction is the whole point. It moves on every push, so
+ * putting it in `digest` would supersede and re-insert every active repository in the estate on every run —
+ * turning a change history into the snapshot series this table exists not to be. So it is written on insert
+ * AND updated in place on the unchanged and changed paths alike, exactly as `lastObservedAt` is: a push moves
+ * the column and never ends the row.
+ *
+ * It is stored at all because the cohort's activity window is the only thing that can answer "which of 1,872
+ * repositories is anybody still working in", and it has to answer that BEFORE deciding what to collect — so it
+ * cannot read `repository_state`, which only exists for repositories already in the cohort.
  */
 export async function recordOrgRepositories(
   organization: string,
@@ -429,6 +442,7 @@ export async function recordOrgRepositories(
               repository: candidate.key.repository,
               archived: candidate.fact.archived,
               visibility: candidate.fact.visibility,
+              pushedAt: candidate.fact.pushedAt ?? null,
               payload: payloadOf({ isFork: candidate.fact.isFork, defaultBranch: candidate.fact.defaultBranch }),
               observedAt,
               lastObservedAt: observedAt,
@@ -442,11 +456,42 @@ export async function recordOrgRepositories(
           tx.orgRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
         );
       }
+      await syncPushedAt(tx, organization, facts);
       return plan.summary;
     });
   } catch (error) {
     throw new StorageError("could not update the organisation graph", error);
   }
+}
+
+/**
+ * Brings every live row's `pushedAt` up to what this run observed, in ONE statement.
+ *
+ * Raw SQL for the reason `prune.ts` gives for its own: the query API cannot express it. `updateMany` sets one
+ * value across many rows, and this is many values across many rows — a different `pushedAt` per repository —
+ * so through the query API it is one round trip each. At 1,872 repositories, measured at 1.3 ms a round trip,
+ * that is a needless two-and-a-half seconds inside a transaction holding the whole graph.
+ *
+ * Run over EVERY fact rather than only the touched ones. The rows just inserted already carry the right value,
+ * so re-setting it is a no-op; scoping it to `plan.toTouch` would save nothing and add a second thing to keep
+ * in step with the plan.
+ *
+ * `unnest` pairs the two arrays into rows, which is what keeps the parameter count fixed at three however
+ * large the estate grows — a `VALUES` list would put one placeholder per repository into the statement text
+ * and eventually meet PostgreSQL's parameter limit.
+ */
+async function syncPushedAt(tx: GraphTransaction, organization: string, facts: readonly RepositoryFact[]): Promise<void> {
+  if (facts.length === 0) {
+    return;
+  }
+  const names = facts.map((fact) => fact.name);
+  const pushed = facts.map((fact) => fact.pushedAt ?? null);
+  await tx.$executeRaw`
+    UPDATE org_repositories AS r
+    SET pushed_at = v.pushed_at
+    FROM (SELECT * FROM unnest(${names}::text[], ${pushed}::timestamptz[]) AS t(repository, pushed_at)) AS v
+    WHERE r.organization = ${organization} AND r.repository = v.repository AND r.superseded_at IS NULL
+  `;
 }
 
 /**
@@ -659,6 +704,7 @@ export async function liveOrgRepositories(organization: string): Promise<LiveOrg
       repository: row.repository,
       archived: row.archived,
       visibility: row.visibility,
+      ...(row.pushedAt === null ? {} : { pushedAt: row.pushedAt }),
       payload: row.payload,
       observedAt: row.observedAt,
       lastObservedAt: row.lastObservedAt
@@ -739,6 +785,8 @@ export interface LiveOrgRepository extends LiveInterval {
   repository: string;
   archived: boolean;
   visibility: string;
+  /** Absent where GitHub named no last push, which is not the same answer as a very old one. */
+  pushedAt?: Date;
   payload: unknown;
 }
 
