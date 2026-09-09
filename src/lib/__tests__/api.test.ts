@@ -48,6 +48,28 @@ describe("api.ts", () => {
     expect(text).toContain('export { isNotFound, RepositoryUnknownError } from "@/lib/not-found"');
   });
 
+  it("should select a team's repositories by every owner, not just the primary one", async () => {
+    // 390 repositories on the estate are shared, and the report layer's `teamRows` counts each of them for every
+    // team that owns it. A `row.team === team` filter here listed one repository beside a card that said two, and
+    // left the readiness legend — which comes from `teamRows` — able to filter to an empty table.
+    // Asserted on the source because importing this module opens a Postgres pool; the behaviour of the fold itself
+    // is exercised in `rows.test.ts`.
+    const code = (await source()).replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    expect(code).toContain("owners(row).includes(team)");
+    expect(code).not.toContain("row.team === team");
+  });
+
+  it("should read ownership by the same fold the report layer counts it by", async () => {
+    // The count on /teams and the list on /teams/<team> come from two files, and the only thing keeping them from
+    // drifting is that both fold an absent `teams` to the primary owner rather than to "owned by nobody".
+    const report = await readFile("src/evidence/report/repositories.ts", "utf8");
+    const rows = await readFile("src/lib/rows.ts", "utf8");
+
+    expect(rows).toContain("row.teams ?? [row.team]");
+    expect(report).toContain("row.teams ??");
+  });
+
   it("should signal a missing name by type rather than by an HTTP status", async () => {
     // The pages branch on `isNotFound` to render Next's own not-found; there is no response to carry a 404.
     const text = await source();

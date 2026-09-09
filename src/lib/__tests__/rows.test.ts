@@ -18,6 +18,7 @@ import {
   filterRepositories,
   matchesRepository,
   orderRepositories,
+  owners,
   PRODUCTION_PARAMETER,
   PRODUCTION_VALUE,
   parseFilters,
@@ -96,9 +97,35 @@ const DONUT: Record<FilterParameter, (rows: readonly RepositoryRow[]) => PieSlic
   security: securitySlices
 };
 
+describe("owners", () => {
+  it("reads every owner of a shared repository, in the reporting order", () => {
+    expect(owners(row({ repository: "hmcts/shared", team: "platform", teams: ["platform", "delivery"] }))).toEqual(["platform", "delivery"]);
+  });
+
+  it("folds the ordinary row, which carries no `teams` at all, to its one owner", () => {
+    // Absence is the common case — 390 of the estate's repositories are shared and the rest carry no list — so it
+    // has to read as "owned by this team" rather than as "owned by nobody".
+    expect(owners(row({ repository: "hmcts/api", team: "platform" }))).toEqual(["platform"]);
+  });
+});
+
 describe("orderRepositories", () => {
   it("groups a team together, alphabetically within it, ordered by no figure", () => {
     expect(orderRepositories(ROWS).map((entry) => entry.repository)).toEqual(["hmcts/web", "hmcts/api", "hmcts/legacy", "hmcts/tools"]);
+  });
+
+  it("places a shared repository under its primary owner, once", () => {
+    // The stated decision: `team` is the head of the reporting order, and a row appears at one position. Ordering
+    // by any other owner would file it under a heading it is not led by; placing it under each would print it
+    // twice in a table whose row count the reader holds against the donuts.
+    const shared = row({ repository: "hmcts/shared", team: "delivery", teams: ["delivery", "platform"] });
+    expect(orderRepositories([...ROWS, shared]).map((entry) => entry.repository)).toEqual([
+      "hmcts/shared",
+      "hmcts/web",
+      "hmcts/api",
+      "hmcts/legacy",
+      "hmcts/tools"
+    ]);
   });
 
   it("leaves the rows it was given untouched", () => {
@@ -114,6 +141,15 @@ describe("matchesRepository", () => {
     expect(matchesRepository(entry, "api")).toBe(true);
     expect(matchesRepository(entry, "platform")).toBe(true);
     expect(matchesRepository(entry, "delivery")).toBe(false);
+  });
+
+  it("matches a team that owns the repository without leading it", () => {
+    // A reader typing a team name is asking what that team is on the hook for, which on a shared repository is not
+    // settled by which owner happens to head the reporting order.
+    const shared = row({ repository: "hmcts/shared", team: "platform", teams: ["platform", "Delivery"] });
+    expect(matchesRepository(shared, "delivery")).toBe(true);
+    expect(matchesRepository(shared, "platform")).toBe(true);
+    expect(matchesRepository(shared, "research")).toBe(false);
   });
 
   it("matches everything on an empty term", () => {

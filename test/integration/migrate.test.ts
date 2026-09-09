@@ -66,7 +66,13 @@ describe("migrate", () => {
       "alert_observations",
       "collection_state",
       "direct_commit_facts",
+      "org_people",
+      "org_repositories",
+      "org_team_memberships",
+      "org_team_repositories",
+      "org_teams",
       "pull_request_facts",
+      "repository_ownership",
       "repository_state",
       "sonar_project_map",
       "source_coverage"

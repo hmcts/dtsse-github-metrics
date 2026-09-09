@@ -166,10 +166,16 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration(document).enablement["some-repo"]?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
   });
 
-  it("should reject a repository owned by more than one team", () => {
+  it("should accept a repository owned by more than one team", () => {
     const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
 
-    expect(() => parseConfiguration(document)).toThrow(/repositories may belong to only one team: nfdiv-case-api/);
+    expect(parseConfiguration(document).teams.map((team) => team.identifier)).toContain("shared");
+  });
+
+  it("should reject a repository listed twice under one team", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - other-api\n      - other-api\n`;
+
+    expect(() => parseConfiguration(document)).toThrow(/shared lists a repository twice: other-api/);
   });
 
   it("should reject duplicate team identifiers", () => {
@@ -313,13 +319,62 @@ describe("ownedRepositories", () => {
   });
 });
 
+describe("org_graph", () => {
+  it("should be off unless a configuration turns it on, so no existing file changes meaning", () => {
+    expect(parseConfiguration(VALID).org_graph.enabled).toBe(false);
+  });
+
+  it("should carry the measured defaults for every threshold", () => {
+    const graph = parseConfiguration(VALID).org_graph;
+
+    expect(graph).toMatchObject({
+      prefix_support: 3,
+      prefix_dominance: 0.8,
+      maximum_team_share: 0.25,
+      maximum_team_members: 100,
+      excluded_teams: ["all-org-members"],
+      unresolved_repository_limit: 500
+    });
+  });
+
+  it("should read a lowered member ceiling", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_members: 50\n`;
+
+    expect(parseConfiguration(document).org_graph.maximum_team_members).toBe(50);
+  });
+
+  it("should refuse a member ceiling of zero, which would disown every team", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_members: 0\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
+  });
+
+  it("should refuse a misspelled threshold rather than silently reporting the default as a choice", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_member: 50\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
+  });
+});
+
 describe("repositoryOwners", () => {
-  it("should name the team that owns each repository", () => {
+  it("should name the teams that own each repository", () => {
     expect([...repositoryOwners(parseConfiguration(POPULATION))]).toEqual([
-      ["nfdiv-case-api", "divorce"],
-      ["opal-common-lib", "opal"],
-      ["opal-logging-service", "opal"]
+      ["nfdiv-case-api", ["divorce"]],
+      ["opal-common-lib", ["opal"]],
+      ["opal-logging-service", ["opal"]]
     ]);
+  });
+
+  it("should name every team that owns a shared repository, in the reporting order", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
+
+    expect(repositoryOwners(parseConfiguration(document)).get("nfdiv-case-api")).toEqual(["divorce", "shared"]);
+  });
+
+  it("should list a shared repository once, so nothing collects or counts it twice", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
+
+    expect(configuredRepositories(parseConfiguration(document))).toEqual(["nfdiv-case-api", "opal-common-lib", "opal-logging-service"]);
   });
 });
 

@@ -108,6 +108,46 @@ describe("COHORT_COMMANDS", () => {
     expect(COHORT_COMMANDS.has("prune")).toBe(false);
     expect(COHORT_COMMANDS.has("map-sonar")).toBe(false);
   });
+
+  it("should not oblige collect-org to have a cohort, since it is what establishes one", () => {
+    expect(COHORT_COMMANDS.has("collect-org")).toBe(false);
+  });
+});
+
+describe("collect-org", () => {
+  it("should be a recognised command", () => {
+    expect(parseArguments(["collect-org", "--config", "m.yaml"]).command).toBe("collect-org");
+  });
+
+  it("should leave the proposal flag off unless asked for", () => {
+    expect(parseArguments(["collect-org", "--config", "m.yaml"]).proposeTeams).toBe(false);
+  });
+
+  it("should read the proposal flag", () => {
+    expect(parseArguments(["collect-org", "--config", "m.yaml", "--propose-teams"]).proposeTeams).toBe(true);
+  });
+
+  it("should leave the unresolved limit absent so the configured ceiling stands", () => {
+    expect(parseArguments(["collect-org", "--config", "m.yaml"]).unresolvedLimit).toBeUndefined();
+  });
+
+  it("should read an unresolved limit that overrides the configured ceiling", () => {
+    expect(parseArguments(["collect-org", "--config", "m.yaml", "--unresolved-limit", "25"]).unresolvedLimit).toBe(25);
+  });
+
+  it("should accept a zero limit, which skips the per-repository rungs entirely", () => {
+    expect(parseArguments(["collect-org", "--config", "m.yaml", "--unresolved-limit", "0"]).unresolvedLimit).toBe(0);
+  });
+
+  // `--unresolved-limit -1` never reaches the guard: `parseArgs` reads `-1` as an option rather than as this
+  // one's value and refuses it first. `=` is how a negative is written, and is what the guard actually sees.
+  it("should refuse a negative limit rather than reading it as no limit", () => {
+    expect(() => parseArguments(["collect-org", "--config", "m.yaml", "--unresolved-limit=-1"])).toThrow(/may not be negative/);
+  });
+
+  it("should refuse a limit that is not a whole number", () => {
+    expect(() => parseArguments(["collect-org", "--config", "m.yaml", "--unresolved-limit", "many"])).toThrow(/must be a whole number/);
+  });
 });
 
 describe("runStatus", () => {
@@ -129,7 +169,7 @@ describe("usage", () => {
   it("should document every command and every exit status", () => {
     const text = usage();
 
-    for (const command of ["doctor", "collect", "prune", "map-sonar", "evidence", "trend"]) {
+    for (const command of ["doctor", "collect", "collect-org", "prune", "map-sonar", "evidence", "trend"]) {
       expect(text).toContain(command);
     }
     expect(text).toMatch(/exit status/);

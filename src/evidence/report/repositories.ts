@@ -113,20 +113,32 @@ function reportedFamily(family: OpenAlertCount | undefined): Record<string, unkn
   };
 }
 
-/** One repository's row, whether this window could be reported for it or not. */
+/**
+ * One repository's row, whether this window could be reported for it or not.
+ *
+ * `teams` carries every owner and `team` carries the first of them. Both, rather than widening `team` to a
+ * list: every component that renders a row reads `team` as a string, and `src/lib/**` is held at 100%
+ * coverage, so widening it would be a large change to prove for no gain a second field does not give. That
+ * `team` is the first owner in the reporting order is a STATED CONVENTION, not a claim that there is only
+ * one — silent truncation is the failure mode here, and naming the rule is the fix.
+ */
 async function repositoryRow(
   configuration: Configuration,
   repository: string,
-  team: string,
+  teams: string[],
   window: ReportingWindow,
   production: boolean | undefined
 ): Promise<Record<string, unknown>> {
   const policy = readinessPolicy(configuration);
   const state = await storedRepositoryState(configuration.organization, repository);
+  const team = teams[0] ?? "";
+  // Absent for the ordinary single-owner repository, so a reader is not shown a one-element list restating
+  // `team` on every row of an estate where sharing is the exception.
+  const shared = teams.length > 1 ? teams : undefined;
 
   if (state === undefined) {
     // Nothing collected: the row exists so the estate is complete, and says why it carries no figures.
-    return { repository, team, detail: "nothing has been collected for this repository" };
+    return { repository, team, teams: shared, detail: "nothing has been collected for this repository" };
   }
 
   const merges: Merges = await loadCachedMerges(configuration.organization, repository, window);
@@ -137,6 +149,7 @@ async function repositoryRow(
   return {
     repository,
     team,
+    teams: shared,
     readiness: assessment?.label,
     merged_pull_requests: merges.pullRequests.length,
     direct_commits: merges.directCommits.length,
@@ -157,7 +170,7 @@ export async function repositoryRows(configuration: Configuration, weeks: number
   const owners = repositoryOwners(configuration);
   const rows = [];
   for (const repository of configuredRepositories(configuration)) {
-    rows.push(await repositoryRow(configuration, repository, owners.get(repository) ?? "", window, undefined));
+    rows.push(await repositoryRow(configuration, repository, owners.get(repository) ?? [], window, undefined));
   }
   return stripAbsent(rows);
 }
@@ -198,14 +211,23 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
   });
 }
 
-/** Each configured team's row. */
+/**
+ * Each configured team's row.
+ *
+ * A repository counts for EVERY team that owns it, not only the one that happens to lead its row. The
+ * consequence is deliberate and should not be "fixed": the team cards' repository counts now sum to MORE
+ * than `overview.repositories`. A shared repository is one repository in the estate and a holding of two
+ * teams, and both numbers are right.
+ */
 export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  const rows = (await repositoryRows(configuration, weeks, reference)) as { team?: string; readiness?: string }[];
+  const rows = (await repositoryRows(configuration, weeks, reference)) as { team?: string; teams?: string[]; readiness?: string }[];
   const names = teamDisplayNames(configuration);
 
   return stripAbsent(
     configuration.teams.map((team) => {
-      const owned = rows.filter((row) => row.team === team.identifier);
+      // `teams` is absent on the ordinary single-owner row, so fall back to the primary rather than treating
+      // its absence as "owned by nobody".
+      const owned = rows.filter((row) => (row.teams ?? (row.team === undefined ? [] : [row.team])).includes(team.identifier));
       const labels: Record<string, number> = {};
       for (const row of owned) {
         if (row.readiness !== undefined) {

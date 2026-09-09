@@ -70,6 +70,43 @@ const team = z
   })
   .strict();
 
+/**
+ * How the organisation graph decides who owns a repository.
+ *
+ * Every number here is a policy judgement about how far to guess, not a measurement, which is why it is
+ * configuration. The defaults are the ones the Python generator this ladder was ported from ran with against
+ * this estate, so changing one is arguing with a tuned figure rather than filling in a blank.
+ */
+const orgGraph = z
+  .object({
+    // Off by default so that adding this block is what turns the walk on, and no existing configuration
+    // changes meaning by being upgraded.
+    enabled: z.boolean().default(false),
+    // Attributed repositories a name prefix needs before it may attribute others.
+    prefix_support: positiveInt.default(3),
+    // Proportion of a prefix that must agree on one team before it may speak.
+    prefix_dominance: z.number().min(0).max(1).default(0.8),
+    // Above this share of the estate a team holds access administratively rather than editorially, and is
+    // not read as a claim. A quarter is far past any team that could be said to own what it holds: on 3,277
+    // repositories that is over 800, which no service team reaches.
+    maximum_team_share: z.number().min(0).max(1).default(0.25),
+    // Above this many members a team is a population rather than an owner — an "all developers" group, which
+    // neither of the other two filters catches: it is not named, and it may hold an unremarkable number of
+    // repositories. Measured on this estate, 50 would disown about 44 repositories belonging to ordinary
+    // product teams that are simply large, and the distribution jumps from 92 members to 217, so the ceiling
+    // sits in that gap. See DefaultMaximumTeamMembers for the figures.
+    maximum_team_members: positiveInt.default(100),
+    // Handles that are not owners BY IDENTITY rather than by size. `all-org-members` is the organisation
+    // wearing a team's clothes: attributing a repository to it says only that the repository is in the
+    // organisation, which the graph already says by listing it, and no threshold makes that an owner.
+    excluded_teams: z.array(nonEmpty).default(["all-org-members"]),
+    // A ceiling on the repositories one run may pay the per-repository rungs for, not a target. The residue
+    // left after the free rungs is not knowable in advance at this scale, and a run that walks all of it is
+    // better discovered as an incomplete exit than as a six-hour job.
+    unresolved_repository_limit: positiveInt.default(500)
+  })
+  .strict();
+
 const cohort = z
   .object({
     // Dependency bots raise mechanical version bumps; agent-authored code stays in the cohort
@@ -216,6 +253,7 @@ export const configurationSchema = z
     assessment: assessment.default({}),
     traceability: traceability.default({}),
     practices: practices.default({}),
+    org_graph: orgGraph.default({}),
     excluded_repositories: z.array(z.string()).default([]),
     // Optional at the schema, required by the commands whose subject is the cohort. `map-sonar`
     // resolves every project a SonarCloud organisation lists and `prune` deletes stale cache rows:
@@ -254,11 +292,24 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["teams"], message: "team identifiers must be unique" });
   }
 
-  const repositories = value.teams.flatMap((entry) => entry.repositories);
-  const duplicates = [...new Set(repositories.filter((name, index) => repositories.indexOf(name) !== index))].sort();
-  if (duplicates.length > 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["teams"], message: `repositories may belong to only one team: ${duplicates.join(", ")}` });
+  // RELAXED from "a repository may belong to only one team". Shared ownership is real — a platform repository
+  // can carry two teams holding admin, and the collected organisation graph reports exactly that — so the
+  // schema must be able to say it. The old rule's message claimed more than the mistake it was catching.
+  //
+  // What is still refused is a repository listed TWICE UNDER ONE TEAM, which cannot mean anything other than a
+  // copy-paste, and which would double that repository in `ownedRepositories` and in every count taken over it.
+  for (const entry of value.teams) {
+    // Sorted only so the message reads the same twice, which is why this one collates rather than comparing by
+    // code point: nothing downstream decides anything from the order.
+    const repeated = [...new Set(entry.repositories.filter((name, index) => entry.repositories.indexOf(name) !== index))].sort((left, right) =>
+      left.localeCompare(right)
+    );
+    if (repeated.length > 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["teams"], message: `${entry.identifier} lists a repository twice: ${repeated.join(", ")}` });
+    }
   }
+
+  const repositories = value.teams.flatMap((entry) => entry.repositories);
 
   const owned = new Set(repositories);
   const ownedExclusions = value.excluded_repositories.filter((name) => owned.has(name)).sort();
@@ -325,6 +376,7 @@ export type TeamConfiguration = z.infer<typeof team>;
 export type LookbackConfiguration = z.infer<typeof lookback>;
 export type AssessmentConfiguration = z.infer<typeof assessment>;
 export type TrivialityConfiguration = z.infer<typeof triviality>;
+export type OrgGraphConfiguration = z.infer<typeof orgGraph>;
 export type TraceabilityConfiguration = z.infer<typeof traceability>;
 export type PracticeRuleConfiguration = z.infer<typeof practiceRule>;
 export type ReadinessThresholds = z.infer<typeof readinessThresholds>;
