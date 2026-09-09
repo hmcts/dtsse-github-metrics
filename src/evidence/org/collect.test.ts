@@ -264,7 +264,18 @@ describe("collectOrgTeams", () => {
 
     const facts = await collectOrgTeams(client(fetch), "hmcts");
 
-    expect(facts).toEqual({ teamsRead: false, knownTeams: new Set(), teams: [], memberships: [], teamRepositories: [] });
+    expect(facts).toEqual({
+      teamsRead: false,
+      // NOT complete: a refused team list is the case where an absence must not be read as a deletion, so the
+      // writer is told it observed nothing rather than told the organisation has no teams.
+      teamsComplete: false,
+      knownTeams: new Set(),
+      teams: [],
+      memberships: [],
+      teamRepositories: [],
+      membershipsObserved: new Set(),
+      teamRepositoriesObserved: new Set()
+    });
   });
 
   it("should return teamsRead false when GitHub names no organisation", async () => {
@@ -420,7 +431,7 @@ describe("collectOrgRepositories", () => {
   it("should convert nodes into facts", async () => {
     const { fetch } = replying(graphql(repositories([repositoryNode()])));
 
-    expect(await collectOrgRepositories(client(fetch), "hmcts")).toEqual([
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([
       { name: "pcs-api", archived: false, isFork: false, visibility: "PUBLIC", defaultBranch: "main", pushedAt: new Date("2026-08-30T09:00:00Z") }
     ]);
   });
@@ -428,7 +439,7 @@ describe("collectOrgRepositories", () => {
   it("should refuse a body carrying an instant it cannot read, rather than storing a broken date", async () => {
     const { fetch } = replying(graphql(repositories([repositoryNode({ pushedAt: "the day before yesterday" })])));
 
-    expect(await collectOrgRepositories(client(fetch), "hmcts")).toEqual([]);
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([]);
   });
 
   it("should read an absent flag as the answer that excludes nothing", async () => {
@@ -436,7 +447,7 @@ describe("collectOrgRepositories", () => {
       graphql(repositories([{ name: "empty-repo", isArchived: null, isFork: null, visibility: null, pushedAt: null, defaultBranchRef: null }]))
     );
 
-    expect(await collectOrgRepositories(client(fetch), "hmcts")).toEqual([{ name: "empty-repo", archived: false, isFork: false, visibility: "" }]);
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([{ name: "empty-repo", archived: false, isFork: false, visibility: "" }]);
   });
 
   it("should walk every page", async () => {
@@ -445,26 +456,26 @@ describe("collectOrgRepositories", () => {
       graphql(repositories([repositoryNode({ name: "pcs-frontend" })]))
     );
 
-    expect((await collectOrgRepositories(client(fetch), "hmcts")).map((repository) => repository.name)).toEqual(["pcs-api", "pcs-frontend"]);
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts.map((repository) => repository.name)).toEqual(["pcs-api", "pcs-frontend"]);
     expect(sent[1]?.variables).toEqual({ organization: "hmcts", cursor: "MORE" });
   });
 
   it("should keep the repositories already read when a page fails", async () => {
     const { fetch } = replying(graphql(repositories([repositoryNode()], { pageInfo: PAGE_MORE })), REFUSED);
 
-    expect((await collectOrgRepositories(client(fetch), "hmcts")).map((repository) => repository.name)).toEqual(["pcs-api"]);
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts.map((repository) => repository.name)).toEqual(["pcs-api"]);
   });
 
   it("should report an organisation GitHub named no repositories connection for", async () => {
     const { fetch } = replying(graphql({ organization: null }));
 
-    expect(await collectOrgRepositories(client(fetch), "hmcts")).toEqual([]);
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([]);
   });
 
   it("should skip a node GitHub returned as null", async () => {
     const { fetch } = replying(graphql(repositories([null, repositoryNode()])));
 
-    expect(await collectOrgRepositories(client(fetch), "hmcts")).toHaveLength(1);
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toHaveLength(1);
   });
 });
 
@@ -474,7 +485,7 @@ describe("collectOrgPeople", () => {
       graphql(people([{ role: "ADMIN", node: { login: "alice", name: "Alice Smith", email: "alice@example.com", company: "HMCTS" } }]))
     );
 
-    expect(await collectOrgPeople(client(fetch), "hmcts")).toEqual([
+    expect((await collectOrgPeople(client(fetch), "hmcts")).facts).toEqual([
       { login: "alice", role: "ADMIN", name: "Alice Smith", email: "alice@example.com", company: "HMCTS" }
     ]);
   });
@@ -482,13 +493,13 @@ describe("collectOrgPeople", () => {
   it("should omit the self-reported fields when they are blank", async () => {
     const { fetch } = replying(graphql(people([{ role: "MEMBER", node: { login: "bob", name: "", email: null, company: "   " } }])));
 
-    expect(await collectOrgPeople(client(fetch), "hmcts")).toEqual([{ login: "bob", role: "MEMBER" }]);
+    expect((await collectOrgPeople(client(fetch), "hmcts")).facts).toEqual([{ login: "bob", role: "MEMBER" }]);
   });
 
   it("should default a role GitHub did not name to MEMBER", async () => {
     const { fetch } = replying(graphql(people([{ role: null, node: { login: "bob" } }])));
 
-    expect(await collectOrgPeople(client(fetch), "hmcts")).toEqual([{ login: "bob", role: "MEMBER" }]);
+    expect((await collectOrgPeople(client(fetch), "hmcts")).facts).toEqual([{ login: "bob", role: "MEMBER" }]);
   });
 
   it("should count one login written two ways as one person", async () => {
@@ -496,19 +507,19 @@ describe("collectOrgPeople", () => {
       graphql(people([{ role: "MEMBER", node: { login: "Alice" } }, { role: "ADMIN", node: { login: "alice" } }, null, { role: "MEMBER", node: null }]))
     );
 
-    expect(await collectOrgPeople(client(fetch), "hmcts")).toEqual([{ login: "alice", role: "ADMIN" }]);
+    expect((await collectOrgPeople(client(fetch), "hmcts")).facts).toEqual([{ login: "alice", role: "ADMIN" }]);
   });
 
   it("should walk every page and keep what was read when one fails", async () => {
     const { fetch } = replying(graphql(people([{ role: "MEMBER", node: { login: "alice" } }], { pageInfo: PAGE_MORE })), REFUSED);
 
-    expect(await collectOrgPeople(client(fetch), "hmcts")).toHaveLength(1);
+    expect((await collectOrgPeople(client(fetch), "hmcts")).facts).toHaveLength(1);
   });
 
   it("should report an organisation GitHub named no membership connection for", async () => {
     const { fetch } = replying(graphql({ organization: {} }));
 
-    expect(await collectOrgPeople(client(fetch), "hmcts")).toEqual([]);
+    expect((await collectOrgPeople(client(fetch), "hmcts")).facts).toEqual([]);
   });
 });
 

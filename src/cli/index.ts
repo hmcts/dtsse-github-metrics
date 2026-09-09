@@ -14,7 +14,7 @@ import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRep
 import { byCodePoint, canonical, type OrgFacts, OwnerKind, type OwnershipOptions, type ResolvedOwnership } from "../evidence/org/graph.ts";
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
-import { configuredRepositories, repositoryOwners, sonarOrganizationName } from "../evidence/policy/repositories.ts";
+import { configuredRepositories, configuredTeamSlugs, repositoryOwners, sonarOrganizationName } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
@@ -163,7 +163,11 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
 }
 
 /**
- * Whether this credential may list the organisation's teams, and how many it sees.
+ * Whether this credential may list the organisation's teams at all.
+ *
+ * READABILITY ONLY, and the request is `per_page=1` because that is all the question needs. It deliberately does
+ * NOT report how many teams there are: counting them means paging 336 of them, which is what `collect-org` is for,
+ * and `doctor` is meant to be the cheap check somebody runs first.
  *
  * Reported by `doctor` because it is exactly the kind of invisible failure `doctor` exists for: a token that
  * reads every repository perfectly well can still be refused the team list, and `collect-org` would then fall
@@ -300,12 +304,14 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   if (!teamFacts.teamsRead && teamFacts.teams.length === 0) {
     progress("the teams could not be listed, so ownership will rest on CODEOWNERS and names alone");
   }
-  const repositories = await collectOrgRepositories(client, organization);
+  const repositoryWalk = await collectOrgRepositories(client, organization);
+  const repositories = repositoryWalk.facts;
   if (repositories.length === 0) {
     console.error(`no repositories could be listed for ${organization}`);
     return runStatus(CollectionStatus.Failed);
   }
-  const people = await collectOrgPeople(client, organization);
+  const peopleWalk = await collectOrgPeople(client, organization);
+  const people = peopleWalk.facts;
 
   const options: OwnershipOptions = {
     prefixSupport: graph.prefix_support,
@@ -313,7 +319,8 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     maximumTeamShare: graph.maximum_team_share,
     maximumTeamMembers: graph.maximum_team_members,
     excludedTeams: new Set(graph.excluded_teams.map(canonical)),
-    configured: repositoryOwners(configuration)
+    // Slugs, not identifiers: this feeds the ladder, whose answer is stored in a column joined to `org_teams`.
+    configured: configuredTeamSlugs(configuration)
   };
 
   // Resolved once from the free rungs to find the residue, then again once the paid rungs have answered.
@@ -331,20 +338,61 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   }
 
   const unresolved = unresolvedRepositories(free, evidence, options.configured);
+  const residue = new Set(unresolved);
   const limit = argv.unresolvedLimit ?? graph.unresolved_repository_limit;
   const scoped = unresolved.slice(0, limit);
   const truncated = unresolved.length - scoped.length;
   progress(`${unresolved.length} repositories unresolved by team access; reading CODEOWNERS for ${scoped.length}`);
 
+  const requested = new Set(scoped);
   const codeowners = await collectCodeowners(client, organization, scoped);
   const stillOpen = scoped.filter((repository) => {
     const fact = codeowners.get(repository);
     return fact === undefined || (fact.teams.length === 0 && fact.people.length === 0);
   });
+  const openAfterCodeowners = new Set(stillOpen);
   const directAdmins = await collectDirectAdmins(client, organization, stillOpen);
 
   const facts: OrgFacts = { ...free, codeowners, directAdmins };
   const resolved = attributeOwnership(facts, options);
+
+  /**
+   * Whether this run knows enough about one repository to rewrite its ownership.
+   *
+   * A repository the free rungs answered is always complete: the evidence was in hand before the walk started.
+   * One in the residue is complete only if the paid rungs actually ran for it.
+   *
+   * THE THREE STATES ARE NOT TWO, and conflating them is a mistake worth naming because the first version of
+   * this made it. `collectCodeowners` records a REFUSAL as a fact carrying `refusal`, but records an ABSENT file
+   * as no map entry at all — "the map's own silence is what there is no CODEOWNERS file looks like", and it is
+   * the commonest answer on this estate. So `fact === undefined` covers both "the file does not exist", which is
+   * an answer, and "we never asked", which is not. Treating the pair as incomplete meant no residue repository
+   * ever got an ownership row — including the `unowned` remembered negative the whole "how many does nobody own"
+   * count depends on — and made `attributed.size === resolved.length` unreachable, so the command could never
+   * exit 0 on this organisation.
+   *
+   * `requested` is therefore tracked separately, and `directAdmins` is read the same way round: an entry means
+   * the collaborator listing was read, possibly to an empty result, and no entry after being asked means it was
+   * refused — in which case `unowned` is not established either.
+   *
+   * Getting this wrong the OTHER way is what produced a repository that was simultaneously owned and unowned:
+   * the ladder always answers something, so an unread repository resolved to `unowned`, and because
+   * `(repository, kind, owner)` is the key, that row was INSERTED BESIDE the live team row rather than replacing
+   * it.
+   */
+  function evidenceComplete(repository: string): boolean {
+    if (!residue.has(repository)) {
+      return true;
+    }
+    if (!requested.has(repository)) {
+      return false;
+    }
+    const fact = codeowners.get(repository);
+    if (fact !== undefined && fact.refusal !== undefined) {
+      return false;
+    }
+    return !openAfterCodeowners.has(repository) || directAdmins.has(repository);
+  }
 
   for (const [rung, count] of rungCounts(resolved)) {
     progress(`  ${rung}: ${count}`);
@@ -358,16 +406,37 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     return truncated === 0 ? EXIT_COMPLETE : collectionStatus(CollectionStatus.Partial, argv.toleratePartial);
   }
 
-  // `complete` is false where the ladder was cut short: the graph is missing answers it would have had, so
-  // nothing absent from it may be read as deleted.
-  const complete = truncated === 0 && teamFacts.teamsRead;
+  // WHAT THIS RUN SAW IN FULL, per table, and per team or repository where the walk degrades that finely. One
+  // boolean used to stand for all of it, and it was wrong in the direction that loses data: a single refused
+  // membership left it `true`, so every one of that team's live rows was closed as a departure that never
+  // happened. Each writer now gets only the scopes it may infer a deletion inside.
+  //
+  // ATTRIBUTION IS ALL-OR-NOTHING ON THE TEAM PICTURE, unlike the rest. A missing team→repository edge does not
+  // merely omit a claim, it silently changes what every remaining rung concludes — a repository whose owning
+  // team was not read looks unowned. So unless the team walk and every team's repository list came back whole,
+  // the ownership table is left entirely alone rather than rewritten from a picture known to be short.
+  const teamPictureWhole = teamFacts.teamsRead && teamFacts.teamsComplete && teamFacts.teamRepositoriesObserved.size === teamFacts.teams.length;
+  const attributed = teamPictureWhole
+    ? new Set(resolved.filter((entry) => evidenceComplete(entry.repository)).map((entry) => entry.repository))
+    : new Set<string>();
+  if (!teamPictureWhole) {
+    progress("the team picture came back short, so ownership was left as it stood rather than re-decided from it");
+  }
+
   const written = [
-    await recordOrgTeams(organization, observedAt, teamFacts.teams, complete),
-    await recordOrgTeamMemberships(organization, observedAt, teamFacts.memberships, complete),
-    await recordOrgTeamRepositories(organization, observedAt, teamFacts.teamRepositories, complete),
-    await recordOrgRepositories(organization, observedAt, repositories, complete),
-    await recordOrgPeople(organization, observedAt, people, complete),
-    await recordRepositoryOwnership(organization, observedAt, resolved, complete)
+    await recordOrgTeams(organization, observedAt, teamFacts.teams, teamFacts.teamsComplete),
+    await recordOrgTeamMemberships(organization, observedAt, teamFacts.memberships, teamFacts.membershipsObserved),
+    await recordOrgTeamRepositories(organization, observedAt, teamFacts.teamRepositories, teamFacts.teamRepositoriesObserved),
+    await recordOrgRepositories(organization, observedAt, repositories, repositoryWalk.complete),
+    await recordOrgPeople(organization, observedAt, people, peopleWalk.complete),
+    // Only the repositories actually attributed with complete evidence, so a repository the cap skipped keeps the
+    // owners it had instead of gaining a contradicting `unowned` row beside them.
+    await recordRepositoryOwnership(
+      organization,
+      observedAt,
+      resolved.filter((entry) => attributed.has(entry.repository)),
+      attributed
+    )
   ];
   await stampRevision();
 
@@ -392,24 +461,53 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   // touches every team in the organisation, so something always refuses — a team whose membership is not
   // visible, a repository the App is not installed on. Exiting 3 daily would make the CronJob Failed every day
   // and the alert would mean nothing. The true status still reaches Application Insights.
+  // Complete means every walk reached its end AND the ladder answered every repository — the same conditions the
+  // writers were handed, restated as one exit status rather than derived a second way that could disagree.
+  const complete =
+    truncated === 0 &&
+    teamPictureWhole &&
+    repositoryWalk.complete &&
+    peopleWalk.complete &&
+    teamFacts.membershipsObserved.size === teamFacts.teams.length &&
+    attributed.size === resolved.length;
   if (!complete && argv.toleratePartial) {
     progress("part of the organisation would not answer, which a scheduled run reports as success; see collector.exit_status");
   }
   return complete ? EXIT_COMPLETE : collectionStatus(CollectionStatus.Partial, argv.toleratePartial);
 }
 
+/** The bucket a repository nothing owns is grouped under. Not a GitHub team, and never given a slug. */
+const UnknownIdentifier = "unknown";
+
 /**
  * A reviewable `teams:` block, one team per owning slug with the repositories it was attributed.
  *
- * Repositories nothing owns are grouped under `unknown`, which carries NO `github_team_slugs` because it is
- * not a GitHub team — naming a slug there would invent one. The rung behind each team is written as a comment
- * so a reviewer can weigh a `name-prefix` guess differently from a `teams-api-admin` fact.
+ * ONLY A GITHUB TEAM GETS `github_team_slugs`, and getting that wrong was a bug: the grouping key special-cased
+ * `none` alone, so a repository attributed by `codeowners-person` or `direct-collaborator-admin` emitted
+ * `identifier: <login>` with that login as a team slug — declaring a person to be a team in a file whose whole
+ * purpose is to be read as a reviewed answer. A CODEOWNERS handle from another organisation is kept as
+ * `other-org/team` by `parseCodeowners`, which is not a slug of THIS organisation either.
+ *
+ * So people and foreign handles are reported in their own comment section. They are still owners and still worth
+ * seeing — an individual-owned repository is exactly the outlier a reader is looking for — but they are not
+ * something to paste under `teams:`.
+ *
+ * The rung behind each team is written as a comment so a reviewer can weigh a `name-prefix` guess differently
+ * from a `teams-api-admin` fact.
  */
 function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
   const grouped = new Map<string, { repositories: string[]; rungs: Set<string> }>();
+  const individuals = new Map<string, string[]>();
   for (const entry of resolved) {
     for (const owner of entry.owners) {
-      const key = owner.kind === OwnerKind.None ? "unknown" : owner.owner;
+      // A person, or a team belonging to another organisation, is not a slug this file may claim.
+      if (owner.kind === OwnerKind.Person || (owner.kind === OwnerKind.Team && owner.owner.includes("/"))) {
+        const held = individuals.get(owner.owner) ?? [];
+        held.push(entry.repository);
+        individuals.set(owner.owner, held);
+        continue;
+      }
+      const key = owner.kind === OwnerKind.None ? UnknownIdentifier : owner.owner;
       const group = grouped.get(key) ?? { repositories: [], rungs: new Set<string>() };
       group.repositories.push(entry.repository);
       group.rungs.add(owner.rung);
@@ -418,18 +516,29 @@ function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
   }
 
   const lines = ["teams:"];
-  for (const key of [...grouped.keys()].sort((left, right) => (left === "unknown" ? 1 : right === "unknown" ? -1 : byCodePoint(left, right)))) {
+  for (const key of [...grouped.keys()].sort((left, right) => (left === UnknownIdentifier ? 1 : right === UnknownIdentifier ? -1 : byCodePoint(left, right)))) {
     const group = grouped.get(key) as { repositories: string[]; rungs: Set<string> };
     lines.push(`  # attributed by ${[...group.rungs].sort(byCodePoint).join(", ")}`);
     lines.push(`  - identifier: ${key}`);
-    lines.push(`    display_name: ${key === "unknown" ? "Unknown (team not established)" : key}`);
-    if (key !== "unknown") {
+    lines.push(`    display_name: ${key === UnknownIdentifier ? "Unknown (team not established)" : key}`);
+    if (key !== UnknownIdentifier) {
       lines.push("    github_team_slugs:");
       lines.push(`      - ${key}`);
     }
     lines.push("    repositories:");
     for (const repository of [...new Set(group.repositories)].sort(byCodePoint)) {
       lines.push(`      - ${repository}`);
+    }
+  }
+
+  // Commented out rather than omitted: these repositories DO have an owner, and a reader scanning for the
+  // individually-owned outliers wants them named. Commented rather than emitted, because nothing here is a team
+  // and `teams:` is the wrong shape for it.
+  if (individuals.size > 0) {
+    lines.push("# Owned by an individual, or by a team in another organisation. NOT teams, so not listed above.");
+    for (const owner of [...individuals.keys()].sort(byCodePoint)) {
+      const held = individuals.get(owner) as string[];
+      lines.push(`#   ${owner}: ${[...new Set(held)].sort(byCodePoint).join(", ")}`);
     }
   }
   return lines.join("\n");

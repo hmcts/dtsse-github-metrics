@@ -46,6 +46,60 @@ export interface GraphCandidate<Key> {
   digest: string;
 }
 
+/**
+ * WHICH PART OF A TABLE THIS RUN SAW IN FULL, and therefore where an absence may be read as a deletion.
+ *
+ * This replaced a single `complete: boolean`, and the reason is a bug that boolean could not express. Every walk
+ * in `org/collect.ts` degrades independently and QUIETLY: a per-team membership refusal is caught and the run
+ * continues ("it will claim no people"), the team walk breaks out of pagination while keeping `teamsRead` true,
+ * and the repository and people walks return the short list they reached. One boolean covering all of that read
+ * `true` while a team's members were missing — so the writer closed every one of that team's live membership rows
+ * as a departure. Since GitHub serves only the present, re-running opens new intervals rather than restoring the
+ * ones wrongly ended, which is precisely what the flag existed to prevent.
+ *
+ * A SCOPE IS THE UNIT THAT SUCCEEDS OR FAILS TOGETHER: one team for its members and its repositories, one
+ * repository for its ownership, the whole organisation for the flat walks. An absent live key is closed only when
+ * its own scope was observed in full, so one team's refusal freezes that team and nothing else. On this estate
+ * something refuses on almost every run, so the alternative — freezing the whole table — would mean departures
+ * were essentially never recorded.
+ */
+export interface GraphScope<Key> {
+  /** Which scope a key belongs to. */
+  scopeOf: (key: Key) => string;
+  /** The scopes this run observed in full. */
+  observed: ReadonlySet<string>;
+}
+
+/**
+ * How many rows one `createMany` may carry.
+ *
+ * PostgreSQL's wire protocol counts bind parameters in an int16, so 65,535 is a hard ceiling and Prisma builds
+ * one statement with one parameter per column per row. The widest table here writes nine columns, so 4,000 rows
+ * is 36,000 parameters — comfortably under, and comfortably under for every narrower table too, without a
+ * per-table figure to keep in step with the schema.
+ *
+ * Measured on the real estate, the first run inserts 6,647 owning team→repository edges at seven columns:
+ * 46,529 parameters, or 71% of the ceiling in ONE statement. Nothing failed, which is the awkward part — it is a
+ * limit the estate grows into rather than one a test would have found, and it takes the whole `$transaction` with
+ * it when it goes, leaving no graph at all.
+ */
+const MaximumRowsPerStatement = 4000;
+
+/** Applies one write in chunks, so no single statement can reach the parameter ceiling. */
+async function inChunks<Row>(rows: readonly Row[], write: (chunk: Row[]) => Promise<unknown>): Promise<void> {
+  for (let at = 0; at < rows.length; at += MaximumRowsPerStatement) {
+    await write(rows.slice(at, at + MaximumRowsPerStatement));
+  }
+}
+
+/** The single scope covering a table read in one walk, so the flat cases stay one-liners. */
+export const WholeOrganization = "";
+
+/** A scope for a table whose whole contents come from one walk: complete, or nothing may be closed. */
+export function wholeOrganization<Key>(complete: boolean): GraphScope<Key> {
+  return { scopeOf: () => WholeOrganization, observed: complete ? new Set([WholeOrganization]) : new Set() };
+}
+
 /** The three statements one reconcile resolves to, and what they add up to. */
 export interface GraphWritePlan<Key, Candidate> {
   /** New keys and the new versions of changed ones. Runs AFTER `toClose`, or the live index rejects it. */
@@ -81,7 +135,7 @@ export function planGraphWrite<Key, Candidate extends GraphCandidate<Key>>(
   live: readonly GraphCandidate<Key>[],
   candidates: readonly Candidate[],
   identityOf: (key: Key) => string,
-  complete: boolean
+  scope: GraphScope<Key>
 ): GraphWritePlan<Key, Candidate> {
   const liveByIdentity = new Map(live.map((row) => [identityOf(row.key), row.digest]));
   const seen = new Set<string>();
@@ -110,7 +164,10 @@ export function planGraphWrite<Key, Candidate extends GraphCandidate<Key>>(
     }
   }
 
-  const absent = complete ? live.filter((row) => !seen.has(identityOf(row.key))).map((row) => row.key) : [];
+  // An absence is read as a deletion ONLY INSIDE A SCOPE THIS RUN SAW IN FULL. A live row whose scope was
+  // refused, or was never reached because pagination stopped, is left exactly as it was — the run has no
+  // evidence either way, and inventing a departure is the one mistake that cannot be undone by re-running.
+  const absent = live.filter((row) => !seen.has(identityOf(row.key)) && scope.observed.has(scope.scopeOf(row.key))).map((row) => row.key);
   toClose.push(...absent);
 
   return { toInsert, toTouch, toClose, summary: { inserted, unchanged: toTouch.length, changed, superseded: absent.length } };
@@ -172,26 +229,32 @@ export async function recordOrgTeams(organization: string, observedAt: Date, fac
           fact
         })),
         (key) => key.teamSlug,
-        complete
+        wholeOrganization(complete)
       );
       if (plan.toClose.length > 0) {
-        await tx.orgTeam.updateMany({ where: { organization, supersededAt: null, OR: plan.toClose }, data: { supersededAt: observedAt } });
+        await inChunks(plan.toClose, (chunk) =>
+          tx.orgTeam.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
+        );
       }
       if (plan.toInsert.length > 0) {
-        await tx.orgTeam.createMany({
-          data: plan.toInsert.map((candidate) => ({
-            organization,
-            teamSlug: candidate.key.teamSlug,
-            parentSlug: candidate.fact.parentSlug,
-            payload: payloadOf({ name: candidate.fact.name, description: candidate.fact.description, privacy: candidate.fact.privacy }),
-            observedAt,
-            lastObservedAt: observedAt,
-            digest: candidate.digest
-          }))
-        });
+        await inChunks(plan.toInsert, (chunk) =>
+          tx.orgTeam.createMany({
+            data: chunk.map((candidate) => ({
+              organization,
+              teamSlug: candidate.key.teamSlug,
+              parentSlug: candidate.fact.parentSlug,
+              payload: payloadOf({ name: candidate.fact.name, description: candidate.fact.description, privacy: candidate.fact.privacy }),
+              observedAt,
+              lastObservedAt: observedAt,
+              digest: candidate.digest
+            }))
+          })
+        );
       }
       if (plan.toTouch.length > 0) {
-        await tx.orgTeam.updateMany({ where: { organization, supersededAt: null, OR: plan.toTouch }, data: { lastObservedAt: observedAt } });
+        await inChunks(plan.toTouch, (chunk) =>
+          tx.orgTeam.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
+        );
       }
       return plan.summary;
     });
@@ -213,7 +276,8 @@ export async function recordOrgTeamMemberships(
   organization: string,
   observedAt: Date,
   facts: readonly TeamMembershipFact[],
-  complete: boolean
+  /** Team slugs whose membership this run read IN FULL. Only their absences are read as departures. */
+  observed: ReadonlySet<string>
 ): Promise<GraphWriteSummary> {
   try {
     return await prisma.$transaction(async (tx) => {
@@ -229,26 +293,32 @@ export async function recordOrgTeamMemberships(
           fact
         })),
         (key) => `${key.teamSlug}\u0000${key.login}`,
-        complete
+        { scopeOf: (key) => key.teamSlug, observed: observed }
       );
       if (plan.toClose.length > 0) {
-        await tx.orgTeamMembership.updateMany({ where: { organization, supersededAt: null, OR: plan.toClose }, data: { supersededAt: observedAt } });
+        await inChunks(plan.toClose, (chunk) =>
+          tx.orgTeamMembership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
+        );
       }
       if (plan.toInsert.length > 0) {
-        await tx.orgTeamMembership.createMany({
-          data: plan.toInsert.map((candidate) => ({
-            organization,
-            teamSlug: candidate.key.teamSlug,
-            login: candidate.key.login,
-            role: candidate.fact.role,
-            observedAt,
-            lastObservedAt: observedAt,
-            digest: candidate.digest
-          }))
-        });
+        await inChunks(plan.toInsert, (chunk) =>
+          tx.orgTeamMembership.createMany({
+            data: chunk.map((candidate) => ({
+              organization,
+              teamSlug: candidate.key.teamSlug,
+              login: candidate.key.login,
+              role: candidate.fact.role,
+              observedAt,
+              lastObservedAt: observedAt,
+              digest: candidate.digest
+            }))
+          })
+        );
       }
       if (plan.toTouch.length > 0) {
-        await tx.orgTeamMembership.updateMany({ where: { organization, supersededAt: null, OR: plan.toTouch }, data: { lastObservedAt: observedAt } });
+        await inChunks(plan.toTouch, (chunk) =>
+          tx.orgTeamMembership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
+        );
       }
       return plan.summary;
     });
@@ -268,7 +338,8 @@ export async function recordOrgTeamRepositories(
   organization: string,
   observedAt: Date,
   facts: readonly TeamRepositoryFact[],
-  complete: boolean
+  /** Team slugs whose repository list this run read IN FULL. */
+  observed: ReadonlySet<string>
 ): Promise<GraphWriteSummary> {
   try {
     return await prisma.$transaction(async (tx) => {
@@ -284,26 +355,32 @@ export async function recordOrgTeamRepositories(
           fact
         })),
         (key) => `${key.teamSlug}\u0000${key.repository}`,
-        complete
+        { scopeOf: (key) => key.teamSlug, observed: observed }
       );
       if (plan.toClose.length > 0) {
-        await tx.orgTeamRepository.updateMany({ where: { organization, supersededAt: null, OR: plan.toClose }, data: { supersededAt: observedAt } });
+        await inChunks(plan.toClose, (chunk) =>
+          tx.orgTeamRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
+        );
       }
       if (plan.toInsert.length > 0) {
-        await tx.orgTeamRepository.createMany({
-          data: plan.toInsert.map((candidate) => ({
-            organization,
-            teamSlug: candidate.key.teamSlug,
-            repository: candidate.key.repository,
-            permission: candidate.fact.access,
-            observedAt,
-            lastObservedAt: observedAt,
-            digest: candidate.digest
-          }))
-        });
+        await inChunks(plan.toInsert, (chunk) =>
+          tx.orgTeamRepository.createMany({
+            data: chunk.map((candidate) => ({
+              organization,
+              teamSlug: candidate.key.teamSlug,
+              repository: candidate.key.repository,
+              permission: candidate.fact.access,
+              observedAt,
+              lastObservedAt: observedAt,
+              digest: candidate.digest
+            }))
+          })
+        );
       }
       if (plan.toTouch.length > 0) {
-        await tx.orgTeamRepository.updateMany({ where: { organization, supersededAt: null, OR: plan.toTouch }, data: { lastObservedAt: observedAt } });
+        await inChunks(plan.toTouch, (chunk) =>
+          tx.orgTeamRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
+        );
       }
       return plan.summary;
     });
@@ -337,27 +414,33 @@ export async function recordOrgRepositories(
           fact
         })),
         (key) => key.repository,
-        complete
+        wholeOrganization(complete)
       );
       if (plan.toClose.length > 0) {
-        await tx.orgRepository.updateMany({ where: { organization, supersededAt: null, OR: plan.toClose }, data: { supersededAt: observedAt } });
+        await inChunks(plan.toClose, (chunk) =>
+          tx.orgRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
+        );
       }
       if (plan.toInsert.length > 0) {
-        await tx.orgRepository.createMany({
-          data: plan.toInsert.map((candidate) => ({
-            organization,
-            repository: candidate.key.repository,
-            archived: candidate.fact.archived,
-            visibility: candidate.fact.visibility,
-            payload: payloadOf({ isFork: candidate.fact.isFork, defaultBranch: candidate.fact.defaultBranch }),
-            observedAt,
-            lastObservedAt: observedAt,
-            digest: candidate.digest
-          }))
-        });
+        await inChunks(plan.toInsert, (chunk) =>
+          tx.orgRepository.createMany({
+            data: chunk.map((candidate) => ({
+              organization,
+              repository: candidate.key.repository,
+              archived: candidate.fact.archived,
+              visibility: candidate.fact.visibility,
+              payload: payloadOf({ isFork: candidate.fact.isFork, defaultBranch: candidate.fact.defaultBranch }),
+              observedAt,
+              lastObservedAt: observedAt,
+              digest: candidate.digest
+            }))
+          })
+        );
       }
       if (plan.toTouch.length > 0) {
-        await tx.orgRepository.updateMany({ where: { organization, supersededAt: null, OR: plan.toTouch }, data: { lastObservedAt: observedAt } });
+        await inChunks(plan.toTouch, (chunk) =>
+          tx.orgRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
+        );
       }
       return plan.summary;
     });
@@ -385,26 +468,32 @@ export async function recordOrgPeople(organization: string, observedAt: Date, fa
           fact
         })),
         (key) => key.login,
-        complete
+        wholeOrganization(complete)
       );
       if (plan.toClose.length > 0) {
-        await tx.orgPerson.updateMany({ where: { organization, supersededAt: null, OR: plan.toClose }, data: { supersededAt: observedAt } });
+        await inChunks(plan.toClose, (chunk) =>
+          tx.orgPerson.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
+        );
       }
       if (plan.toInsert.length > 0) {
-        await tx.orgPerson.createMany({
-          data: plan.toInsert.map((candidate) => ({
-            organization,
-            login: candidate.key.login,
-            role: candidate.fact.role,
-            payload: payloadOf({ name: candidate.fact.name, email: candidate.fact.email, company: candidate.fact.company }),
-            observedAt,
-            lastObservedAt: observedAt,
-            digest: candidate.digest
-          }))
-        });
+        await inChunks(plan.toInsert, (chunk) =>
+          tx.orgPerson.createMany({
+            data: chunk.map((candidate) => ({
+              organization,
+              login: candidate.key.login,
+              role: candidate.fact.role,
+              payload: payloadOf({ name: candidate.fact.name, email: candidate.fact.email, company: candidate.fact.company }),
+              observedAt,
+              lastObservedAt: observedAt,
+              digest: candidate.digest
+            }))
+          })
+        );
       }
       if (plan.toTouch.length > 0) {
-        await tx.orgPerson.updateMany({ where: { organization, supersededAt: null, OR: plan.toTouch }, data: { lastObservedAt: observedAt } });
+        await inChunks(plan.toTouch, (chunk) =>
+          tx.orgPerson.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
+        );
       }
       return plan.summary;
     });
@@ -429,14 +518,22 @@ export async function recordRepositoryOwnership(
   organization: string,
   observedAt: Date,
   resolved: readonly ResolvedOwnership[],
-  complete: boolean
+  /** Repositories this run ATTRIBUTED with complete evidence. Only their stale rows are closed. */
+  observed: ReadonlySet<string>
 ): Promise<GraphWriteSummary> {
   const candidates = resolved.flatMap((repository) =>
     repository.owners.map((owner) => {
       const primary = owner.kind === repository.primary.kind && owner.owner === repository.primary.owner;
       return {
         key: { repository: repository.repository, ownerKind: owner.kind as string, owner: owner.owner },
-        digest: digestOf({ rung: owner.rung, detail: owner.detail, primary }),
+        // `detail` IS DELIBERATELY NOT HASHED. It interpolates counts that move with the estate rather than with
+        // this repository's ownership — the deciding team's size for `teams-api-write`, the agreeing/total pair
+        // for `name-prefix` — so adding one repository to a team changed the detail of every row that team had
+        // decided, superseding and re-inserting all of them. Measured, 167 of 2,347 live rows churned that way on
+        // a run where nothing about ownership had changed, which contradicts the very property versioning was
+        // chosen for: an unchanged run must move `lastObservedAt` and write nothing. The detail is still STORED,
+        // because a reader weighing the answer needs it; it just no longer decides whether the fact changed.
+        digest: digestOf({ rung: owner.rung, primary }),
         rung: owner.rung as string,
         detail: owner.detail,
         primary
@@ -453,28 +550,34 @@ export async function recordRepositoryOwnership(
         live.map((row) => ({ key: { repository: row.repository, ownerKind: row.ownerKind, owner: row.owner }, digest: row.digest })),
         candidates,
         (key) => `${key.repository}\u0000${key.ownerKind}\u0000${key.owner}`,
-        complete
+        { scopeOf: (key) => key.repository, observed: observed }
       );
       if (plan.toClose.length > 0) {
-        await tx.repositoryOwnership.updateMany({ where: { organization, supersededAt: null, OR: plan.toClose }, data: { supersededAt: observedAt } });
+        await inChunks(plan.toClose, (chunk) =>
+          tx.repositoryOwnership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
+        );
       }
       if (plan.toInsert.length > 0) {
-        await tx.repositoryOwnership.createMany({
-          data: plan.toInsert.map((candidate) => ({
-            organization,
-            repository: candidate.key.repository,
-            ownerKind: candidate.key.ownerKind,
-            owner: candidate.key.owner,
-            rung: candidate.rung,
-            payload: payloadOf({ detail: candidate.detail, primary: candidate.primary }),
-            observedAt,
-            lastObservedAt: observedAt,
-            digest: candidate.digest
-          }))
-        });
+        await inChunks(plan.toInsert, (chunk) =>
+          tx.repositoryOwnership.createMany({
+            data: chunk.map((candidate) => ({
+              organization,
+              repository: candidate.key.repository,
+              ownerKind: candidate.key.ownerKind,
+              owner: candidate.key.owner,
+              rung: candidate.rung,
+              payload: payloadOf({ detail: candidate.detail, primary: candidate.primary }),
+              observedAt,
+              lastObservedAt: observedAt,
+              digest: candidate.digest
+            }))
+          })
+        );
       }
       if (plan.toTouch.length > 0) {
-        await tx.repositoryOwnership.updateMany({ where: { organization, supersededAt: null, OR: plan.toTouch }, data: { lastObservedAt: observedAt } });
+        await inChunks(plan.toTouch, (chunk) =>
+          tx.repositoryOwnership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
+        );
       }
       return plan.summary;
     });

@@ -59,6 +59,9 @@ export function enablementInstants(configuration: Configuration): Map<string, Da
  * first of several owners would be the kind of truncation nobody notices until a team's figures are wrong.
  *
  * Owners are in the reporting order, so `[0]` is a stable primary for callers that can only render one.
+ *
+ * These are `identifier`s, which are what a REPORT groups by. Anything writing an owner into the graph wants
+ * `configuredTeamSlugs` instead — see there for why the two must not be confused.
  */
 export function repositoryOwners(configuration: Configuration): Map<string, string[]> {
   const owners = new Map<string, string[]>();
@@ -69,6 +72,37 @@ export function repositoryOwners(configuration: Configuration): Map<string, stri
     } else {
       existing.push(identifier);
     }
+  }
+  return owners;
+}
+
+/**
+ * Each configured repository mapped to the GITHUB TEAM SLUGS that own it, for the ladder's `configured` rung.
+ *
+ * TWO NAMESPACES WERE BEING MIXED, and this separates them. `repository_ownership.owner` is documented as "a team
+ * slug, a login, or ''", and every collected rung writes a real slug from `org_teams`. The configured rung was
+ * writing `identifier` — a name whose only job is to group a report — so for any team whose identifier differs
+ * from its slug the row could not be joined to `org_teams`, and `prefixIndex` silently dropped the decision from
+ * the name-prefix index because the identifier is not in `knownTeams`. It looked harmless only because the one
+ * configured team happened to use the same word for both.
+ *
+ * This is also the first reader `github_team_slugs` has ever had. A team declaring several slugs contributes each
+ * of them, because each is genuinely an owner. A team declaring NONE falls back to its identifier — the best
+ * guess available, and the same string as before, so nothing gets worse for the case that used to work.
+ */
+export function configuredTeamSlugs(configuration: Configuration): Map<string, string[]> {
+  const slugsByIdentifier = new Map(
+    configuration.teams.map((team) => [team.identifier, team.github_team_slugs.length > 0 ? team.github_team_slugs : [team.identifier]])
+  );
+  const owners = new Map<string, string[]>();
+  for (const [identifier, repository] of ownedRepositories(configuration)) {
+    const held = owners.get(repository) ?? [];
+    for (const slug of slugsByIdentifier.get(identifier) ?? [identifier]) {
+      if (!held.includes(slug)) {
+        held.push(slug);
+      }
+    }
+    owners.set(repository, held);
   }
   return owners;
 }

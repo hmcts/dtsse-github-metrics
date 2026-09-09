@@ -29,14 +29,43 @@ import {
 } from "@/lib/tone";
 import type { RepositoryRow } from "@/lib/types";
 
-/** The default order: one team's repositories together, alphabetically within the team. */
+/**
+ * Every team that owns the row, which is not always the one name its team cell prints.
+ *
+ * 390 repositories on the estate have MORE THAN ONE OWNER, and `teams` is ABSENT on the ordinary single-owner row —
+ * deliberately, so that an estate where sharing is the exception does not carry a one-element list restating `team`
+ * on every row. So an absent `teams` folds to the primary rather than to "owned by nobody", which is the reading
+ * that made `/teams/<team>` list fewer repositories than the card linking to it had counted.
+ *
+ * The same fold the report layer's `teamRows` counts ownership by, so a repository cannot be counted for a team
+ * whose page then refuses to list it.
+ */
+export function owners(row: Pick<RepositoryRow, "team" | "teams">): readonly string[] {
+  return row.teams ?? [row.team];
+}
+
+/**
+ * The default order: one team's repositories together, alphabetically within the team.
+ *
+ * Ordered by the PRIMARY owner alone, which is a stated decision rather than an oversight beside the two functions
+ * above and below that read every owner. `team` is the head of the reporting order, and a shared repository has to
+ * appear once in the list at one position: ordering it by any of its other owners would either put it under a
+ * heading it is not led by, or — if it were placed under each — list it several times in a table whose row count
+ * the reader compares against the donuts.
+ */
 export function orderRepositories(rows: readonly RepositoryRow[]): RepositoryRow[] {
   return [...rows].sort((left, right) => compare(left.team, right.team) || compare(left.repository, right.repository));
 }
 
-/** A term matches a row on either name a reader would type: the repository or its team. */
+/**
+ * A term matches a row on either name a reader would type: the repository or ANY of its owning teams.
+ *
+ * Any owner rather than the primary, because a reader searching a team's name is asking which repositories that
+ * team is on the hook for, and on a shared repository that question is not settled by which owner happens to lead
+ * the reporting order.
+ */
 export function matchesRepository(row: RepositoryRow, term: string): boolean {
-  return matches(row.repository, term) || matches(row.team, term);
+  return matches(row.repository, term) || owners(row).some((owner) => matches(owner, term));
 }
 
 /** The six dimensions the estate can be filtered by, one per donut and one per URL parameter. */

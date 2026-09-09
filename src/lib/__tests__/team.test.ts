@@ -7,6 +7,7 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { owners } from "@/lib/rows";
 import { holdings, people, unreported } from "@/lib/team";
 import type { TeamDetail } from "@/lib/types";
 
@@ -34,6 +35,22 @@ describe("holdings", () => {
 
   it("pluralises against its own noun", () => {
     expect(holdings(team({ repositories: [{ repository: "api", team: "platform" }] }))).toBe("1 repository");
+  });
+
+  it("agrees with the card on /teams for a SHARED repository, which both count for every owner", () => {
+    // 390 repositories on the estate have more than one owner. The card counts a shared repository for each of
+    // them, and this page's count is the length of the list under it — so the two agree only if the list holds the
+    // repositories the team owns without leading. Both sides are folded here through `owners`, which is what the
+    // card's own report layer and `getTeam` read ownership by.
+    const estate = [
+      { repository: "shared", team: "platform", teams: ["platform", "delivery"] },
+      { repository: "web", team: "delivery" },
+      { repository: "api", team: "platform" }
+    ];
+    const card = estate.filter((entry) => owners(entry).includes("delivery")).length;
+
+    expect(card).toBe(2);
+    expect(holdings(team({ team: "delivery", repositories: estate.filter((entry) => owners(entry).includes("delivery")) }))).toBe(`${card} repositories`);
   });
 });
 
