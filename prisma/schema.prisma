@@ -6,7 +6,7 @@
 //
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
-// `alert_observations` or `sonar_project_map`. That is enforced by
+// `alert_observations`, `sonar_project_map`, or the six organisation-graph tables. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
 //
 // Facts are stored as `jsonb` payloads beside the few queryable columns, exactly as upstream stored
@@ -136,4 +136,197 @@ model CollectionState {
   collectedAt DateTime @map("collected_at") @db.Timestamptz(6)
 
   @@map("collection_state")
+}
+
+// ─── Durable: the organisation graph, never pruned ───────────────────────────────────────────────
+//
+// Six tables holding who the teams are, who is in them, what they own, and what the ownership ladder
+// decided. All six are DURABLE for `alert_observations`' exact reason: GitHub serves only the present.
+// A membership deleted this morning cannot be asked about again, so nobody can put a question to
+// GitHub about who was in `civil-admins` last June — a deleted row here is a hole in the history for
+// ever. `prune` therefore may not touch them, which is asserted by
+// test/integration/prune-never-touches-durable.test.ts rather than left to convention.
+//
+// Every one is CHANGE-VERSIONED (SCD-2) rather than snapshotted per run. Each row carries the closed
+// or open interval over which one fact stayed true:
+//
+//   observed_at       when this fact first became true. IN THE PRIMARY KEY, so a fact that comes back
+//                     after being superseded is a second interval and not an overwrite.
+//   last_observed_at  the most recent run that saw it unchanged
+//   superseded_at     when it stopped being true; NULL means live
+//   digest            a hash of the varying content, so "unchanged" is one comparison
+//
+// A snapshot per run would multiply 3,277 repositories and 336 teams by every weekly collection to
+// re-record an estate that barely moves. Here an unchanged run touches `last_observed_at` and writes
+// no rows at all; only a change costs one.
+//
+// Reads are always `WHERE superseded_at IS NULL`, which the per-table partial unique indexes in the
+// org-graph migration make sound — Prisma has no schema expression for a partial unique index, so
+// those live in hand-written SQL, as do the `superseded_at > observed_at` CHECK constraints.
+
+/// One GitHub team as the organisation listed it, over the interval that listing held.
+///
+/// `parent_slug` is a COLUMN and not part of the payload because ownership rollup walks it: teams nest,
+/// and answering "what does this team's subtree hold" means following the parent edge repeatedly. Across
+/// 336 nested teams, doing that through jsonb documents is a scan and not a query.
+///
+/// `name`, `description` and `privacy` stay in the payload — nothing selects on them.
+model OrgTeam {
+  organization   String
+  teamSlug       String    @map("team_slug")
+  parentSlug     String?   @map("parent_slug")
+  payload        Json      @db.JsonB
+  observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
+  lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  digest         String
+
+  @@id([organization, teamSlug, observedAt])
+  @@index([organization, supersededAt])
+  @@map("org_teams")
+}
+
+/// One person's membership of one team, over the interval they held that role in it.
+///
+/// The index is on `(organization, login, superseded_at)` rather than on the team, because the question
+/// this table exists to answer is "which teams is this person in" — asked per person, on a page about a
+/// person. Reading a single team's roster is the primary key's leading columns already.
+///
+/// COLLECTED WITH `membership: IMMEDIATE`, NOT GitHub's default of `ALL`. `ALL` folds every descendant
+/// team's people into the parent, which across 336 nested teams makes a parent look as though it employs
+/// its whole subtree, and makes "which teams is this person in" answer with the ancestry of the one team
+/// they actually joined rather than that team. The rollup is a DERIVATION a reader may compute by walking
+/// `org_teams.parent_slug`; it is not a fact, and storing it here would record an edge nobody made.
+model OrgTeamMembership {
+  organization   String
+  teamSlug       String    @map("team_slug")
+  login          String
+  /// `MEMBER` or `MAINTAINER`, as GitHub words it.
+  role           String
+  observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
+  lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  digest         String
+
+  @@id([organization, teamSlug, login, observedAt])
+  @@index([organization, login, supersededAt])
+  @@map("org_team_memberships")
+}
+
+/// One team's access to one repository, over the interval that access held.
+///
+/// `permission` is a column rather than payload because it is the first rungs of the ownership ladder:
+/// `admin` and `maintain` are ownership, `push` is contested, and `triage`/`pull` are permission to look.
+/// That comparison runs across every edge in the estate every time ownership is resolved, so it is a
+/// predicate and not a detail.
+model OrgTeamRepository {
+  organization   String
+  teamSlug       String    @map("team_slug")
+  repository     String
+  /// One of `AccessLevels` in org/graph.ts, whose ORDER is the semantics.
+  permission     String
+  observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
+  lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  digest         String
+
+  @@id([organization, teamSlug, repository, observedAt])
+  @@index([organization, repository, supersededAt])
+  @@map("org_team_repositories")
+}
+
+/// Every repository the organisation holds, whether any team holds it or not.
+///
+/// THIS TABLE IS WHAT MAKES "UNOWNED" ANSWERABLE. Ownership resolved from team edges alone can only
+/// report repositories that have an owner; the 3,277 the organisation holds are the denominator, and
+/// without them "how many does nobody own" has no numerator to subtract from.
+///
+/// `archived` and `visibility` are columns because they QUALIFY THE FINDING rather than decorate it: an
+/// archived unowned repository is housekeeping, and a live public one is not. `is_fork`, the default
+/// branch and `pushed_at` stay in the payload.
+model OrgRepository {
+  organization   String
+  repository     String
+  archived       Boolean
+  visibility     String
+  /// When the repository was last pushed to. CURRENT STATE, NOT A VERSIONED FACT — see below.
+  ///
+  /// Stored as a column and deliberately kept OUT of `digest`, which is what lets the cohort's activity
+  /// window read it without the cost the writer's comment warns about: it moves on every push, so versioning
+  /// on it would supersede and re-insert every active repository in the estate on every run. Updated in place
+  /// beside `last_observed_at` instead, so a push changes this row rather than ending it and opening another.
+  ///
+  /// Nullable because GitHub omits it for a repository that has never been pushed to, and an absent last push
+  /// is not the same answer as a very old one.
+  pushedAt       DateTime? @map("pushed_at") @db.Timestamptz(6)
+  payload        Json      @db.JsonB
+  observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
+  lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  digest         String
+
+  @@id([organization, repository, observedAt])
+  @@index([organization, supersededAt])
+  @@map("org_repositories")
+}
+
+/// One organisation member, over the interval their membership and role held.
+///
+/// `role` is a column — `ADMIN` reads differently from `MEMBER` on every row that mentions the person.
+/// `name`, `email` and `company` live in the payload because all three are SELF-REPORTED and frequently
+/// blank, and `email` is the account's PUBLIC email: absent for most HMCTS members, and not their work
+/// address when it is present. None of the three is an identity; the login is.
+///
+/// Keyed on `(organization, login)` like every other table here even though a GitHub account is not
+/// org-scoped. What was observed is not the account — it is this person's MEMBERSHIP OF THIS
+/// ORGANISATION, which begins, changes role, and ends.
+model OrgPerson {
+  organization   String
+  login          String
+  /// `ADMIN` or `MEMBER`.
+  role           String
+  payload        Json      @db.JsonB
+  observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
+  lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  digest         String
+
+  @@id([organization, login, observedAt])
+  @@index([organization, supersededAt])
+  @@map("org_people")
+}
+
+/// What the ownership ladder decided, and which rung decided it.
+///
+/// SEVERAL ROWS PER REPOSITORY IS THE NORMAL CASE, not an exception: a repository two teams hold `admin`
+/// on has two owners, and collapsing that to one would invent a tie-break nobody made. `owner_kind` is
+/// part of the key because a team and a person may share a handle and are not the same owner.
+///
+/// `owner_kind = 'none'` is a REMEMBERED NEGATIVE in exactly the sense `sonar_project_map` uses the
+/// phrase: the ladder was walked, every rung declined, and the answer is stored so that "how many
+/// repositories does nobody own" is one COUNT rather than a set difference somebody has to remember to
+/// compute — and so that "nothing owns it" stays distinguishable from "we never looked". The
+/// `("owner_kind" = 'none') = ("owner" = '')` CHECK constraint in the org-graph migration is what keeps
+/// that row from being confused with one somebody half-wrote.
+///
+/// The index is on `rung` because reports are read by confidence: the `name-prefix` rung is a guess and
+/// `teams-api-admin` is nearly a declaration, and a reader wants them counted apart.
+model RepositoryOwnership {
+  organization   String
+  repository     String
+  /// `team`, `person`, or `none` — see `OwnerKind` in org/graph.ts.
+  ownerKind      String    @map("owner_kind")
+  /// A team slug, a login, or `''` when `owner_kind` is `none`.
+  owner          String
+  /// Which rung attributed it — see `OwnershipRung`. Stored so a reader can weigh the answer.
+  rung           String
+  payload        Json      @db.JsonB
+  observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
+  lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)
+  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
+  digest         String
+
+  @@id([organization, repository, ownerKind, owner, observedAt])
+  @@index([organization, rung, supersededAt])
+  @@map("repository_ownership")
 }

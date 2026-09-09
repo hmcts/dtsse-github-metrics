@@ -13,6 +13,7 @@ One Next.js application and one image, with two entry points:
 | --- | --- | --- |
 | `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
 | `node dist/cli/run.js collect` | a daily CronJob | contacts GitHub, caches facts, stamps the collection |
+| `node dist/cli/run.js collect-org` | a second daily CronJob | walks the organisation's teams, people and repository ownership |
 
 The web pod holds **no GitHub credential**. It never contacts GitHub, which is what makes the serving path
 read-only and the credential the collector's alone.
@@ -29,15 +30,125 @@ yarn db:migrate:dev
 yarn dev                     # http://localhost:3000
 ```
 
-Nothing renders until something has been collected. `metrics.yaml` is the estate this deployment reports on, and
-is tracked here so that adding a team is a reviewed change; `metrics.example.yaml` documents every option beside
-it. To collect against it:
+Nothing renders until something has been collected. `metrics.yaml` is the POLICY this deployment reports under —
+which repositories count, and the thresholds they are graded against — and `metrics.example.yaml` documents every
+option beside it. The estate itself comes from the graph, so `collect-org` runs first:
 
 ```bash
 export GH_TOKEN=...                                  # or the App variables below
+yarn cli collect-org --config metrics.yaml           # the estate, which `collect` reads
 yarn cli collect --config metrics.yaml --days 90
 yarn cli evidence --config metrics.yaml --days 90    # the same figures as JSON
 ```
+
+## What the estate is
+
+**The cohort comes from the collected graph, not from `metrics.yaml`.** `collect-org` walks the organisation
+and stores every repository it holds; `metrics.yaml` then states which of them count:
+
+```yaml
+cohort:
+  visibilities: [public]     # narrow to what the credential can actually read
+  include_archived: false    # nobody is working in an archived repository
+  active_within_days: 90     # 1,872 repositories becomes roughly 1,210
+excluded_repositories: []    # removed outright, whatever the graph says
+```
+
+`teams:` used to list the estate one repository at a time. It doesn't any more — at 1,872 repositories a
+committed list is stale the day it lands, because a repository created on Tuesday stays invisible and one
+archived on Wednesday keeps being collected. What `teams:` still does is **override ownership**, feeding the
+`configured` rung below so a hand-set owner beats every inferred one.
+
+The trade is deliberate: adding a team is no longer a reviewed change. A stale list is the worse failure, and
+because the graph tables are change-versioned, "what joined the cohort this week" is a query rather than a
+diff of a file nobody updated. **Review the policy, not the membership.**
+
+One consequence worth knowing: **`collect` now depends on `collect-org` having run.** The chart sequences them
+at 14:00 and 15:00, and on an empty database `collect` refuses and says no graph has been collected rather
+than reporting an estate of zero repositories. `doctor` is the exception — it reports an uncollected graph as
+a finding, because it is the command you run to find out why the others are refusing.
+
+## Who owns what
+
+`collect-org` attributes every repository in the organisation — not only the ones in the cohort — to the teams
+or people that own it, by walking the organisation's teams, their members and their repository access.
+
+```bash
+yarn cli collect-org --config metrics.yaml                     # walk it and store the graph
+yarn cli collect-org --config metrics.yaml --propose-teams     # print the attribution without storing it
+```
+
+`--propose-teams` no longer exists to be committed — the cohort is read from the graph, so there is nothing to
+paste. It prints the same block as a way of READING the attribution: which team got which repository, and by
+which rung, in a form that diffs against last week's.
+
+**Attribution is best effort and some of it is wrong.** GitHub has no field for "owner", so each repository is
+decided by the first of these that answers, and every stored row names the rung that decided it:
+
+| Rung | What it reads |
+| --- | --- |
+| `configured` | a reviewed `metrics.yaml` entry, which short-circuits everything below |
+| `teams-api-admin` | the teams holding `admin` — the closest thing to a declared owner the API has |
+| `codeowners-sole` | CODEOWNERS names exactly one team, so there is nothing to choose between |
+| `teams-api-write` | several teams hold write-or-better: most permissive wins, ties to the smallest team |
+| `codeowners-first` | CODEOWNERS names several teams: the one owning fewest wins, then alphabetically |
+| `codeowners-person` | a bare `@login`, once no team rung has answered — the individual-owner outlier |
+| `direct-collaborator-admin` | a direct collaborator holding admin, once CODEOWNERS names nobody |
+| `name-prefix` | the name shares a family prefix with repositories the rungs above agreed on |
+| `unowned` | nothing answered. A normal outcome, stored as a row rather than left as a silence |
+
+A sole `admin` team outranks CODEOWNERS, but a sole CODEOWNERS team outranks any contested API claim: access
+says who *can* merge and CODEOWNERS says who is *expected* to review, and where the two disagree the less
+ambiguous is the better guess.
+
+That precedence decides which repositories are worth paying for. CODEOWNERS costs up to three requests each, so
+it is read only where **no rung above `codeowners-sole` has answered** — no reviewed override, and no `admin`
+team. Scoping it to "no claim at all" instead, as it first did, made the rung unreachable for the 270
+repositories that have several teams holding `push` and a CODEOWNERS naming exactly one: their file was never
+read and `teams-api-write` decided them, against the order documented here.
+
+Three filters keep a handle from being read as an owner, and each answers a question the others cannot:
+`excluded_teams` by **identity** (`all-org-members` is the organisation wearing a team's clothes),
+`maximum_team_share` by **breadth** (a team holding access across the estate holds it administratively), and
+`maximum_team_members` by **size** (an "all developers" group is everyone, whatever it holds). Every team an
+exclusion removes is named in the run's output beside the figure that removed it, because a filter quietly
+turning a well-owned repository into an `unowned` row is the one thing here that should never be silent.
+
+The graph is change-versioned rather than overwritten, because GitHub serves only the present — nobody can ask
+it who was in a team last June. A run that sees a fact unchanged moves `last_observed_at` and writes no row.
+
+The team, repository and people walks are about 250 GraphQL calls; the ownership ladder adds up to three
+CODEOWNERS requests per unresolved repository and one collaborator listing after that, bounded by
+`unresolved_repository_limit`. The whole run fits inside one hour of the installation's quota (15,000 core and
+12,500 GraphQL), so it runs as its own CronJob at 14:00, an hour ahead of `collect`, and each day's figures are
+read against the same day's ownership. A repository may have several owners.
+
+### Only one collector runs at a time, and the database enforces it
+
+AAT runs this application on **two clusters** — `cft-aat-00` and `cft-aat-01` — and both mount the same
+`dtsse-aat` Key Vault, so both resolve the same `POSTGRES_*` and the same GitHub App installation. Two clusters,
+one database, one rate-limit budget. `concurrencyPolicy: Forbid` does not help: it stops a CronJob overlapping
+*itself* in *one* cluster and says nothing about its twin next door.
+
+Two concurrent collectors do more than duplicate work:
+
+- The GitHub budget is per **installation**. A full `collect` is ~15,500 calls against 15,000 core and 12,500
+  GraphQL an hour, so one run fits and two do not — both degrade to partial and the estate ends up *less* well
+  collected than if one had run alone.
+- Each run stamps `observed_at` at its own start instant, so the later-starting run committing first makes the
+  other close a row at an instant *before* it was observed, which `<table>_interval_ordered` rejects.
+- The live-row partial unique indexes catch two writers inserting one key — as a unique violation, which rolls
+  back the whole transaction. A colliding run writes **no graph at all**.
+
+So `collect` and `collect-org` both take one Postgres advisory lock, the same mechanism `migrate` uses for the
+same reason. A run that does not get it stands down and **exits 0**: on an estate where both clusters share a
+schedule one of them loses every day, and a CronJob reporting Failed daily for correct behaviour is an alert
+nobody reads.
+
+This replaced suspending the CronJob on one cluster by hand. That worked, but the chart never sets `suspend`, so
+Helm does not manage the field — the decision lived only in the cluster, invisible to git and undone by anyone
+who re-enabled it, and it did not generalise: `collect-org` arrived enabled on both clusters with nothing to
+explain why its neighbour was not.
 
 ### Authenticating
 
@@ -180,13 +291,19 @@ revocation a cookie-borne session has.
 
 ## Changing the Helm chart
 
-**Bump `version:` in `charts/dtsse-github-metrics/Chart.yaml` in the same commit.** The chart is published to
-ACR once per version and never overwritten, and the flux HelmRelease asks for `>=0.0.2` — so a values change
-committed without a version bump builds green, promotes green, and deploys the *previous* chart. Nothing
-reports an error; the environment simply keeps running the old values.
+The chart is published to ACR **once per version and never overwritten**, and the flux HelmRelease asks for
+`>=0.0.2`. A values change that reaches master without a version bump therefore builds green, promotes green, and
+leaves the environment running the *previous* chart, with nothing reporting an error.
 
-This is not the same as an application change, which needs no bump: the image tag is a commit SHA, and flux
-image automation moves the HelmRelease onto the new tag on its own.
+**Change the chart through a pull request and the bump is automatic** — the pipeline commits it to the branch
+(`Bumping chart version/ fixing aliases`), which is why `Chart.yaml` is a routine merge conflict when two
+branches touch the chart. Resolve it upwards: the version has to exceed whatever master now holds.
+
+**Push a chart change straight to master and nothing bumps it.** That is how this chart sat at `0.0.2` while
+three master builds published no chart at all.
+
+An application change needs no bump either way: the image tag is a commit SHA, and flux image automation moves
+the HelmRelease onto the new tag on its own.
 
 ## Tests
 

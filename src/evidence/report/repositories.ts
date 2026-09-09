@@ -6,7 +6,8 @@ import { EvidenceSource } from "../domain/coverage.ts";
 import type { Merges } from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
-import { configuredRepositories, repositoryOwners, teamDisplayNames } from "../policy/repositories.ts";
+import { cohortTeams, servedCohort } from "../org/cohort.ts";
+import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
 import { prevailingCachedCoverage } from "../store/coverage.ts";
@@ -113,20 +114,32 @@ function reportedFamily(family: OpenAlertCount | undefined): Record<string, unkn
   };
 }
 
-/** One repository's row, whether this window could be reported for it or not. */
+/**
+ * One repository's row, whether this window could be reported for it or not.
+ *
+ * `teams` carries every owner and `team` carries the first of them. Both, rather than widening `team` to a
+ * list: every component that renders a row reads `team` as a string, and `src/lib/**` is held at 100%
+ * coverage, so widening it would be a large change to prove for no gain a second field does not give. That
+ * `team` is the first owner in the reporting order is a STATED CONVENTION, not a claim that there is only
+ * one — silent truncation is the failure mode here, and naming the rule is the fix.
+ */
 async function repositoryRow(
   configuration: Configuration,
   repository: string,
-  team: string,
+  teams: string[],
   window: ReportingWindow,
   production: boolean | undefined
 ): Promise<Record<string, unknown>> {
   const policy = readinessPolicy(configuration);
   const state = await storedRepositoryState(configuration.organization, repository);
+  const team = teams[0] ?? "";
+  // Absent for the ordinary single-owner repository, so a reader is not shown a one-element list restating
+  // `team` on every row of an estate where sharing is the exception.
+  const shared = teams.length > 1 ? teams : undefined;
 
   if (state === undefined) {
     // Nothing collected: the row exists so the estate is complete, and says why it carries no figures.
-    return { repository, team, detail: "nothing has been collected for this repository" };
+    return { repository, team, teams: shared, detail: "nothing has been collected for this repository" };
   }
 
   const merges: Merges = await loadCachedMerges(configuration.organization, repository, window);
@@ -137,6 +150,7 @@ async function repositoryRow(
   return {
     repository,
     team,
+    teams: shared,
     readiness: assessment?.label,
     merged_pull_requests: merges.pullRequests.length,
     direct_commits: merges.directCommits.length,
@@ -151,13 +165,24 @@ async function repositoryRow(
   };
 }
 
-/** Every configured repository's row, in the reporting order. */
+/**
+ * Every cohort repository's row, in the reporting order.
+ *
+ * KNOWN COST, LEFT ALONE DELIBERATELY. `repositoryRow` awaits two round trips per repository inside this
+ * sequential loop, and `overviewSummary` and `teamRows` each call this again rather than sharing one result. At
+ * 1,872 repositories and a measured 1.3 ms a round trip that is roughly 10,776 round trips and a ~14 second
+ * floor per page render. It needs collapsing into two grouped queries, and that is its own change — batching it
+ * here while also moving the cohort's source of truth would make one diff that could fail two ways.
+ *
+ * `teamRows` counting a repository once per owner has already nudged this the wrong way, so the fix is worth
+ * doing soon rather than eventually.
+ */
 export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
   const { window } = await resolveReportWindow(configuration, weeks, reference);
-  const owners = repositoryOwners(configuration);
+  const cohort = await servedCohort(configuration, reference);
   const rows = [];
-  for (const repository of configuredRepositories(configuration)) {
-    rows.push(await repositoryRow(configuration, repository, owners.get(repository) ?? "", window, undefined));
+  for (const entry of cohort) {
+    rows.push(await repositoryRow(configuration, entry.repository, entry.owners, window, undefined));
   }
   return stripAbsent(rows);
 }
@@ -188,7 +213,10 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
     collected_through: collectedThrough?.toISOString(),
     repositories: rows.length,
     unavailable: rows.filter((row) => row.detail !== undefined).length,
-    teams: configuration.teams.length,
+    // Counted off the rows rather than off `configuration.teams`, which no longer lists the estate's teams —
+    // it lists the handful somebody has overridden. Includes the `unowned` bucket, because 360 repositories
+    // are reported under it and a team count that omitted it would not add up against the cards below.
+    teams: cohortTeams(await servedCohort(configuration, reference)).length,
     // Contributor attribution is read from the cached facts, which the contributor rows walk; the estate summary
     // reports the count the rows agree on rather than a second walk that could disagree with them.
     actors: 0,
@@ -198,14 +226,26 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
   });
 }
 
-/** Each configured team's row. */
+/**
+ * Each configured team's row.
+ *
+ * A repository counts for EVERY team that owns it, not only the one that happens to lead its row. The
+ * consequence is deliberate and should not be "fixed": the team cards' repository counts now sum to MORE
+ * than `overview.repositories`. A shared repository is one repository in the estate and a holding of two
+ * teams, and both numbers are right.
+ */
 export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  const rows = (await repositoryRows(configuration, weeks, reference)) as { team?: string; readiness?: string }[];
+  const rows = (await repositoryRows(configuration, weeks, reference)) as { team?: string; teams?: string[]; readiness?: string }[];
   const names = teamDisplayNames(configuration);
+  // The teams come from the cohort now, not from the file. The file names only the teams somebody has overridden
+  // an owner for, so iterating it would have reported a handful of cards for an estate of 154 teams.
+  const teams = cohortTeams(await servedCohort(configuration, reference));
 
   return stripAbsent(
-    configuration.teams.map((team) => {
-      const owned = rows.filter((row) => row.team === team.identifier);
+    teams.map((identifier) => {
+      // `teams` is absent on the ordinary single-owner row, so fall back to the primary rather than treating
+      // its absence as "owned by nobody".
+      const owned = rows.filter((row) => (row.teams ?? (row.team === undefined ? [] : [row.team])).includes(identifier));
       const labels: Record<string, number> = {};
       for (const row of owned) {
         if (row.readiness !== undefined) {
@@ -213,8 +253,10 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
         }
       }
       return {
-        team: team.identifier,
-        display_name: names.get(team.identifier) ?? team.identifier,
+        team: identifier,
+        // The slug IS the display name for most teams: only an overridden team has one in the file. Falling back
+        // rather than prettifying the slug, because a generated title would read as a name somebody chose.
+        display_name: names.get(identifier) ?? identifier,
         repositories: owned.length,
         labels
       };

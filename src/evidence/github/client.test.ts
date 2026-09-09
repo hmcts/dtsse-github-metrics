@@ -53,6 +53,10 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(console, "debug").mockImplementation(() => undefined);
+  // The client writes its per-call progress to stderr rather than through `console`, so that a command whose
+  // product is a document can have stdout redirected. Silenced the same way, and here rather than globally:
+  // a test that means to assert on stderr should have to say so.
+  vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 
 describe("get", () => {

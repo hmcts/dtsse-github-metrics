@@ -36,14 +36,27 @@ traceability:
     - '#\d+'
     - '[A-Z][A-Z0-9]+-\d+'
 excluded_repositories: []
-teams:
-  - identifier: dtsse
-    display_name: Developer Tools & Shared Services Engineering
-    repositories:
-      - cms-template
-      - dtsse-dashboard-ingestion
-      - dtsse-github-metrics
-      - expressjs-monorepo-template
-      - github-metrics
+# WHICH REPOSITORIES THE ESTATE IS. This block replaced the `teams:` list that used to name them one by one:
+# the cohort now comes from the graph `collect-org` walks, and this selects from it. Review the policy here,
+# not the membership — at 1,872 repositories a committed list of names was stale the day it landed.
+cohort:
+  # All three, because the App's `pull_requests: read` has now been approved. This was narrowed to `[public]`
+  # while it was pending: 962 private and 547 internal repositories were refused outright, so admitting them
+  # would have filled the dashboard with `unavailable` rows rather than figures. Verified after approval —
+  # `doctor` reads every configured repository with zero refusals, including the internal one that used to
+  # answer FORBIDDEN. Expect the estate to roughly double against the 788 measured under `[public]`.
+  visibilities:
+    - public
+    - internal
+    - private
+  # 90 days. Takes the estate from 1,872 repositories to roughly 1,210, and what it drops would report
+  # "no merges in the window" anyway.
+  active_within_days: 90
+# The organisation graph `collect-org` walks, which is now what the cohort is read from. Thresholds are left
+# at their defaults, documented with the measurements behind them in metrics.example.yaml; only `enabled` is
+# stated, because it is the switch that decides whether the daily walk runs at all and that belongs in a
+# reviewed file rather than in a chart value.
+org_graph:
+  enabled: true
 sonar_organization: hmcts
 production_list_url: https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ConfigurationError, parseConfiguration } from "./load.ts";
-import { configuredRepositories, enablementInstants, ownedRepositories, repositoryOwners, sonarOrganizationName } from "./repositories.ts";
+import { configuredOwners, enablementInstants, sonarOrganizationName } from "./repositories.ts";
 import { PRODUCTION_LIST_URL } from "./schema.ts";
 
 // Ported from tests/test_config.py. Upstream wrote each case to a temp file; these parse the same text
@@ -166,10 +166,16 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration(document).enablement["some-repo"]?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
   });
 
-  it("should reject a repository owned by more than one team", () => {
+  it("should accept a repository owned by more than one team", () => {
     const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
 
-    expect(() => parseConfiguration(document)).toThrow(/repositories may belong to only one team: nfdiv-case-api/);
+    expect(parseConfiguration(document).teams.map((team) => team.identifier)).toContain("shared");
+  });
+
+  it("should reject a repository listed twice under one team", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - other-api\n      - other-api\n`;
+
+    expect(() => parseConfiguration(document)).toThrow(/shared lists a repository twice: other-api/);
   });
 
   it("should reject duplicate team identifiers", () => {
@@ -198,10 +204,14 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration(document).enablement["civil-service"]?.toISOString()).toBe(expected);
   });
 
-  it("should reject an enablement date for a repository the configuration does not own", () => {
+  it("should accept an enablement date for a repository the file does not override the owner of", () => {
+    // This case USED TO BE REJECTED, while `teams:` listed the estate and so could be checked against. It
+    // lists ownership overrides now, so the old rule rejected the ordinary case: a date for a repository whose
+    // owner nobody has overridden. A typo is caught where the cohort lives — by the report naming a key that
+    // matched no repository — rather than by a schema that would need a database to know.
     const document = `${VALID}\nenablement:\n  civil-servce: 2026-06-01\n`;
 
-    expect(() => parseConfiguration(document)).toThrow(/enablement dates must name a configured repository: civil-servce/);
+    expect(parseConfiguration(document).enablement["civil-servce"]?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
   });
 
   it("should reject an unparseable enablement date", () => {
@@ -239,10 +249,12 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration(document).sonar_projects).toEqual({ "civil-service": "civil_service_key" });
   });
 
-  it("should reject a sonar project for a repository the configuration does not own", () => {
+  it("should accept a sonar project for a repository the file does not override the owner of", () => {
+    // Removed for the same reason as the enablement check above: `teams:` no longer lists the estate, so
+    // requiring every override key to appear in it rejected the ordinary case.
     const document = `${VALID}\nsonar_projects:\n  civil-servce: key\n`;
 
-    expect(() => parseConfiguration(document)).toThrow(/sonar projects must name a configured repository: civil-servce/);
+    expect(parseConfiguration(document).sonar_projects).toEqual({ "civil-servce": "key" });
   });
 
   it.each(['""', '"   "'])("should reject the empty sonar project key %s", (written) => {
@@ -298,42 +310,115 @@ describe("sonarOrganizationName", () => {
   });
 });
 
-describe("ownedRepositories", () => {
-  it("should order by team and then repository, so editing the file cannot reorder a report", () => {
-    // The file lists `opal` before `divorce`, and opal's second repository before its first.
-    expect(ownedRepositories(parseConfiguration(POPULATION))).toEqual([
-      ["divorce", "nfdiv-case-api"],
-      ["opal", "opal-common-lib"],
-      ["opal", "opal-logging-service"]
-    ]);
+// `ownedRepositories` and `configuredRepositories` were removed with the cohort's move to the graph. What the
+// file still answers is "whose is this", and the tests for the estate itself live in org/cohort.test.ts.
+
+describe("org_graph", () => {
+  it("should be off unless a configuration turns it on, so no existing file changes meaning", () => {
+    expect(parseConfiguration(VALID).org_graph.enabled).toBe(false);
   });
 
-  it("should list every configured repository in the reporting order", () => {
-    expect(configuredRepositories(parseConfiguration(POPULATION))).toEqual(["nfdiv-case-api", "opal-common-lib", "opal-logging-service"]);
+  it("should carry the measured defaults for every threshold", () => {
+    const graph = parseConfiguration(VALID).org_graph;
+
+    expect(graph).toMatchObject({
+      prefix_support: 3,
+      prefix_dominance: 0.8,
+      maximum_team_share: 0.25,
+      maximum_team_members: 100,
+      excluded_teams: ["all-org-members"],
+      unresolved_repository_limit: 500
+    });
+  });
+
+  it("should read a lowered member ceiling", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_members: 50\n`;
+
+    expect(parseConfiguration(document).org_graph.maximum_team_members).toBe(50);
+  });
+
+  it("should refuse a member ceiling of zero, which would disown every team", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_members: 0\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
+  });
+
+  it("should refuse a misspelled threshold rather than silently reporting the default as a choice", () => {
+    const document = `${VALID}\norg_graph:\n  enabled: true\n  maximum_team_member: 50\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
   });
 });
 
-describe("repositoryOwners", () => {
-  it("should name the team that owns each repository", () => {
-    expect([...repositoryOwners(parseConfiguration(POPULATION))]).toEqual([
-      ["nfdiv-case-api", "divorce"],
-      ["opal-common-lib", "opal"],
-      ["opal-logging-service", "opal"]
+describe("configuredOwners", () => {
+  it("should name the teams a human has overridden the owner to", () => {
+    expect([...configuredOwners(parseConfiguration(POPULATION))]).toEqual([
+      ["nfdiv-case-api", ["divorce"]],
+      ["opal-common-lib", ["opal"]],
+      ["opal-logging-service", ["opal"]]
     ]);
+  });
+
+  it("should name every team overriding a shared repository, in the reporting order", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
+
+    expect(configuredOwners(parseConfiguration(document)).get("nfdiv-case-api")).toEqual(["divorce", "shared"]);
+  });
+
+  it("should be empty where the file overrides nothing, which is now the normal case", () => {
+    // The estate no longer comes from the file, so a file naming no team is a file that disagrees with no
+    // inference — not a misconfiguration a cohort command should refuse.
+    expect(configuredOwners(parseConfiguration("version: 1\norganization: hmcts\n")).size).toBe(0);
   });
 });
 
 describe("enablementInstants", () => {
-  it("should report every repository in the reporting order, dated or not", () => {
+  it("should report every repository it is given, dated or not", () => {
     // A repository missing an anchor is reported with that reason and no series, never silently
-    // dropped and never defaulted to an instant nobody chose.
+    // dropped and never defaulted to an instant nobody chose. The estate is passed in now rather than read
+    // from the file, so this stays a pure lookup.
     const document = `${POPULATION}enablement:\n  opal-common-lib: 2026-06-01\n`;
+    const cohort = ["nfdiv-case-api", "opal-common-lib", "opal-logging-service"];
 
-    const instants = enablementInstants(parseConfiguration(document));
+    const instants = enablementInstants(parseConfiguration(document), cohort);
 
-    expect([...instants.keys()]).toEqual(["nfdiv-case-api", "opal-common-lib", "opal-logging-service"]);
+    expect([...instants.keys()]).toEqual(cohort);
     expect(instants.get("nfdiv-case-api")).toBeUndefined();
     expect(instants.get("opal-common-lib")?.toISOString()).toBe("2026-06-01T00:00:00.000Z");
     expect(instants.get("opal-logging-service")).toBeUndefined();
+  });
+});
+
+describe("cohort", () => {
+  it("should select every visibility and exclude archived by default, over a 90-day window", () => {
+    expect(parseConfiguration(VALID).cohort).toMatchObject({
+      visibilities: ["public", "internal", "private"],
+      include_archived: false,
+      active_within_days: 90
+    });
+  });
+
+  it("should let the window be turned off outright", () => {
+    const document = `${VALID}\ncohort:\n  active_within_days: null\n`;
+
+    expect(parseConfiguration(document).cohort.active_within_days).toBeNull();
+  });
+
+  it("should narrow to the visibilities a deployment can actually read", () => {
+    const document = `${VALID}\ncohort:\n  visibilities:\n    - public\n`;
+
+    expect(parseConfiguration(document).cohort.visibilities).toEqual(["public"]);
+  });
+
+  it("should refuse an empty visibility list, which would select nothing at all", () => {
+    const document = `${VALID}\ncohort:\n  visibilities: []\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
+  });
+
+  it("should refuse a visibility GitHub does not have", () => {
+    const document = `${VALID}\ncohort:\n  visibilities:\n    - secret\n`;
+
+    expect(() => parseConfiguration(document)).toThrow();
   });
 });
