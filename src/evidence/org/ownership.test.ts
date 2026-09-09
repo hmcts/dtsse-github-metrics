@@ -858,6 +858,26 @@ describe("unresolvedRepositories", () => {
     expect(unresolvedRepositories(facts, evidence, configured)).toEqual(["named", "orphan"]);
   });
 
+  it("should include a repository whose only claims are write, because codeowners-sole outranks teams-api-write", () => {
+    // The bug this replaced: the residue filtered on "no claim at all", so a repository with several teams holding
+    // push never had its CODEOWNERS read and was decided by `teams-api-write` — even though a sole CODEOWNERS team
+    // outranks any contested API claim. Measured on the real estate, 270 repositories sit in exactly this state.
+    const facts = orgFacts({
+      repositories: repositories("contested"),
+      teamRepositories: [owns("alpha", "contested", "push"), owns("beta", "contested", "push"), owns("gamma", "contested", "push")]
+    });
+    const evidence = ownershipEvidence(facts, ownershipOptions());
+
+    expect(unresolvedRepositories(facts, evidence)).toEqual(["contested"]);
+  });
+
+  it("should exclude a repository a sole admin team already decided, since nothing above that rung is left", () => {
+    const facts = orgFacts({ repositories: repositories("administered"), teamRepositories: [owns("alpha", "administered", "admin")] });
+    const evidence = ownershipEvidence(facts, ownershipOptions());
+
+    expect(unresolvedRepositories(facts, evidence)).toEqual([]);
+  });
+
   it("should treat an unchecked override as unresolved rather than skip it, which costs a request and is never wrong", () => {
     const facts = orgFacts({ repositories: repositories("reviewed") });
     const evidence = ownershipEvidence(facts, ownershipOptions());

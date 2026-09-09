@@ -3,6 +3,7 @@ import { loadConfiguration } from "@/evidence/policy/load";
 import type { Configuration } from "@/evidence/policy/schema";
 import { collectionNotice, overviewSummary, repositoryRows, teamRows, windowOptions } from "@/evidence/report/repositories";
 import { RepositoryUnknownError } from "@/lib/not-found";
+import { owners } from "@/lib/rows";
 import type { ActorDetail, ActorRow, OverviewSummary, RepositoryDetail, RepositoryRow, RepositoryTrend, TeamDetail, TeamRow, WindowOptions } from "@/lib/types";
 
 /**
@@ -99,7 +100,11 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
   if (found === undefined) {
     throw new RepositoryUnknownError(`${team} is not a configured team`);
   }
-  const repositories = (await getRepositories(weeks)).filter((row) => row.team === team);
+  // EVERY OWNER, NOT JUST THE PRIMARY. 390 repositories on the estate are shared, and `teamRows` counts each of
+  // them for every team that owns it — so filtering on `team` alone here listed one repository beside a card that
+  // said two, and left the page's readiness legend (which comes from `teamRows`) able to filter to an empty table.
+  // `owners` is the same fold the report layer reads ownership by, so the count and the list cannot drift apart.
+  const repositories = (await getRepositories(weeks)).filter((row) => owners(row).includes(team));
   return { ...found, repositories } as unknown as TeamDetail;
 }
 

@@ -71,6 +71,12 @@ A sole `admin` team outranks CODEOWNERS, but a sole CODEOWNERS team outranks any
 says who *can* merge and CODEOWNERS says who is *expected* to review, and where the two disagree the less
 ambiguous is the better guess.
 
+That precedence decides which repositories are worth paying for. CODEOWNERS costs up to three requests each, so
+it is read only where **no rung above `codeowners-sole` has answered** — no reviewed override, and no `admin`
+team. Scoping it to "no claim at all" instead, as it first did, made the rung unreachable for the 270
+repositories that have several teams holding `push` and a CODEOWNERS naming exactly one: their file was never
+read and `teams-api-write` decided them, against the order documented here.
+
 Three filters keep a handle from being read as an owner, and each answers a question the others cannot:
 `excluded_teams` by **identity** (`all-org-members` is the organisation wearing a team's clothes),
 `maximum_team_share` by **breadth** (a team holding access across the estate holds it administratively), and
@@ -81,8 +87,11 @@ turning a well-owned repository into an `unowned` row is the one thing here that
 The graph is change-versioned rather than overwritten, because GitHub serves only the present — nobody can ask
 it who was in a team last June. A run that sees a fact unchanged moves `last_observed_at` and writes no row.
 
-The walk is about 250 API calls and a few minutes, so it runs as its own CronJob at 14:00, an hour ahead of
-`collect`, so each day's figures are read against the same day's ownership. A repository may have several owners.
+The team, repository and people walks are about 250 GraphQL calls; the ownership ladder adds up to three
+CODEOWNERS requests per unresolved repository and one collaborator listing after that, bounded by
+`unresolved_repository_limit`. The whole run fits inside one hour of the installation's quota (15,000 core and
+12,500 GraphQL), so it runs as its own CronJob at 14:00, an hour ahead of `collect`, and each day's figures are
+read against the same day's ownership. A repository may have several owners.
 
 ### Authenticating
 

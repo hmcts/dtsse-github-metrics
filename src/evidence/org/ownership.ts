@@ -577,11 +577,17 @@ export function rungCounts(resolved: Iterable<ResolvedOwnership>): Map<Ownership
 /**
  * The repositories no free rung answered, so the caller can scope the expensive fetches to the residue.
  *
- * THIS IS THE COST-CONTROL MECHANISM. A configured override, a sole `admin` team and a contested write claim
- * all decide a repository from data the graph collection already holds, so they cost nothing; CODEOWNERS costs
- * up to three content requests per repository and direct collaborators one more. Only what the free rungs left
- * open needs to be paid for — on the measured estate that is the difference between three requests for 1,863
- * repositories and three for a few hundred.
+ * THIS IS THE COST-CONTROL MECHANISM, and it has to agree with the ladder's precedence or it silently changes
+ * the answer. It once filtered on "no claim at all", which was wrong: `codeowners-sole` sits ABOVE
+ * `teams-api-write`, so a repository with three teams holding push and a CODEOWNERS naming exactly one team
+ * should be decided by that file — and never had its file read. Measured on this estate, 270 repositories have a
+ * claim but no `admin` team, which is exactly the set that was being decided by the wrong rung; the predecessor's
+ * `codeowners-sole 200` could not be reproduced while they were skipped.
+ *
+ * So the residue is what NO RUNG ABOVE `codeowners-sole` answered: no configured override, and no `admin` team.
+ * A configured override and a sole `admin` team decide from data already in hand and stay free; everything else
+ * pays up to three content requests, plus one more for direct collaborators. On the measured estate that is a few
+ * hundred repositories rather than 1,878.
  *
  * `configured` is a parameter rather than read from `OwnershipOptions` so that a caller holding only facts can
  * still ask; left out, a repository with a reviewed override is fetched needlessly rather than skipped, which
@@ -591,6 +597,6 @@ export function unresolvedRepositories(facts: OrgFacts, evidence: Evidence, conf
   return facts.repositories
     .filter((repository) => !repository.archived)
     .map((repository) => repository.name)
-    .filter((name) => (configured.get(name) ?? []).length === 0 && (evidence.claims.get(name)?.size ?? 0) === 0)
+    .filter((name) => (configured.get(name) ?? []).length === 0 && adminTeams(evidence.claims.get(name) ?? new Map()).length === 0)
     .sort(byCodePoint);
 }

@@ -53,8 +53,41 @@ import {
  * empty owners. Reporting the second as the first states a fact nobody observed.
  */
 
-/** What the team walk answers, as exactly the slice of `OrgFacts` it fills. */
-export type OrgTeamFacts = Pick<OrgFacts, "teamsRead" | "knownTeams" | "teams" | "memberships" | "teamRepositories">;
+/**
+ * What the team walk answers, as the slice of `OrgFacts` it fills plus WHAT IT SAW IN FULL.
+ *
+ * The three completeness fields are not bookkeeping — they decide whether the writer may read an absence as a
+ * departure. Each walk here degrades quietly and independently: a per-team refusal is caught and the run
+ * continues, and the team list itself can stop paging while the teams already read stay perfectly good. Without
+ * them, one refused membership closed every one of that team's live rows as though everybody had left, and
+ * GitHub cannot be asked to confirm otherwise afterwards.
+ */
+export interface OrgTeamFacts extends Pick<OrgFacts, "teamsRead" | "knownTeams" | "teams" | "memberships" | "teamRepositories"> {
+  /**
+   * Whether the whole team list was paged without a refusal.
+   *
+   * Distinct from `teamsRead`, which only says the FIRST page answered. A walk that read 200 of 336 teams and
+   * then hit a rate limit has `teamsRead: true` and `teamsComplete: false` — and the 136 it never reached must
+   * not be recorded as teams that were deleted.
+   */
+  teamsComplete: boolean;
+  /** Team slugs whose membership was read in full. Only these may have a departure inferred from an absence. */
+  membershipsObserved: Set<string>;
+  /** Team slugs whose repository list was read in full. */
+  teamRepositoriesObserved: Set<string>;
+}
+
+/** What a flat organisation-wide walk answers, beside whether it reached the end. */
+export interface OrgWalk<Fact> {
+  facts: Fact[];
+  /**
+   * Whether the walk paged to the end.
+   *
+   * `false` means it returned the prefix it managed — which is worth storing, and must never be read as the
+   * whole estate. A rate limit at page 5 of 33 would otherwise supersede some 1,500 live repository rows.
+   */
+  complete: boolean;
+}
 
 /** One failure's message, for a log line that names what went wrong rather than that something did. */
 function reason(error: unknown): string {
@@ -195,7 +228,17 @@ async function collectTeamRepositories(
  * the count it reached so a reader can see it is short.
  */
 export async function collectOrgTeams(client: GitHubClient, organization: string): Promise<OrgTeamFacts> {
-  const facts: OrgTeamFacts = { teamsRead: false, knownTeams: new Set<string>(), teams: [], memberships: [], teamRepositories: [] };
+  const facts: OrgTeamFacts = {
+    teamsRead: false,
+    // Complete until something proves otherwise: an organisation with no teams at all is completely read.
+    teamsComplete: true,
+    knownTeams: new Set<string>(),
+    teams: [],
+    memberships: [],
+    teamRepositories: [],
+    membershipsObserved: new Set<string>(),
+    teamRepositoriesObserved: new Set<string>()
+  };
   let cursor: string | null = null;
 
   for (;;) {
@@ -209,12 +252,14 @@ export async function collectOrgTeams(client: GitHubClient, organization: string
           ? `Could not list further teams of ${organization} after ${facts.teams.length}; keeping the teams already read: ${reason(error)}`
           : `Could not list the teams of ${organization}; the graph will be built without team access: ${reason(error)}`
       );
+      facts.teamsComplete = false;
       break;
     }
     if (connection == null) {
       // GitHub answered with no organisation, or with an organisation carrying no teams connection: for this
       // purpose the same answer as a refusal — nobody listed the teams.
       console.warn(`GitHub named no teams connection for ${organization}; the graph will be built without team access`);
+      facts.teamsComplete = false;
       break;
     }
 
@@ -227,11 +272,13 @@ export async function collectOrgTeams(client: GitHubClient, organization: string
       facts.knownTeams.add(canonical(node.slug));
       try {
         facts.memberships.push(...(await collectTeamMembers(client, organization, node.slug, node.members)));
+        facts.membershipsObserved.add(canonical(node.slug));
       } catch (error) {
         console.warn(`Could not list the members of ${organization}/${node.slug}; it will claim no people: ${reason(error)}`);
       }
       try {
         facts.teamRepositories.push(...(await collectTeamRepositories(client, organization, node.slug, node.repositories)));
+        facts.teamRepositoriesObserved.add(canonical(node.slug));
       } catch (error) {
         console.warn(`Could not list the repositories of ${organization}/${node.slug}; it will claim no repositories: ${reason(error)}`);
       }
@@ -259,8 +306,9 @@ function parseTeams(data: unknown) {
  * nobody listed is simply absent from the report, whereas a team nobody listed silently rewrites what every
  * remaining rung concludes.
  */
-export async function collectOrgRepositories(client: GitHubClient, organization: string): Promise<RepositoryFact[]> {
+export async function collectOrgRepositories(client: GitHubClient, organization: string): Promise<OrgWalk<RepositoryFact>> {
   const repositories: RepositoryFact[] = [];
+  let complete = true;
   let cursor: string | null = null;
 
   for (;;) {
@@ -270,10 +318,12 @@ export async function collectOrgRepositories(client: GitHubClient, organization:
       connection = parseRepositories(data);
     } catch (error) {
       console.warn(`Could not list the repositories of ${organization} after ${repositories.length}: ${reason(error)}`);
+      complete = false;
       break;
     }
     if (connection == null) {
       console.warn(`GitHub named no repositories connection for ${organization}`);
+      complete = false;
       break;
     }
 
@@ -299,7 +349,7 @@ export async function collectOrgRepositories(client: GitHubClient, organization:
     cursor = connection.pageInfo.endCursor ?? null;
   }
 
-  return repositories;
+  return { facts: repositories, complete };
 }
 
 function parseRepositories(data: unknown) {
@@ -313,8 +363,9 @@ function parseRepositories(data: unknown) {
  * a name means somebody typed one — `PersonFact` treats all three as decoration, and an empty string would be
  * decoration that looks like data.
  */
-export async function collectOrgPeople(client: GitHubClient, organization: string): Promise<PersonFact[]> {
+export async function collectOrgPeople(client: GitHubClient, organization: string): Promise<OrgWalk<PersonFact>> {
   const people = new Map<string, PersonFact>();
+  let complete = true;
   let cursor: string | null = null;
 
   for (;;) {
@@ -324,10 +375,12 @@ export async function collectOrgPeople(client: GitHubClient, organization: strin
       connection = parsePeople(data);
     } catch (error) {
       console.warn(`Could not list the members of ${organization} after ${people.size}: ${reason(error)}`);
+      complete = false;
       break;
     }
     if (connection == null) {
       console.warn(`GitHub named no membership connection for ${organization}`);
+      complete = false;
       break;
     }
 
@@ -352,7 +405,7 @@ export async function collectOrgPeople(client: GitHubClient, organization: strin
     cursor = connection.pageInfo.endCursor ?? null;
   }
 
-  return [...people.values()];
+  return { facts: [...people.values()], complete };
 }
 
 function parsePeople(data: unknown) {
