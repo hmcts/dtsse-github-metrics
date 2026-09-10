@@ -120,3 +120,30 @@ export async function prevailingCachedCoverage(organization: string, source: Evi
     throw new StorageError("could not read collection cache", error);
   }
 }
+
+/**
+ * Stamps every series of one organisation as used, in one write per source.
+ *
+ * The batched counterpart to `touchSourceCoverage`, and the reason a page render is not dominated by writes:
+ * per repository it was two `UPDATE`s, which measured at more than half of the 15.39 ms each repository cost.
+ *
+ * Coarser than the per-series stamp, and that is safe rather than sloppy. `accessedAt` feeds one decision —
+ * `prune` deleting series unused since a cutoff — so the question it answers is "did anything read this
+ * recently", and a render that reads the whole organisation has read every series in it. What it must not do is
+ * stamp a series NOTHING read, which is why it is scoped to the query hashes the render actually used: a series
+ * under a retired signature keeps ageing and stays prunable.
+ */
+export async function touchOrganisationCoverage(
+  organization: string,
+  queryHashes: { pullRequests: string; directCommits: string },
+  accessedAt: Date = new Date()
+): Promise<void> {
+  try {
+    await prisma.sourceCoverage.updateMany({
+      where: { organization, queryHash: { in: [queryHashes.pullRequests, queryHashes.directCommits] } },
+      data: { accessedAt }
+    });
+  } catch (error) {
+    throw new StorageError("could not update collection cache", error);
+  }
+}
