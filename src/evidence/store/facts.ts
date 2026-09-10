@@ -1,5 +1,5 @@
 import type { CoverageKey, SourceCoverage } from "../domain/coverage.ts";
-import { recordSourceCoverage, touchSourceCoverage } from "./coverage.ts";
+import { recordSourceCoverage, touchOrganisationCoverage, touchSourceCoverage } from "./coverage.ts";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
@@ -135,4 +135,77 @@ export interface DirectCommitFactRow {
   sha: string;
   committedAt: Date;
   payload: { [key: string]: JsonValue };
+}
+
+/**
+ * Every cohort repository's cached facts for one window, in FOUR queries rather than five per repository.
+ *
+ * This exists because the per-repository path made a page render unusable. `loadCachedMerges` costs five
+ * database calls per repository — a state lookup, two fact queries, and two `touchSourceCoverage` WRITES — and
+ * `repositoryRows` walked it sequentially while `overviewSummary` walked the whole thing again. Measured against
+ * AAT at 1,235 repositories: 15.39 ms per repository, so about 38 seconds of database time per render, of which
+ * the two writes are most. Rendering took 20 to 28 seconds.
+ *
+ * The two `accessedAt` stamps collapse into one `updateMany` per source across the whole organisation, which is
+ * sound because the column feeds exactly one decision — `prune` deleting series unused since a cutoff. Stamping
+ * a series once per render rather than once per read carries the same meaning: something read it today.
+ *
+ * Ordering is preserved per repository, because two reports of one window must not differ: rows arrive sorted by
+ * `(mergedAt, identifier)` and are appended to their repository's list in that order.
+ */
+export async function loadCachedFactsForOrganisation(
+  organization: string,
+  queryHashes: { pullRequests: string; directCommits: string },
+  startsAt: Date,
+  endsAt: Date
+): Promise<Map<string, { pullRequests: unknown[]; directCommits: unknown[] }>> {
+  try {
+    const [pullRequests, directCommits] = await Promise.all([
+      prisma.pullRequestFact.findMany({
+        where: { organization, queryHash: queryHashes.pullRequests, mergedAt: { gte: startsAt, lt: endsAt } },
+        orderBy: [{ mergedAt: "asc" }, { identifier: "asc" }],
+        select: { repository: true, payload: true }
+      }),
+      prisma.directCommitFact.findMany({
+        where: { organization, queryHash: queryHashes.directCommits, committedAt: { gte: startsAt, lt: endsAt } },
+        orderBy: [{ committedAt: "asc" }, { sha: "asc" }],
+        select: { repository: true, payload: true }
+      })
+    ]);
+
+    const byRepository = new Map<string, { pullRequests: unknown[]; directCommits: unknown[] }>();
+    const forRepository = (repository: string) => {
+      const existing = byRepository.get(repository);
+      if (existing !== undefined) {
+        return existing;
+      }
+      const created = { pullRequests: [] as unknown[], directCommits: [] as unknown[] };
+      byRepository.set(repository, created);
+      return created;
+    };
+    for (const row of pullRequests) {
+      forRepository(row.repository).pullRequests.push(row.payload);
+    }
+    for (const row of directCommits) {
+      forRepository(row.repository).directCommits.push(row.payload);
+    }
+
+    await touchOrganisationCoverage(organization, queryHashes);
+    return byRepository;
+  } catch (error) {
+    throw new StorageError("could not read collection cache", error);
+  }
+}
+
+/** Every cohort repository's collected state, in one query. */
+export async function storedRepositoryStates(organization: string): Promise<Map<string, { fetchedAt: Date; payload: unknown }>> {
+  try {
+    const rows = await prisma.repositoryState.findMany({
+      where: { organization },
+      select: { repository: true, fetchedAt: true, payload: true }
+    });
+    return new Map(rows.map((row) => [row.repository, { fetchedAt: row.fetchedAt, payload: row.payload }]));
+  } catch (error) {
+    throw new StorageError("could not read collection cache", error);
+  }
 }

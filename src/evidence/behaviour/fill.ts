@@ -90,9 +90,21 @@ export async function loadCachedMerges(organization: string, repository: string,
     loadCachedPullRequestFacts(pullRequestKey, window.startsAt, window.endsAt),
     loadCachedDirectCommitFacts(commitKey, window.startsAt, window.endsAt)
   ]);
+  return deserialiseMerges({ pullRequests, directCommits });
+}
+
+/**
+ * The stored payloads of one repository turned back into facts.
+ *
+ * Split out of `loadCachedMerges` so the batched reader can share it: one deserialiser means the per-repository
+ * path and the whole-estate path cannot drift in how a payload becomes a fact. An absent entry is a repository
+ * the window holds no facts for, which is empty lists rather than a missing row — the row still appears in the
+ * report, carrying zeroes it was measured to have.
+ */
+export function deserialiseMerges(payloads: { pullRequests: unknown[]; directCommits: unknown[] } | undefined): Merges {
   return {
-    pullRequests: pullRequests.map((payload) => deserialise<PullRequestFact>(payload)),
-    directCommits: directCommits.map((payload) => deserialise<DirectCommitFact>(payload))
+    pullRequests: (payloads?.pullRequests ?? []).map((payload) => deserialise<PullRequestFact>(payload)),
+    directCommits: (payloads?.directCommits ?? []).map((payload) => deserialise<DirectCommitFact>(payload))
   };
 }
 

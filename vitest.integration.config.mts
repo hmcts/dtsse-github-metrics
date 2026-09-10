@@ -4,7 +4,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   resolve: {
     alias: {
-      "@": fileURLToPath(new URL("./src", import.meta.url))
+      "@": fileURLToPath(new URL("./src", import.meta.url)),
+      // `server-only` throws on import outside a React Server Component, which is the point of it — but it also
+      // stops a test importing the report layer at all. Aliased to an empty module so the guard keeps protecting
+      // the build while these cases can still reach the code the config already collects coverage for.
+      "server-only": fileURLToPath(new URL("./test/integration/server-only-stub.ts", import.meta.url))
     }
   },
   test: {

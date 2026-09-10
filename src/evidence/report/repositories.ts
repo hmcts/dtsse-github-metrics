@@ -1,6 +1,6 @@
 import "server-only";
 import { readinessPolicy } from "../assessment/assessment.ts";
-import { loadCachedMerges } from "../behaviour/fill.ts";
+import { deserialiseMerges } from "../behaviour/fill.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
 import type { Merges } from "../domain/facts.ts";
@@ -11,7 +11,7 @@ import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
 import { prevailingCachedCoverage } from "../store/coverage.ts";
-import { storedRepositoryState } from "../store/repository-state.ts";
+import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
 
@@ -123,15 +123,15 @@ function reportedFamily(family: OpenAlertCount | undefined): Record<string, unkn
  * `team` is the first owner in the reporting order is a STATED CONVENTION, not a claim that there is only
  * one — silent truncation is the failure mode here, and naming the rule is the fix.
  */
-async function repositoryRow(
+function repositoryRow(
   configuration: Configuration,
   repository: string,
   teams: string[],
-  window: ReportingWindow,
+  state: { fetchedAt: Date; payload: unknown } | undefined,
+  merges: Merges,
   production: boolean | undefined
-): Promise<Record<string, unknown>> {
+): Record<string, unknown> {
   const policy = readinessPolicy(configuration);
-  const state = await storedRepositoryState(configuration.organization, repository);
   const team = teams[0] ?? "";
   // Absent for the ordinary single-owner repository, so a reader is not shown a one-element list restating
   // `team` on every row of an estate where sharing is the exception.
@@ -142,7 +142,6 @@ async function repositoryRow(
     return { repository, team, teams: shared, detail: "nothing has been collected for this repository" };
   }
 
-  const merges: Merges = await loadCachedMerges(configuration.organization, repository, window);
   const gate = storedGate(state.payload);
   const assessment = policy.enabled ? policy.assess(merges, gate) : undefined;
   const payload = state.payload as { securityAlerts?: SecurityAlertEvidence; deploysToProduction?: boolean };
@@ -166,24 +165,71 @@ async function repositoryRow(
 }
 
 /**
+ * One built set of rows, held between the calls of a single render.
+ *
+ * `overviewSummary` and `teamRows` both read `repositoryRows`, and `/repositories` asks for the overview and the
+ * rows together — so without this the estate is walked twice per render and `/teams` walks it twice again. That
+ * doubling was half the page's cost.
+ *
+ * Keyed by span AND by collection revision, so a render started after a collection lands cannot be served rows
+ * built from the previous one. Holding the promise rather than the result means two concurrent calls share one
+ * build instead of racing to do it twice; a rejection is not cached, or a transient database error would be
+ * served for the life of the process. Just one entry, because the alternative is an unbounded map keyed by a
+ * value a query string controls.
+ */
+let held: { key: string; rows: Promise<unknown[]> } | undefined;
+
+export function forgetBuiltRows(): void {
+  held = undefined;
+}
+
+async function builtRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
+  const state = await collectionState();
+  const key = `${configuration.organization}|${weeks}|${state?.revision ?? "none"}`;
+  if (held?.key === key) {
+    return await held.rows;
+  }
+  const rows = buildRepositoryRows(configuration, weeks, reference).catch((error: unknown) => {
+    held = undefined;
+    throw error;
+  });
+  held = { key, rows };
+  return await rows;
+}
+
+/**
  * Every cohort repository's row, in the reporting order.
  *
- * KNOWN COST, LEFT ALONE DELIBERATELY. `repositoryRow` awaits two round trips per repository inside this
- * sequential loop, and `overviewSummary` and `teamRows` each call this again rather than sharing one result. At
- * 1,872 repositories and a measured 1.3 ms a round trip that is roughly 10,776 round trips and a ~14 second
- * floor per page render. It needs collapsing into two grouped queries, and that is its own change — batching it
- * here while also moving the cohort's source of truth would make one diff that could fail two ways.
+ * FOUR QUERIES FOR THE WHOLE ESTATE, not five per repository. Fetching per repository inside this loop is what
+ * made a page render unusable: measured against AAT at 1,235 repositories it cost 15.39 ms each — a state
+ * lookup, two fact queries and two `accessedAt` WRITES — and `overviewSummary` walked the estate a second time,
+ * so a render spent about 38 seconds in the database and took 20 to 28 seconds. The same data in bulk costs
+ * about 1.5 seconds.
  *
- * `teamRows` counting a repository once per owner has already nudged this the wrong way, so the fix is worth
- * doing soon rather than eventually.
+ * The loop that remains is pure. `repositoryRow` is handed its state and its facts, which is what keeps the
+ * cost here proportional to the estate rather than to the estate times a round trip.
  */
 export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+  return await builtRows(configuration, weeks, reference);
+}
+
+async function buildRepositoryRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
   const { window } = await resolveReportWindow(configuration, weeks, reference);
-  const cohort = await servedCohort(configuration, reference);
-  const rows = [];
-  for (const entry of cohort) {
-    rows.push(await repositoryRow(configuration, entry.repository, entry.owners, window, undefined));
-  }
+  const organization = configuration.organization;
+  const [cohort, states, facts] = await Promise.all([
+    servedCohort(configuration, reference),
+    storedRepositoryStates(organization),
+    loadCachedFactsForOrganisation(
+      organization,
+      { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) },
+      window.startsAt,
+      window.endsAt
+    )
+  ]);
+
+  const rows = cohort.map((entry) =>
+    repositoryRow(configuration, entry.repository, entry.owners, states.get(entry.repository), deserialiseMerges(facts.get(entry.repository)), undefined)
+  );
   return stripAbsent(rows);
 }
 
