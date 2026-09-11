@@ -1,15 +1,15 @@
 #!groovy
 
-// PINNED, and the pin is the only thing keeping AAT deployable. The library's `master` supplies
-// `TF_VAR_jenkins_AAD_objectId` from a per-environment managed identity, which changes this server's Postgres
-// Entra administrator from `jenkins-cftptl-intsvc-mi` to `jenkins-aat-mi`. `infrastructure/postgres.tf` passes
-// that straight into `admin_user_object_id`, so the change forces a REPLACE of the administrator — and the
-// `CanNotDelete` lock on `dts-github-metrics-data-aat` refuses the destroy half, failing `Apply … in aat` with
-// a 409 ScopeLocked. This branch resolves the identity the way it was resolved before that change.
+// PINNED, and it pairs with the module branch in `infrastructure/postgres.tf` — remove them together, not
+// separately. The library's `master` supplies `TF_VAR_jenkins_AAD_objectId` from a per-environment managed
+// identity, which moves this server's Postgres Entra administrator from `jenkins-cftptl-intsvc-mi` to
+// `jenkins-aat-mi`. That forces a REPLACE of the administrator, and the `CanNotDelete` lock on
+// `dts-github-metrics-data-aat` refuses the destroy half — `Apply … in aat` fails with a 409 ScopeLocked.
 //
-// Remove the pin once the platform has resolved the identity migration against the lock; the floating
-// `Infrastructure` is what every other CFT service uses and what this should go back to.
-@Library("Infrastructure@DTSPO-35113/master")
+// A released tag rather than a branch, so what this builds against cannot move underneath it. 2.7.2 predates
+// that change. Both pins come off once `DTSPO-30107-additional-postgres-admins` is on the module's master,
+// because the administrator is then added alongside the old one rather than replacing it.
+@Library("Infrastructure@2.7.2")
 
 def type = "nodejs"
 def product = "dtsse"
