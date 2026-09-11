@@ -14,6 +14,7 @@ import { prevailingCachedCoverage } from "../store/coverage.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
+import { builtReport, CACHEABLE_SPANS, forgetBuiltReports } from "./cache.ts";
 
 /**
  * Assembling what the dashboard reads. Ported from `metrics.evidence` and the report-building half of
@@ -24,8 +25,14 @@ import { stripAbsent } from "./absent.ts";
  * can never reach a component that reads the field as optional.
  */
 
-/** The spans the week selector offers. */
-const WEEK_OPTIONS = [1, 4, 8, 12, 26];
+/**
+ * The spans the week selector offers, which are the spans the cache holds.
+ *
+ * Read from `./cache.ts` rather than declared twice: a span on offer that the cache does not hold is a page
+ * every reader pays a cold build for, and a span held but not offered is an entry nothing reads. One list
+ * cannot disagree with itself.
+ */
+const WEEK_OPTIONS = CACHEABLE_SPANS;
 const DEFAULT_WEEKS = 4;
 
 /** The most periods one trend request may ask for. The UI reads the cut from here rather than assuming one. */
@@ -164,53 +171,28 @@ function repositoryRow(
   };
 }
 
-/**
- * One built set of rows, held between the calls of a single render.
- *
- * `overviewSummary` and `teamRows` both read `repositoryRows`, and `/repositories` asks for the overview and the
- * rows together — so without this the estate is walked twice per render and `/teams` walks it twice again. That
- * doubling was half the page's cost.
- *
- * Keyed by span AND by collection revision, so a render started after a collection lands cannot be served rows
- * built from the previous one. Holding the promise rather than the result means two concurrent calls share one
- * build instead of racing to do it twice; a rejection is not cached, or a transient database error would be
- * served for the life of the process. Just one entry, because the alternative is an unbounded map keyed by a
- * value a query string controls.
- */
-let held: { key: string; rows: Promise<unknown[]> } | undefined;
-
+/** Forgets every built report, so a test or a development reload starts cold. See `./cache.ts`. */
 export function forgetBuiltRows(): void {
-  held = undefined;
-}
-
-async function builtRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
-  const state = await collectionState();
-  const key = `${configuration.organization}|${weeks}|${state?.revision ?? "none"}`;
-  if (held?.key === key) {
-    return await held.rows;
-  }
-  const rows = buildRepositoryRows(configuration, weeks, reference).catch((error: unknown) => {
-    held = undefined;
-    throw error;
-  });
-  held = { key, rows };
-  return await rows;
+  forgetBuiltReports();
 }
 
 /**
  * Every cohort repository's row, in the reporting order.
  *
- * FOUR QUERIES FOR THE WHOLE ESTATE, not five per repository. Fetching per repository inside this loop is what
- * made a page render unusable: measured against AAT at 1,235 repositories it cost 15.39 ms each — a state
- * lookup, two fact queries and two `accessedAt` WRITES — and `overviewSummary` walked the estate a second time,
- * so a render spent about 38 seconds in the database and took 20 to 28 seconds. The same data in bulk costs
- * about 1.5 seconds.
+ * TWO QUERIES FOR THE WHOLE ESTATE, not five per repository, and neither of them fetches the two thirds of each
+ * payload nothing reads. Fetching per repository inside this loop is what made a page render unusable: measured
+ * inside the AAT pod at 1,233 repositories, a four-week `/repositories` render cost 7.89 s of CPU. Batching the
+ * reads took it to 1.15 s and narrowing the projection to 0.71 s — see `loadCachedFactsForOrganisation`.
  *
  * The loop that remains is pure. `repositoryRow` is handed its state and its facts, which is what keeps the
  * cost here proportional to the estate rather than to the estate times a round trip.
+ *
+ * The build is held per span until a collection lands, which is what makes the SECOND reader of a span free
+ * rather than only the second call of one render. `./cache.ts` states why that is keyed on the revision and
+ * never on a clock.
  */
 export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  return await builtRows(configuration, weeks, reference);
+  return await builtReport(configuration.organization, weeks, () => buildRepositoryRows(configuration, weeks, reference));
 }
 
 async function buildRepositoryRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {

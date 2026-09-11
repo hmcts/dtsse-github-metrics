@@ -1,17 +1,24 @@
-import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
+import { builtReport, builtSpanCount, CACHEABLE_SPANS } from "../../src/evidence/report/cache.ts";
 import { forgetBuiltRows, repositoryRows } from "../../src/evidence/report/repositories.ts";
+import { startReportWarmer, warmEverySpan } from "../../src/evidence/report/warmer.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 
 /**
- * That batching the report's reads did not change what the report says.
+ * That making the report fast did not change what the report says.
  *
  * `repositoryRows` had no test at all while it fetched per repository, which is how a five-call-per-repository
- * loop reached AAT and made a page render take 20 to 28 seconds. These cases pin the two things the batching
- * could plausibly have broken: which repositories appear, and in what order their facts are counted.
+ * loop reached AAT and made a page render take 20 to 28 seconds. Three things have since been done to it, and
+ * each can be wrong in a way no page would show: BATCHING the reads could credit one repository's merges to
+ * another, NARROWING the projection could drop a field the readiness assessment grades, and CACHING per span
+ * could serve one span's figures for another or one revision's for the next.
+ *
+ * Every case here was checked against the behaviour it replaced — reintroduced, run, and seen to fail. A case
+ * that passes either way would have shipped the original slowness just as quietly.
  */
 
 const ORGANIZATION = "hmcts";
@@ -150,6 +157,89 @@ describe("the batched readers", () => {
     expect(identifiers).toEqual([2]);
   });
 
+  it("should drop the payload fields nothing reads, which is two thirds of the bytes", async () => {
+    // `body` and `title` are collected for two neutral metrics that neither grade the readiness label nor
+    // reach the dashboard, and on AAT they are 62 MB of a 93 MB read. They are subtracted in Postgres, so a
+    // regression to a whole-payload projection is a regression in transferred bytes that nothing else notices.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.pullRequestFact.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "alpha",
+        queryHash: PULL_REQUESTS,
+        identifier: 1n,
+        mergedAt: new Date(Date.UTC(2026, 7, 10)),
+        payload: { identifier: 1, title: "a title", body: "a very long description", additions: 10, deletions: 1, changedFiles: 1 }
+      }
+    });
+
+    const facts = await loadCachedFactsForOrganisation(
+      ORGANIZATION,
+      { pullRequests: PULL_REQUESTS, directCommits: DIRECT_COMMITS },
+      WINDOW.startsAt,
+      WINDOW.endsAt
+    );
+
+    const payload = (facts.get("alpha")?.pullRequests ?? [])[0] as Record<string, unknown>;
+    expect(payload).not.toHaveProperty("body");
+    expect(payload).not.toHaveProperty("title");
+  });
+
+  it("should keep every payload field the readiness assessment grades", async () => {
+    // The counterpart of the case above, and the one that matters if somebody widens the drop list: the
+    // assessment reads sizes, authorship, instants, reviews and checks off the same payload, and a projection
+    // that removed one of them would silently regrade the whole estate rather than fail.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.pullRequestFact.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "alpha",
+        queryHash: PULL_REQUESTS,
+        identifier: 1n,
+        mergedAt: new Date(Date.UTC(2026, 7, 10)),
+        payload: {
+          identifier: 1,
+          number: 7,
+          createdAt: new Date(Date.UTC(2026, 7, 9)).toISOString(),
+          mergedAt: new Date(Date.UTC(2026, 7, 10)).toISOString(),
+          readyForReviewAt: new Date(Date.UTC(2026, 7, 9)).toISOString(),
+          authorLogin: "someone",
+          authorType: "User",
+          additions: 120,
+          deletions: 4,
+          changedFiles: 9,
+          draft: false,
+          reviews: [{ identifier: 3, submittedAt: new Date(Date.UTC(2026, 7, 10)).toISOString(), state: "APPROVED", authorLogin: "other", commentCount: 2 }],
+          checks: [{ name: "build", conclusion: "SUCCESS", completedAt: new Date(Date.UTC(2026, 7, 10)).toISOString() }]
+        }
+      }
+    });
+
+    const facts = await loadCachedFactsForOrganisation(
+      ORGANIZATION,
+      { pullRequests: PULL_REQUESTS, directCommits: DIRECT_COMMITS },
+      WINDOW.startsAt,
+      WINDOW.endsAt
+    );
+
+    const payload = (facts.get("alpha")?.pullRequests ?? [])[0] as Record<string, unknown>;
+    expect(Object.keys(payload).sort()).toEqual([
+      "additions",
+      "authorLogin",
+      "authorType",
+      "changedFiles",
+      "checks",
+      "createdAt",
+      "deletions",
+      "draft",
+      "identifier",
+      "mergedAt",
+      "number",
+      "readyForReviewAt",
+      "reviews"
+    ]);
+  });
+
   it("should return a map keyed by repository for stored state", async () => {
     await prisma.repositoryState.create({
       data: { organization: ORGANIZATION, repository: "alpha", fetchedAt: new Date(), payload: { defaultBranch: "main" } }
@@ -255,5 +345,156 @@ describe("the held rows", () => {
 
     expect(await repositoryRows(CONFIGURATION, 26, reference)).not.toBe(before);
     await prisma.collectionState.deleteMany();
+  });
+
+  it("should still hold one span's build after another span has been read", async () => {
+    // The failure a single held entry had: reading a second span EVICTED the first, so a reader switching from
+    // four weeks to twelve made the next reader of four weeks pay for a full rebuild. Nothing had changed —
+    // the entry was thrown away by the reader who arrived next. Five spans on offer means five entries.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const reference = new Date(Date.UTC(2026, 8, 1));
+
+    const first = await repositoryRows(CONFIGURATION, 4, reference);
+    await repositoryRows(CONFIGURATION, 12, reference);
+    await repositoryRows(CONFIGURATION, 26, reference);
+
+    expect(await repositoryRows(CONFIGURATION, 4, reference)).toBe(first);
+  });
+
+  it("should hold every offered span at once, so no reader meets a cold one", async () => {
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const reference = new Date(Date.UTC(2026, 8, 1));
+
+    for (const weeks of CACHEABLE_SPANS) {
+      await repositoryRows(CONFIGURATION, weeks, reference);
+    }
+
+    expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
+  });
+
+  it("should not hold a span no page offers, so a query string cannot grow the cache without bound", async () => {
+    // `?weeks=` is reader-controlled. A span off the selector's list is answered and forgotten rather than held,
+    // or the map is keyed by whatever anybody types.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const reference = new Date(Date.UTC(2026, 8, 1));
+
+    const first = await repositoryRows(CONFIGURATION, 7, reference);
+
+    expect(builtSpanCount()).toBe(0);
+    expect(await repositoryRows(CONFIGURATION, 7, reference)).not.toBe(first);
+  });
+
+  it("should drop every superseded span when a collection lands, not only the one being read", async () => {
+    // Without the prune, a process that never restarts accumulates one set of entries per daily collection.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const reference = new Date(Date.UTC(2026, 8, 1));
+    await repositoryRows(CONFIGURATION, 4, reference);
+    await repositoryRows(CONFIGURATION, 12, reference);
+    expect(builtSpanCount()).toBe(2);
+
+    await prisma.collectionState.upsert({
+      where: { id: 1 },
+      create: { id: 1, revision: 42n, collectedAt: new Date() },
+      update: { revision: 42n, collectedAt: new Date() }
+    });
+    await repositoryRows(CONFIGURATION, 4, reference);
+
+    // Only the span just rebuilt: the twelve-week entry described the previous revision and went with it.
+    expect(builtSpanCount()).toBe(1);
+    await prisma.collectionState.deleteMany();
+  });
+
+  it("should not cache a failed build, so one database error is not served for the life of the process", async () => {
+    const failing = () => Promise.reject(new Error("connection reset"));
+
+    await expect(builtReport(ORGANIZATION, 4, failing)).rejects.toThrow("connection reset");
+
+    expect(builtSpanCount()).toBe(0);
+    await expect(builtReport(ORGANIZATION, 4, () => Promise.resolve([{ repository: "alpha" }]))).resolves.toEqual([{ repository: "alpha" }]);
+  });
+
+  it("should share one build between two concurrent readers rather than running it twice", async () => {
+    // On a pod capped at one CPU, two readers arriving on a cold span must not start two builds that then
+    // compete for the same core. This is also what makes the warmer safe beside live traffic.
+    let builds = 0;
+    const build = () => {
+      builds += 1;
+      return new Promise<unknown[]>((resolve) => setTimeout(() => resolve([{ repository: "alpha" }]), 20));
+    };
+
+    const [left, right] = await Promise.all([builtReport(ORGANIZATION, 8, build), builtReport(ORGANIZATION, 8, build)]);
+
+    expect(builds).toBe(1);
+    expect(right).toBe(left);
+  });
+});
+
+describe("the warmer", () => {
+  it("should build every offered span, so the first reader of each pays for none of it", async () => {
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+
+    await warmEverySpan(CONFIGURATION);
+
+    expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
+  });
+
+  it("should warm the remaining spans even when one of them fails", async () => {
+    // The spans are independent builds. A failure on the widest is no reason to leave the other four cold, and
+    // the warmer is an optimisation that must never take the pod down with it.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const broken = { ...CONFIGURATION, lookback: { ...CONFIGURATION.lookback, stale_collection_days: Number.NaN } };
+
+    await expect(warmEverySpan(broken)).resolves.toBeUndefined();
+  });
+
+  it("should rebuild every span when a collection lands, so no reader pays for the first read after one", async () => {
+    // The half a warm-at-boot alone does not cover: the 15:00 collection invalidates every span, and without
+    // the poll the next reader of each one pays a cold build. The collector is in another pod, so the revision
+    // in the database is the only signal that reaches here.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const warmer = startReportWarmer(CONFIGURATION, 20);
+    try {
+      await warmer.settled();
+
+      await prisma.collectionState.upsert({
+        where: { id: 1 },
+        create: { id: 1, revision: 7n, collectedAt: new Date() },
+        update: { revision: 7n, collectedAt: new Date() }
+      });
+      await new Promise((settle) => setTimeout(settle, 60));
+      await warmer.settled();
+
+      // Reading one span AFTER the poll must find every entry current and so prune nothing. A count alone
+      // cannot say this: five entries left over from the previous revision count five too. What separates the
+      // two is what a read does to them — a stale set is pruned down to the one span just rebuilt.
+      await repositoryRows(CONFIGURATION, 4, new Date(Date.UTC(2026, 8, 1)));
+      expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
+    } finally {
+      warmer.stop();
+      await prisma.collectionState.deleteMany();
+    }
+  });
+
+  it("should warm once and not again while the revision stands still", async () => {
+    // The poll runs every minute for the life of the pod, so what it does on a revision that has not moved is
+    // the steady state. It must be the single-row read and nothing else: re-warming would walk five spans a
+    // minute for ever, and on one CPU that is work taken from whatever reader arrived.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const warms = vi.spyOn(console, "info");
+    const warmer = startReportWarmer(CONFIGURATION, 20);
+    try {
+      await warmer.settled();
+      const landed = () => warms.mock.calls.filter(([line]) => String(line).includes("rebuilding every span")).length;
+      expect(landed()).toBe(1);
+
+      // Several polls' worth of time with nothing landing.
+      await new Promise((settle) => setTimeout(settle, 90));
+      await warmer.settled();
+
+      expect(landed()).toBe(1);
+    } finally {
+      warmer.stop();
+      warms.mockRestore();
+    }
   });
 });
