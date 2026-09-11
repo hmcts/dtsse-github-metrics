@@ -139,20 +139,27 @@ export interface DirectCommitFactRow {
 }
 
 /**
- * The payload fields nothing that reports from the cache ever reads.
+ * The payload fields no figure the dashboard currently shows is derived from.
  *
  * A pull request's `body` and `title` are collected because two neutral metrics grade them —
- * `description-quality` and `traceability-reference` — but neither enters the readiness label and neither is
- * summarised anywhere the dashboard reads. They are also, measured on AAT, TWO THIRDS OF THE ESTATE'S PAYLOAD:
- * at 26 weeks the pull-request facts serialise to 93 MB, of which `body` alone is 61 MB and `title` 1.2 MB. The
- * report was transferring, parsing and materialising 62 MB per window to reach nothing.
+ * `description-quality` and `traceability-reference` — and neither enters the readiness label. They are also,
+ * measured on AAT, TWO THIRDS OF THE ESTATE'S PAYLOAD: at 26 weeks the pull-request facts serialise to 93 MB, of
+ * which `body` alone is 61 MB and `title` 1.2 MB. The report was transferring, parsing and materialising 62 MB
+ * per window to reach nothing.
+ *
+ * BE PRECISE ABOUT WHY THAT IS SAFE, because it is NOT that nothing renders them. `MetricsGrid` is rendered by
+ * `/repositories/[repository]` and `/contributors/[login]`, and it reads both metrics through
+ * `src/lib/metrics.ts`. What makes the drop safe is one level up: `getRepository` in `src/lib/api.ts` returns the
+ * row unchanged and never populates `metrics`, so those two summaries are absent today whatever this projection
+ * does.
+ *
+ * SO WIRING THE METRIC SUMMARIES UP MEANS TAKING `body` OUT OF THIS LIST IN THE SAME CHANGE. Leaving it here
+ * would report a description-quality rate over descriptions that were never fetched — a plausible-looking zero
+ * rather than a failure, which is the one outcome this comment exists to prevent.
  *
  * Dropped in POSTGRES rather than after the rows arrive, which is the whole point: a projection applied in
- * JavaScript would already have paid the transfer and the JSON parse this exists to avoid.
- *
- * A field is only safe to drop here while nothing on the serving path reads it. Adding a report figure derived
- * from a description means removing it from this list, and `deserialiseMerges` will then revive it as before —
- * the payload is a `jsonb` document, so a narrowed projection is a smaller document and not a different shape.
+ * JavaScript would already have paid the transfer and the JSON parse this exists to avoid. `deserialiseMerges`
+ * revives whatever does arrive, so a narrowed projection is a smaller `jsonb` document and not a different shape.
  */
 const UNREAD_PULL_REQUEST_FIELDS = ["body", "title"] as const;
 
