@@ -8,8 +8,8 @@ import { expect, test } from "@playwright/test";
  * the link tag present and correct in the HTML and `document.styleSheets` empty. These assertions are about the
  * browser having actually applied the CSS, not about the file being fetchable.
  */
-test.describe("styling @smoke @regression", () => {
-  test("should apply a stylesheet the browser could parse @smoke @regression", async ({ page }) => {
+test.describe("styling @regression", () => {
+  test("should apply a stylesheet the browser could parse @regression", async ({ page }) => {
     await page.goto("/repositories");
 
     const sheets = await page.evaluate(() =>
@@ -26,7 +26,7 @@ test.describe("styling @smoke @regression", () => {
     expect(Math.max(...sheets)).toBeGreaterThan(0);
   });
 
-  test("should reach the load event, so no subresource is left hanging @smoke @regression", async ({ page }) => {
+  test("should reach the load event, so no subresource is left hanging @regression", async ({ page }) => {
     // The failure mode was a pending request rather than a failed one: nothing errored, the page just never
     // finished. Waiting for load is what distinguishes the two.
     await page.goto("/repositories", { waitUntil: "load" });
@@ -38,7 +38,7 @@ test.describe("styling @smoke @regression", () => {
     expect(pending).toBe(0);
   });
 
-  test("should paint the dark theme the design depends on @smoke @regression", async ({ page }) => {
+  test("should paint the dark theme the design depends on @regression", async ({ page }) => {
     await page.goto("/repositories");
 
     // Unstyled, this is rgba(0, 0, 0, 0); styled, it is the slate the whole dashboard is built on.
