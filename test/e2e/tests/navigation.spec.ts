@@ -6,9 +6,9 @@ const ROUTES = [
   { path: "/contributors", heading: "Contributors" }
 ];
 
-test.describe("navigation @smoke @regression", () => {
+test.describe("navigation @regression", () => {
   for (const route of ROUTES) {
-    test(`should render ${route.path} @smoke @regression`, async ({ page }) => {
+    test(`should render ${route.path} @regression`, async ({ page }) => {
       const response = await page.goto(route.path);
 
       expect(response?.status()).toBe(200);
@@ -16,13 +16,13 @@ test.describe("navigation @smoke @regression", () => {
     });
   }
 
-  test("should redirect the root to repositories @smoke @regression", async ({ page }) => {
+  test("should redirect the root to repositories @regression", async ({ page }) => {
     await page.goto("/");
 
     await expect(page).toHaveURL(/\/repositories/);
   });
 
-  test("should carry the chosen span across a navigation @smoke @regression", async ({ page }) => {
+  test("should carry the chosen span across a navigation @regression", async ({ page }) => {
     await page.goto("/repositories?weeks=26");
     await page.getByRole("link", { name: "Teams" }).first().click();
     await expect(page).toHaveURL(/\/teams/);
@@ -31,7 +31,7 @@ test.describe("navigation @smoke @regression", () => {
     await expect(page.getByRole("button", { name: "26 week window" })).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("should offer every configured span @smoke @regression", async ({ page }) => {
+  test("should offer every configured span @regression", async ({ page }) => {
     await page.goto("/repositories");
 
     const selector = page.getByRole("group", { name: "Reporting window" });
