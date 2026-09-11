@@ -1,5 +1,4 @@
 import { cookies } from "next/headers";
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AssessmentSection } from "@/components/AssessmentSection";
 import { CollectionNotice } from "@/components/CollectionNotice";
@@ -11,6 +10,7 @@ import { FindingsTable } from "@/components/FindingsTable";
 import { MetricCard } from "@/components/MetricCard";
 import { MetricsGrid } from "@/components/MetricsGrid";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
+import { OwnerName } from "@/components/OwnerName";
 import { Panel, Section, SectionPair } from "@/components/Section";
 import { TrendSection } from "@/components/TrendSection";
 import { getRepository, getTrend, getWindows, isNotFound } from "@/lib/api";
@@ -31,7 +31,7 @@ import {
 import { directCommitTone } from "@/lib/tone";
 import { hasPeriods } from "@/lib/trend";
 import type { RepositoryDetail, SonarReport } from "@/lib/types";
-import { resolveWeeks, type SearchValue, WEEKS_COOKIE, withWeeks } from "@/lib/weeks";
+import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
  * One repository's whole evidence block at one window span.
@@ -76,9 +76,9 @@ export default async function RepositoryPage({
       action={<NavWeekSelector options={windows.options} active={weeks} />}
       context={
         <>
-          <Link href={withWeeks(`/teams/${encodeURIComponent(detail.team)}`, weeks)} className="text-indigo-400 hover:text-indigo-300">
-            {detail.team}
-          </Link>
+          {/* The same owner rule the estate table follows: a person is named and marked rather than
+              linked, because `/teams` lists teams and there is no page for one. */}
+          <OwnerName row={detail} weeks={weeks} />
           {evidence ? <span>{span(evidence.starts_at, evidence.ends_at)}</span> : null}
           {/* provenance.intervals_fetched is deliberately not rendered: how many intervals the
               collector had to fetch rather than reuse is a caching detail, and "0 intervals fetched"

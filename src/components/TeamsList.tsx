@@ -5,12 +5,21 @@ import type { TeamRow } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
 
 /**
- * Every configured team, with what it owns, who worked in it, and its label counts.
+ * Every team, with what it owns, who worked in it, and its label counts.
  *
  * The label counts are a DISTRIBUTION, permitted from 2026-09-01: they say how many of a team's
- * repositories carry each readiness label. There is no combined team label, no team score, and the
- * teams are in the configuration's own order rather than sorted by any of these figures — an ordering
- * would be a ranking of teams whatever it was called.
+ * repositories carry each readiness label. There is no combined team label and no team score.
+ *
+ * The rows arrive LARGEST HOLDING FIRST, which `cohortTeams` decides and this component keeps. That
+ * reverses an earlier note here — that no order over these figures was allowed because it would be a
+ * ranking whatever it was called — and the distinction it missed is which figure is being ordered by.
+ * A team's repository count is not a grade: it is how much of the estate that team is on the hook for,
+ * and no label, score or quality takes part in the order. Ordering by one of the LABEL counts would
+ * still be a ranking and is still not done. What this buys is that a reader opening 154 cards meets
+ * the teams with the largest estates rather than whichever slug begins with `a`.
+ *
+ * A CARD IS A TEAM. An individual who owns a repository gets none, from 2026-09-11: 126 of the 280
+ * cards this drew were people. Where that ownership is is on `/repositories`, which marks the row.
  *
  * The counts are grouped through `distributionSlices`, the same function the donut is drawn from, so a
  * chart and a row can never disagree about which repositories fall under a label.

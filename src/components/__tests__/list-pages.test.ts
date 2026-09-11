@@ -188,6 +188,19 @@ describe("the three list routes", () => {
   });
 
   /**
+   * The teams page says what its order is, which nothing below it can.
+   *
+   * The cards arrive in `cohortTeams`' order and `TeamsList` keeps it, so the page is the only place a reader is
+   * told that order is by repository count. A default that moved without this line moving reads as arbitrary.
+   */
+  it("says the cards are ordered by what each team owns, which is the order they arrive in", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({}) }));
+
+    expect(markup).toContain("most repositories first");
+  });
+
+  /**
    * A page asked for no span falls back to the service's default, and links there too.
    *
    * This is the case a nav link arrives in: the links carry no parameter, so the span comes from the
@@ -222,7 +235,11 @@ describe("the three list routes", () => {
     stubEmptyService();
     const markup = renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({}) }));
 
-    expect(markup).toContain("No team is configured for this organisation.");
+    // No longer "no team is configured": the cohort names the teams, not the file, and from 2026-09-11 an
+    // estate can have owners and still no cards — where every one of them is an individual. The remedy is on
+    // the repositories list, which names them, so the sentence sends a reader there.
+    expect(markup).toContain("No team owns a repository in this organisation.");
+    expect(markup).toContain("attributed to individuals");
   });
 
   /**

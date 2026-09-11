@@ -20,6 +20,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositoriesTable } from "@/components/RepositoriesTable";
 import { PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
+import { INDIVIDUAL_LABEL } from "@/lib/rows";
 import type { RepositoryRow } from "@/lib/types";
 
 let replaced: string[] = [];
@@ -310,6 +311,81 @@ describe("RepositoriesTable production column", () => {
     for (const repository of ["web", "docs", "api"]) {
       expect(productionCell(repository)?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
     }
+  });
+});
+
+/**
+ * The Team cell, which is where an individually-owned repository is now marked.
+ *
+ * Its own fixture rather than a fourth row in `ROWS`, so the ordering and filtering assertions above keep
+ * counting three rows: what is under test here is one cell's contents, not the table's arrangement.
+ */
+describe("RepositoriesTable owner cell", () => {
+  const OWNERS: RepositoryRow[] = [
+    { repository: "ours", team: "civil-admins", owner_kind: "team" },
+    { repository: "theirs", team: "a1i-hussain", owner_kind: "person" },
+    { repository: "orphan", team: "unowned", owner_kind: "none" }
+  ];
+
+  /** One row's Team cell, found under its header for `productionCell`'s reason. */
+  function ownerCell(repository: string): HTMLElement | undefined {
+    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+    const entry = screen
+      .getAllByRole("row")
+      .slice(1)
+      .find((row) => within(row).getAllByRole("cell")[1]?.textContent?.startsWith(repository));
+    return within(entry as HTMLElement).getAllByRole("cell")[headers.indexOf("Team")];
+  }
+
+  it("links a team's name and marks it as nothing", () => {
+    mount(OWNERS);
+
+    expect(
+      within(ownerCell("ours") as HTMLElement)
+        .getByRole("link")
+        .getAttribute("href")
+    ).toBe("/teams/civil-admins?weeks=12");
+    expect(ownerCell("ours")?.textContent).toBe("civil-admins");
+  });
+
+  it("marks one person and links nothing, there being no team page for them", () => {
+    // THE LINK THIS CHANGE HAD TO NOT LEAVE BEHIND. `/teams` lists teams only, so `/teams/a1i-hussain` is the
+    // not-found page — and 206 repositories of this estate are owned by one person.
+    mount(OWNERS);
+
+    const cell = ownerCell("theirs") as HTMLElement;
+    expect(within(cell).queryByRole("link")).toBeNull();
+    expect(cell.textContent).toBe(`a1i-hussain${INDIVIDUAL_LABEL}`);
+  });
+
+  it("keeps the unowned bucket linked, which is a card and not a person", () => {
+    mount(OWNERS);
+
+    expect(
+      within(ownerCell("orphan") as HTMLElement)
+        .getByRole("link")
+        .getAttribute("href")
+    ).toBe("/teams/unowned?weeks=12");
+    expect(ownerCell("orphan")?.textContent).toBe("unowned");
+  });
+
+  it("links a row carrying no kind, so a row served without the field is not stranded", () => {
+    mount();
+
+    expect(
+      within(ownerCell("api") as HTMLElement)
+        .getByRole("link")
+        .getAttribute("href")
+    ).toBe("/teams/platform?weeks=12");
+  });
+
+  it("still finds a person’s repository by their name in the term, marker or no marker", () => {
+    // The marker changes what the cell renders and must not change what the term searches: a reader typing a
+    // login is asking which repositories that person is on the hook for.
+    url("weeks=12&repository=hussain");
+    mount(OWNERS);
+
+    expect(order()).toEqual(["theirs"]);
   });
 });
 

@@ -3,7 +3,7 @@ import { loadConfiguration } from "@/evidence/policy/load";
 import type { Configuration } from "@/evidence/policy/schema";
 import { collectionNotice, overviewSummary, repositoryRows, teamRows, windowOptions } from "@/evidence/report/repositories";
 import { RepositoryUnknownError } from "@/lib/not-found";
-import { owners } from "@/lib/rows";
+import { ownedByIndividual, owners } from "@/lib/rows";
 import type { ActorDetail, ActorRow, OverviewSummary, RepositoryDetail, RepositoryRow, RepositoryTrend, TeamDetail, TeamRow, WindowOptions } from "@/lib/types";
 
 /**
@@ -94,17 +94,28 @@ export async function getTeams(weeks: number): Promise<TeamRow[]> {
   return (await teamRows(await configuration(), weeks)) as unknown as TeamRow[];
 }
 
+/**
+ * One team's page, or a refusal for a name no card was drawn for.
+ *
+ * A PERSON'S LOGIN REFUSES HERE, and by the existing rule rather than a new one: `teamRows` lists teams only
+ * from 2026-09-11, so an individual owner is not among them and the lookup below misses — which is what makes
+ * `/teams/a1i-hussain` the not-found page it should be, since a page headed `team` for one person was never
+ * true. Nothing else was needed for it, and stating it here is what stops somebody "fixing" the miss.
+ */
 export async function getTeam(team: string, weeks: number): Promise<TeamDetail> {
   const rows = (await getTeams(weeks)) as unknown as { team: string }[];
   const found = rows.find((candidate) => candidate.team === team);
   if (found === undefined) {
-    throw new RepositoryUnknownError(`${team} is not a configured team`);
+    throw new RepositoryUnknownError(`${team} is not a reported team`);
   }
   // EVERY OWNER, NOT JUST THE PRIMARY. 390 repositories on the estate are shared, and `teamRows` counts each of
   // them for every team that owns it — so filtering on `team` alone here listed one repository beside a card that
   // said two, and left the page's readiness legend (which comes from `teamRows`) able to filter to an empty table.
   // `owners` is the same fold the report layer reads ownership by, so the count and the list cannot drift apart.
-  const repositories = (await getRepositories(weeks)).filter((row) => owners(row).includes(team));
+  //
+  // A person-owned row is dropped for `teamRows`' reason: nothing stops a login matching a team slug, and one
+  // that did would list somebody's repository under that team beside a count that never included it.
+  const repositories = (await getRepositories(weeks)).filter((row) => !ownedByIndividual(row) && owners(row).includes(team));
   return { ...found, repositories } as unknown as TeamDetail;
 }
 

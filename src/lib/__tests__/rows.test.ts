@@ -16,8 +16,10 @@ import {
   FILTER_PARAMETERS,
   type FilterParameter,
   filterRepositories,
+  INDIVIDUAL_LABEL,
   matchesRepository,
   orderRepositories,
+  ownedByIndividual,
   owners,
   PRODUCTION_PARAMETER,
   PRODUCTION_VALUE,
@@ -106,6 +108,41 @@ describe("owners", () => {
     // Absence is the common case — 390 of the estate's repositories are shared and the rest carry no list — so it
     // has to read as "owned by this team" rather than as "owned by nobody".
     expect(owners(row({ repository: "hmcts/api", team: "platform" }))).toEqual(["platform"]);
+  });
+});
+
+describe("the individual marker", () => {
+  it("names the finding in the reader's word rather than the contract's", () => {
+    // `person` is the kind the domain resolved; "Individual" is what a reader is being told about the
+    // repository, which is that it is one person's rather than a team's.
+    expect(INDIVIDUAL_LABEL).toBe("Individual");
+  });
+
+  it("carries no emoji: the word is the information", () => {
+    expect(INDIVIDUAL_LABEL).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+});
+
+describe("ownedByIndividual", () => {
+  it("marks a row the service says one person owns", () => {
+    expect(ownedByIndividual(row({ repository: "hmcts/theirs", team: "a1i-hussain", owner_kind: "person" }))).toBe(true);
+  });
+
+  it("does not mark a team, whose name is the same shape as a login", () => {
+    expect(ownedByIndividual(row({ repository: "hmcts/api", team: "civil-admins", owner_kind: "team" }))).toBe(false);
+  });
+
+  it("does not mark the unowned bucket, which is a destination rather than a person", () => {
+    // 141 repositories are reported under `unowned`, which has a card and a name that already says what it is.
+    // Marking it as an individual would say something false about every one of them.
+    expect(ownedByIndividual(row({ repository: "hmcts/orphan", team: "unowned", owner_kind: "none" }))).toBe(false);
+  });
+
+  it("reads an absent kind as a team, which is what the field's absence used to mean", () => {
+    // The field only exists from 2026-09-11 and `API_URL` used to be read per request, so a page can be served a
+    // row without it. Every such row was rendered as a team before, and 1,499 of the estate's 1,846 owned
+    // repositories are team-owned — reading absence as a person would mark most of the estate as somebody's own.
+    expect(ownedByIndividual(row({ repository: "hmcts/api", team: "platform" }))).toBe(false);
   });
 });
 

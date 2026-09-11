@@ -193,6 +193,24 @@ describe("TeamsList", () => {
     expect(markup).toContain("opacity:0.38");
   });
 
+  it("keeps the order the service sent, which is by what each team owns", () => {
+    // `cohortTeams` orders the cards, largest holding first, and this component re-sorts nothing. Ordering
+    // here would either restate that rule in a second place or quietly disagree with it — and there is no
+    // sortable control either, because the label counts are the one thing on a card it must not be ordered by.
+    const ordered = renderToStaticMarkup(
+      createElement(TeamsList, {
+        rows: [
+          { team: "zebra", repositories: 40, unavailable: 0, actors: 3, labels: {} },
+          { team: "alpha", repositories: 1, unavailable: 0, actors: 1, labels: {} }
+        ],
+        weeks: 4
+      })
+    );
+
+    expect(ordered.indexOf("zebra")).toBeLessThan(ordered.indexOf("alpha"));
+    expect(ordered).not.toContain("<button");
+  });
+
   it("draws no box of its own, because the section it renders inside draws one", () => {
     expect(markup).not.toContain("border");
     expect(markup).not.toContain("bg-slate-900");

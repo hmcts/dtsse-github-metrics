@@ -7,6 +7,7 @@ import type { Merges } from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import { cohortTeams, servedCohort } from "../org/cohort.ts";
+import { OwnerKind } from "../org/graph.ts";
 import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
@@ -129,11 +130,18 @@ function reportedFamily(family: OpenAlertCount | undefined): Record<string, unkn
  * coverage, so widening it would be a large change to prove for no gain a second field does not give. That
  * `team` is the first owner in the reporting order is a STATED CONVENTION, not a claim that there is only
  * one — silent truncation is the failure mode here, and naming the rule is the fix.
+ *
+ * `owner_kind` is what those names ARE, and it is sent on EVERY ROW rather than only on the person-owned
+ * ones. A team slug and a login are the same shape, so a reader with the names alone cannot tell them apart:
+ * the estate table needs it to mark an individually-owned repository and to not link one to a team page that
+ * no longer exists, since `/teams` lists teams only. Always present, so an absent field means an older
+ * service and nothing about this repository — the rule `ActorRow.labels` follows.
  */
 function repositoryRow(
   configuration: Configuration,
   repository: string,
   teams: string[],
+  ownerKind: OwnerKind,
   state: { fetchedAt: Date; payload: unknown } | undefined,
   merges: Merges,
   production: boolean | undefined
@@ -145,8 +153,9 @@ function repositoryRow(
   const shared = teams.length > 1 ? teams : undefined;
 
   if (state === undefined) {
-    // Nothing collected: the row exists so the estate is complete, and says why it carries no figures.
-    return { repository, team, teams: shared, detail: "nothing has been collected for this repository" };
+    // Nothing collected: the row exists so the estate is complete, and says why it carries no figures. Who
+    // owns it is not a fact about the window, so the row still says what kind of owner that is.
+    return { repository, team, teams: shared, owner_kind: ownerKind, detail: "nothing has been collected for this repository" };
   }
 
   const gate = storedGate(state.payload);
@@ -157,6 +166,7 @@ function repositoryRow(
     repository,
     team,
     teams: shared,
+    owner_kind: ownerKind,
     readiness: assessment?.label,
     merged_pull_requests: merges.pullRequests.length,
     direct_commits: merges.directCommits.length,
@@ -210,7 +220,15 @@ async function buildRepositoryRows(configuration: Configuration, weeks: number, 
   ]);
 
   const rows = cohort.map((entry) =>
-    repositoryRow(configuration, entry.repository, entry.owners, states.get(entry.repository), deserialiseMerges(facts.get(entry.repository)), undefined)
+    repositoryRow(
+      configuration,
+      entry.repository,
+      entry.owners,
+      entry.ownerKind,
+      states.get(entry.repository),
+      deserialiseMerges(facts.get(entry.repository)),
+      undefined
+    )
   );
   return stripAbsent(rows);
 }
@@ -243,7 +261,9 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
     unavailable: rows.filter((row) => row.detail !== undefined).length,
     // Counted off the rows rather than off `configuration.teams`, which no longer lists the estate's teams —
     // it lists the handful somebody has overridden. Includes the `unowned` bucket, because 360 repositories
-    // are reported under it and a team count that omitted it would not add up against the cards below.
+    // are reported under it and a team count that omitted it would not add up against the cards below. It
+    // excludes the individuals for the same reason: it is a count OF THE CARDS, so whatever `cohortTeams`
+    // stops listing this figure has to stop counting.
     teams: cohortTeams(await servedCohort(configuration, reference)).length,
     // Contributor attribution is read from the cached facts, which the contributor rows walk; the estate summary
     // reports the count the rows agree on rather than a second walk that could disagree with them.
@@ -263,17 +283,21 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
  * teams, and both numbers are right.
  */
 export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  const rows = (await repositoryRows(configuration, weeks, reference)) as { team?: string; teams?: string[]; readiness?: string }[];
+  const rows = (await repositoryRows(configuration, weeks, reference)) as { team?: string; teams?: string[]; owner_kind?: string; readiness?: string }[];
   const names = teamDisplayNames(configuration);
   // The teams come from the cohort now, not from the file. The file names only the teams somebody has overridden
   // an owner for, so iterating it would have reported a handful of cards for an estate of 154 teams.
   const teams = cohortTeams(await servedCohort(configuration, reference));
+  // A person-owned row belongs to no card, and is dropped here rather than left to miss every identifier by
+  // luck: nothing stops a login matching a team slug, and one that did would put somebody's repository under
+  // that team's count.
+  const attributable = rows.filter((row) => row.owner_kind !== OwnerKind.Person);
 
   return stripAbsent(
     teams.map((identifier) => {
       // `teams` is absent on the ordinary single-owner row, so fall back to the primary rather than treating
       // its absence as "owned by nobody".
-      const owned = rows.filter((row) => (row.teams ?? (row.team === undefined ? [] : [row.team])).includes(identifier));
+      const owned = attributable.filter((row) => (row.teams ?? (row.team === undefined ? [] : [row.team])).includes(identifier));
       const labels: Record<string, number> = {};
       for (const row of owned) {
         if (row.readiness !== undefined) {

@@ -37,6 +37,7 @@ import { MetricCard } from "@/components/MetricCard";
 import { Navigation } from "@/components/Navigation";
 import { WeekSpanButtons } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
+import { OwnerName } from "@/components/OwnerName";
 import { ProductionBadge } from "@/components/ProductionBadge";
 import { RAGCard, RAGLabel, RAGRow } from "@/components/RAGCard";
 import { Section } from "@/components/Section";
@@ -45,9 +46,10 @@ import { TeamActorsTable } from "@/components/TeamActorsTable";
 import { TeamsList } from "@/components/TeamsList";
 import { PRODUCTION_BADGE, PRODUCTION_HEX, PRODUCTION_LABEL } from "@/lib/production";
 import { RAG_BORDER } from "@/lib/rag";
+import { INDIVIDUAL_LABEL } from "@/lib/rows";
 import { people } from "@/lib/team";
 import { TONE_BORDER, TONE_VALUE, TONES } from "@/lib/tone";
-import type { OverviewSummary, PracticeFinding, ReadinessAssessment } from "@/lib/types";
+import type { OverviewSummary, PracticeFinding, ReadinessAssessment, RepositoryRow } from "@/lib/types";
 
 describe("MetricCard", () => {
   it("states the figure, its name, and what it was measured over", () => {
@@ -288,6 +290,67 @@ describe("ProductionBadge", () => {
     const markup = renderToStaticMarkup(createElement(ProductionBadge, { production: true }));
     expect(markup).not.toContain(PRODUCTION_HEX);
     expect(markup).not.toContain("#");
+  });
+});
+
+/**
+ * Who owns a repository, and the one rule that matters: a person is never a link.
+ *
+ * `/teams` lists teams only from 2026-09-11, so a link to `/teams/<login>` is a link to the not-found page —
+ * on 206 repositories of this estate. Nothing below this component can see that: the row carries a name and a
+ * kind, and whether the name became an `<a>` is only visible in the markup.
+ */
+describe("OwnerName", () => {
+  function ownerOf(row: Pick<RepositoryRow, "team" | "owner_kind">): string {
+    return renderToStaticMarkup(createElement(OwnerName, { row, weeks: 8 }));
+  }
+
+  it("links an owning team, carrying the span onto the drill-through", () => {
+    const markup = ownerOf({ team: "civil-admins", owner_kind: "team" });
+    expect(markup).toContain('href="/teams/civil-admins?weeks=8"');
+    expect(markup).toContain("civil-admins");
+  });
+
+  it("names one person without linking them, because there is no team page to link to", () => {
+    const markup = ownerOf({ team: "a1i-hussain", owner_kind: "person" });
+    expect(markup).toContain("a1i-hussain");
+    expect(markup).not.toContain("<a");
+    expect(markup).not.toContain("/teams/");
+  });
+
+  it("links neither the person to their contributor page: owning is not contributing", () => {
+    // The same human and a different claim. `/contributors/<login>` is about who authored merges in the window,
+    // which owning a repository neither requires nor implies — a link there would assert one from the other.
+    expect(ownerOf({ team: "a1i-hussain", owner_kind: "person" })).not.toContain("/contributors/");
+  });
+
+  it("marks the individual with a word, so the name is not read as a team whose page is missing", () => {
+    expect(ownerOf({ team: "a1i-hussain", owner_kind: "person" })).toContain(INDIVIDUAL_LABEL);
+  });
+
+  it("marks no team and no unowned repository, which are not individuals", () => {
+    // `unowned` keeps its link and its name: 141 repositories are reported under it and it has a card of its
+    // own, so "nobody owns this" is already stated and is a different finding from "one person does".
+    expect(ownerOf({ team: "civil-admins", owner_kind: "team" })).not.toContain(INDIVIDUAL_LABEL);
+    const unowned = ownerOf({ team: "unowned", owner_kind: "none" });
+    expect(unowned).not.toContain(INDIVIDUAL_LABEL);
+    expect(unowned).toContain('href="/teams/unowned?weeks=8"');
+  });
+
+  it("links a row carrying no kind at all, which is what a row without the field used to be", () => {
+    expect(ownerOf({ team: "platform" })).toContain('href="/teams/platform?weeks=8"');
+  });
+
+  it("tones the marker with none of the report’s palettes: owning it alone is not a grade", () => {
+    // Slate, and deliberately neither `rag.ts`'s verdict colours nor `production.ts`'s royal: a repository one
+    // person owns is a fact about the estate's shape and neither better nor worse than a team-owned one.
+    const markup = ownerOf({ team: "a1i-hussain", owner_kind: "person" });
+    expect(markup).toMatch(/bg-slate-800/);
+    expect(markup).not.toMatch(/rag-|royal|emerald|rose|amber|red|green/);
+  });
+
+  it("carries no emoji, as nothing in this vocabulary does", () => {
+    expect(ownerOf({ team: "a1i-hussain", owner_kind: "person" })).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 });
 
