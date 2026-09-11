@@ -45,6 +45,31 @@ export function owners(row: Pick<RepositoryRow, "team" | "teams">): readonly str
 }
 
 /**
+ * The word the estate table marks an individually-owned repository with.
+ *
+ * "Individual" rather than "person" or "no team": it is the reader's word for the finding, which is that this
+ * repository is one person's rather than a team's. `owner_kind` keeps the contract's own vocabulary.
+ */
+export const INDIVIDUAL_LABEL = "Individual";
+
+/**
+ * Whether the row's owner is one person rather than a team.
+ *
+ * ABSENT READS AS A TEAM, which is the one guess in here and it is the safe direction. The field only exists
+ * from 2026-09-11 and `RepositoryRow` documents why it is optional; before it, every owner name was rendered
+ * as a team, and 1,499 of the estate's 1,846 owned repositories are team-owned — so treating an absent value
+ * as an individual would mark most of the estate as somebody's personal project on a deployment that simply
+ * predates the field.
+ *
+ * The unowned bucket is NOT an individual and gets no marker: it has a name of its own (`unowned`) and a card
+ * of its own, so "nobody owns this" is already stated where a reader meets it. What the marker adds is the
+ * thing a name cannot say — that `a1i-hussain` is a person and not a team whose page is missing.
+ */
+export function ownedByIndividual(row: Pick<RepositoryRow, "owner_kind">): boolean {
+  return row.owner_kind === "person";
+}
+
+/**
  * The default order: one team's repositories together, alphabetically within the team.
  *
  * Ordered by the PRIMARY owner alone, which is a stated decision rather than an oversight beside the two functions

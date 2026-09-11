@@ -316,6 +316,20 @@ export type DeltaBasis = "percentage_points" | "percentage_change";
 
 export type AlertFamily = "dependabot" | "code-scanning" | "secret-scanning";
 
+/**
+ * What KIND of thing a repository's owner name is, which the name itself cannot say.
+ *
+ * `domain.OwnerKind` verbatim. A team slug and a GitHub login are the same shape — `civil-admins` and
+ * `a1i-hussain` are both lower-case hyphenated words — so a page holding the name alone has no way to
+ * tell an owning team from one person who happens to hold admin on a repository. It needs to: `/teams`
+ * lists TEAMS, so a `person` name has no page to link to, and `/repositories` marks the repository as
+ * individually owned instead.
+ *
+ * `none` is the unowned bucket, which is a real destination rather than a missing answer — 141
+ * repositories are reported under it and it has a card of its own.
+ */
+export type OwnerKind = "team" | "person" | "none";
+
 export interface TrendThroughput {
   merges: number;
   merged_pull_requests: number;
@@ -447,6 +461,16 @@ export interface RepositoryRow {
   team: string;
   /** Every owning team, present only where a repository has more than one. */
   teams?: string[];
+  /**
+   * What `team` and `teams` name: an owning team, one person, or the unowned bucket.
+   *
+   * OPTIONAL for `ActorRow.labels`' reason and no other — a service of this version always sends it, on
+   * every row, so an absent value means a deployment older than 2026-09-11 rather than a repository
+   * whose ownership nobody could read. That is why every read of it treats absence as `team`: it is the
+   * answer the field had before it existed, and 1,499 of the estate's 1,846 owned repositories are
+   * team-owned, so guessing the other way would mark most of the estate as somebody's personal project.
+   */
+  owner_kind?: OwnerKind;
   readiness?: ReadinessLabel;
   merged_pull_requests?: number;
   direct_commits?: number;
@@ -490,6 +514,8 @@ export interface ContributorRow {
 export interface RepositoryDetail {
   repository: string;
   team: string;
+  /** What `team` names, under `RepositoryRow.owner_kind`'s rule: the header links a team and not a person. */
+  owner_kind?: OwnerKind;
   evidence?: RepositoryPracticeEvidence;
   contributors: ContributorRow[];
   detail?: string;

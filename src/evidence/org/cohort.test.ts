@@ -73,8 +73,14 @@ function policyOf(overrides: Partial<CohortPolicy> = {}): CohortPolicy {
   return { visibilities: new Set(["public"]), includeArchived: false, activeWithinDays: 90, excluded: new Set(), ...overrides };
 }
 
-function entryOf(name: string, owners: string[]): CohortEntry {
-  return { repository: name, owners, archived: false, visibility: "public" };
+/**
+ * A cohort entry owned by a team, since that is the case every ordering fixture is about.
+ *
+ * The kind is a parameter rather than always `team` because it is what decides whether an entry gets a card at
+ * all, and a builder that could only make teams would leave the whole exclusion untestable.
+ */
+function entryOf(name: string, owners: string[], ownerKind: OwnerKind = OwnerKind.Team): CohortEntry {
+  return { repository: name, owners, ownerKind, archived: false, visibility: "public" };
 }
 
 /** A real parsed configuration, so what the reading tests exercise is the policy the schema actually produces. */
@@ -161,7 +167,9 @@ describe("selectCohort", () => {
   it("should report a repository under the team its ownership row names", () => {
     const entries = selectCohort([repository("civil-service")], [ownedBy("civil-service", "civil")], policyOf(), REFERENCE);
 
-    expect(entries).toEqual([{ repository: "civil-service", owners: ["civil"], archived: false, visibility: "public", pushedAt: daysBefore(1) }]);
+    expect(entries).toEqual([
+      { repository: "civil-service", owners: ["civil"], ownerKind: OwnerKind.Team, archived: false, visibility: "public", pushedAt: daysBefore(1) }
+    ]);
   });
 
   it("should carry every owner of a repository several teams hold", () => {
@@ -182,7 +190,49 @@ describe("selectCohort", () => {
     // direction of error nobody checks.
     const entries = selectCohort([repository("collected-since")], [ownedBy("something-else", "civil")], policyOf(), REFERENCE);
 
-    expect(entries).toEqual([{ repository: "collected-since", owners: [UnownedIdentifier], archived: false, visibility: "public", pushedAt: daysBefore(1) }]);
+    expect(entries).toEqual([
+      { repository: "collected-since", owners: [UnownedIdentifier], ownerKind: OwnerKind.None, archived: false, visibility: "public", pushedAt: daysBefore(1) }
+    ]);
+  });
+
+  it("should carry the kind of owner a row names, which the name itself cannot say", () => {
+    // A slug and a login are the same shape. Without the kind, `a1i-hussain` and `civil-admins` are two
+    // strings a report has no way to tell apart, which is how 126 people came to have team cards.
+    const repositories = [repository("team-owned"), repository("person-owned")];
+    const ownership = [ownedBy("team-owned", "civil-admins"), ownedBy("person-owned", "a1i-hussain", OwnerKind.Person)];
+
+    const kinds = new Map(selectCohort(repositories, ownership, policyOf(), REFERENCE).map((entry) => [entry.repository, entry.ownerKind]));
+
+    expect(kinds.get("team-owned")).toBe(OwnerKind.Team);
+    expect(kinds.get("person-owned")).toBe(OwnerKind.Person);
+  });
+
+  it("should read an ownership row whose kind this build does not know as unowned", () => {
+    // The column is `text`, so a kind written by a newer collector can reach an older reader. Reported as a
+    // team it would put whatever the string was on the teams page, which is the failure the kind exists to fix.
+    const ownership = [{ ...ownedBy("odd", "something"), ownerKind: "consortium" as OwnerKind }];
+
+    expect(selectCohort([repository("odd")], ownership, policyOf(), REFERENCE)[0]?.ownerKind).toBe(OwnerKind.None);
+  });
+
+  it("should report a repository with a team row and a person row under the team alone", () => {
+    // The ladder reaches a person only once no team rung answered, so rows of both kinds are two collections'
+    // answers overlapping rather than co-owners. Kept together, the login would be listed as a second owning
+    // team — the exact thing the kind is carried to prevent.
+    const ownership = [ownedBy("both", "a1i-hussain", OwnerKind.Person), ownedBy("both", "civil-admins")];
+
+    const entry = selectCohort([repository("both")], ownership, policyOf(), REFERENCE)[0];
+
+    expect(entry?.owners).toEqual(["civil-admins"]);
+    expect(entry?.ownerKind).toBe(OwnerKind.Team);
+  });
+
+  it("should keep every person where several people own one repository", () => {
+    // `direct-collaborator-admin` yields one owner per admin collaborator, so several people is a real answer
+    // and not a kind collision — the precedence reduces ACROSS kinds and must not reduce within one.
+    const ownership = [ownedBy("shared", "zoe", OwnerKind.Person), ownedBy("shared", "amir", OwnerKind.Person)];
+
+    expect(selectCohort([repository("shared")], ownership, policyOf(), REFERENCE)[0]?.owners).toEqual(["amir", "zoe"]);
   });
 
   it("should collapse two ownership rows naming the same owner into one", () => {
@@ -353,18 +403,69 @@ describe("cohortOwners", () => {
 });
 
 describe("cohortTeams", () => {
-  it("should list the teams alphabetically with the unowned bucket last", () => {
-    // `unowned` is not a team, and a reader scanning team cards wants the real ones first — so it sorts last
-    // rather than under `u`, which is where `localeCompare` alone would have put it.
-    const entries = [entryOf("one", ["zebra"]), entryOf("two", [UnownedIdentifier]), entryOf("three", ["alpha", "zebra"])];
+  it("should list the teams with the largest holding first, and the unowned bucket last", () => {
+    // THE FIXTURE HAS TO CROSS THE TWO ORDERS. `zebra` sorts last alphabetically and holds most, so an
+    // alphabetical list and a list by holding disagree about it — one where the largest team was named `alpha`
+    // would pass under either rule and prove nothing.
+    //
+    // `unowned` sorts last whatever it holds, and here it holds more than either team, which is what separates
+    // "a bucket last" from "the smallest last".
+    const entries = [
+      entryOf("one", ["alpha"]),
+      entryOf("two", [UnownedIdentifier], OwnerKind.None),
+      entryOf("three", [UnownedIdentifier], OwnerKind.None),
+      entryOf("four", [UnownedIdentifier], OwnerKind.None),
+      entryOf("five", ["zebra"]),
+      entryOf("six", ["zebra"])
+    ];
 
-    expect(cohortTeams(entries)).toEqual(["alpha", "zebra", UnownedIdentifier]);
+    expect(cohortTeams(entries)).toEqual(["zebra", "alpha", UnownedIdentifier]);
+  });
+
+  it("should break a tie on holding alphabetically, so two runs over one cohort are diffable", () => {
+    const entries = [entryOf("one", ["zebra"]), entryOf("two", ["alpha"])];
+
+    expect(cohortTeams(entries)).toEqual(["alpha", "zebra"]);
+  });
+
+  it("should count a shared repository for both its teams, as the cards do", () => {
+    // A card's figure comes from `teamRows` and its position from here, and both fold one repository to every
+    // owner it names. Counted for the primary alone, `zebra` would hold one and sit below `alpha`.
+    const entries = [entryOf("one", ["alpha", "zebra"]), entryOf("two", ["zebra"])];
+
+    expect(cohortTeams(entries)).toEqual(["zebra", "alpha"]);
   });
 
   it("should name each team once however many repositories it owns", () => {
     const entries = [entryOf("one", ["civil"]), entryOf("two", ["civil"])];
 
     expect(cohortTeams(entries)).toEqual(["civil"]);
+  });
+
+  it("should list no card for a repository one person owns", () => {
+    // THE 126 CARDS THAT WERE PEOPLE. `a1i-hussain` is one person holding admin on one repository as a direct
+    // collaborator, and it had a card headed `team` and a page of its own.
+    const entries = [entryOf("theirs", ["a1i-hussain"], OwnerKind.Person), entryOf("ours", ["civil-admins"])];
+
+    expect(cohortTeams(entries)).toEqual(["civil-admins"]);
+  });
+
+  it("should still list the unowned bucket, which is a destination and not a person", () => {
+    // 141 repositories are reported under it, so dropping it with the individuals would silently shrink what
+    // the cards account for. "Nobody owns this" and "one person owns this" are different findings.
+    const entries = [entryOf("orphan", [UnownedIdentifier], OwnerKind.None), entryOf("theirs", ["someone"], OwnerKind.Person)];
+
+    expect(cohortTeams(entries)).toEqual([UnownedIdentifier]);
+  });
+
+  it("should count none of a person's repositories for a team whose slug that login happens to equal", () => {
+    // A login can equal a team slug — nothing in GitHub stops it — so a person-owned repository has to be
+    // excluded by KIND rather than by the identifier failing to match any team's name.
+    const entries = [entryOf("ours", ["zzz-ambiguous"]), entryOf("theirs", ["zzz-ambiguous"], OwnerKind.Person), entryOf("mine", ["civil-admins"])];
+
+    // ONE REPOSITORY EACH IS THE ASSERTION. Both teams tie on holding, so the alphabetical break decides and
+    // `civil-admins` leads. Counted, the person's repository would give `zzz-ambiguous` two and put it first.
+    expect(cohortTeams(entries)).toEqual(["civil-admins", "zzz-ambiguous"]);
   });
 });
 

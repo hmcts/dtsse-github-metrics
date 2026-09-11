@@ -114,6 +114,21 @@ Three filters keep a handle from being read as an owner, and each answers a ques
 exclusion removes is named in the run's output beside the figure that removed it, because a filter quietly
 turning a well-owned repository into an `unowned` row is the one thing here that should never be silent.
 
+**A person is an owner, and not a team.** Two of those rungs resolve to an individual rather than a team, and on
+this estate they account for 206 repositories across 126 people. `/teams` therefore lists **teams only** — it
+was drawing a card and a page for every one of those logins, so 126 of its 280 cards were individuals — and
+`/repositories` marks a person-owned row **Individual** instead, with the owner's name left unlinked because
+there is no team page for them. The `unowned` bucket keeps its card: "nobody owns this" and "one person does"
+are different findings, and the 141 repositories under the first are accounted for there.
+
+No membership threshold does that job, and one was tried and rejected: `cdm-tl` has 2 members and 38
+repositories, `opal-review-admins` 2 and 22, and 15 teams have no membership row at all, so a size rule would
+drop real estates for a gap in the data. What separates a team from a person is the rung's own answer.
+
+The team cards are ordered by **how many repositories each team holds**, largest first, so a reader opening 154
+of them meets the largest estates rather than whichever slug begins with `a`. That is not a ranking of teams:
+the count is what a team is on the hook for, and no readiness label or score takes part in the order.
+
 The graph is change-versioned rather than overwritten, because GitHub serves only the present — nobody can ask
 it who was in a team last June. A run that sees a fact unchanged moves `last_observed_at` and writes no row.
 

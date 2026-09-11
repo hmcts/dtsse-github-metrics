@@ -6,6 +6,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
+import { OwnerName } from "@/components/OwnerName";
 import { ProductionBadge } from "@/components/ProductionBadge";
 import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
@@ -196,9 +197,7 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
               {ordered.map((row) => (
                 <tr key={row.repository} className="hover:bg-slate-800/30">
                   <td className={clsx("py-2 pl-3 pr-3", borderClass(row.readiness))}>
-                    <Link href={withWeeks(`/teams/${encodeURIComponent(row.team)}`, weeks)} className="text-indigo-400 hover:text-indigo-300">
-                      {row.team}
-                    </Link>
+                    <OwnerName row={row} weeks={weeks} />
                   </td>
                   <td className="py-2 pr-3">
                     <Link

@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import RepositoryPage from "@/app/repositories/[repository]/page";
 import { RepositoryUnknownError } from "@/lib/not-found";
 import { PRODUCTION_BADGE } from "@/lib/production";
+import { INDIVIDUAL_LABEL } from "@/lib/rows";
 import type { ContributorRow, PracticeFinding, RepositoryDetail, RepositoryPracticeEvidence, RepositoryTrend, TrendWindow, WindowOptions } from "@/lib/types";
 
 const api = vi.hoisted(() => ({ getWindows: vi.fn(), getRepository: vi.fn(), getTrend: vi.fn() }));
@@ -320,6 +321,40 @@ describe("the repository header’s production badge", () => {
  * The rule is that a configured repository keeps its page either way: a 404 for one would read as a
  * repository nobody has heard of, when what happened is that the caches do not cover this span.
  */
+/**
+ * The owner in the header, which follows the estate table's rule rather than its own.
+ *
+ * A repository page and a repository row disagreeing about whether its owner is a link is exactly the drift the
+ * shared `OwnerName` exists to stop, and only a page-level render can see that this page uses it.
+ */
+describe("the repository header’s owner", () => {
+  it("links an owning team, carrying the span", async () => {
+    expect(await render()).toContain('href="/teams/platform?weeks=8"');
+  });
+
+  it("names one person and links no team page for them, there being none", async () => {
+    const markup = await renderDetail({
+      repository: "api",
+      team: "a1i-hussain",
+      owner_kind: "person",
+      evidence: evidence(),
+      contributors: []
+    });
+
+    expect(markup).toContain("a1i-hussain");
+    expect(markup).toContain(INDIVIDUAL_LABEL);
+    expect(markup).not.toContain("/teams/a1i-hussain");
+  });
+
+  it("names the person on a span with no evidence too, ownership not being a fact about the window", async () => {
+    const markup = await renderDetail({ repository: "api", team: "a1i-hussain", owner_kind: "person", contributors: [] });
+
+    expect(markup).toContain("This span holds no evidence for api.");
+    expect(markup).toContain(INDIVIDUAL_LABEL);
+    expect(markup).not.toContain("/teams/a1i-hussain");
+  });
+});
+
 describe("a repository the span cannot be reported for", () => {
   /** The detail the service sends for a repository it could not report: no evidence, and a reason. */
   function unavailable(detail?: string): RepositoryDetail {

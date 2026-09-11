@@ -60,6 +60,24 @@ describe("api.ts", () => {
     expect(code).not.toContain("row.team === team");
   });
 
+  it("should refuse a team page for a name no card was drawn for, which is now every person", async () => {
+    // `/teams/a1i-hussain` was a page headed `team` for one person holding admin on one repository. It refuses
+    // by the existing rule rather than a new one — `teamRows` lists teams only, so the lookup misses — and this
+    // asserts the lookup is still the source of the refusal rather than something that could be "fixed".
+    const code = (await source()).replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    expect(code).toContain("rows.find((candidate) => candidate.team === team)");
+    expect(code).toContain("throw new RepositoryUnknownError");
+  });
+
+  it("should exclude a person-owned repository from a team's list, however its name reads", async () => {
+    // Nothing stops a login equalling a team slug, and one that did would list somebody's repository under that
+    // team beside a count `teamRows` never included it in.
+    const code = (await source()).replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    expect(code).toContain("!ownedByIndividual(row)");
+  });
+
   it("should read ownership by the same fold the report layer counts it by", async () => {
     // The count on /teams and the list on /teams/<team> come from two files, and the only thing keeping them from
     // drifting is that both fold an absent `teams` to the primary owner rather than to "owned by nobody".

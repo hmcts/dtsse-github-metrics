@@ -10,11 +10,17 @@ import { span } from "@/lib/format";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
- * Every configured team at one window span, with the readiness labels its repositories carry.
+ * Every team at one window span, with the readiness labels its repositories carry.
  *
  * A route of its own from 2026-09-02, where it was a section of the overview before. The cards state
  * label COUNTS per team and stop there: there is no combined team label, no team score and no
  * comparison of one team against another anywhere here (architecture.md, "Scope boundaries").
+ *
+ * TEAMS ONLY, from 2026-09-11. The estate attributes a repository to one person where no team rung
+ * answered, and each of those logins was drawing a card: 126 of 280 were individuals, so nearly half
+ * of a page headed "Teams" was people. They are not listed here at all now, and the ownership is not
+ * lost — `/repositories` marks a person-owned row, which is where a reader meets the repository the
+ * fact is about.
  *
  * Three requests where the overview made five — `/windows`, `/overview` for the header, and `/teams`
  * for the cards — all against the one bundle the service already holds for this span.
@@ -32,11 +38,11 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Promi
 
       <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
-      <Section heading="Teams" detail={span(overview.starts_at, overview.ends_at)}>
+      <Section heading="Teams" detail={`${span(overview.starts_at, overview.ends_at)}, most repositories first`}>
         {teams.length === 0 ? (
           <EmptyState
-            message="No team is configured for this organisation."
-            detail="The service refuses a configuration without teams, so this is an empty team list."
+            message="No team owns a repository in this organisation."
+            detail="Ownership is attributed from the collected graph, so this is an uncollected graph or an estate whose repositories are attributed to individuals and to nobody. The repositories list says which."
           />
         ) : (
           <TeamsList rows={teams} weeks={weeks} />

@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
-import { forgetBuiltRows, repositoryRows } from "../../src/evidence/report/repositories.ts";
+import { forgetBuiltRows, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 
@@ -29,6 +29,23 @@ cohort:
 
 const WINDOW = { startsAt: new Date(Date.UTC(2026, 7, 1)), endsAt: new Date(Date.UTC(2026, 8, 1)) };
 
+/** One owner of one repository, as the ladder resolved it: a team slug, a login, or the unowned negative. */
+async function graphOwnership(repository: string, ownerKind: string, owner: string, rung: string): Promise<void> {
+  await prisma.repositoryOwnership.create({
+    data: {
+      organization: ORGANIZATION,
+      repository,
+      ownerKind,
+      owner,
+      rung,
+      payload: {},
+      observedAt: new Date(Date.UTC(2026, 7, 15)),
+      lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+      digest: `${repository}-${ownerKind}-${owner}-digest`
+    }
+  });
+}
+
 async function graphRepository(repository: string, pushedAt: Date): Promise<void> {
   await prisma.orgRepository.create({
     data: {
@@ -45,19 +62,25 @@ async function graphRepository(repository: string, pushedAt: Date): Promise<void
       digest: `${repository}-digest`
     }
   });
-  await prisma.repositoryOwnership.create({
+  await graphOwnership(repository, "team", "dtsse", "teams-api-admin");
+}
+
+/** A repository one person owns, which is how 242 rows of AAT's ownership table read. */
+async function personOwnedRepository(repository: string, login: string): Promise<void> {
+  await prisma.orgRepository.create({
     data: {
       organization: ORGANIZATION,
       repository,
-      ownerKind: "team",
-      owner: "dtsse",
-      rung: "teams-api-admin",
-      payload: {},
+      archived: false,
+      visibility: "PUBLIC",
+      pushedAt: new Date(Date.UTC(2026, 7, 20)),
+      payload: { defaultBranch: "main", isFork: false },
       observedAt: new Date(Date.UTC(2026, 7, 15)),
       lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
-      digest: `${repository}-owner-digest`
+      digest: `${repository}-digest`
     }
   });
+  await graphOwnership(repository, "person", login, "direct-collaborator-admin");
 }
 
 async function mergedPullRequest(repository: string, identifier: bigint, mergedAt: Date): Promise<void> {
@@ -217,6 +240,143 @@ describe("repositoryRows", () => {
 
     const row = await prisma.sourceCoverage.findFirst({ where: { organization: ORGANIZATION, repository: "alpha" } });
     expect(row?.accessedAt.getTime()).toBeGreaterThan(stale.getTime());
+  });
+});
+
+/**
+ * Who each row says owns it, and which of those owners gets a team card.
+ *
+ * The seam this covers is the one the two changes sit on: `owner_kind` has to reach the row for
+ * `/repositories` to mark an individually-owned repository, and `teamRows` has to stop drawing a card for
+ * every login — 126 of AAT's 280 cards were people. Neither is visible from `cohort.test.ts`, which stubs the
+ * store, nor from a component test, which is handed rows somebody wrote by hand.
+ */
+describe("the owner a row is reported under", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  it("should say what kind of thing owns each repository, since a slug and a login look alike", async () => {
+    await graphRepository("team-owned", new Date(Date.UTC(2026, 7, 20)));
+    await personOwnedRepository("person-owned", "a1i-hussain");
+    // Collected, so both rows come off the REPORTABLE branch. The unavailable one builds its own object and is
+    // asserted separately below; without state here, this case would only ever exercise that one.
+    await prisma.repositoryState.createMany({
+      data: [
+        { organization: ORGANIZATION, repository: "team-owned", fetchedAt: new Date(), payload: { defaultBranch: "main" } },
+        { organization: ORGANIZATION, repository: "person-owned", fetchedAt: new Date(), payload: { defaultBranch: "main" } }
+      ]
+    });
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as {
+      repository: string;
+      team: string;
+      owner_kind?: string;
+      merged_pull_requests?: number;
+    }[];
+
+    // Both rows carry counts, which is what says they came off the reportable branch rather than the one above it.
+    expect(rows.map((row) => row.merged_pull_requests)).toEqual([0, 0]);
+
+    const owners = new Map(rows.map((row) => [row.repository, row]));
+    expect(owners.get("team-owned")).toMatchObject({ team: "dtsse", owner_kind: "team" });
+    expect(owners.get("person-owned")).toMatchObject({ team: "a1i-hussain", owner_kind: "person" });
+  });
+
+  it("should say the kind on a repository nothing has been collected for, ownership not being a window fact", async () => {
+    // The unavailable branch builds its own row, so the field has to be on both of them: a person-owned
+    // repository this span cannot report is still owned by that person, and a row without the kind would be
+    // linked to a team page for them.
+    await personOwnedRepository("person-owned", "a1i-hussain");
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as { repository: string; owner_kind?: string; detail?: string }[];
+
+    expect(rows[0]?.detail).toBe("nothing has been collected for this repository");
+    expect(rows[0]?.owner_kind).toBe("person");
+  });
+
+  it("should report a repository with no ownership row at all as unowned rather than as somebody's", async () => {
+    await prisma.orgRepository.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "collected-since",
+        archived: false,
+        visibility: "PUBLIC",
+        pushedAt: new Date(Date.UTC(2026, 7, 20)),
+        payload: { defaultBranch: "main" },
+        observedAt: new Date(Date.UTC(2026, 7, 15)),
+        lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+        digest: "collected-since-digest"
+      }
+    });
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as { team: string; owner_kind?: string }[];
+
+    expect(rows[0]).toMatchObject({ team: "unowned", owner_kind: "none" });
+  });
+
+  it("should draw a card for a team and none for a person, whatever either of them owns", async () => {
+    // THE 126 CARDS THAT WERE PEOPLE. `/teams/a1i-hussain` was a page headed `team` for one person who holds
+    // admin on one repository as a direct collaborator.
+    await graphRepository("team-owned", new Date(Date.UTC(2026, 7, 20)));
+    await personOwnedRepository("person-owned", "a1i-hussain");
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { team: string }[];
+
+    expect(cards.map((card) => card.team)).toEqual(["dtsse"]);
+  });
+
+  it("should still draw the unowned card, which is a bucket and not a person", async () => {
+    // 141 repositories are reported under it. Dropped alongside the individuals, the cards would stop
+    // accounting for them and the estate's team count would not add up against the page.
+    await prisma.orgRepository.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "orphan",
+        archived: false,
+        visibility: "PUBLIC",
+        pushedAt: new Date(Date.UTC(2026, 7, 20)),
+        payload: { defaultBranch: "main" },
+        observedAt: new Date(Date.UTC(2026, 7, 15)),
+        lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+        digest: "orphan-digest"
+      }
+    });
+    await graphOwnership("orphan", "none", "", "unowned");
+    await personOwnedRepository("person-owned", "a1i-hussain");
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { team: string; repositories: number }[];
+
+    expect(cards).toMatchObject([{ team: "unowned", repositories: 1 }]);
+  });
+
+  it("should count no person-owned repository for a team whose slug that login happens to equal", async () => {
+    // Nothing in GitHub stops a login equalling a team slug, so the card's count has to exclude a
+    // person-owned row by KIND rather than by the identifier failing to match.
+    await graphRepository("theirs", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryOwnership.deleteMany({ where: { repository: "theirs" } });
+    await graphOwnership("theirs", "person", "dtsse", "direct-collaborator-admin");
+    await graphRepository("ours", new Date(Date.UTC(2026, 7, 20)));
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { team: string; repositories: number }[];
+
+    expect(cards).toMatchObject([{ team: "dtsse", repositories: 1 }]);
+  });
+
+  it("should order the cards by holding, largest first, so 154 of them open on the estates that matter", async () => {
+    await graphRepository("one", new Date(Date.UTC(2026, 7, 20)));
+    await graphRepository("two", new Date(Date.UTC(2026, 7, 20)));
+    // `zzz-small` sorts LAST alphabetically and holds more, which is the only fixture that can tell the two
+    // orders apart — a larger team named `a...` would come first under either rule.
+    await graphRepository("three", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryOwnership.deleteMany({ where: { repository: { in: ["one", "two"] } } });
+    await graphOwnership("one", "team", "zzz-large", "teams-api-admin");
+    await graphOwnership("two", "team", "zzz-large", "teams-api-admin");
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { team: string; repositories: number }[];
+
+    expect(cards).toMatchObject([
+      { team: "zzz-large", repositories: 2 },
+      { team: "dtsse", repositories: 1 }
+    ]);
   });
 });
 

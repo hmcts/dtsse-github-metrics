@@ -62,12 +62,31 @@ export interface CohortPolicy {
 /** One repository in the cohort, with the owners it is reported under. */
 export interface CohortEntry {
   repository: string;
-  /** Every owning team, in reporting order. Exactly `[UnownedIdentifier]` where nothing owns it. */
+  /** Every owning identifier, in reporting order. Exactly `[UnownedIdentifier]` where nothing owns it. */
   owners: string[];
+  /**
+   * What KIND of thing `owners` names, which the strings themselves cannot say.
+   *
+   * A team slug and a GitHub login are both lower-case hyphenated words, so a report reading `owners` alone
+   * cannot tell `civil-admins` from `a1i-hussain`. It has to: the teams page lists teams and 126 of the 280
+   * cards it drew were individuals, and the repositories list marks an individually-owned repository rather
+   * than pretending a login is a team.
+   */
+  ownerKind: OwnerKind;
   archived: boolean;
   visibility: string;
   pushedAt?: Date;
 }
+
+/**
+ * The owner kinds in precedence order, which decides what one repository is reported under.
+ *
+ * The ladder in `ownership.ts` reaches a person only once NO TEAM RUNG ANSWERED, so a repository holding
+ * rows of both kinds is not a repository owned by a team and a person — it is two collections' answers
+ * caught in the same live window. Measured on this estate that never happens; the precedence is stated
+ * anyway, because the alternative is a login reported as a co-owning team.
+ */
+const OwnerKindPrecedence: readonly OwnerKind[] = [OwnerKind.Team, OwnerKind.Person, OwnerKind.None];
 
 /** Raised when the graph has nothing in it, which is a different problem from an estate of zero. */
 export class CohortUncollectedError extends Error {
@@ -86,6 +105,18 @@ export function cohortPolicy(configuration: Configuration): CohortPolicy {
     ...(cohort.active_within_days === null ? {} : { activeWithinDays: cohort.active_within_days }),
     excluded: new Set(configuration.excluded_repositories)
   };
+}
+
+/**
+ * The kind a stored ownership row names, read from the `text` column it is kept in.
+ *
+ * A kind the column holds but this build does not know reads as `none`, which puts the repository in the
+ * unowned bucket. That is the conservative direction: an unrecognised kind is not evidence of a team, and
+ * reporting it as one would put whatever the string was on the teams page — which is the failure this whole
+ * change is about.
+ */
+function readOwnerKind(stored: string): OwnerKind {
+  return OwnerKindPrecedence.find((kind) => kind === stored) ?? OwnerKind.None;
 }
 
 /**
@@ -121,16 +152,25 @@ export function selectCohort(
   policy: CohortPolicy,
   reference: Date
 ): CohortEntry[] {
-  const owners = new Map<string, string[]>();
+  const owners = new Map<string, { kind: OwnerKind; identifiers: string[] }>();
   for (const row of ownership) {
     // A `none` row is the ladder's remembered negative, and it is what puts the repository in the unowned
     // bucket rather than leaving it with an empty owner list that later code would have to interpret.
-    const identifier = row.ownerKind === OwnerKind.None ? UnownedIdentifier : row.owner;
+    const kind = readOwnerKind(row.ownerKind);
+    const identifier = kind === OwnerKind.None ? UnownedIdentifier : row.owner;
     const existing = owners.get(row.repository);
     if (existing === undefined) {
-      owners.set(row.repository, [identifier]);
-    } else if (!existing.includes(identifier)) {
-      existing.push(identifier);
+      owners.set(row.repository, { kind, identifiers: [identifier] });
+      continue;
+    }
+    // The kinds are reduced by precedence rather than joined, so a repository with a team row and a person row
+    // is reported as the team's and the person is dropped from it — not listed beside the team as if the two
+    // were peers. Where the kinds agree the rows are the several owners of one kind the ladder does produce.
+    const rank = OwnerKindPrecedence.indexOf(kind) - OwnerKindPrecedence.indexOf(existing.kind);
+    if (rank < 0) {
+      owners.set(row.repository, { kind, identifiers: [identifier] });
+    } else if (rank === 0 && !existing.identifiers.includes(identifier)) {
+      existing.identifiers.push(identifier);
     }
   }
 
@@ -152,16 +192,20 @@ export function selectCohort(
     return policy.activeWithinDays === undefined || pushedWithin(repository.pushedAt, policy.activeWithinDays, reference);
   });
 
-  const entries = selected.map((repository) => ({
-    repository: repository.repository,
+  const entries = selected.map((repository) => {
     // A selected repository with no ownership row at all is unowned, not ownerless. The ladder writes a `none`
     // row for every repository it walks, so this is the case where the two tables disagree — a repository
     // collected after the last attribution — and it belongs in the estate rather than being dropped from it.
-    owners: (owners.get(repository.repository) ?? [UnownedIdentifier]).slice().sort((left, right) => left.localeCompare(right)),
-    archived: repository.archived,
-    visibility: repository.visibility,
-    ...(repository.pushedAt === undefined ? {} : { pushedAt: repository.pushedAt })
-  }));
+    const owned = owners.get(repository.repository) ?? { kind: OwnerKind.None, identifiers: [UnownedIdentifier] };
+    return {
+      repository: repository.repository,
+      owners: owned.identifiers.slice().sort((left, right) => left.localeCompare(right)),
+      ownerKind: owned.kind,
+      archived: repository.archived,
+      visibility: repository.visibility,
+      ...(repository.pushedAt === undefined ? {} : { pushedAt: repository.pushedAt })
+    };
+  });
 
   return entries.sort((left, right) => {
     // `owners` is never empty by construction, but the fallback is stated rather than asserted away: if it ever
@@ -246,22 +290,44 @@ export async function servedCohort(configuration: Configuration, reference = new
 }
 
 /**
- * Every team the cohort is reported under, in reporting order, `unowned` last.
+ * Every TEAM the cohort is reported under, largest holding first, `unowned` last.
  *
  * Derived from the cohort rather than from the file, which no longer lists teams. `unowned` sorts last because
  * it is a bucket rather than a team, and a reader scanning team cards wants the real ones first.
+ *
+ * A PERSON IS NOT A TEAM AND GETS NO CARD. Measured on AAT, 126 of the 280 cards this drew were individuals —
+ * `/teams/a1i-hussain` was one person who holds admin on one repository as a direct collaborator — so the
+ * teams page was 45% people and the page's own heading was wrong about what it listed. That hides real
+ * ownership (23 individuals hold three or more repositories), which is why `/repositories` marks a
+ * person-owned repository instead: the finding moves to the list of the things it is a fact about.
+ *
+ * NO SIZE THRESHOLD DOES THIS JOB, and one was considered and rejected. Filtering teams by membership would
+ * drop `cdm-tl` (2 members, 38 repositories), `opal-review-admins` (2 and 22) and `cc_admins` (1 and 8), and
+ * would drop the 15 teams with no membership row at all for a gap in the data rather than a judgement. What
+ * separates a team from a person is the kind the ladder resolved, which is now carried on the entry.
+ *
+ * ORDERED BY HOLDING, WHICH IS NOT A RANKING OF TEAMS. The count is how much of the estate a team is on the
+ * hook for, and it is the one figure on a card that is not a grade — no readiness label, no score and no
+ * quality of any kind takes part in this order, which is the boundary the team cards were built to keep. What
+ * it buys is that a reader opening 154 cards sees the teams whose estates matter first instead of whichever
+ * slug begins with `a`. Ties break alphabetically so two runs over one cohort are diffable.
  */
 export function cohortTeams(entries: readonly CohortEntry[]): string[] {
-  const teams = new Set<string>();
+  // Counted here rather than left to `teamRows`, which counts the same repositories off the rows it built:
+  // both fold one repository to every owner it names, so a card's figure and its position cannot disagree.
+  const holdings = new Map<string, number>();
   for (const entry of entries) {
+    if (entry.ownerKind === OwnerKind.Person) {
+      continue;
+    }
     for (const owner of entry.owners) {
-      teams.add(owner);
+      holdings.set(owner, (holdings.get(owner) ?? 0) + 1);
     }
   }
-  return [...teams].sort((left, right) => {
+  return [...holdings.keys()].sort((left, right) => {
     if (left === UnownedIdentifier || right === UnownedIdentifier) {
       return left === UnownedIdentifier ? 1 : -1;
     }
-    return left.localeCompare(right);
+    return (holdings.get(right) ?? 0) - (holdings.get(left) ?? 0) || left.localeCompare(right);
   });
 }
