@@ -1,5 +1,6 @@
 import type { CoverageKey, SourceCoverage } from "../domain/coverage.ts";
 import { recordSourceCoverage, touchOrganisationCoverage, touchSourceCoverage } from "./coverage.ts";
+import { Prisma } from "./generated/client.js";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
@@ -138,13 +139,49 @@ export interface DirectCommitFactRow {
 }
 
 /**
- * Every cohort repository's cached facts for one window, in FOUR queries rather than five per repository.
+ * The payload fields nothing that reports from the cache ever reads.
+ *
+ * A pull request's `body` and `title` are collected because two neutral metrics grade them —
+ * `description-quality` and `traceability-reference` — but neither enters the readiness label and neither is
+ * summarised anywhere the dashboard reads. They are also, measured on AAT, TWO THIRDS OF THE ESTATE'S PAYLOAD:
+ * at 26 weeks the pull-request facts serialise to 93 MB, of which `body` alone is 61 MB and `title` 1.2 MB. The
+ * report was transferring, parsing and materialising 62 MB per window to reach nothing.
+ *
+ * Dropped in POSTGRES rather than after the rows arrive, which is the whole point: a projection applied in
+ * JavaScript would already have paid the transfer and the JSON parse this exists to avoid.
+ *
+ * A field is only safe to drop here while nothing on the serving path reads it. Adding a report figure derived
+ * from a description means removing it from this list, and `deserialiseMerges` will then revive it as before —
+ * the payload is a `jsonb` document, so a narrowed projection is a smaller document and not a different shape.
+ */
+const UNREAD_PULL_REQUEST_FIELDS = ["body", "title"] as const;
+
+/** One `jsonb` payload column with the unread fields subtracted, as a SQL fragment. */
+function narrowedPayload(): Prisma.Sql {
+  return UNREAD_PULL_REQUEST_FIELDS.reduce<Prisma.Sql>((expression, field) => Prisma.sql`${expression} - ${field}`, Prisma.sql`payload`);
+}
+
+/** One repository's cached facts, as the reader groups them. */
+interface RepositoryFacts {
+  pullRequests: unknown[];
+  directCommits: unknown[];
+}
+
+/**
+ * Every cohort repository's cached facts for one window, in TWO queries rather than five per repository, and
+ * WITHOUT the two thirds of each payload nothing reads.
  *
  * This exists because the per-repository path made a page render unusable. `loadCachedMerges` costs five
  * database calls per repository — a state lookup, two fact queries, and two `touchSourceCoverage` WRITES — and
- * `repositoryRows` walked it sequentially while `overviewSummary` walked the whole thing again. Measured against
- * AAT at 1,235 repositories: 15.39 ms per repository, so about 38 seconds of database time per render, of which
- * the two writes are most. Rendering took 20 to 28 seconds.
+ * `repositoryRows` walked it sequentially while `overviewSummary` walked the whole thing again. Measured inside
+ * the AAT pod at 1,233 repositories, a four-week `/repositories` render cost 7.89 s of CPU that way; batching the
+ * reads took it to 1.15 s, and narrowing the projection to what the report reads took it to 0.71 s. At 26 weeks
+ * the same three figures are 10.49 s, 2.91 s and 1.50 s.
+ *
+ * `$queryRaw` rather than `findMany`, and that is the projection's doing rather than a preference: Prisma has no
+ * way to select PART of a `jsonb` column, so `select: { payload: true }` is all-or-nothing and the 62 MB of
+ * `body` would come with it. The `where` and the `orderBy` are the same predicates the typed query used, against
+ * the same `(organization, repository, query_hash, merged_at)` index.
  *
  * The two `accessedAt` stamps collapse into one `updateMany` per source across the whole organisation, which is
  * sound because the column feeds exactly one decision — `prune` deleting series unused since a cutoff. Stamping
@@ -158,22 +195,26 @@ export async function loadCachedFactsForOrganisation(
   queryHashes: { pullRequests: string; directCommits: string },
   startsAt: Date,
   endsAt: Date
-): Promise<Map<string, { pullRequests: unknown[]; directCommits: unknown[] }>> {
+): Promise<Map<string, RepositoryFacts>> {
   try {
     const [pullRequests, directCommits] = await Promise.all([
-      prisma.pullRequestFact.findMany({
-        where: { organization, queryHash: queryHashes.pullRequests, mergedAt: { gte: startsAt, lt: endsAt } },
-        orderBy: [{ mergedAt: "asc" }, { identifier: "asc" }],
-        select: { repository: true, payload: true }
-      }),
-      prisma.directCommitFact.findMany({
-        where: { organization, queryHash: queryHashes.directCommits, committedAt: { gte: startsAt, lt: endsAt } },
-        orderBy: [{ committedAt: "asc" }, { sha: "asc" }],
-        select: { repository: true, payload: true }
-      })
+      prisma.$queryRaw<{ repository: string; payload: unknown }[]>`
+        SELECT repository, ${narrowedPayload()} AS payload
+        FROM pull_request_facts
+        WHERE organization = ${organization} AND query_hash = ${queryHashes.pullRequests}
+          AND merged_at >= ${startsAt} AND merged_at < ${endsAt}
+        ORDER BY merged_at ASC, identifier ASC
+      `,
+      prisma.$queryRaw<{ repository: string; payload: unknown }[]>`
+        SELECT repository, payload
+        FROM direct_commit_facts
+        WHERE organization = ${organization} AND query_hash = ${queryHashes.directCommits}
+          AND committed_at >= ${startsAt} AND committed_at < ${endsAt}
+        ORDER BY committed_at ASC, sha ASC
+      `
     ]);
 
-    const byRepository = new Map<string, { pullRequests: unknown[]; directCommits: unknown[] }>();
+    const byRepository = new Map<string, RepositoryFacts>();
     const forRepository = (repository: string) => {
       const existing = byRepository.get(repository);
       if (existing !== undefined) {
