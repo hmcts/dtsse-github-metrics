@@ -762,3 +762,107 @@ describe("the team rows", () => {
     expect(cards[0]?.practice).toMatchObject({ gates_measured: 0, checks_measured: 0, unreviewed_measured: 0 });
   });
 });
+
+/**
+ * The two timing medians, which are the "time to review merge requests" half of what moved to the team page.
+ *
+ * Read off `BehaviourMetric.summary`, so the page and the assessment compare the same number at the same
+ * percentile. What these cases are mostly about is the payload shape: the metrics reach into `reviews` without a
+ * guard, and the cache does not promise every stored row has one.
+ */
+describe("the review timings", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  /** One merged pull request with a review, which is what a timing can actually be measured from. */
+  async function reviewedMerge(repository: string, options: { readyAt: Date; reviewedAt: Date; mergedAt: Date }): Promise<void> {
+    await prisma.pullRequestFact.create({
+      data: {
+        organization: ORGANIZATION,
+        repository,
+        queryHash: PULL_REQUESTS,
+        identifier: 501n,
+        mergedAt: options.mergedAt,
+        payload: {
+          identifier: 501,
+          number: 7,
+          createdAt: options.readyAt.toISOString(),
+          readyForReviewAt: options.readyAt.toISOString(),
+          mergedAt: options.mergedAt.toISOString(),
+          authorLogin: "author",
+          authorType: "User",
+          additions: 120,
+          deletions: 4,
+          changedFiles: 9,
+          draft: false,
+          // `authorType` is required for `isHumanReview`: a review with no type reads as a bot and is not eligible,
+          // so a fixture without it measures nothing and the case would assert against an absence.
+          reviews: [
+            { identifier: 3, submittedAt: options.reviewedAt.toISOString(), state: "APPROVED", authorLogin: "reviewer", authorType: "User", commentCount: 2 }
+          ],
+          checks: []
+        }
+      }
+    });
+  }
+
+  it("should report both medians in hours off the facts already cached", async () => {
+    // Ready at 09:00, reviewed at 14:00, merged at 15:00: five hours to the first review and six to the merge.
+    //
+    // The state row is what puts this on the REPORTABLE branch. Without it `repositoryRow` returns early with
+    // `detail` and no figures at all, so the case would assert an absence and pass whatever the metrics did.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({
+      data: { organization: ORGANIZATION, repository: "alpha", fetchedAt: new Date(), payload: readableGate() }
+    });
+    await reviewedMerge("alpha", {
+      readyAt: new Date(Date.UTC(2026, 7, 10, 9)),
+      reviewedAt: new Date(Date.UTC(2026, 7, 10, 14)),
+      mergedAt: new Date(Date.UTC(2026, 7, 10, 15))
+    });
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as { time_to_first_review_hours?: number; merge_cycle_time_hours?: number }[];
+
+    expect(rows[0]?.time_to_first_review_hours).toBe(5);
+    expect(rows[0]?.merge_cycle_time_hours).toBe(6);
+  });
+
+  it("should leave both absent where no review was observed, never reporting nought hours", async () => {
+    // `0 hours` would say a team reviews instantly. Absent is what the contract means by unmeasured.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 10)));
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as { time_to_first_review_hours?: number }[];
+
+    expect(rows[0]?.time_to_first_review_hours).toBeUndefined();
+  });
+
+  it("should render the row rather than throwing when a stored payload carries no reviews array", async () => {
+    // A REAL SHAPE IN THE CACHE, not defensive padding. `eligibleReviews` reads `pullRequest.reviews` with no
+    // check, so a payload lacking it throws — and the projection in `loadCachedFactsForOrganisation` has been
+    // narrowed once already, so "every stored payload carries every field" is an assumption about history. One
+    // such row must not 500 the whole page.
+    //
+    // The state row is load-bearing: without it the row takes the unavailable branch, never reaches the metrics,
+    // and the case passes with the guard removed. Found exactly that way.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({
+      data: { organization: ORGANIZATION, repository: "alpha", fetchedAt: new Date(), payload: readableGate() }
+    });
+    await prisma.pullRequestFact.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "alpha",
+        queryHash: PULL_REQUESTS,
+        identifier: 601n,
+        mergedAt: new Date(Date.UTC(2026, 7, 10)),
+        // No `reviews`, which is what this case is about.
+        payload: { identifier: 601, mergedAt: new Date(Date.UTC(2026, 7, 10)).toISOString(), additions: 10, deletions: 1, changedFiles: 1 }
+      }
+    });
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as { repository: string; time_to_first_review_hours?: number }[];
+
+    expect(rows[0]?.repository).toBe("alpha");
+    expect(rows[0]?.time_to_first_review_hours).toBeUndefined();
+  });
+});

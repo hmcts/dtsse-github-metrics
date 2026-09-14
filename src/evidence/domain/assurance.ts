@@ -8,20 +8,23 @@
  * ownership, security tooling, patching and whether the code is maintained at all. The two share the RAG
  * machinery in `lib/rag.ts` and nothing else: neither is a version of the other, and neither replaces the other.
  *
- * SEVEN CRITERIA, OF WHICH THIS EVIDENCES FOUR. The three left out are left out because no proxy for them would
- * be honest, which was a decision rather than an omission:
+ * SEVEN CRITERIA. FIVE ARE REPORTED — four of them fully, one in part — AND ONE IS OMITTED. That is six; the
+ * seventh, a maintenance plan, is not a separate column because `NamedOwner` is the only part of it GitHub can
+ * answer: a plan is a document, and who is accountable for the code is the collectable half.
  *
- *   • NO SECRETS OR SENSITIVE DETAIL IN THE REPOSITORY needs a human reading the diff. Secret scanning finds
- *     credentials matching a known provider pattern and says nothing about a hostname, an internal URL or a
- *     customer name, so reporting it as this criterion would grade the tooling and claim it graded the content.
- *   • SECURE BY DESIGN needs a threat model and a review of what the service exposes. Nothing in a GitHub API
- *     answers it.
- *   • A SECURITY CONTACT AND INTAKE ROUTE is collectable and is deliberately NOT reported, which is the one of
- *     the three worth explaining. `isSecurityPolicyEnabled` reads `true` for 40 of 40 sampled repositories,
- *     including every one with no `SECURITY.md` of its own: GitHub inherits the organisation's `.github`
- *     repository, so the field evidences that HMCTS has an org-level policy — which it does, once — and carries
- *     no information about any individual repository. A column reading Yes for the entire estate is not a
- *     finding, and presenting it as per-repository intake would be the proxy this set was built to avoid.
+ * The omission and the partial are different things and the page says so separately, because a tick on a secrets
+ * column otherwise reads as a broader assurance than it is:
+ *
+ *   • OMITTED — SECURE BY DESIGN needs a threat model and a review of what the service exposes. Nothing in a
+ *     GitHub API answers it, and no proxy for it would be honest.
+ *   • PARTIAL — "no secrets or SENSITIVE OPERATIONAL DETAIL" is evidenced for secrets only. `NoCommittedSecrets`
+ *     reads secret-scanning alerts, which find committed credentials; hostnames, IP ranges, admin endpoints and
+ *     capacity thresholds need a human reading the content and stay uncollectable. The criterion is named for the
+ *     half it evidences rather than the full wording, which is what keeps the column from claiming the other.
+ *
+ * ONE CRITERION IS REPORTED WITHOUT BEING GRADED. `SecurityContact` is collectable and reads met for essentially
+ * the whole estate, so it is shown and kept out of `GradedAssuranceCriteria` — see its own note for why including
+ * it would inflate the grade rather than inform it.
  *
  * What is graded is stated on each criterion below, with the measured spread that justifies including it.
  */
@@ -74,6 +77,47 @@ export const AssuranceCriterion = {
    */
   AutomatedHygiene: "automated-hygiene",
   /**
+   * No committed secrets: nothing found by secret scanning is still open.
+   *
+   * HALF OF A CRITERION, AND NAMED FOR THE HALF IT EVIDENCES. The published criterion is "no secrets or sensitive
+   * operational detail"; hostnames, IP ranges, admin endpoints and capacity thresholds need a human reading the
+   * content and stay uncollectable. A committed CREDENTIAL does not: GitHub finds it, and an alert still open
+   * means it was found and not resolved. Calling this `no-committed-secrets` rather than the full wording is what
+   * keeps the page from claiming the other half.
+   *
+   * DETECTION AND PREVENTION ARE DIFFERENT CLAIMS AND BOTH ARE REPORTED, in different places. `secret_scanning`
+   * and `secret_scanning_push_protection` say scanning is ON, and they sit in `AutomatedHygiene` where they
+   * belong; this says something was FOUND and is outstanding. A repository with scanning enabled and an open
+   * alert is worse than one with scanning enabled and none, and folding the two together would hide exactly that.
+   *
+   * MEASURED ON AAT, and the reason this is worth a column: 18 alerts open across 12 repositories, the oldest
+   * raised 2022-05-26 — 1,572 days. That single finding is the kind of thing this dashboard exists to surface,
+   * and it was invisible while the criterion was written off as needing human judgement.
+   *
+   * ONE CALL FOR THE WHOLE ESTATE. `GET /orgs/{org}/secret-scanning/alerts?state=open` covers every repository,
+   * so a repository NOT NAMED in the response is genuinely clean rather than merely unasked-about — which is a
+   * real distinction from the per-repository endpoint, where absence is ambiguous. That is why the org-wide form
+   * is used and the per-repository one is not.
+   */
+  NoCommittedSecrets: "no-committed-secrets",
+  /**
+   * A security contact and an intake route: somewhere to report a vulnerability.
+   *
+   * REPORTED BUT NOT GRADED, and this is the one criterion here whose own comment argues against trusting it.
+   * `isSecurityPolicyEnabled` reads `true` for 40 of 40 sampled repositories, including every one with no
+   * `SECURITY.md` of its own, because GitHub inherits the organisation's `.github` repository. So the field
+   * evidences that HMCTS HAS AN ORG-LEVEL POLICY — which it does, once — and says nothing about any individual
+   * repository.
+   *
+   * It is shown because the criterion is one of the seven and a reader checking the page against the published
+   * list is entitled to see it answered. It is kept out of `GradedAssuranceCriteria` because a criterion that is
+   * met everywhere cannot distinguish anything: folded into the grade it would be a free pass on every row,
+   * making a repository that meets two of three graded criteria look like one that meets three of four. The
+   * column reads Yes almost everywhere and the detail says why, which is the honest way to show a signal that
+   * evidences org-level intake rather than per-repository intake.
+   */
+  SecurityContact: "security-contact",
+  /**
    * Patching expectations: how old the oldest open critical or high alert is.
    *
    * MEASUREMENT FIRST, WITH NO THRESHOLD. This criterion is deliberately never `Unmet`: it reports the age and
@@ -103,6 +147,8 @@ export type AssuranceCriterion = (typeof AssuranceCriterion)[keyof typeof Assura
 export const AssuranceCriteria: readonly AssuranceCriterion[] = [
   AssuranceCriterion.NamedOwner,
   AssuranceCriterion.AutomatedHygiene,
+  AssuranceCriterion.NoCommittedSecrets,
+  AssuranceCriterion.SecurityContact,
   AssuranceCriterion.Patching,
   AssuranceCriterion.Maintained
 ];
@@ -110,14 +156,25 @@ export const AssuranceCriteria: readonly AssuranceCriterion[] = [
 /**
  * The criteria that take part in the overall grade.
  *
- * `Patching` is EXCLUDED, and stating it as a list rather than a filter over an outcome is deliberate: the
- * criterion reports an age against no threshold, so it has no pass or fail to contribute. Folding it in as
- * "unknown" would drag every graded repository towards cannot-assess on the strength of a column that was never
- * meant to judge. When a threshold is agreed, adding it here is the whole change.
+ * TWO OF THE SIX ARE EXCLUDED, for opposite reasons, and stating this as a list rather than filtering on some
+ * property of the outcome is what keeps both arguments visible:
+ *
+ *   • `Patching` reports an age against no threshold, so it has no pass or fail to contribute. Folding it in as
+ *     "unknown" would drag every graded repository towards cannot-assess on the strength of a column that was
+ *     never meant to judge. When a threshold is agreed, adding it here is the whole change.
+ *   • `SecurityContact` is met for essentially the whole estate, because GitHub inherits the organisation's
+ *     policy — so it can only ever add a pass. A criterion that never discriminates does not make a grade more
+ *     accurate, it makes it more generous: three of four met reads better than two of three met, on identical
+ *     evidence. It is reported and not counted.
+ *
+ * `NoCommittedSecrets` IS counted, and that is the distinction between the two exclusions above and it. An open
+ * secret-scanning alert is a real, varying, actionable finding — 12 repositories on this estate have one — so it
+ * separates repositories rather than flattering them.
  */
 export const GradedAssuranceCriteria: readonly AssuranceCriterion[] = [
   AssuranceCriterion.NamedOwner,
   AssuranceCriterion.AutomatedHygiene,
+  AssuranceCriterion.NoCommittedSecrets,
   AssuranceCriterion.Maintained
 ];
 
@@ -133,6 +190,31 @@ export interface HygieneSignals {
   vulnerabilityAlerts?: boolean;
   /** Whether `.github/dependabot.yml` or `renovate.json` is present on the default branch. */
   updateConfiguration?: boolean;
+}
+
+/**
+ * What secret scanning found in one repository and nobody has resolved.
+ *
+ * NO SECRET VALUE IS CARRIED HERE, and that is deliberate rather than incidental. Each alert GitHub returns
+ * includes the literal detected credential in a `secret` field — which is why `github/client.ts` refuses to log
+ * response bodies at all — so this holds a COUNT and an AGE and nothing else. A leaked key must not be copied out
+ * of GitHub's access controls into a `jsonb` column that every reader of the report can select.
+ *
+ * `secret_type` is left out for the same reason at one remove: "Azure Storage Account Access Key" tells an
+ * attacker reading the dashboard what to go looking for, and the repository name beside it tells them where. The
+ * count is what the criterion needs.
+ */
+export interface SecretAlertSummary {
+  /** How many alerts are open. Zero is a real answer and means clean — see `secretsRead`. */
+  open: number;
+  /**
+   * How old the oldest open alert is, in days, or absent where none is open.
+   *
+   * Worth carrying for the reason `Patching` carries its own age: a secret open since 2022 is a different finding
+   * from one raised yesterday, and on this estate the oldest is 1,572 days. It is reported in the detail rather
+   * than in its own column — the criterion's answer is binary, and the age is what qualifies it.
+   */
+  oldestOpenDays?: number;
 }
 
 /**
@@ -154,6 +236,29 @@ export interface AssuranceEvidence {
   oldestSevereAlertDays?: number;
   /** Whether the alert list was read at all, so "nothing open" stays apart from "nobody could look". */
   severeAlertsRead: boolean;
+  /**
+   * Whether GitHub reports a security policy for this repository.
+   *
+   * Reads `true` for essentially every repository, inherited from the organisation's `.github` — see
+   * `AssuranceCriterion.SecurityContact`. Stored anyway, because the criterion is reported.
+   */
+  securityPolicy?: boolean;
+  /**
+   * Open secret-scanning alerts for this repository, or absent where the org-wide read failed.
+   *
+   * ABSENT MEANS UNREAD AND `{ open: 0 }` MEANS CLEAN, which the org-wide endpoint is what makes sound: it covers
+   * every repository in one call, so a repository the response does not name genuinely has none. Were this read
+   * per repository, an absence could not be told from a refusal.
+   */
+  secrets?: SecretAlertSummary;
+  /**
+   * Whether the org-wide secret-scanning read succeeded.
+   *
+   * Carried beside `secrets` rather than inferred from it, for the reason `severeAlertsRead` exists: one failed
+   * call must make every repository UNKNOWN rather than every repository clean, and a collector that wrote
+   * `{ open: 0 }` on failure would report the estate as having no leaked credentials at all.
+   */
+  secretsRead: boolean;
 }
 
 /** One criterion's verdict, with the evidence a reader needs to weigh it. */
@@ -228,6 +333,51 @@ function ownerJudgement(ownerKind: string | undefined): AssuranceJudgement {
   };
 }
 
+/**
+ * The committed-secrets criterion: nothing secret scanning found is still open.
+ *
+ * The age of the oldest open alert is carried in the DETAIL rather than in a column of its own: the criterion's
+ * answer is binary — there is an outstanding leaked credential or there is not — and how long it has been
+ * outstanding is what a reader needs next, not a second verdict.
+ */
+function secretsJudgement(evidence: AssuranceEvidence): AssuranceJudgement {
+  if (!evidence.secretsRead || evidence.secrets === undefined) {
+    return { criterion: AssuranceCriterion.NoCommittedSecrets, outcome: AssuranceOutcome.Unknown, detail: "the secret-scanning alerts could not be read" };
+  }
+  const { open, oldestOpenDays } = evidence.secrets;
+  if (open === 0) {
+    // CLEAN, and soundly so: the org-wide read covers every repository, so not being named in it is an answer.
+    return { criterion: AssuranceCriterion.NoCommittedSecrets, outcome: AssuranceOutcome.Met, detail: "no secret-scanning alert is open" };
+  }
+  const alerts = `${open} secret-scanning alert${open === 1 ? "" : "s"} open`;
+  return {
+    criterion: AssuranceCriterion.NoCommittedSecrets,
+    outcome: AssuranceOutcome.Unmet,
+    detail: oldestOpenDays === undefined ? alerts : `${alerts}, the oldest for ${oldestOpenDays} days`
+  };
+}
+
+/**
+ * The security-contact criterion, which is reported and deliberately not graded.
+ *
+ * The detail says WHAT THE ANSWER ACTUALLY EVIDENCES, because a reader meeting a column of Yes will otherwise
+ * conclude that every repository has been given its own intake route. It has not; the organisation has one, and
+ * GitHub reports it against every repository that does not override it.
+ */
+function securityContactJudgement(evidence: AssuranceEvidence): AssuranceJudgement {
+  if (evidence.securityPolicy === undefined) {
+    return { criterion: AssuranceCriterion.SecurityContact, outcome: AssuranceOutcome.Unknown, detail: "GitHub did not say whether a security policy applies" };
+  }
+  if (evidence.securityPolicy) {
+    return {
+      criterion: AssuranceCriterion.SecurityContact,
+      outcome: AssuranceOutcome.Met,
+      detail: "a security policy applies, usually the organisation's own rather than this repository's"
+    };
+  }
+  return { criterion: AssuranceCriterion.SecurityContact, outcome: AssuranceOutcome.Unmet, detail: "no security policy applies, not even the organisation's" };
+}
+
 /** The patching criterion, which reports an age and grades nothing. See `AssuranceCriterion.Patching`. */
 function patchingJudgement(evidence: AssuranceEvidence): AssuranceJudgement {
   if (!evidence.severeAlertsRead) {
@@ -277,14 +427,20 @@ export interface AssuranceSubject {
  */
 export function judgeAssurance(subject: AssuranceSubject): AssuranceJudgement[] {
   const evidence = subject.evidence;
+  /** The four criteria read from the collection, each unknown where nothing was collected. */
+  const collected = (criterion: AssuranceCriterion, judge: (read: AssuranceEvidence) => AssuranceJudgement): AssuranceJudgement =>
+    evidence === undefined ? { criterion, outcome: AssuranceOutcome.Unknown, detail: "nothing has been collected for this repository" } : judge(evidence);
+
+  // IN `AssuranceCriteria` ORDER, which `judgeAssurance` is tested against: the table generates a column per
+  // entry in that list and finds each result by name, so a mismatch would not misalign the columns — but a
+  // criterion missing here renders as a dash for the whole estate, which is the failure the CODEOWNERS column
+  // shipped with.
   return [
     ownerJudgement(subject.ownerKind),
-    evidence === undefined
-      ? { criterion: AssuranceCriterion.AutomatedHygiene, outcome: AssuranceOutcome.Unknown, detail: "nothing has been collected for this repository" }
-      : hygieneJudgement(evidence.hygiene),
-    evidence === undefined
-      ? { criterion: AssuranceCriterion.Patching, outcome: AssuranceOutcome.Unknown, detail: "nothing has been collected for this repository" }
-      : patchingJudgement(evidence),
+    collected(AssuranceCriterion.AutomatedHygiene, (read) => hygieneJudgement(read.hygiene)),
+    collected(AssuranceCriterion.NoCommittedSecrets, secretsJudgement),
+    collected(AssuranceCriterion.SecurityContact, securityContactJudgement),
+    collected(AssuranceCriterion.Patching, patchingJudgement),
     maintainedJudgement(subject.archived, subject.unmaintained)
   ];
 }

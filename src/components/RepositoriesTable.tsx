@@ -1,13 +1,11 @@
 "use client";
 
 import clsx from "clsx";
-import { X } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
-import { ProductionBadge } from "@/components/ProductionBadge";
 import { type Align, SortHeader } from "@/components/SortHeader";
 import { filterTarget } from "@/lib/filter";
 import { ABSENT, day } from "@/lib/format";
@@ -21,15 +19,11 @@ import {
   answerOrder,
   assuranceOrder,
   criterionResult,
-  ESTATE_FILTERS,
-  type EstateFilter,
-  type FilterOption,
   filterRepositories,
   orderRepositories,
   outcomeOrder,
   PRODUCTION_PARAMETER,
   PRODUCTION_VALUE,
-  parseFilters,
   parseProduction,
   parseVisibilities,
   productionCount,
@@ -49,20 +43,17 @@ import { withWeeks } from "@/lib/weeks";
  * with dashes in place of counts. Dropping it would make the list read as the whole estate when it is
  * the reportable part of it, and filling zeros in would claim nothing was merged there.
  *
- * The filter term and every donut's filter live in the URL, so a filtered table is a thing that can
- * be reloaded and shared. Sorting stays in component state: it is how one reader is looking at the
- * list right now, not a fact about the window worth sending to somebody.
+ * Every control's state lives in the URL, so a filtered table is a thing that can be reloaded and shared.
+ * Sorting stays in component state: it is how one reader is looking at the list right now, not a fact about the
+ * window worth sending to somebody.
  *
- * The bar above the table is ALWAYS THERE, because it holds a control of its own: the Production
- * toggle, first in the row and with no way to remove it. The donuts above it are the other controls,
- * and the rest of the bar shows what they have been set to — one chip per filtered dimension, each
- * dismissable on its own, so a reader who has stacked three of them can see all three and drop the
- * one they did not mean. A bar that appeared and vanished with those chips read as a status line; a
- * permanent one reads as the control it now is, with the chips as additions to it.
+ * THE BAR IS FOUR TOGGLES AND NOTHING ELSE, from 2026-09-14. It used to hold the Production toggle followed by a
+ * dismissible chip per filtered donut dimension — the donuts above the table were the controls and the chips
+ * showed what they had been set to. The donuts are gone, so the chips went with them: a filter a reader can
+ * dismiss but has no way to apply is worse than no filter. What is left is Production and the three visibility
+ * toggles, each with its own affordance and none with an × on it, which is the shape Production always had.
  */
 export const TERM_PARAMETER = "repository";
-
-export const LABEL_PARAMETER = "label";
 
 interface Column {
   key: string;
@@ -126,13 +117,11 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
   const [direction, setDirection] = useState<Direction>("ascending");
 
   const term = searchParameters.get(TERM_PARAMETER) ?? "";
-  const filters = parseFilters((parameter) => searchParameters.get(parameter));
   const production = parseProduction((parameter) => searchParameters.get(parameter));
   const visibilities = parseVisibilities((parameter) => searchParameters.get(parameter));
-  const found = filterRepositories(rows, term, filters, production, visibilities);
+  const found = filterRepositories(rows, term, production, visibilities);
   const ordered = column === null ? orderRepositories(found) : sorted(found, column.read, direction);
-  const chips = activeChips(filters);
-  const produced = productionCount(rows, term, filters);
+  const produced = productionCount(rows, term, visibilities);
 
   function sort(next: Column) {
     setDirection(nextDirection(column, next, direction));
@@ -145,15 +134,6 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
     // were off expressed as absence, turning public off would produce the same URL as never having touched it.
     const chosen = visibilities.has(visibility) ? VISIBILITY_OFF : VISIBILITY_ON;
     router.replace(filterTarget(pathname, window.location.search, visibilityParameter(visibility), chosen), {
-      scroll: false
-    });
-  }
-
-  function clear(parameter: string) {
-    // Clearing a filter is the parameter's absence rather than an empty value, which would read back
-    // as a filter for the empty string. `window.location.search`, so the other chips, the term and
-    // the span all come through — this drops one dimension, not the reader's whole view.
-    router.replace(filterTarget(pathname, window.location.search, parameter, ""), {
       scroll: false
     });
   }
@@ -210,26 +190,16 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
             <span className="tabular-nums text-slate-500">{rows.filter((row) => row.visibility === visibility).length}</span>
           </button>
         ))}
-
-        {chips.map(({ filter, option }) => (
-          <span key={filter.parameter} className="flex items-center gap-1.5 rounded bg-slate-800 py-1 pl-2 pr-1 text-xs text-slate-200">
-            <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: option.color }} aria-hidden="true" />
-            <span className="text-slate-400 uppercase tracking-wide">{`${filter.title}: `}</span>
-            {option.name}
-            <button
-              type="button"
-              onClick={() => clear(filter.parameter)}
-              aria-label={`Remove ${filter.title} filter`}
-              className="rounded text-slate-500 transition-colors hover:text-slate-200 focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500"
-            >
-              <X className="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
-          </span>
-        ))}
       </div>
 
       {ordered.length === 0 ? (
-        <EmptyState message="No repository matches this filter." detail="Clear the term, the Production toggle, or a filter above, to see the whole estate." />
+        // Names the controls that can actually be cleared. It used to say "or a filter above", meaning a donut
+        // chip; those are gone, and the visibility toggles are the likeliest cause now — the table opens filtered
+        // to public, so a reader searching for an internal repository finds nothing.
+        <EmptyState
+          message="No repository matches this filter."
+          detail="Clear the term, the Production toggle, or a visibility toggle above, to see more of the estate."
+        />
       ) : (
         // No border of its own: the table sits inside a `Section` panel that already draws one.
         <div className="overflow-x-auto">
@@ -297,21 +267,6 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
       )}
     </div>
   );
-}
-
-/**
- * The dimensions filtered right now, each with the option it is filtered to.
- *
- * In `ESTATE_FILTERS` order rather than in the order the parameters were clicked, so the chips sit
- * in the order the donuts above them do and a chip does not move when another is dropped. A
- * dimension whose value named no option was already dropped by `parseFilters`, which is why the
- * lookup here cannot come back empty.
- */
-function activeChips(filters: ReturnType<typeof parseFilters>): { filter: EstateFilter; option: FilterOption }[] {
-  return ESTATE_FILTERS.flatMap((filter) => {
-    const option = filter.options.find((entry) => entry.key === filters[filter.parameter]);
-    return option === undefined ? [] : [{ filter, option }];
-  });
 }
 
 /**

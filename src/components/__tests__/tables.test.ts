@@ -243,8 +243,12 @@ describe("TeamPractice", () => {
     unreviewed_clear: 4,
     unreviewed_within: 2,
     unreviewed_above: 1,
+    unreviewed_substantial_merges: 3,
+    substantial_merges: 40,
     merged_pull_requests: 120,
-    direct_commits: 4
+    direct_commits: 4,
+    time_to_first_review_hours: 5.25,
+    merge_cycle_time_hours: 30
   };
 
   const markup = renderToStaticMarkup(createElement(TeamPractice, { practice: PRACTICE }));
@@ -256,7 +260,15 @@ describe("TeamPractice", () => {
   });
 
   it("names every figure it draws, so no count is printed without its question", () => {
-    for (const label of ["Enforces review", "Enforces CI", "Substantial merges reviewed"]) {
+    for (const label of [
+      "Enforces review",
+      "Enforces CI",
+      "Repositories reviewing substantial changes",
+      "Substantial changes reviewed",
+      "Direct pushes to the default branch",
+      "Time to first review",
+      "Merge cycle time"
+    ]) {
       expect(markup).toContain(label);
     }
   });

@@ -2,13 +2,20 @@ import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge } from "../evidence/behaviour/collect.ts";
 import { directCommitCacheWriter, fillCachedSource, loadCachedMerges, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
+import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
-import { assuranceEvidence, collectAssuranceSignals, type GraphAssurance, readDependabotAlerts } from "../evidence/inventory/assurance.ts";
+import {
+  assuranceEvidence,
+  collectAssuranceSignals,
+  collectOrganisationSecretAlerts,
+  type GraphAssurance,
+  readDependabotAlerts
+} from "../evidence/inventory/assurance.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
 import { collectSecurityAlerts, countBySeverity, dependabotSeverity, FEATURE_NOT_ENABLED } from "../evidence/inventory/security-alerts.ts";
@@ -125,7 +132,7 @@ async function collectRepository(
   window: { startsAt: Date; endsAt: Date },
   reference: Date,
   production: Set<string> | undefined,
-  options: { behaviour: boolean; assurance: GraphAssurance | undefined }
+  options: { behaviour: boolean; assurance: GraphAssurance | undefined; secrets: { read: boolean; summary?: SecretAlertSummary } }
 ): Promise<{ observed: boolean; failures: number }> {
   const organization = configuration.organization;
   let failures = 0;
@@ -149,7 +156,7 @@ async function collectRepository(
   // of the hourly core budget to 83%. `collectSecurityAlerts` therefore takes the records this already fetched
   // rather than fetching its own.
   const dependabot = await readDependabotAlerts(client, organization, repository);
-  const assurance = assuranceEvidence(metadata, options.assurance, dependabot, reference);
+  const assurance = assuranceEvidence(metadata, options.assurance, dependabot, reference, options.secrets);
 
   if (!options.behaviour) {
     // The shallow path. No gate, no other alert family, and above all no merge walk — which is what keeps
@@ -273,10 +280,31 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   let observed = 0;
   let failures = 0;
 
+  // ONE CALL FOR THE WHOLE ESTATE, which is what makes the committed-secrets criterion affordable — and what makes
+  // "this repository has none" a real answer rather than an untested assumption, since the response covers every
+  // repository. `undefined` on failure, so every repository reads unknown rather than clean.
+  //
+  // COUNTED AS ONE FAILURE when it fails, not one per repository: it is a single call, and inflating it to 1,889
+  // would swamp the exit status with one refusal. `--tolerate-partial` still reports the run as success, which is
+  // right — the rest of the estate was collected.
+  const secretAlerts = await collectOrganisationSecretAlerts(client, configuration.organization, reference);
+  if (secretAlerts === undefined) {
+    failures += 1;
+  } else {
+    const open = [...secretAlerts.values()].reduce((total, summary) => total + summary.open, 0);
+    console.info(`${open} open secret-scanning alerts across ${secretAlerts.size} repositories`);
+  }
+
   for (const entry of walk) {
     const result = await collectRepository(configuration, client, entry.repository, window, reference, production, {
       behaviour: entry.behaviour,
-      assurance: assurance.get(entry.repository)
+      assurance: assurance.get(entry.repository),
+      // Absent from the map is CLEAN rather than unread, because the org-wide read covers every repository — which
+      // is why `read` is carried separately from the summary rather than inferred from its absence.
+      secrets: {
+        read: secretAlerts !== undefined,
+        ...(secretAlerts?.get(entry.repository) === undefined ? {} : { summary: secretAlerts.get(entry.repository) })
+      }
     });
     observed += result.observed ? 1 : 0;
     failures += result.failures;

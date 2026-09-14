@@ -13,21 +13,8 @@
  */
 
 import { matches } from "@/lib/filter";
-import { distributionState, RAG_HEX, RAG_LABEL, RAG_STATES, type RAGState, state } from "@/lib/rag";
+import type { RAGState } from "@/lib/rag";
 import { compare, type SortValue } from "@/lib/sort";
-import {
-  type Band,
-  CHECKS_BANDS,
-  COVERAGE_BANDS,
-  checksBand,
-  coverageBand,
-  REVIEW_BANDS,
-  reviewBand,
-  SECURITY_BANDS,
-  securityBand,
-  UNREVIEWED_BANDS,
-  unreviewedBand
-} from "@/lib/tone";
 import type { AssuranceCriterion, AssuranceCriterionResult, AssuranceGrade, AssuranceOutcome, RepositoryRow, Visibility } from "@/lib/types";
 
 /**
@@ -112,105 +99,13 @@ export function matchesRepository(row: RepositoryRow, term: string): boolean {
   return matches(row.repository, term) || owners(row).some((owner) => matches(owner, term));
 }
 
-/** The six dimensions the estate can be filtered by, one per donut and one per URL parameter. */
-export type FilterParameter = "label" | "review" | "checks" | "unreviewed" | "coverage" | "security";
-
-/** One value a dimension can be filtered to: the slice a reader clicked, in the slice's own words. */
-export interface FilterOption {
-  /** The value that goes in the URL — a `RAGState` or a band key, never the words beside it. */
-  key: string;
-  name: string;
-  /** A colour value, not a class: the chip's dot is the mark its donut drew the slice with. */
-  color: string;
-}
-
 /**
- * One filterable dimension: its parameter, the words a chip reads it as, its values, and how a row
- * is placed in one of them.
- */
-export interface EstateFilter {
-  parameter: FilterParameter;
-  /** The title a chip prints before the value, and the donut's own heading. */
-  title: string;
-  options: readonly FilterOption[];
-  /** Which option a row falls in, by the same function the donut counted it with. */
-  band: (row: RepositoryRow) => string;
-}
-
-/** Read a band table as filter options, so a legend entry and a chip can never say different words. */
-function bandOptions(bands: readonly Band[]): FilterOption[] {
-  return bands.map((entry) => ({ key: entry.key, name: entry.name, color: entry.mark }));
-}
-
-/**
- * The six donuts as filters, each classifying a row with the function its own donut counts by.
+ * The production toggle's parameter.
  *
- * The `band` functions are `tone.ts`'s, not copies of them: the filtered row count has to equal the
- * legend count of the slice that was clicked, and a second definition of "moderate coverage" is how
- * a table shows nine rows under a wedge that says eleven. Readiness comes from `rag.ts` for the same
- * reason — the donut is drawn from `RAG_HEX` and the chip's dot is the same hex.
- *
- * `label` keeps the parameter name the readiness filter has always used, so links shared before the
- * other five dimensions existed still filter what they filtered.
- */
-export const ESTATE_FILTERS: readonly EstateFilter[] = [
-  {
-    parameter: "label",
-    title: "Readiness",
-    options: RAG_STATES.map((readiness) => ({
-      key: readiness,
-      name: RAG_LABEL[readiness],
-      color: RAG_HEX[readiness]
-    })),
-    // Folded through `distributionState`, as the donut counts through it: a label this build does
-    // not know is counted under "Not assessed" in the slice, so it has to be selected by that slice
-    // too. Without the fold the row falls in no option and the table shows one row fewer than the
-    // wedge said — the one divergence every other band function here is written to avoid.
-    band: (row) => distributionState(state(row.readiness))
-  },
-  {
-    parameter: "review",
-    title: "Enforces review",
-    options: bandOptions(REVIEW_BANDS),
-    band: (row) => reviewBand(row.required_approving_reviews)
-  },
-  {
-    parameter: "checks",
-    title: "Enforces CI",
-    options: bandOptions(CHECKS_BANDS),
-    band: (row) => checksBand(row.required_status_checks)
-  },
-  {
-    parameter: "unreviewed",
-    title: "Unreviewed substantial merges",
-    options: bandOptions(UNREVIEWED_BANDS),
-    band: (row) => unreviewedBand(row.unreviewed_substantial)
-  },
-  {
-    parameter: "coverage",
-    title: "Test coverage",
-    options: bandOptions(COVERAGE_BANDS),
-    band: (row) => coverageBand(row.sonar_coverage)
-  },
-  {
-    parameter: "security",
-    title: "Security issues",
-    options: bandOptions(SECURITY_BANDS),
-    band: (row) => securityBand(row)
-  }
-];
-
-export const FILTER_PARAMETERS: readonly FilterParameter[] = ESTATE_FILTERS.map((filter) => filter.parameter);
-
-/**
- * The production filter's parameter, DELIBERATELY OUTSIDE `ESTATE_FILTERS`.
- *
- * Every entry in that list is a donut's dimension: it has options, each with a colour its own slice
- * was drawn in, a band function that places a row in one of them, and — because of all that — a
- * dismissible chip in the bar under the charts. Production has none of it. It is one two-state
- * toggle over an attribute nothing graphs, and folding it into the list would give it a chip with an
- * × on it, which is the one control it must not have: the toggle is part of the bar rather than
- * something a reader has added to it.
+ * IT USED TO BE DEFINED AS "NOT ONE OF THE DONUT DIMENSIONS", and that framing is worth recording because the
+ * donuts are gone from 2026-09-14 and with them `ESTATE_FILTERS`, the band-function filters and the dismissible
+ * chips. Every filter on this table is now a toggle of exactly this shape: a control with its own affordance,
+ * `aria-pressed`, and no × to remove it. What was special about production is now the rule.
  */
 export const PRODUCTION_PARAMETER = "production";
 
@@ -222,40 +117,17 @@ export const PRODUCTION_PARAMETER = "production";
  */
 export const PRODUCTION_VALUE = "true";
 
-/** Whether the production filter is on, read off the URL the same way the six dimensions are. */
+/** Whether the production filter is on, read off the URL as the visibility toggles are. */
 export function parseProduction(read: (parameter: string) => string | null): boolean {
   return read(PRODUCTION_PARAMETER) === PRODUCTION_VALUE;
 }
 
-/** Which value each dimension is filtered to, where the dimension is filtered at all. */
-export type RepositoryFilters = Partial<Record<FilterParameter, string>>;
-
 /**
- * Read every dimension's filter off the URL, keeping only the values that name one of its options.
+ * The rows a reader is looking at: the term, the visibilities, and the production toggle together.
  *
- * A value in no option is dropped rather than kept: six parameters typed by hand and shared in links
- * is six ways to arrive at a table filtered to a value nothing can carry, and an empty list is a
- * worse answer than the whole one.
- */
-export function parseFilters(read: (parameter: string) => string | null): RepositoryFilters {
-  const filters: RepositoryFilters = {};
-  for (const filter of ESTATE_FILTERS) {
-    const raw = read(filter.parameter);
-    if (raw !== null && filter.options.some((option) => option.key === raw)) {
-      filters[filter.parameter] = raw;
-    }
-  }
-  return filters;
-}
-
-/**
- * The rows a reader is looking at: the term, the production toggle, and every dimension they have
- * filtered, all together.
- *
- * Dimensions AND, because that is what clicking a second donut means — the repositories that are
- * blocked AND enforce no review — and each is checked with its own donut's band function, so the
- * table under a wedge holds exactly the rows the wedge counted. The production toggle ANDs with them
- * for the same reason.
+ * THE THREE AND, which is what stacking controls means — the public repositories whose name matches AND which
+ * deploy to production. The six donut dimensions used to AND here too; they went with the charts, since a filter
+ * a reader can dismiss but has no way to apply is a half-wired control surface.
  *
  * A row whose production answer could not be read is EXCLUDED while the toggle is on, rather than
  * kept on the chance that it is one. The toggle says "show me the production services", and a
@@ -265,31 +137,21 @@ export function parseFilters(read: (parameter: string) => string | null): Reposi
 export function filterRepositories(
   rows: readonly RepositoryRow[],
   term: string,
-  filters: RepositoryFilters,
   production = false,
   visibilities: ReadonlySet<Visibility> = new Set(VISIBILITIES)
 ): RepositoryRow[] {
-  const active = ESTATE_FILTERS.filter((filter) => filters[filter.parameter] !== undefined);
-  return rows.filter(
-    (row) =>
-      matchesRepository(row, term) &&
-      matchesVisibility(row, visibilities) &&
-      (!production || row.production === true) &&
-      active.every((filter) => filter.band(row) === filters[filter.parameter])
-  );
+  return rows.filter((row) => matchesRepository(row, term) && matchesVisibility(row, visibilities) && (!production || row.production === true));
 }
 
 /**
- * How many production repositories the reader's OTHER filters leave, which is what the toggle counts.
+ * How many production repositories the reader's OTHER controls leave, which is what the toggle counts.
  *
- * The production dimension itself is excluded from its own count — the rule the readiness bar
- * counted by before the donuts replaced it, where the counts came off
- * `filterRepositories(rows, term, null)`. A count that included its own filter would read `n` before
- * the click and `n` after it, which tells a reader nothing: the number is there to say what turning
- * the toggle on would leave.
+ * The production dimension itself is excluded from its own count. A count that included its own filter would
+ * read `n` before the click and `n` after it, which tells a reader nothing: the number is there to say what
+ * turning the toggle on would leave.
  */
-export function productionCount(rows: readonly RepositoryRow[], term: string, filters: RepositoryFilters): number {
-  return filterRepositories(rows, term, filters, true).length;
+export function productionCount(rows: readonly RepositoryRow[], term: string, visibilities?: ReadonlySet<Visibility>): number {
+  return filterRepositories(rows, term, true, visibilities).length;
 }
 
 /**
@@ -378,13 +240,29 @@ export function answerOrder(answer: boolean | undefined): SortValue {
  * Mirrors `domain.AssuranceCriteria`. Restated here rather than imported because `src/lib/**` is the UI half of
  * the contract and imports nothing from `src/evidence/**` — the same separation `types.ts` keeps.
  */
-export const ASSURANCE_CRITERIA: readonly AssuranceCriterion[] = ["named-owner", "automated-hygiene", "patching", "maintained"];
+export const ASSURANCE_CRITERIA: readonly AssuranceCriterion[] = [
+  "named-owner",
+  "automated-hygiene",
+  "no-committed-secrets",
+  "security-contact",
+  "patching",
+  "maintained"
+];
 
-/** The heading each criterion's column carries, in the criteria's own words rather than the field's. */
+/**
+ * The heading each criterion's column carries, in the criteria's own words rather than the field's.
+ *
+ * NAMED FOR THE CRITERION AND NOT THE FIELD, which is the convention worth keeping as this map grows. "Patching
+ * cycle" rather than "Oldest alert": the column happens to print an age, but what a reader is checking is whether
+ * the team patches, and the age is the evidence for it. "Secrets" rather than "Secret scanning" for the same
+ * reason — the criterion is about what is committed, and scanning is the instrument.
+ */
 export const ASSURANCE_LABEL: Record<AssuranceCriterion, string> = {
   "named-owner": "Code owner",
   "automated-hygiene": "Hygiene",
-  patching: "Oldest alert",
+  "no-committed-secrets": "Secrets",
+  "security-contact": "Security contact",
+  patching: "Patching cycle",
   maintained: "Maintained"
 };
 

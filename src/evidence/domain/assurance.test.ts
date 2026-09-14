@@ -34,7 +34,8 @@ function hygiene(overrides: Partial<HygieneSignals> = {}): HygieneSignals {
 }
 
 function evidenceOf(overrides: Partial<AssuranceEvidence> = {}): AssuranceEvidence {
-  return { hygiene: hygiene(), severeAlertsRead: true, ...overrides };
+  // Clean and readable by default on every axis, so a case that is about one criterion states only that one.
+  return { hygiene: hygiene(), severeAlertsRead: true, securityPolicy: true, secrets: { open: 0 }, secretsRead: true, ...overrides };
 }
 
 /** A team-owned, maintained repository with every signal on: the all-met baseline. */
@@ -59,13 +60,15 @@ function detailOf(subject: AssuranceSubject, criterion: AssuranceCriterion): str
 }
 
 describe("the criteria this build reports", () => {
-  it("should report four of the seven, and name them in the order the criteria themselves read", () => {
-    // The count is the claim the page footnote makes, so it is asserted rather than left to a comment: three are
-    // omitted deliberately and a fifth appearing here without that decision being revisited would be a proxy
-    // signal, which is the one thing this set was built to avoid.
+  it("should report the six it can evidence, in the order the criteria themselves read", () => {
+    // The count is the claim the page footnote makes, so it is asserted rather than left to a comment: one
+    // criterion is omitted deliberately and one is partial, and a seventh appearing here without that decision
+    // being revisited would be a proxy signal, which is the one thing this set was built to avoid.
     expect(AssuranceCriteria).toEqual([
       AssuranceCriterion.NamedOwner,
       AssuranceCriterion.AutomatedHygiene,
+      AssuranceCriterion.NoCommittedSecrets,
+      AssuranceCriterion.SecurityContact,
       AssuranceCriterion.Patching,
       AssuranceCriterion.Maintained
     ]);
@@ -77,9 +80,123 @@ describe("the criteria this build reports", () => {
     expect(judgeAssurance(subjectOf()).map((judgement) => judgement.criterion)).toEqual([...AssuranceCriteria]);
   });
 
-  it("should leave the patching criterion out of the grade, having no threshold to pass", () => {
+  it("should leave two criteria out of the grade, for opposite reasons", () => {
+    // `Patching` has no threshold to pass, so it has no verdict to contribute. `SecurityContact` is met for
+    // essentially the whole estate, so it can only ever add a free pass — counted, it would make a repository
+    // meeting two of three graded criteria look like one meeting three of four on identical evidence.
     expect(GradedAssuranceCriteria).not.toContain(AssuranceCriterion.Patching);
-    expect(GradedAssuranceCriteria).toEqual([AssuranceCriterion.NamedOwner, AssuranceCriterion.AutomatedHygiene, AssuranceCriterion.Maintained]);
+    expect(GradedAssuranceCriteria).not.toContain(AssuranceCriterion.SecurityContact);
+    expect(GradedAssuranceCriteria).toEqual([
+      AssuranceCriterion.NamedOwner,
+      AssuranceCriterion.AutomatedHygiene,
+      AssuranceCriterion.NoCommittedSecrets,
+      AssuranceCriterion.Maintained
+    ]);
+  });
+
+  it("should grade the secrets criterion, which unlike those two actually discriminates", () => {
+    // The distinction between the two exclusions above and this: an open secret-scanning alert is a real, varying,
+    // actionable finding — 12 repositories on this estate have one — so it separates repositories rather than
+    // flattering them.
+    expect(GradedAssuranceCriteria).toContain(AssuranceCriterion.NoCommittedSecrets);
+  });
+});
+
+/**
+ * The committed-secrets criterion, which is the half of "no secrets or sensitive detail" that IS collectable.
+ *
+ * Measured on AAT: 18 alerts open across 12 repositories, oldest raised 2022-05-26. The criterion was written off
+ * as needing human judgement until the org-wide endpoint was checked.
+ */
+describe("the committed-secrets criterion", () => {
+  it("should be met where nothing is open, which the org-wide read makes a real answer", () => {
+    // Clean rather than merely unasked-about: one call covers every repository, so a repository absent from the
+    // response genuinely has no open alert. That is the distinction from the per-repository endpoint.
+    const subject = subjectOf({ evidence: evidenceOf({ secrets: { open: 0 } }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Met);
+    expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe("no secret-scanning alert is open");
+  });
+
+  it("should be unmet with an open alert, and carry how long it has been open", () => {
+    // The age goes in the DETAIL rather than a column of its own: the answer is binary — there is an outstanding
+    // leaked credential or there is not — and how long is what a reader needs next. On this estate the oldest is
+    // 1,572 days, which is the finding this criterion exists to surface.
+    const subject = subjectOf({ evidence: evidenceOf({ secrets: { open: 3, oldestOpenDays: 1572 } }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unmet);
+    expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe("3 secret-scanning alerts open, the oldest for 1572 days");
+  });
+
+  it("should pluralise one alert against its own noun", () => {
+    expect(detailOf(subjectOf({ evidence: evidenceOf({ secrets: { open: 1, oldestOpenDays: 4 } }) }), AssuranceCriterion.NoCommittedSecrets)).toBe(
+      "1 secret-scanning alert open, the oldest for 4 days"
+    );
+  });
+
+  it("should still report an open alert whose age could not be read", () => {
+    // An alert with an unreadable `created_at` is still an alert. It just cannot contribute an age, and the
+    // criterion must not read as clean because one instant would not parse.
+    const subject = subjectOf({ evidence: evidenceOf({ secrets: { open: 2 } }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unmet);
+    expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe("2 secret-scanning alerts open");
+  });
+
+  it("should be unknown where the org-wide read failed, never clean", () => {
+    // THE ONE WRONG ANSWER THAT READS LIKE GOOD NEWS. One failed call must make every repository unknown rather
+    // than reporting the estate as having no leaked credentials at all.
+    expect(outcomeOf(subjectOf({ evidence: evidenceOf({ secretsRead: false, secrets: undefined }) }), AssuranceCriterion.NoCommittedSecrets)).toBe(
+      AssuranceOutcome.Unknown
+    );
+  });
+
+  it("should be unknown where the read succeeded but this repository has no summary at all", () => {
+    // Defensive rather than reachable through the collector, which writes `{ open: 0 }` for a clean repository.
+    // Read as unknown rather than clean, because a summary that should exist and does not is a fault, not an
+    // answer — and the conservative direction on a security criterion is to admit ignorance.
+    expect(outcomeOf(subjectOf({ evidence: evidenceOf({ secretsRead: true, secrets: undefined }) }), AssuranceCriterion.NoCommittedSecrets)).toBe(
+      AssuranceOutcome.Unknown
+    );
+  });
+});
+
+/**
+ * The security-contact criterion, reported and deliberately not graded.
+ *
+ * These cases are mostly about the DETAIL, because the outcome carries almost no information: it reads met for 40
+ * of 40 sampled repositories. What the page has to do is say why.
+ */
+describe("the security-contact criterion", () => {
+  it("should say what the answer actually evidences, not merely that it is met", () => {
+    // A reader meeting a column of Yes would otherwise conclude every repository has its own intake route. It does
+    // not; the organisation has one, and GitHub reports it against every repository that does not override it.
+    expect(detailOf(subjectOf(), AssuranceCriterion.SecurityContact)).toBe(
+      "a security policy applies, usually the organisation's own rather than this repository's"
+    );
+  });
+
+  it("should be unmet where not even the organisation's policy applies", () => {
+    // Rare to the point of being nearly unobservable on this estate, which is exactly why it is worth keeping: if
+    // it ever fires it is a real finding rather than noise.
+    const subject = subjectOf({ evidence: evidenceOf({ securityPolicy: false }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.SecurityContact)).toBe(AssuranceOutcome.Unmet);
+    expect(detailOf(subject, AssuranceCriterion.SecurityContact)).toBe("no security policy applies, not even the organisation's");
+  });
+
+  it("should be unknown where GitHub said nothing about it", () => {
+    expect(outcomeOf(subjectOf({ evidence: evidenceOf({ securityPolicy: undefined }) }), AssuranceCriterion.SecurityContact)).toBe(AssuranceOutcome.Unknown);
+  });
+
+  it("should not lift a repository's grade by being met, which is why it is not counted", () => {
+    // THE REASON IT IS EXCLUDED, asserted rather than only argued in a comment: a repository failing one graded
+    // criterion is `partial` whether or not the security contact is met, so the always-true signal cannot flatter
+    // it. Counted, the same repository would read three-of-four met instead of two-of-three.
+    const failing = subjectOf({ ownerKind: "person" });
+
+    expect(assuranceGrade(judgeAssurance(failing))).toBe(AssuranceGrade.Partial);
+    expect(assuranceGrade(judgeAssurance({ ...failing, evidence: evidenceOf({ securityPolicy: false }) }))).toBe(AssuranceGrade.Partial);
   });
 });
 
@@ -205,9 +322,10 @@ describe("assuranceGrade", () => {
   });
 
   it("should read unknown only when nothing at all could be graded", () => {
-    // Every graded criterion unreadable: no ownership attributed, no hygiene signal read. Maintenance is not
-    // among them because the graph always answers it, so this needs the one subject where it cannot.
-    const nothing = judgeAssurance(subjectOf({ ownerKind: undefined, evidence: evidenceOf({ hygiene: {} }) })).filter(
+    // EVERY graded criterion unreadable: no ownership attributed, no hygiene signal read, and the org-wide secret
+    // scan failed. Maintenance is dropped from the list rather than made unreadable because the graph always
+    // answers it — there is no subject for which it cannot, which is why it is filtered here instead.
+    const nothing = judgeAssurance(subjectOf({ ownerKind: undefined, evidence: evidenceOf({ hygiene: {}, secretsRead: false, secrets: undefined }) })).filter(
       (judgement) => judgement.criterion !== AssuranceCriterion.Maintained
     );
 

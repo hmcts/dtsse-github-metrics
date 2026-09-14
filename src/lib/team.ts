@@ -79,7 +79,7 @@ export function practiceFigures(practice: TeamPractice): PracticeFigure[] {
       detail: practice.checks_measured === 0 ? "no merge gate could be read" : "a required status check can block a merge"
     },
     {
-      label: "Substantial merges reviewed",
+      label: "Repositories reviewing substantial changes",
       value: outOf(practice.unreviewed_clear, practice.unreviewed_measured),
       // The policy's own three words rather than a pass and a fail: `within` is the allowance forgiving what it
       // was configured to forgive, which is a different fact from nothing having merged unreviewed.
@@ -87,6 +87,66 @@ export function practiceFigures(practice: TeamPractice): PracticeFigure[] {
         practice.unreviewed_measured === 0
           ? "too few merges to grade"
           : `${practice.unreviewed_within} within the allowance, ${practice.unreviewed_above} above it`
+    },
+    {
+      // THE CHANGES, not the repositories, which is the figure with teeth. The line above counts how many of a
+      // team's repositories the policy graded clear; this counts how many substantial changes actually reached the
+      // default branch with nobody else's eyes on them. A team can be "8 of 24 clear" with two such merges or
+      // two hundred, and only this line tells them apart.
+      //
+      // READ THROUGH ONE GUARD rather than defaulting each field. The report layer emits the pair together or not
+      // at all — `substantialCounts` returns both or `{}` — so a `?? 0` on the second is a branch nothing can
+      // reach, and an unreachable branch is either dead code or a coverage exemption nobody can justify.
+      label: "Substantial changes reviewed",
+      ...substantialChanges(practice)
+    },
+    {
+      label: "Direct pushes to the default branch",
+      // A COUNT WITH ITS OWN DENOMINATOR, which for this one is every change that reached the branch: a direct
+      // commit bypassed review entirely, so what qualifies it is how much of the team's traffic it was. 4 of 400
+      // and 4 of 6 are different findings.
+      value: `${practice.direct_commits} of ${practice.direct_commits + practice.merged_pull_requests}`,
+      detail: practice.direct_commits === 0 ? "every change arrived through a pull request" : `${practice.merged_pull_requests} arrived through a pull request`
+    },
+    {
+      label: "Time to first review",
+      value: hours(practice.time_to_first_review_hours),
+      // NAMED AS A MEDIAN OF MEDIANS rather than presented as the team's median wait, because it is not the same
+      // thing — see `timings` in the report layer. Stating it is what stops a reader taking it for the latter.
+      detail: practice.time_to_first_review_hours === undefined ? "no repository observed an independent review" : "typical repository’s typical wait"
+    },
+    {
+      label: "Merge cycle time",
+      value: hours(practice.merge_cycle_time_hours),
+      detail: practice.merge_cycle_time_hours === undefined ? "no repository observed a merge" : "ready for review until merged"
     }
   ];
+}
+
+/**
+ * The reviewed-changes figure, or a stated absence where the policy graded nothing.
+ *
+ * ONE GUARD OVER THE PAIR, because the pair is what the report layer emits: `substantialCounts` returns both counts
+ * or neither, so reading them through a single check is what keeps every branch here reachable. A team with zero
+ * substantial changes is "not measured" too — the policy had nothing to grade, which is a different statement from
+ * a team that reviewed none of them.
+ */
+function substantialChanges(practice: TeamPractice): { value: string; detail: string } {
+  const total = practice.substantial_merges;
+  const unreviewed = practice.unreviewed_substantial_merges;
+  if (total === undefined || unreviewed === undefined || total === 0) {
+    return { value: "not measured", detail: "no substantial change was graded at this span" };
+  }
+  return { value: `${total - unreviewed} of ${total}`, detail: `${unreviewed} merged with no independent review` };
+}
+
+/**
+ * One duration in hours, or a stated absence.
+ *
+ * ROUNDED TO ONE DECIMAL, because these are medians of medians over a window and further precision would imply an
+ * accuracy the aggregation does not have. Absent reads as "not measured" and never as `0 hours`, which would say a
+ * team reviews instantly when in fact nothing was measured.
+ */
+function hours(value: number | undefined): string {
+  return value === undefined ? "not measured" : `${Math.round(value * 10) / 10} hours`;
 }

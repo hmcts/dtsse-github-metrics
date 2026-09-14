@@ -1,19 +1,8 @@
 import { describe, expect, it } from "vitest";
-import {
-  activeSlices,
-  bandSlices,
-  checksSlices,
-  coverageSlices,
-  distributionSlices,
-  type PieSlice,
-  reviewSlices,
-  securitySlices,
-  totalValue,
-  unreviewedSlices
-} from "@/lib/chart";
+import { activeSlices, bandSlices, distributionSlices, type PieSlice, totalValue } from "@/lib/chart";
 import { RAG_HEX, RAG_STATES } from "@/lib/rag";
-import { type Band, CHECKS_BANDS, COVERAGE_BANDS, REVIEW_BANDS, SECURITY_BANDS, STRONG_GOOD_HEX, TONE_HEX, UNREVIEWED_BANDS } from "@/lib/tone";
-import type { OpenAlertCount, RepositoryRow, SecurityAlertEvidence } from "@/lib/types";
+import { type Band, REVIEW_BANDS } from "@/lib/tone";
+import type { RepositoryRow } from "@/lib/types";
 
 /** A band key of nothing in particular, for the counting `bandSlices` does over any item type. */
 type Side = "left" | "middle" | "right";
@@ -83,8 +72,9 @@ describe("bandSlices", () => {
     expect(built.map((slice) => slice.color)).toEqual(REVIEW_BANDS.map((band) => band.mark));
   });
 
-  it("keys each slice on the band's own key, which is what a filter is written in", () => {
-    const built = reviewSlices([row({ required_approving_reviews: 1 })]);
+  it("keys each slice on the band's own key rather than on the words its legend reads", () => {
+    // The key is what a link carries, so it has to survive a legend being reworded.
+    const built = bandSlices(REVIEW_BANDS, [row({ required_approving_reviews: 1 })], () => "required");
     expect(built.map((slice) => slice.key)).toEqual(REVIEW_BANDS.map((band) => band.key));
   });
 
@@ -101,153 +91,6 @@ describe("bandSlices", () => {
 
     expect(counts(built)).toEqual({ Left: 2, Middle: 0, Right: 1 });
     expect(totalValue(built)).toBe(3);
-  });
-});
-
-describe("reviewSlices", () => {
-  it("bands every row by the approvals its gate requires", () => {
-    const built = reviewSlices([
-      row({ required_approving_reviews: 3 }),
-      row({ required_approving_reviews: 2 }),
-      row({ required_approving_reviews: 1 }),
-      row({ required_approving_reviews: 0 }),
-      row({})
-    ]);
-    expect(counts(built)).toEqual({ Multiple: 2, Enforced: 1, Unenforced: 1, Unknown: 1 });
-  });
-
-  it("marks two or more approvals apart from one, deeper green against green", () => {
-    const built = reviewSlices([row({ required_approving_reviews: 2 })]);
-    expect(built.map((slice) => slice.color).slice(0, 2)).toEqual([STRONG_GOOD_HEX, TONE_HEX.good]);
-  });
-
-  it("counts a row with no gate figure unknown rather than dropping it", () => {
-    const built = reviewSlices([row({}), row({ required_approving_reviews: 1 })]);
-    expect(counts(built).Unknown).toBe(1);
-    expect(totalValue(built)).toBe(2);
-  });
-
-  it("returns every band at zero for an empty list", () => {
-    const built = reviewSlices([]);
-    expect(built).toHaveLength(REVIEW_BANDS.length);
-    expect(totalValue(built)).toBe(0);
-  });
-});
-
-describe("checksSlices", () => {
-  it("bands every row by whether its gate requires any check", () => {
-    const built = checksSlices([row({ required_status_checks: 4 }), row({ required_status_checks: 1 }), row({ required_status_checks: 0 }), row({})]);
-    expect(counts(built)).toEqual({ Enforced: 2, Unenforced: 1, Unknown: 1 });
-  });
-
-  it("keeps a band nothing fell in, so the legend still lists it", () => {
-    const built = checksSlices([row({ required_status_checks: 2 })]);
-    expect(built).toHaveLength(CHECKS_BANDS.length);
-    expect(counts(built).Unenforced).toBe(0);
-    expect(counts(built).Unknown).toBe(0);
-  });
-
-  it("counts nothing for an empty list", () => {
-    expect(totalValue(checksSlices([]))).toBe(0);
-  });
-});
-
-describe("unreviewedSlices", () => {
-  it("bands every row by the policy's own verdict", () => {
-    const built = unreviewedSlices([
-      row({ unreviewed_substantial: "none" }),
-      row({ unreviewed_substantial: "within" }),
-      row({ unreviewed_substantial: "within" }),
-      row({ unreviewed_substantial: "above" }),
-      row({})
-    ]);
-    expect(counts(built)).toEqual({
-      Clear: 1,
-      "Within allowance": 2,
-      "Above allowance": 1,
-      Unknown: 1
-    });
-  });
-
-  it("counts a repository the policy graded nothing for as unknown, never as clean", () => {
-    const built = unreviewedSlices([row({}), row({})]);
-    expect(counts(built).Clear).toBe(0);
-    expect(counts(built).Unknown).toBe(2);
-  });
-
-  it("returns every band at zero for an empty list", () => {
-    const built = unreviewedSlices([]);
-    expect(built).toHaveLength(UNREVIEWED_BANDS.length);
-    expect(totalValue(built)).toBe(0);
-  });
-});
-
-describe("coverageSlices", () => {
-  it("bands every row on the boundary the repository page colours coverage with", () => {
-    const built = coverageSlices([
-      row({ sonar_coverage: 90 }),
-      row({ sonar_coverage: 94.2 }),
-      row({ sonar_coverage: 80 }),
-      row({ sonar_coverage: 12.5 }),
-      row({})
-    ]);
-    expect(counts(built)).toEqual({
-      "90% or more": 2,
-      "80% to under 90%": 1,
-      "Below 80%": 1,
-      Unknown: 1
-    });
-  });
-
-  it("counts an unmeasured repository unknown rather than at nought per cent", () => {
-    const built = coverageSlices([row({}), row({ sonar_coverage: 0 })]);
-    expect(counts(built).Unknown).toBe(1);
-    expect(counts(built)["Below 80%"]).toBe(1);
-  });
-
-  it("returns every band at zero for an empty list", () => {
-    const built = coverageSlices([]);
-    expect(built).toHaveLength(COVERAGE_BANDS.length);
-    expect(totalValue(built)).toBe(0);
-  });
-});
-
-describe("securitySlices", () => {
-  /** A security block whose three families are all clear, bar the one a case is about. */
-  function security(families: Partial<SecurityAlertEvidence> = {}): SecurityAlertEvidence {
-    const clear: OpenAlertCount = { open: 0, by_severity: {} };
-    return { dependabot: clear, code_scanning: clear, secret_scanning: clear, ...families };
-  }
-
-  it("bands every row on the worst of the five signals it carries", () => {
-    const built = securitySlices([
-      row({ security: security({ secret_scanning: { open: 1, by_severity: {} } }) }),
-      row({ security: security(), sonar_security_rating: { value: 3 } }),
-      row({ security: security(), sonar_security_issues: 2 }),
-      row({ security: security(), sonar_security_issues: 0 }),
-      row({})
-    ]);
-    // The C-rated row is Medium, not High, since the 2026-09-04 reversal; the secret scanning row is
-    // the one that reaches High here. `tone.test.ts` covers the rating boundary letter by letter.
-    expect(counts(built)).toEqual({ Clear: 1, Medium: 2, High: 1, Unknown: 1 });
-  });
-
-  it("keeps a band nothing fell in, so the legend still lists it", () => {
-    const built = securitySlices([row({ security: security() })]);
-    expect(built).toHaveLength(SECURITY_BANDS.length);
-    expect(counts(built)).toEqual({ Clear: 1, Medium: 0, High: 0, Unknown: 0 });
-  });
-
-  it("counts a row carrying no security signal unknown rather than dropping it", () => {
-    const built = securitySlices([row({}), row({ security: security() })]);
-    expect(counts(built).Unknown).toBe(1);
-    expect(totalValue(built)).toBe(2);
-  });
-
-  it("returns every band at zero for an empty list", () => {
-    const built = securitySlices([]);
-    expect(built).toHaveLength(SECURITY_BANDS.length);
-    expect(totalValue(built)).toBe(0);
   });
 });
 

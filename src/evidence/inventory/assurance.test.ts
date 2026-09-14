@@ -5,6 +5,7 @@ import {
   assuranceEvidence,
   assuranceQuery,
   collectAssuranceSignals,
+  collectOrganisationSecretAlerts,
   DefaultAssuranceBatchSize,
   hygieneFromMetadata,
   readDependabotAlerts,
@@ -266,7 +267,10 @@ describe("assuranceEvidence", () => {
     expect(assuranceEvidence(metadata, { vulnerabilityAlerts: true, updateConfiguration: false }, alerts, NOW)).toEqual({
       hygiene: { secretScanning: true, vulnerabilityAlerts: true, updateConfiguration: false },
       oldestSevereAlertDays: 10,
-      severeAlertsRead: true
+      severeAlertsRead: true,
+      // Unread by default, which is the honest reading of a caller that passed nothing: the org-wide secret scan
+      // is one call for the estate, and a repository must not read as clean because nobody mentioned it.
+      secretsRead: false
     });
   });
 
@@ -284,5 +288,102 @@ describe("assuranceEvidence", () => {
 
     expect(evidence.severeAlertsRead).toBe(true);
     expect(evidence.oldestSevereAlertDays).toBeUndefined();
+  });
+});
+
+/**
+ * The security policy, which arrives on the same aliased document as the hygiene signals and is NOT one of them.
+ *
+ * Kept out of `hygiene` deliberately: it is its own criterion, and folding it in would have put a value that is
+ * true almost everywhere into the hygiene composite, making that criterion easier to meet for no reason.
+ */
+describe("the security policy signal", () => {
+  it("is carried on the evidence rather than among the hygiene signals", () => {
+    const evidence = assuranceEvidence({}, { securityPolicy: true, vulnerabilityAlerts: true, updateConfiguration: true }, [], NOW);
+
+    expect(evidence.securityPolicy).toBe(true);
+    expect(evidence.hygiene).not.toHaveProperty("securityPolicy");
+  });
+
+  it("stays absent where GitHub said nothing, rather than reading as no policy", () => {
+    expect(assuranceEvidence({}, { vulnerabilityAlerts: true, updateConfiguration: true }, [], NOW).securityPolicy).toBeUndefined();
+  });
+});
+
+/**
+ * The org-wide secret-scanning read, which is what makes the committed-secrets criterion affordable AND sound.
+ *
+ * One call covers every repository, so a repository absent from the response is genuinely clean — the distinction
+ * from the per-repository endpoint, where an absence cannot be told from a refusal. Measured on AAT: 18 alerts
+ * across 12 repositories, one page, oldest raised 2022-05-26.
+ */
+describe("collectOrganisationSecretAlerts", () => {
+  function alert(repository: string, createdAt: string, secret = "ghp_averyrealsecret"): unknown {
+    // `secret` is included in the fixture ON PURPOSE: GitHub really does return the literal credential, and the
+    // collector has to be seen not to carry it.
+    return { created_at: createdAt, secret, secret_type: "github_personal_access_token", repository: { name: repository } };
+  }
+
+  it("summarises each repository's open alerts and the age of its oldest", () => {
+    const { fetch } = replying({
+      body: [alert("kubernetes", "2026-05-04T07:00:55Z"), alert("kubernetes", "2026-09-01T00:00:00Z"), alert("cvp-audio-ingress", "2022-05-26T12:12:21Z")]
+    });
+
+    return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
+      expect(summaries?.get("kubernetes")).toEqual({ open: 2, oldestOpenDays: 133 });
+      // The real oldest alert on this estate, raised 2022-05-26 and measured at 1,572 days against the live API.
+      // 1,571 here because `NOW` is the suite's fixed instant rather than the day of that measurement — a fixture
+      // written against the clock would pass today and fail tomorrow, which is why the constant is fixed.
+      expect(summaries?.get("cvp-audio-ingress")).toEqual({ open: 1, oldestOpenDays: 1571 });
+    });
+  });
+
+  it("NEVER CARRIES THE SECRET, which is why the schema names two fields and no more", () => {
+    // Each alert includes the live credential — the reason `github/client.ts` refuses to log response bodies at
+    // all — so the projection happens at the boundary. Asserted on the whole returned structure, because a
+    // `secret` reaching a `jsonb` column would be selectable by every reader of the report.
+    const { fetch } = replying({ body: [alert("kubernetes", "2026-09-01T00:00:00Z", "ghp_leakme")] });
+
+    return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
+      expect(JSON.stringify([...(summaries ?? [])])).not.toContain("ghp_leakme");
+      expect(JSON.stringify([...(summaries ?? [])])).not.toContain("github_personal_access_token");
+    });
+  });
+
+  it("names no repository at all where nothing is open, so absence reads as clean", () => {
+    const { fetch } = replying({ body: [] });
+
+    return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
+      expect(summaries?.size).toBe(0);
+    });
+  });
+
+  it("counts an alert whose instant could not be read, rather than reporting the repository clean", () => {
+    // THE BUG THIS CAUGHT IN ITS FIRST VERSION. Counting the parsed instants meant a repository whose only alert
+    // had an unreadable `created_at` reported ZERO open — turning a leaked credential into a clean bill. An alert
+    // with no readable instant is still an alert; it just cannot contribute an age.
+    const { fetch } = replying({ body: [alert("kubernetes", "not a date")] });
+
+    return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
+      expect(summaries?.get("kubernetes")).toEqual({ open: 1 });
+    });
+  });
+
+  it("skips a record it cannot read at all without failing the estate", () => {
+    const { fetch } = replying({ body: ["nonsense", alert("kubernetes", "2026-09-01T00:00:00Z")] });
+
+    return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
+      expect(summaries?.size).toBe(1);
+    });
+  });
+
+  it("returns nothing at all when the read fails, so every repository reads unknown and not clean", () => {
+    // THE ONE WRONG ANSWER THAT READS LIKE GOOD NEWS. An empty map here would say the whole estate has no leaked
+    // credentials; `undefined` is what makes the domain report unknown.
+    const { fetch } = replying(REFUSED);
+
+    return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
+      expect(summaries).toBeUndefined();
+    });
   });
 });

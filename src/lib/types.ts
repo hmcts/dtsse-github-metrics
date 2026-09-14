@@ -345,12 +345,19 @@ export type Visibility = "public" | "internal" | "private";
 /**
  * Which "coding in the open" assurance criterion an answer is about.
  *
- * `domain.AssuranceCriterion` verbatim. FOUR of the seven, which is a decision rather than a gap: two need human
- * judgement (no secrets or sensitive detail, and secure by design) and the third — a security contact — is
- * collectable and deliberately omitted because `isSecurityPolicyEnabled` reads true for the whole estate off the
- * organisation's inherited `.github` policy, so it evidences one org-level fact and nothing per repository.
+ * `domain.AssuranceCriterion` verbatim. SIX OF THE SEVEN, one of them partial, which is a set of decisions rather
+ * than a gap:
+ *
+ *   • `no-committed-secrets` evidences HALF of "no secrets or sensitive operational detail" — the credential half,
+ *     read from open secret-scanning alerts. Hostnames, IP ranges and thresholds need a human and are not covered,
+ *     which is why the criterion is named for the half it answers.
+ *   • `security-contact` is reported and NOT graded: `isSecurityPolicyEnabled` reads true for nearly the whole
+ *     estate off the organisation's inherited `.github` policy, so counting it would be a free pass on every row.
+ *   • Secure by design is absent entirely — it needs a threat model, and no GitHub signal stands in for one.
+ *   • The seventh, a maintenance plan, has no column: a plan is a document, and `named-owner` is the collectable
+ *     half of it.
  */
-export type AssuranceCriterion = "named-owner" | "automated-hygiene" | "patching" | "maintained";
+export type AssuranceCriterion = "named-owner" | "automated-hygiene" | "no-committed-secrets" | "security-contact" | "patching" | "maintained";
 
 /** Met, not met, or nobody could read it. The third is never folded into the second. */
 export type AssuranceOutcome = "met" | "unmet" | "unknown";
@@ -691,8 +698,27 @@ export interface TeamPractice {
   /** The allowance forgiving what it was configured to forgive, which is not the same as nothing merging. */
   unreviewed_within: number;
   unreviewed_above: number;
+  /**
+   * The CHANGES rather than the repositories: how many substantial changes reached the default branch with no
+   * independent review, out of how many there were.
+   *
+   * A different denominator from the four counts above, and the one with teeth. Those say how many of a team's
+   * repositories the policy graded clear; these say how much actually got through. Absent where the policy graded
+   * nothing — `minimum_merges` declines thin evidence, and the team page must not state a rate the policy refused.
+   */
+  unreviewed_substantial_merges?: number;
+  substantial_merges?: number;
   merged_pull_requests: number;
   direct_commits: number;
+  /**
+   * The typical repository's typical wait, in hours — a MEDIAN OF MEDIANS.
+   *
+   * Not the median across the team's changes, which would need every per-change value rather than each
+   * repository's summary. Named as what it is on the page, because the two are different numbers and the
+   * distinction is not obvious from a label. Absent where no repository observed one, never zero.
+   */
+  time_to_first_review_hours?: number;
+  merge_cycle_time_hours?: number;
 }
 
 export interface TeamRow {

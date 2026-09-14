@@ -11,20 +11,7 @@
  */
 
 import { distributionState, RAG_HEX, RAG_LABEL, RAG_STATES } from "@/lib/rag";
-import {
-  type Band,
-  CHECKS_BANDS,
-  COVERAGE_BANDS,
-  checksBand,
-  coverageBand,
-  REVIEW_BANDS,
-  reviewBand,
-  SECURITY_BANDS,
-  securityBand,
-  UNREVIEWED_BANDS,
-  unreviewedBand
-} from "@/lib/tone";
-import type { RepositoryRow } from "@/lib/types";
+import type { Band } from "@/lib/tone";
 
 export interface PieSlice {
   /**
@@ -88,36 +75,17 @@ export function bandSlices<Key extends string, Item>(bands: readonly Band<Key>[]
 }
 
 /**
- * The five estate donuts, each counting EVERY row it is given.
+ * THE FIVE ESTATE DONUTS ARE GONE, and this note is what is left of them.
  *
- * A row whose field is absent is counted unknown rather than dropped, so the five totals and the
- * readiness donut beside them all add up to the same number of repositories — a donut that quietly
- * shrank to the measured ones would report a coverage gap as a smaller estate.
+ * `reviewSlices`, `checksSlices`, `unreviewedSlices`, `coverageSlices` and `securitySlices` were removed on
+ * 2026-09-14 with the charts on `/repositories`. Four of the five drew ways-of-working dimensions, which
+ * `/teams` now reports per team as counts over stated denominators; the fifth, coverage, read a field the report
+ * layer has never emitted and so drew an all-unknown circle.
+ *
+ * `bandSlices` and `distributionSlices` survive because `TeamsList` and the team page's readiness legend read
+ * them. The band TABLES in `lib/tone.ts` survive too and are still used — `reviewBand`, `checksBand` and the
+ * rest grade a repository's own page — so nothing there was orphaned by this.
  */
-export function reviewSlices(rows: readonly RepositoryRow[]): PieSlice[] {
-  return bandSlices(REVIEW_BANDS, rows, (row) => reviewBand(row.required_approving_reviews));
-}
-
-export function checksSlices(rows: readonly RepositoryRow[]): PieSlice[] {
-  return bandSlices(CHECKS_BANDS, rows, (row) => checksBand(row.required_status_checks));
-}
-
-export function unreviewedSlices(rows: readonly RepositoryRow[]): PieSlice[] {
-  return bandSlices(UNREVIEWED_BANDS, rows, (row) => unreviewedBand(row.unreviewed_substantial));
-}
-
-export function coverageSlices(rows: readonly RepositoryRow[]): PieSlice[] {
-  return bandSlices(COVERAGE_BANDS, rows, (row) => coverageBand(row.sonar_coverage));
-}
-
-/**
- * The security donut, banded off the row itself: `RepositoryRow` carries the three fields
- * `SecuritySignals` names — five signals between them — so the row is passed through whole rather
- * than picked apart here.
- */
-export function securitySlices(rows: readonly RepositoryRow[]): PieSlice[] {
-  return bandSlices(SECURITY_BANDS, rows, (row) => securityBand(row));
-}
 
 export function totalValue(slices: readonly PieSlice[]): number {
   return slices.reduce((total, slice) => total + slice.value, 0);

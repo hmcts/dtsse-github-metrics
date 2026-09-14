@@ -77,6 +77,9 @@ const ROWS: RepositoryRow[] = [
         { criterion: "named-owner", outcome: "met", detail: "assigned to a team" },
         // Crossed over from `docs`: this one fails hygiene and meets maintenance, and `docs` is the reverse.
         { criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: secret scanning" },
+        // An outstanding leaked credential, crossed over from `docs` which has none.
+        { criterion: "no-committed-secrets", outcome: "unmet", detail: "2 secret-scanning alerts open, the oldest for 900 days" },
+        { criterion: "security-contact", outcome: "met", detail: "a security policy applies, usually the organisation's own rather than this repository's" },
         { criterion: "patching", outcome: "met", detail: "the oldest open critical or high alert is 120 days old" },
         { criterion: "maintained", outcome: "met", detail: "pushed to recently enough to read as maintained" }
       ],
@@ -104,6 +107,8 @@ const ROWS: RepositoryRow[] = [
       criteria: [
         { criterion: "named-owner", outcome: "unmet", detail: "assigned to one individual rather than a team" },
         { criterion: "automated-hygiene", outcome: "met", detail: "every hygiene signal is on" },
+        { criterion: "no-committed-secrets", outcome: "met", detail: "no secret-scanning alert is open" },
+        { criterion: "security-contact", outcome: "met", detail: "a security policy applies, usually the organisation's own rather than this repository's" },
         { criterion: "patching", outcome: "met", detail: "no critical or high alert is open" },
         { criterion: "maintained", outcome: "unmet", detail: "not archived and not pushed to for years, so it should be archived" }
       ]
@@ -211,10 +216,16 @@ describe("RepositoriesTable sorting", () => {
     // crossed over between them, so a header reading the wrong criterion sorts the pair the other way round.
     expect(sortBy("Code owner")).toEqual(["web", "docs", "api"]);
     expect(sortBy("Hygiene")).toEqual(["docs", "web", "api"]);
+    // `web` has an open secret-scanning alert and `docs` has none, so met sorts first and `api` — whose org-wide
+    // read never happened — sorts last.
+    expect(sortBy("Secrets")).toEqual(["docs", "web", "api"]);
+    // Met for both, which is the point of the column: it reads Yes almost everywhere. What it must still do is
+    // hold `api` back, since an unanswered criterion is not a met one.
+    expect(sortBy("Security contact").at(-1)).toBe("api");
     // The AGE, ascending. `web` has 120 days; `docs` has nothing severe open and `api` was never collected, and
     // BOTH sort last — the column orders the repositories that have an alert, and "no alert open" is not an
     // answer to "which has the oldest" any more than "nobody looked" is.
-    expect(sortBy("Oldest alert")[0]).toBe("web");
+    expect(sortBy("Patching cycle")[0]).toBe("web");
     expect(sortBy("Maintained")).toEqual(["web", "docs", "api"]);
     // No below Yes, and `api`, whose list could not be read, last rather than counted as either.
     expect(sortBy("Production")).toEqual(["docs", "web", "api"]);
@@ -282,7 +293,9 @@ describe("RepositoriesTable columns", () => {
       "Assurance",
       "Code owner",
       "Hygiene",
-      "Oldest alert",
+      "Secrets",
+      "Security contact",
+      "Patching cycle",
       "Maintained",
       "Production"
     ]);
@@ -302,10 +315,10 @@ describe("RepositoriesTable columns", () => {
     // A tone here would publish a policy nobody chose — which is why this asserts the ABSENCE of one.
     mount();
 
-    expect(cellOf("web", "Oldest alert")?.textContent).toBe("120d");
+    expect(cellOf("web", "Patching cycle")?.textContent).toBe("120d");
     // Nothing severe open reads as a dash rather than as `0d`, which would claim an alert was raised today.
-    expect(cellOf("docs", "Oldest alert")?.textContent).toBe("-");
-    expect(cellOf("web", "Oldest alert")?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
+    expect(cellOf("docs", "Patching cycle")?.textContent).toBe("-");
+    expect(cellOf("web", "Patching cycle")?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
   });
 
   it("prints the last push as a day and the visibility as a word", () => {
@@ -330,17 +343,17 @@ describe("RepositoriesTable columns", () => {
 
   // Header and cell together: a centred column whose header still read from the left, or the other
   // way round, would put the title off the answers under it.
-  it("centres the three outcome columns under centred headers", () => {
+  it("centres every outcome column under a centred header", () => {
     mount();
 
-    for (const label of ["Code owner", "Hygiene", "Maintained"]) {
+    for (const label of ["Code owner", "Hygiene", "Secrets", "Security contact", "Maintained"]) {
       for (const cell of criterionCells(label)) {
         expect(cell?.className).toContain("text-center");
       }
       expect(headerCell(label).className).toContain("text-center");
     }
     // The age is a figure and reads down a right edge instead.
-    expect(cellOf("web", "Oldest alert")?.className).toContain("text-right");
+    expect(cellOf("web", "Patching cycle")?.className).toContain("text-right");
   });
 
   it("tones the criteria, which ARE the grade on this page", () => {
@@ -476,60 +489,30 @@ describe("RepositoriesTable owner cell", () => {
   });
 });
 
-describe("RepositoriesTable filter chips", () => {
-  it("keeps the bar and shows no chip on it when the URL carries no filter", () => {
+/**
+ * The term box, and what the bar holds now that the donut chips have gone.
+ *
+ * The chip cases that used to live here went with `ESTATE_FILTERS` on 2026-09-14: the donuts were the only way to
+ * create one of those filters, so a chip a reader could dismiss but never apply was a half-wired control. What is
+ * left is the term and the four toggles, each of which has its own affordance.
+ */
+describe("RepositoriesTable filtering", () => {
+  it("shows no chip at all, there being no dimension left to chip", () => {
     mount();
 
     expect(chips()).toEqual([]);
     expect(order()).toEqual(["web", "docs", "api"]);
   });
 
-  it("reads one chip per filtered dimension, each naming its donut and the slice", () => {
+  it("ignores a stale donut parameter rather than filtering on it", () => {
+    // LINKS SHARED BEFORE THIS CHANGE still carry `?label=green&review=multiple`. They must show the whole table
+    // rather than an empty one: the dimension no longer exists, so the honest reading of the parameter is that it
+    // means nothing, not that it matches nothing.
     url("weeks=12&label=green&review=multiple");
-    mount();
-
-    expect(chips()).toEqual(["Readiness: Ready", "Enforces review: Multiple"]);
-  });
-
-  it("leaves a parameter naming no slice of its donut off the chips and off the rows", () => {
-    url("weeks=12&label=purple");
     mount();
 
     expect(chips()).toEqual([]);
     expect(order()).toEqual(["web", "docs", "api"]);
-  });
-
-  it("applies every filter in the URL together, not just the last one read", () => {
-    url("weeks=12&label=green&review=multiple");
-    mount();
-
-    expect(order()).toEqual(["docs"]);
-  });
-
-  it("says two dimensions matched nothing rather than ignoring one of them", () => {
-    url("weeks=12&label=red&review=multiple");
-    mount();
-
-    expect(screen.queryByRole("table")).toBeNull();
-    expect(chips()).toHaveLength(2);
-  });
-
-  it("drops only its own parameter on the ×, keeping the span, the term and the other chip", () => {
-    url("weeks=26&repository=e&label=green&review=multiple");
-    mount();
-
-    fireEvent.click(remove("Readiness"));
-
-    expect(replaced).toEqual(["/repositories?weeks=26&repository=e&review=multiple"]);
-  });
-
-  it("clears a filter by dropping the parameter rather than by emptying it", () => {
-    url("weeks=12&review=multiple");
-    mount();
-
-    fireEvent.click(remove("Enforces review"));
-
-    expect(replaced).toEqual(["/repositories?weeks=12"]);
   });
 
   it("applies the term in the URL to both the repository name and its team", () => {
@@ -547,21 +530,21 @@ describe("RepositoriesTable filter chips", () => {
     expect(screen.getByText(/No repository matches this filter/)).toBeTruthy();
   });
 
-  it("names the production toggle among the things an empty table can be cleared of", () => {
+  it("names the controls an empty table can be cleared of, and no longer a chip", () => {
     url("weeks=12&repository=nothing-here");
     mount();
 
-    expect(screen.getByText(/Clear the term, the Production toggle, or a filter/)).toBeTruthy();
+    expect(screen.getByText(/Clear the term, the Production toggle, or a visibility/)).toBeTruthy();
   });
 });
 
 describe("RepositoriesTable production toggle", () => {
-  it("is the first thing in the bar, before any chip", () => {
-    url("weeks=12&label=green");
+  it("is the first thing in the bar, ahead of the visibility toggles", () => {
     mount();
 
     expect(bar().children[0]).toBe(toggle());
-    expect(chips()).toEqual(["Readiness: Ready"]);
+    // No chips at all: the donut dimensions they reported went with the charts.
+    expect(chips()).toEqual([]);
   });
 
   it("carries the count of the production repositories a reader could turn it on for", () => {
@@ -759,11 +742,6 @@ function chips(): string[] {
 /** The Production toggle, found the way a reader does: by the word on it. */
 function toggle(): HTMLElement {
   return within(bar()).getByRole("button", { name: /Production/ });
-}
-
-/** One chip's dismiss control, found by the dimension it drops. */
-function remove(title: string): HTMLElement {
-  return screen.getByRole("button", { name: `Remove ${title} filter` });
 }
 
 /** What a screen reader is told about a column's sort — the property of the `<th>`, not the button. */

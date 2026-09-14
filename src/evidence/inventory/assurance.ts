@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AssuranceEvidence, HygieneSignals } from "../domain/assurance.ts";
+import type { AssuranceEvidence, HygieneSignals, SecretAlertSummary } from "../domain/assurance.ts";
 import { ageInDays } from "../domain/assurance.ts";
 import { GitHubError } from "../domain/availability.ts";
 import type { GitHubClient } from "../github/client.ts";
@@ -138,6 +138,7 @@ export function assuranceQuery(batchSize: number = DefaultAssuranceBatchSize): s
           a${index}: repository(owner: $organization, name: $r${index}) {
             name
             hasVulnerabilityAlertsEnabled
+            isSecurityPolicyEnabled
             ${files}
           }`
     )
@@ -153,11 +154,21 @@ export function assuranceQuery(batchSize: number = DefaultAssuranceBatchSize): s
 
 const assuranceEntrySchema = z.object({
   name: z.string().nullish(),
-  hasVulnerabilityAlertsEnabled: z.boolean().nullish()
+  hasVulnerabilityAlertsEnabled: z.boolean().nullish(),
+  isSecurityPolicyEnabled: z.boolean().nullish()
 });
 
-/** The GraphQL-only half of one repository's hygiene signals. */
-export type GraphAssurance = Pick<HygieneSignals, "vulnerabilityAlerts" | "updateConfiguration">;
+/**
+ * What the aliased GraphQL document answers for one repository.
+ *
+ * Two hygiene signals plus the security policy, which is NOT a hygiene signal and is kept apart from them: hygiene
+ * asks whether tooling is switched on and the policy is a separate criterion — one that is reported and
+ * deliberately not graded. Folding it into `HygieneSignals` would have put it into the hygiene composite, where a
+ * value that is true everywhere would have made that criterion easier to meet for no reason.
+ */
+export interface GraphAssurance extends Pick<HygieneSignals, "vulnerabilityAlerts" | "updateConfiguration"> {
+  securityPolicy?: boolean;
+}
 
 /** One failure's message, for a log line that names what went wrong rather than that something did. */
 function reason(error: unknown): string {
@@ -190,6 +201,7 @@ function readAssuranceEntry(organization: string, repository: string, value: unk
   const configured = UpdateConfigurationPaths.some((_path, at) => record[`c${at}`] != null);
   return {
     ...(parsed.data.hasVulnerabilityAlertsEnabled == null ? {} : { vulnerabilityAlerts: parsed.data.hasVulnerabilityAlertsEnabled }),
+    ...(parsed.data.isSecurityPolicyEnabled == null ? {} : { securityPolicy: parsed.data.isSecurityPolicyEnabled }),
     updateConfiguration: configured
   };
 }
@@ -276,17 +288,106 @@ export async function readDependabotAlerts(client: GitHubClient, organization: s
   return records;
 }
 
+/**
+ * Every open secret-scanning alert in the ORGANISATION, keyed by repository.
+ *
+ * ONE CALL FOR THE WHOLE ESTATE, and that shape is the whole reason this criterion is reportable. The
+ * per-repository endpoint works too and is deliberately not used: 1,880 calls against one, and — the part that
+ * matters more — a repository absent from THIS response is genuinely clean, where a per-repository absence cannot
+ * be told from a refusal. Measured on AAT: 18 alerts across 12 repositories, one page, oldest raised 2022-05-26.
+ *
+ * NO SECRET VALUE IS READ OUT OF THE RESPONSE. Each alert carries the literal detected credential in a `secret`
+ * field — which is why `github/client.ts` refuses to log response bodies at all — so this projects each record to
+ * a repository name and an instant before anything else touches it. Nothing downstream can leak what it never
+ * received, and `secret_type` is left behind too: "Azure Storage Account Access Key" beside a repository name
+ * tells a reader of the dashboard what to go looking for and where.
+ *
+ * `undefined` for a failed read, so the caller can report every repository as UNKNOWN rather than as clean. A
+ * `{}` here would mean "the whole estate has no leaked credentials", which is the one wrong answer that reads
+ * like good news.
+ */
+export async function collectOrganisationSecretAlerts(
+  client: GitHubClient,
+  organization: string,
+  reference: Date
+): Promise<Map<string, SecretAlertSummary> | undefined> {
+  // THE COUNT AND THE INSTANTS ARE TALLIED SEPARATELY, and conflating them was a real bug in the first version of
+  // this: counting `instants.length` reported a repository whose only alert had an unreadable `created_at` as
+  // having ZERO open, which turns a leaked credential into a clean bill. An alert with no readable instant is
+  // still an alert; it just cannot contribute an age.
+  const open = new Map<string, number>();
+  const raised = new Map<string, Date[]>();
+  try {
+    for await (const page of client.paginate<unknown>(`/orgs/${organization}/secret-scanning/alerts`, { state: "open", per_page: 100 })) {
+      for (const record of page) {
+        const parsed = organisationSecretAlertSchema.safeParse(record);
+        // A record this build cannot read is skipped rather than failing the estate: one unparseable alert must
+        // not turn every repository's answer into unknown.
+        const repository = parsed.success ? parsed.data.repository?.name : undefined;
+        if (repository == null) {
+          continue;
+        }
+        open.set(repository, (open.get(repository) ?? 0) + 1);
+        const createdAt = parsed.data?.created_at == null ? undefined : new Date(parsed.data.created_at);
+        if (createdAt !== undefined && !Number.isNaN(createdAt.getTime())) {
+          raised.set(repository, [...(raised.get(repository) ?? []), createdAt]);
+        }
+      }
+    }
+  } catch (error) {
+    console.warn(`Could not read the open secret-scanning alerts of ${organization}; every repository's answer will be unknown: ${reason(error)}`);
+    return undefined;
+  }
+
+  const summaries = new Map<string, SecretAlertSummary>();
+  for (const [repository, count] of open) {
+    const instants = raised.get(repository) ?? [];
+    const oldest = instants.length === 0 ? undefined : new Date(Math.min(...instants.map((instant) => instant.getTime())));
+    const age = ageInDays(oldest, reference);
+    summaries.set(repository, { open: count, ...(age === undefined ? {} : { oldestOpenDays: age }) });
+  }
+  return summaries;
+}
+
+/**
+ * One organisation-wide secret-scanning alert, projected to the two fields this reads.
+ *
+ * Deliberately NARROW. The schema names `repository.name` and `created_at` and nothing else, so the `secret` field
+ * carrying the live credential is dropped at the boundary rather than carried and then ignored — the safest place
+ * to lose it is before it reaches a variable.
+ */
+const organisationSecretAlertSchema = z.object({
+  created_at: z.string().nullish(),
+  repository: z.object({ name: z.string().nullish() }).nullish()
+});
+
 /** One repository's assurance evidence, assembled from the three sources that carry it. */
 export function assuranceEvidence(
   metadata: unknown,
   graph: GraphAssurance | undefined,
   alerts: readonly unknown[] | undefined,
-  reference: Date
+  reference: Date,
+  /**
+   * The org-wide secret-scanning answer: this repository's summary, or `undefined` where the read failed.
+   *
+   * A THREE-WAY PARAMETER carried as an object rather than as a bare summary, because "no alerts for this
+   * repository" and "the whole read failed" must not collapse into the same `undefined`. `{ read: true }` with no
+   * summary is clean — the org-wide call covers every repository, so absence from it is an answer — and
+   * `{ read: false }` is unknown.
+   */
+  secrets: { read: boolean; summary?: SecretAlertSummary } = { read: false }
 ): AssuranceEvidence {
   const age = alerts === undefined ? undefined : severeAlertAge(alerts, reference);
+  // The policy is lifted OUT of the hygiene signals it arrives beside: it is its own criterion, and leaving it in
+  // `hygiene` would have folded a value that is true everywhere into the hygiene composite.
+  const { securityPolicy, ...hygieneFromGraph } = graph ?? {};
   return {
-    hygiene: { ...hygieneFromMetadata(metadata), ...(graph ?? {}) },
+    hygiene: { ...hygieneFromMetadata(metadata), ...hygieneFromGraph },
     ...(age === undefined ? {} : { oldestSevereAlertDays: age }),
-    severeAlertsRead: alerts !== undefined
+    severeAlertsRead: alerts !== undefined,
+    ...(securityPolicy === undefined ? {} : { securityPolicy }),
+    // Clean is `{ open: 0 }` rather than an absence, so the domain can tell it from an unread estate.
+    ...(secrets.read ? { secrets: secrets.summary ?? { open: 0 } } : {}),
+    secretsRead: secrets.read
   };
 }

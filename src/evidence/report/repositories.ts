@@ -1,10 +1,11 @@
 import "server-only";
-import { readinessPolicy } from "../assessment/assessment.ts";
+import { type ReadinessPolicy, readinessPolicy } from "../assessment/assessment.ts";
 import { deserialiseMerges } from "../behaviour/fill.ts";
+import { mergeCycleTime, timeToFirstReview } from "../behaviour/metrics.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
 import { type AssuranceEvidence, assuranceGrade, judgeAssurance } from "../domain/assurance.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
-import type { Merges } from "../domain/facts.ts";
+import { type DistributionObservation, type Merges, ObservationStatus, type RateObservation } from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import { type CohortEntry, cohortTeams, servedCohort } from "../org/cohort.ts";
@@ -193,10 +194,77 @@ function repositoryRow(
     required_approving_reviews: gate.gate === undefined ? undefined : requiredApprovals(gate.gate),
     required_status_checks: gate.gate === undefined ? undefined : requiredContexts(gate.gate).length,
     unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
+    // THE COUNTS BEHIND THAT VERDICT, which the team page aggregates: how many substantial changes reached the
+    // default branch with no independent review, out of how many substantial changes there were. The verdict alone
+    // cannot be summed across a team's repositories, and the policy already computes both.
+    ...substantialCounts(policy, merges),
+    // The two timing medians. Read off `BehaviourMetric.summary`, so the page and the assessment compare the same
+    // number at the same percentile rather than two derivations that could disagree.
+    ...timingMedians(merges),
     security: reportedAlerts(payload.securityAlerts),
     production: production ?? payload.deploysToProduction,
     detail: gate.gate === undefined ? gate.detail : undefined
   };
+}
+
+/**
+ * The substantial-merge counts, or nothing where the policy graded nothing.
+ *
+ * Suppressed on a cohort below `minimum_merges` for the reason `unreviewedSubstantialOutcome` is: the policy
+ * declines to grade thin evidence, and reporting the raw counts anyway would let the team page state a rate the
+ * policy refused to state. `minimum_merges` is untouched — this reads its answer rather than second-guessing it.
+ */
+function substantialCounts(policy: ReadinessPolicy, merges: Merges): Record<string, number | undefined> {
+  if (!policy.sufficient(merges)) {
+    return {};
+  }
+  const counts = policy.unreviewedSubstantialCounts(merges);
+  return { unreviewed_substantial_merges: counts.unreviewed, substantial_merges: counts.merges };
+}
+
+/**
+ * The two timing medians, or nothing where the facts cannot support them.
+ *
+ * GUARDED, and the guard is not defensive padding — it is a real shape in the cache. `eligibleReviews` reads
+ * `pullRequest.reviews` without a check, so a stored payload lacking that array throws rather than reporting an
+ * absence, and the report layer must not turn one such row into a 500 for the whole page. Rows like that exist:
+ * `deserialiseMerges` passes a payload through as it was stored, and the projection in `loadCachedFactsForOrganisation`
+ * has been narrowed once already, so "every payload carries every field the metrics read" is an assumption about
+ * history rather than a guarantee.
+ *
+ * The failure is reported as an ABSENT median, which is the same answer a window with no reviews gives, and the
+ * reason is logged once per repository rather than swallowed — an unmeasurable metric is worth knowing about, and a
+ * page that renders is worth more than a page that is right about one column.
+ */
+function timingMedians(merges: Merges): Record<string, number | undefined> {
+  try {
+    return {
+      time_to_first_review_hours: medianOf(timeToFirstReview.summary(merges)),
+      merge_cycle_time_hours: medianOf(mergeCycleTime.summary(merges))
+    };
+  } catch (error) {
+    console.warn(`the review timings could not be measured: ${error instanceof Error ? error.message : String(error)}`);
+    return {};
+  }
+}
+
+/**
+ * One distribution's median, or nothing where it observed no eligible sample.
+ *
+ * ABSENT AND NEVER ZERO, which is the same rule the whole contract follows: a repository whose pull requests were
+ * never reviewed has no wait to report, and `0 hours` would read as instant review.
+ *
+ * NARROWED RATHER THAN CAST. `BehaviourMetric.summary` returns a rate or a distribution and only the two metrics
+ * read here return the second, so `assessment.ts` casts at its call sites. A cast would be wrong here for a reason
+ * that does not apply there: this is the SERVING path, and a metric later changed from a distribution to a rate
+ * would put `undefined` on the contract as a silent absence rather than failing. `"unit" in` is the discriminator
+ * `lib/format.ts` already uses, so there is one definition of which shape an observation is.
+ */
+function medianOf(observation: DistributionObservation | RateObservation): number | undefined {
+  if (!("unit" in observation) || observation.status !== ObservationStatus.Observed) {
+    return undefined;
+  }
+  return observation.median;
 }
 
 /**
@@ -376,6 +444,19 @@ interface TeamAggregableRow {
   unreviewed_substantial?: string;
   merged_pull_requests?: number;
   direct_commits?: number;
+  /**
+   * How many substantial changes reached the default branch with no independent review, and out of how many.
+   *
+   * The COUNTS behind `unreviewed_substantial`, which is only the policy's verdict. A team page reporting
+   * "8 of 24 clear" is reporting how many of its repositories were graded clear; what a reader then wants is how
+   * many CHANGES went unreviewed, which is a different denominator and the one with teeth.
+   */
+  unreviewed_substantial_merges?: number;
+  substantial_merges?: number;
+  /** The median hours a merged pull request waited for its first independent review, where one was observed. */
+  time_to_first_review_hours?: number;
+  /** The median hours from ready-for-review to merge. */
+  merge_cycle_time_hours?: number;
 }
 
 /**
@@ -418,10 +499,49 @@ function teamPractice(owned: readonly TeamAggregableRow[]): Record<string, unkno
     unreviewed_clear: graded.filter((row) => row.unreviewed_substantial === "none").length,
     unreviewed_within: graded.filter((row) => row.unreviewed_substantial === "within").length,
     unreviewed_above: graded.filter((row) => row.unreviewed_substantial === "above").length,
+    // THE CHANGES rather than the repositories, which is a different denominator and the one with teeth. The four
+    // figures above count how many of a team's repositories the policy graded clear; these count how many
+    // substantial changes actually reached the default branch unreviewed. A team can be "8 of 24 clear" and have
+    // two unreviewed merges or two hundred.
+    unreviewed_substantial_merges: owned.reduce((total, row) => total + (row.unreviewed_substantial_merges ?? 0), 0),
+    substantial_merges: owned.reduce((total, row) => total + (row.substantial_merges ?? 0), 0),
     // Throughput, stated because the figures above are unreadable without it: 2 of 40 gates unenforced reads
     // differently for a team that merged 400 changes and one that merged none.
     merged_pull_requests: owned.reduce((total, row) => total + (row.merged_pull_requests ?? 0), 0),
-    direct_commits: owned.reduce((total, row) => total + (row.direct_commits ?? 0), 0)
+    direct_commits: owned.reduce((total, row) => total + (row.direct_commits ?? 0), 0),
+    ...timings(owned)
+  };
+}
+
+/**
+ * The two timing medians, aggregated across a team's repositories.
+ *
+ * A MEDIAN OF MEDIANS, and it is worth being honest about what that is: it is not the median wait across the
+ * team's changes, which would need every per-change value rather than each repository's summary. It is the typical
+ * repository's typical wait. That is the figure a reader of a TEAM page actually wants — one repository with a
+ * three-week review does not become the team's story — and it is what the per-repository medians can support
+ * without re-deriving the whole cohort here.
+ *
+ * The alternative, a mean of medians, was rejected for the reason the metrics themselves read at the median: one
+ * stalled repository would drag the team's figure and the page would report a number no repository experienced.
+ *
+ * ABSENT WHERE NO REPOSITORY REPORTED ONE, rather than zero. A team whose repositories all had too few reviews to
+ * measure has no wait to report, and `0 hours` would read as instant review.
+ */
+function timings(owned: readonly TeamAggregableRow[]): Record<string, number | undefined> {
+  const median = (values: number[]): number | undefined => {
+    if (values.length === 0) {
+      return undefined;
+    }
+    const sorted = [...values].sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    // The mean of the two central values on an even count, which is the definition `distribution` in
+    // `behaviour/metrics.ts` uses — so a team of one repository reports exactly that repository's own figure.
+    return sorted.length % 2 === 1 ? (sorted[middle] as number) : ((sorted[middle - 1] as number) + (sorted[middle] as number)) / 2;
+  };
+  return {
+    time_to_first_review_hours: median(owned.map((row) => row.time_to_first_review_hours).filter((hours): hours is number => hours !== undefined)),
+    merge_cycle_time_hours: median(owned.map((row) => row.merge_cycle_time_hours).filter((hours): hours is number => hours !== undefined))
   };
 }
 

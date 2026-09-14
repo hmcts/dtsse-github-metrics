@@ -96,6 +96,10 @@ describe("practiceFigures", () => {
       unreviewed_above: 1,
       merged_pull_requests: 120,
       direct_commits: 4,
+      unreviewed_substantial_merges: 3,
+      substantial_merges: 40,
+      time_to_first_review_hours: 5.25,
+      merge_cycle_time_hours: 30,
       ...overrides
     };
   }
@@ -113,7 +117,7 @@ describe("practiceFigures", () => {
     // nobody could read are not two repositories that fail to enforce review.
     expect(figureOf("Enforces review").value).toBe("8 of 10");
     expect(figureOf("Enforces CI").value).toBe("6 of 10");
-    expect(figureOf("Substantial merges reviewed").value).toBe("4 of 7");
+    expect(figureOf("Repositories reviewing substantial changes").value).toBe("4 of 7");
   });
 
   it("computes no share, so nothing here is a figure two teams could be ordered by", () => {
@@ -139,18 +143,62 @@ describe("practiceFigures", () => {
     // went unreviewed.
     const thin = practice({ unreviewed_measured: 0, unreviewed_clear: 0, unreviewed_within: 0, unreviewed_above: 0 });
 
-    expect(figureOf("Substantial merges reviewed", thin).value).toBe("not measured");
-    expect(figureOf("Substantial merges reviewed", thin).detail).toBe("too few merges to grade");
+    expect(figureOf("Repositories reviewing substantial changes", thin).value).toBe("not measured");
+    expect(figureOf("Repositories reviewing substantial changes", thin).detail).toBe("too few merges to grade");
   });
 
   it("keeps the allowance apart from nothing having merged unreviewed", () => {
     // The policy's own three words. `within` is the allowance forgiving what it was configured to forgive, and
     // folding it into a pass would report a habit as a clean result.
-    expect(figureOf("Substantial merges reviewed").detail).toBe("2 within the allowance, 1 above it");
+    expect(figureOf("Repositories reviewing substantial changes").detail).toBe("2 within the allowance, 1 above it");
   });
 
   it("carries the stronger review requirement as detail rather than as a second verdict", () => {
     expect(figureOf("Enforces review").detail).toBe("3 require two or more approvals");
+  });
+
+  it("counts the CHANGES reviewed as well as the repositories, which is the figure with teeth", () => {
+    // A team can be "4 of 7 clear" with three unreviewed merges or three hundred. The line above counts
+    // repositories the policy graded clear; this counts what actually reached the default branch unreviewed.
+    expect(figureOf("Substantial changes reviewed").value).toBe("37 of 40");
+    expect(figureOf("Substantial changes reviewed").detail).toBe("3 merged with no independent review");
+  });
+
+  it("says nothing was graded rather than printing a rate the policy refused to state", () => {
+    // `minimum_merges` declines thin evidence, so the report layer omits the counts entirely — and the page must
+    // not fill that with "0 of 0", which reads as a team that reviews nothing.
+    const ungraded = practice({ substantial_merges: undefined, unreviewed_substantial_merges: undefined });
+
+    expect(figureOf("Substantial changes reviewed", ungraded).value).toBe("not measured");
+    expect(figureOf("Substantial changes reviewed", ungraded).detail).toBe("no substantial change was graded at this span");
+  });
+
+  it("states direct pushes against every change that reached the branch", () => {
+    // 4 of 400 and 4 of 6 are different findings, so the denominator is the team's whole traffic rather than the
+    // direct commits alone. This is the user's "direct pushes to master", and the pair was already on the row.
+    expect(figureOf("Direct pushes to the default branch").value).toBe("4 of 124");
+    expect(figureOf("Direct pushes to the default branch").detail).toBe("120 arrived through a pull request");
+  });
+
+  it("says every change arrived through a pull request where none was direct", () => {
+    expect(figureOf("Direct pushes to the default branch", practice({ direct_commits: 0 })).detail).toBe("every change arrived through a pull request");
+  });
+
+  it("reports both timing medians in hours, naming what kind of median they are", () => {
+    // A MEDIAN OF MEDIANS, said on the page: it is the typical repository's typical wait rather than the median
+    // across the team's changes, and the two are different numbers.
+    expect(figureOf("Time to first review").value).toBe("5.3 hours");
+    expect(figureOf("Time to first review").detail).toBe("typical repository’s typical wait");
+    expect(figureOf("Merge cycle time").value).toBe("30 hours");
+  });
+
+  it("says a timing was not measured rather than reporting nought hours", () => {
+    // `0 hours` would say a team reviews instantly when in fact nothing was observed.
+    const unwatched = practice({ time_to_first_review_hours: undefined, merge_cycle_time_hours: undefined });
+
+    expect(figureOf("Time to first review", unwatched).value).toBe("not measured");
+    expect(figureOf("Time to first review", unwatched).detail).toBe("no repository observed an independent review");
+    expect(figureOf("Merge cycle time", unwatched).value).toBe("not measured");
   });
 });
 
