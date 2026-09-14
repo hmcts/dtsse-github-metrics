@@ -80,7 +80,7 @@ function policyOf(overrides: Partial<CohortPolicy> = {}): CohortPolicy {
  * all, and a builder that could only make teams would leave the whole exclusion untestable.
  */
 function entryOf(name: string, owners: string[], ownerKind: OwnerKind = OwnerKind.Team): CohortEntry {
-  return { repository: name, owners, ownerKind, archived: false, visibility: "public" };
+  return { repository: name, owners, ownerKind, archived: false, visibility: "public", behaviourCollectable: true, unmaintained: false };
 }
 
 /** A real parsed configuration, so what the reading tests exercise is the policy the schema actually produces. */
@@ -135,40 +135,90 @@ describe("selectCohort", () => {
     expect(entries.map((entry) => entry.repository)).toEqual(["reported"]);
   });
 
-  it("should keep a repository pushed to inside the window and drop one pushed to before it", () => {
+  it("should report a repository pushed to before the window rather than dropping it from the estate", () => {
+    // THE REVERSAL of 2026-09-14, and the case the whole change is for. The activity window used to remove
+    // these entries, which hid exactly the repositories the assurance criteria are most about: 148 unarchived
+    // repositories on this estate are two or more years stale and not one had ever been collected.
     const repositories = [repository("busy", { pushedAt: daysBefore(10) }), repository("dormant", { pushedAt: daysBefore(400) })];
 
-    expect(selectCohort(repositories, [], policyOf({ activeWithinDays: 90 }), REFERENCE).map((entry) => entry.repository)).toEqual(["busy"]);
+    expect(selectCohort(repositories, [], policyOf({ activeWithinDays: 90 }), REFERENCE).map((entry) => entry.repository)).toEqual(["busy", "dormant"]);
   });
 
-  it("should keep a very old push once the window is off, which is what turning it off is for", () => {
+  it("should mark behaviour collectable inside the window and not outside it, which is the cost control", () => {
+    // What the window decides now. The merge walks are most of a run's 15,500 calls, so admitting the stale
+    // repositories to the report had to leave the walk exactly as wide as it was.
+    const repositories = [repository("busy", { pushedAt: daysBefore(10) }), repository("dormant", { pushedAt: daysBefore(400) })];
+
+    const collectable = new Map(
+      selectCohort(repositories, [], policyOf({ activeWithinDays: 90 }), REFERENCE).map((entry) => [entry.repository, entry.behaviourCollectable])
+    );
+    expect(collectable.get("busy")).toBe(true);
+    expect(collectable.get("dormant")).toBe(false);
+  });
+
+  it("should collect every repository's behaviour once the window is off, which is what turning it off is for", () => {
     const repositories = [repository("ancient", { pushedAt: new Date("2014-01-01T00:00:00Z") })];
 
-    expect(selectCohort(repositories, [], policyOf({ activeWithinDays: undefined }), REFERENCE).map((entry) => entry.repository)).toEqual(["ancient"]);
+    expect(selectCohort(repositories, [], policyOf({ activeWithinDays: undefined }), REFERENCE)[0]?.behaviourCollectable).toBe(true);
   });
 
   it("should not read an absent push as activity while a window is set", () => {
-    // THE CASE THAT WOULD HAVE SELECTED THE WHOLE ORGANISATION. `pushed_at` is null on every row collected
-    // before the column existed, so had absence counted as active, the first run after the migration would have
-    // admitted all 3,277 repositories. An empty cohort is a visible failure; that one is an invisible bill.
+    // THE CASE THAT WOULD HAVE WALKED THE WHOLE ORGANISATION. `pushed_at` is null on every row collected before
+    // the column existed, so had absence counted as active, the first run after the migration would have
+    // collected all 3,277 repositories' merge history. It reaches the report either way now; what it must not
+    // reach is the walk.
     const repositories = [neverPushed("never-pushed"), repository("pushed")];
 
-    expect(selectCohort(repositories, [], policyOf({ activeWithinDays: 90 }), REFERENCE).map((entry) => entry.repository)).toEqual(["pushed"]);
+    const entries = selectCohort(repositories, [], policyOf({ activeWithinDays: 90 }), REFERENCE);
+    expect(entries.map((entry) => entry.repository)).toEqual(["never-pushed", "pushed"]);
+    expect(entries.find((entry) => entry.repository === "never-pushed")?.behaviourCollectable).toBe(false);
   });
 
-  it("should keep a repository with no recorded push once the window is off", () => {
-    // With no window there is nothing to compare against, so the absence stops being disqualifying — an empty
-    // repository somebody created on Tuesday is still part of the estate.
-    const repositories = [neverPushed("never-pushed")];
+  it("should flag a repository past the unmaintained boundary and not one merely quiet", () => {
+    // THE THREE STATES, which is the distinction the two windows exist to keep. At 180 days nothing is
+    // collected AND nothing is flagged — a real answer rather than a gap — while at 800 days the repository
+    // reads as code that should have been archived.
+    const repositories = [
+      repository("fresh", { pushedAt: daysBefore(10) }),
+      repository("quiet", { pushedAt: daysBefore(180) }),
+      repository("dead", { pushedAt: daysBefore(800) })
+    ];
 
-    expect(selectCohort(repositories, [], policyOf({ activeWithinDays: undefined }), REFERENCE).map((entry) => entry.repository)).toEqual(["never-pushed"]);
+    const entries = selectCohort(repositories, [], policyOf({ activeWithinDays: 90, unmaintainedAfterDays: 730 }), REFERENCE);
+    const flagged = new Map(entries.map((entry) => [entry.repository, { collectable: entry.behaviourCollectable, unmaintained: entry.unmaintained }]));
+    expect(flagged.get("fresh")).toEqual({ collectable: true, unmaintained: false });
+    expect(flagged.get("quiet")).toEqual({ collectable: false, unmaintained: false });
+    expect(flagged.get("dead")).toEqual({ collectable: false, unmaintained: true });
+  });
+
+  it("should not flag a repository GitHub reports no last push for, an absence being no evidence of neglect", () => {
+    // The opposite reading from `behaviourCollectable` on the same field, and deliberately so: each defaults to
+    // the answer that invents no fact. Absence must not become a red flag nobody measured.
+    const entries = selectCohort([neverPushed("empty")], [], policyOf({ unmaintainedAfterDays: 730 }), REFERENCE);
+
+    expect(entries[0]?.unmaintained).toBe(false);
+  });
+
+  it("should flag nothing when no boundary is configured", () => {
+    const entries = selectCohort([repository("dead", { pushedAt: daysBefore(3000) })], [], policyOf({ unmaintainedAfterDays: undefined }), REFERENCE);
+
+    expect(entries[0]?.unmaintained).toBe(false);
   });
 
   it("should report a repository under the team its ownership row names", () => {
     const entries = selectCohort([repository("civil-service")], [ownedBy("civil-service", "civil")], policyOf(), REFERENCE);
 
     expect(entries).toEqual([
-      { repository: "civil-service", owners: ["civil"], ownerKind: OwnerKind.Team, archived: false, visibility: "public", pushedAt: daysBefore(1) }
+      {
+        repository: "civil-service",
+        owners: ["civil"],
+        ownerKind: OwnerKind.Team,
+        archived: false,
+        visibility: "public",
+        behaviourCollectable: true,
+        unmaintained: false,
+        pushedAt: daysBefore(1)
+      }
     ]);
   });
 
@@ -191,7 +241,16 @@ describe("selectCohort", () => {
     const entries = selectCohort([repository("collected-since")], [ownedBy("something-else", "civil")], policyOf(), REFERENCE);
 
     expect(entries).toEqual([
-      { repository: "collected-since", owners: [UnownedIdentifier], ownerKind: OwnerKind.None, archived: false, visibility: "public", pushedAt: daysBefore(1) }
+      {
+        repository: "collected-since",
+        owners: [UnownedIdentifier],
+        ownerKind: OwnerKind.None,
+        archived: false,
+        visibility: "public",
+        behaviourCollectable: true,
+        unmaintained: false,
+        pushedAt: daysBefore(1)
+      }
     ]);
   });
 

@@ -10,9 +10,17 @@ import { resolveCredentials } from "../evidence/github/credentials.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
 import { collectSecurityAlerts } from "../evidence/inventory/security-alerts.ts";
-import { CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } from "../evidence/org/cohort.ts";
+import { behaviourCollectableRepositories, CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } from "../evidence/org/cohort.ts";
 import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
-import { byCodePoint, canonical, type OrgFacts, OwnerKind, type OwnershipOptions, type ResolvedOwnership } from "../evidence/org/graph.ts";
+import {
+  byCodePoint,
+  canonical,
+  type OrgFacts,
+  OwnerKind,
+  type OwnershipOptions,
+  type RepositoryAuthorship,
+  type ResolvedOwnership
+} from "../evidence/org/graph.ts";
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
 import { configuredTeamSlugs, sonarOrganizationName } from "../evidence/policy/repositories.ts";
@@ -20,6 +28,7 @@ import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
+import { authorshipForOrganisation } from "../evidence/store/facts.ts";
 import { migrate } from "../evidence/store/migrate.ts";
 import {
   recordOrgPeople,
@@ -174,7 +183,11 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
 
   const production = configuration.production_list_url === null ? undefined : await fetchProductionRepositories(configuration.production_list_url);
 
-  const repositories = argv.repository === undefined ? await cohortRepositories(configuration, reference) : [argv.repository];
+  // `behaviourCollectableRepositories` AND NOT `cohortRepositories`, which is the one call site that keeps
+  // admitting stale repositories to the report from costing anything. The estate is 1,880 and this walks the
+  // roughly 1,230 pushed to inside `cohort.active_within_days`; a named `--repository` overrides both, since
+  // somebody asking for one repository has said which.
+  const repositories = argv.repository === undefined ? await behaviourCollectableRepositories(configuration, reference) : [argv.repository];
   let observed = 0;
   let failures = 0;
 
@@ -370,11 +383,19 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     maximumTeamMembers: graph.maximum_team_members,
     excludedTeams: new Set(graph.excluded_teams.map(canonical)),
     // Slugs, not identifiers: this feeds the ladder, whose answer is stored in a column joined to `org_teams`.
-    configured: configuredTeamSlugs(configuration)
+    configured: configuredTeamSlugs(configuration),
+    minimumAuthoredMerges: graph.minimum_authored_merges
   };
 
+  // Read from the fact cache `collect` fills rather than fetched, so the top rung of the ladder costs no
+  // GitHub call. An EMPTY MAP is a legitimate outcome and not a failure — on a database where `collect` has
+  // never run there is no authorship, the rung declines for every repository, and the rungs below answer
+  // exactly as they did before it existed. That is why `collect-org` does not refuse on it.
+  const authorship = await authoredMerges(organization, graph.authorship_days, observedAt);
+  progress(`read authorship for ${authorship.size} repositories from the ${graph.authorship_days}-day fact cache`);
+
   // Resolved once from the free rungs to find the residue, then again once the paid rungs have answered.
-  const free: OrgFacts = { organization, ...teamFacts, repositories, people, codeowners: new Map(), directAdmins: new Map() };
+  const free: OrgFacts = { organization, ...teamFacts, repositories, people, codeowners: new Map(), directAdmins: new Map(), authorship };
   const evidence = ownershipEvidence(free, options);
 
   // Named, not just counted. A filter that quietly stops a team being an owner is the one thing in this walk
@@ -524,6 +545,19 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     progress("part of the organisation would not answer, which a scheduled run reports as success; see collector.exit_status");
   }
   return complete ? EXIT_COMPLETE : collectionStatus(CollectionStatus.Partial, argv.toleratePartial);
+}
+
+/**
+ * Who authored merges in each repository, in the shape the ownership ladder reads.
+ *
+ * The store returns login→count maps and the ladder wants `RepositoryAuthorship`; the reshaping is here
+ * rather than in the store so that `facts.ts` stays a reader of its own tables and knows nothing about the
+ * ownership rungs that happen to consume it.
+ */
+async function authoredMerges(organization: string, days: number, reference: Date): Promise<Map<string, RepositoryAuthorship>> {
+  const since = new Date(reference.getTime() - days * 24 * 60 * 60 * 1000);
+  const counted = await authorshipForOrganisation(organization, since);
+  return new Map([...counted].map(([repository, merges]) => [repository, { repository, merges }]));
 }
 
 /** The bucket a repository nothing owns is grouped under. Not a GitHub team, and never given a slug. */

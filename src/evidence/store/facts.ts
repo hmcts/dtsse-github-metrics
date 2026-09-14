@@ -245,6 +245,48 @@ export async function loadCachedFactsForOrganisation(
   }
 }
 
+/**
+ * Who authored the merges in each repository over a window, for the `authoring-team` ownership rung.
+ *
+ * ONE QUERY FOR THE WHOLE ORGANISATION, aggregated in Postgres. The rung needs a count per
+ * (repository, author) across the estate, and the alternative — reading every payload and folding in
+ * JavaScript — would transfer the fact cache to count a field of it. On AAT this reads 703 repositories'
+ * authorship as a few thousand rows.
+ *
+ * `query_hash` is deliberately NOT constrained. Every other reader here scopes to the signature that collected
+ * it, because a widened query invalidates the intervals a narrower one covered — but this asks "who has been
+ * merging here", and a merge authored under a previous query shape was still authored. Excluding those rows
+ * would empty this the day somebody adds a field to the pull-request document, and silently move the whole
+ * estate's ownership back onto `teams-api-admin`.
+ *
+ * FOLDED IN SQL, matching `canonical`: the memberships this is joined against are folded, and `Alice` must
+ * match their membership as `alice`.
+ */
+export async function authorshipForOrganisation(organization: string, since: Date): Promise<Map<string, Map<string, number>>> {
+  try {
+    const rows = await prisma.$queryRaw<{ repository: string; login: string; merges: bigint }[]>`
+      SELECT repository, lower(payload->>'authorLogin') AS login, count(*) AS merges
+      FROM pull_request_facts
+      WHERE organization = ${organization} AND merged_at >= ${since}
+        AND payload->>'authorLogin' IS NOT NULL AND payload->>'authorLogin' <> ''
+      GROUP BY repository, lower(payload->>'authorLogin')
+      ORDER BY repository ASC, lower(payload->>'authorLogin') ASC
+    `;
+    const authorship = new Map<string, Map<string, number>>();
+    for (const row of rows) {
+      const merges = authorship.get(row.repository) ?? new Map<string, number>();
+      // `count(*)` arrives as a BIGINT through the raw client, which is a `bigint` in JavaScript and would
+      // compare against a threshold as `2n >= 2` — true, but every arithmetic use of it beside a number
+      // throws. Narrowed here, where the row is read, rather than at each of the comparisons downstream.
+      merges.set(row.login, Number(row.merges));
+      authorship.set(row.repository, merges);
+    }
+    return authorship;
+  } catch (error) {
+    throw new StorageError("could not read collection cache", error);
+  }
+}
+
 /** Every cohort repository's collected state, in one query. */
 export async function storedRepositoryStates(organization: string): Promise<Map<string, { fetchedAt: Date; payload: unknown }>> {
   try {
