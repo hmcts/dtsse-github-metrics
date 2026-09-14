@@ -192,6 +192,13 @@ describe("practiceFigures", () => {
     expect(figureOf("Merge cycle time").value).toBe("30 hours");
   });
 
+  it("pluralises the hours against the ROUNDED figure, so the words match the number printed", () => {
+    // A median of 1.03 hours reads "1 hour". Pluralising on the raw value would print "1 hours", which is what
+    // `platform-operations` did on the real estate.
+    expect(figureOf("Time to first review", practice({ time_to_first_review_hours: 1.03 })).value).toBe("1 hour");
+    expect(figureOf("Time to first review", practice({ time_to_first_review_hours: 1.4 })).value).toBe("1.4 hours");
+  });
+
   it("says a timing was not measured rather than reporting nought hours", () => {
     // `0 hours` would say a team reviews instantly when in fact nothing was observed.
     const unwatched = practice({ time_to_first_review_hours: undefined, merge_cycle_time_hours: undefined });

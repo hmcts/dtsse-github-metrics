@@ -148,5 +148,12 @@ function substantialChanges(practice: TeamPractice): { value: string; detail: st
  * team reviews instantly when in fact nothing was measured.
  */
 function hours(value: number | undefined): string {
-  return value === undefined ? "not measured" : `${Math.round(value * 10) / 10} hours`;
+  if (value === undefined) {
+    return "not measured";
+  }
+  const rounded = Math.round(value * 10) / 10;
+  // Pluralised against the ROUNDED figure rather than the raw one, so the words match the number printed beside
+  // them: a median of 1.03 hours reads "1 hour", and pluralising on the unrounded value would print "1 hours".
+  // Found on the real estate, where `platform-operations` reports exactly that.
+  return `${rounded} ${rounded === 1 ? "hour" : "hours"}`;
 }
