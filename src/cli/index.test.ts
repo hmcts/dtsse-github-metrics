@@ -5,7 +5,9 @@ import { EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE } from "./exit-
 const migrate = vi.hoisted(() => vi.fn<() => Promise<string[]>>());
 const loadConfiguration = vi.hoisted(() => vi.fn());
 const cohortRepositories = vi.hoisted(() => vi.fn());
-const behaviourCollectableRepositories = vi.hoisted(() => vi.fn());
+// What `collect` walks, as the entries carrying `behaviourCollectable`. Stubbed here rather than derived, so a
+// case can state a stale repository beside a fresh one without also stating a `pushedAt` and a policy.
+const readCohort = vi.hoisted(() => vi.fn());
 // The `authoring-team` rung's input. Stubbed EMPTY by default, which is the honest default for these cases: an
 // empty fact cache means the rung declines and the access rungs decide, so a fixture that says nothing about
 // authorship is attributed exactly as it was before the rung existed. The cases that are about the rung live in
@@ -55,9 +57,8 @@ vi.mock("../evidence/policy/repositories.ts", () => ({
 vi.mock("../evidence/org/cohort.ts", async () => ({
   ...(await vi.importActual<typeof import("../evidence/org/cohort.ts")>("../evidence/org/cohort.ts")),
   cohortRepositories,
-  behaviourCollectableRepositories,
   cohortOwners: async () => new Map(),
-  readCohort: async () => [{ repository: "repo-a", owners: ["team"], archived: false, visibility: "public", behaviourCollectable: true, unmaintained: false }]
+  readCohort
 }));
 vi.mock("../evidence/store/facts.ts", () => ({ authorshipForOrganisation }));
 // The per-repository writers `collect` ends each repository with. Stubbed because they reach Postgres and
@@ -91,8 +92,25 @@ vi.mock("../evidence/store/org-graph.ts", () => ({
 
 const { main } = await import("./index.ts");
 
+/** One cohort entry, defaulting to a repository behaviour IS collected for — the ordinary case. */
+function cohortEntry(repository: string, overrides: Record<string, unknown> = {}) {
+  return {
+    repository,
+    owners: ["team"],
+    ownerKind: "team",
+    archived: false,
+    visibility: "public",
+    behaviourCollectable: true,
+    unmaintained: false,
+    ...overrides
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // A one-repository estate by default, so the cases that are not about the cohort do not have to state one.
+  // `assertCohortCollected` calls this too, so it must always resolve.
+  readCohort.mockResolvedValue([cohortEntry("repo-a")]);
   vi.spyOn(console, "info").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -267,32 +285,62 @@ describe("what collect walks", () => {
     org_graph: { enabled: true }
   };
 
-  it("should walk only the repositories behaviour is collectable for, never the whole estate", async () => {
-    // THE QUOTA GUARANTEE. `cohortRepositories` now answers 1,880 and this call site must ask the other
-    // function: reading the wrong one would silently start collecting merge history for 650 stale repositories
-    // and put the run over its hourly budget, which nothing on the dashboard would show.
+  /** A collect run over one fresh and one stale repository, reporting every REST path it asked for. */
+  async function pathsAskedFor(): Promise<string[]> {
     loadConfiguration.mockResolvedValue(CONFIG);
-    cohortRepositories.mockResolvedValue(["fresh", "stale"]);
-    behaviourCollectableRepositories.mockResolvedValue(["fresh"]);
+    readCohort.mockResolvedValue([cohortEntry("fresh"), cohortEntry("stale", { behaviourCollectable: false, unmaintained: true })]);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
     const get = vi.fn().mockResolvedValue({ default_branch: "main" });
+    const paths: string[] = [];
     createGitHubClient.mockReturnValue({
       get,
-      graphql: vi.fn().mockResolvedValue({ repository: { pullRequests: { nodes: [], pageInfo: { hasNextPage: false } } } }),
-      paginate: async function* paginate() {
-        yield [];
+      graphql: vi.fn().mockResolvedValue({}),
+      paginate: function paginate(path: string) {
+        paths.push(String(path));
+        return (async function* pages() {
+          yield [];
+        })();
       },
       requestsIssued: () => 1,
       callOutcomes: () => []
     });
 
     await main(["collect", "--config", "m.yaml", "--tolerate-partial"]);
+    return [...get.mock.calls.map(([path]) => String(path)), ...paths];
+  }
 
-    // Read off the metadata call every repository's collection opens with, so the assertion is about which
-    // repositories were WALKED rather than about which list was fetched.
-    const walked = get.mock.calls.map(([path]) => String(path)).filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path));
-    expect(walked).toEqual(["/repos/hmcts/fresh"]);
-    expect(walked).toEqual(["/repos/hmcts/fresh"]);
+  it("should read every repository in the estate, stale ones included, so the assurance columns are populated", async () => {
+    // The other half of the change: a stale repository must still be COLLECTED, or the criteria it exists to be
+    // judged against have nothing to read. 148 unarchived repositories on AAT are two or more years stale, and
+    // not one of them had a `repository_state` row before this.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path))).toEqual(["/repos/hmcts/fresh", "/repos/hmcts/stale"]);
+  });
+
+  it("should not read a stale repository's merge gate, which is ways-of-working rather than assurance", async () => {
+    // THE QUOTA GUARANTEE, read at a seam that actually costs: the gate is several requests per repository, and a
+    // repository nobody has pushed to in two years has no current practice to report. Asserted here rather than
+    // on the merge walk because `fillCachedSource` is stubbed in this file, so the gate is the deep-path call
+    // this test can see.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => path.includes("/branches/") || path.includes("/rules/"))).toEqual([
+      "/repos/hmcts/fresh/branches/main/protection",
+      "/repos/hmcts/fresh/rules/branches/main"
+    ]);
+  });
+
+  it("should read both repositories' Dependabot alerts, the patching age being an assurance answer", async () => {
+    // What the shallow path KEEPS, and the counterpart to the case above: a stale repository is still asked for
+    // its alerts, because how old its unpatched criticals are is exactly what the criterion reports.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => path.includes("dependabot/alerts"))).toEqual([
+      "/repos/hmcts/fresh/dependabot/alerts",
+      "/repos/hmcts/fresh/dependabot/alerts",
+      "/repos/hmcts/stale/dependabot/alerts"
+    ]);
   });
 });
 

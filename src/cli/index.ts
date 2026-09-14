@@ -5,12 +5,14 @@ import { mergedPullRequestQuery, sourceSignature } from "../evidence/behaviour/q
 import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
+import type { AlertSeverity } from "../evidence/domain/security-alerts.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
+import { assuranceEvidence, collectAssuranceSignals, type GraphAssurance, readDependabotAlerts } from "../evidence/inventory/assurance.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
-import { collectSecurityAlerts } from "../evidence/inventory/security-alerts.ts";
-import { behaviourCollectableRepositories, CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } from "../evidence/org/cohort.ts";
+import { collectSecurityAlerts, countBySeverity, dependabotSeverity, FEATURE_NOT_ENABLED } from "../evidence/inventory/security-alerts.ts";
+import { CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } from "../evidence/org/cohort.ts";
 import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
 import {
   byCodePoint,
@@ -103,17 +105,33 @@ async function assertCohortCollected(configuration: Configuration, command: stri
   }
 }
 
+/**
+ * Collects one repository.
+ *
+ * TWO DEPTHS, and the shallow one is what makes the wider estate affordable. A repository inside
+ * `cohort.active_within_days` gets everything: the two merge walks, the gate, all three alert families. A STALE
+ * one — admitted to the estate from 2026-09-14 so the assurance criteria can report on it — gets only what those
+ * criteria read, which is its metadata and its Dependabot alerts, two REST calls against roughly six.
+ *
+ * That split is a judgement rather than only a saving. A merge gate and a code-scanning posture are
+ * ways-of-working material, reported per team, and a repository nobody has pushed to in two years HAS no ways of
+ * working to report — the honest answer for it is the assurance one: who owns it, whether its tooling is on, how
+ * old its alerts are, and that it should probably be archived.
+ */
 async function collectRepository(
   configuration: Configuration,
   client: ReturnType<typeof createGitHubClient>,
   repository: string,
   window: { startsAt: Date; endsAt: Date },
   reference: Date,
-  production: Set<string> | undefined
+  production: Set<string> | undefined,
+  options: { behaviour: boolean; assurance: GraphAssurance | undefined }
 ): Promise<{ observed: boolean; failures: number }> {
   const organization = configuration.organization;
   let failures = 0;
 
+  // Read for the default branch, and read AGAIN for nothing: `security_and_analysis` rides on this same body, so
+  // three of the five hygiene signals cost no request of their own.
   const metadata = await client.get<{ default_branch?: string }>(`/repos/${organization}/${repository}`).catch(() => undefined);
   if (metadata === undefined) {
     console.warn(`${repository}: could not be read at all, so nothing was collected for it`);
@@ -123,6 +141,24 @@ async function collectRepository(
   if (defaultBranch === undefined || defaultBranch === "") {
     console.warn(`${repository}: GitHub named no default branch, so nothing was collected for it`);
     return { observed: false, failures: 1 };
+  }
+
+  const dependabot = await readDependabotAlerts(client, organization, repository);
+  const assurance = assuranceEvidence(metadata, options.assurance, dependabot, reference);
+
+  if (!options.behaviour) {
+    // The shallow path. No gate, no other alert family, and above all no merge walk — which is what keeps
+    // admitting roughly 650 stale repositories from adding a behaviour call. The row they produce carries the
+    // assurance answers and, by the absent-means-unmeasured rule, no behaviour figures at all.
+    await recordRepositoryState(organization, repository, {
+      defaultBranch,
+      fetchedAt: reference,
+      mergeGate: { detail: "not collected: no push inside cohort.active_within_days, so there is no current practice to read" },
+      securityAlerts: { dependabot: dependabotCount(dependabot), codeScanning: {}, secretScanning: {} },
+      deploysToProduction: deploysToProduction(production, organization, repository),
+      assurance
+    });
+    return { observed: true, failures };
   }
 
   const edge = mutableEdge(window, configuration.lookback.mutable_hours, reference);
@@ -161,10 +197,25 @@ async function collectRepository(
     fetchedAt: reference,
     mergeGate: gate,
     securityAlerts: alerts.evidence,
-    deploysToProduction: deploysToProduction(production, organization, repository)
+    deploysToProduction: deploysToProduction(production, organization, repository),
+    assurance
   });
 
   return { observed: true, failures };
+}
+
+/**
+ * The Dependabot family's count, off the records the assurance read already fetched.
+ *
+ * The shallow path does not call `collectSecurityAlerts`, so this is what stops its one alert family being thrown
+ * away: the records are in hand, and counting them costs nothing. `undefined` records mean the family was unread,
+ * which stays absent rather than becoming a zero — a family nobody could read is not a family with nothing open.
+ */
+function dependabotCount(records: readonly unknown[] | undefined): { open?: number; bySeverity?: Partial<Record<AlertSeverity, number>>; detail?: string } {
+  if (records === undefined) {
+    return { detail: `dependabot/alerts ${FEATURE_NOT_ENABLED}` };
+  }
+  return { open: records.length, bySeverity: countBySeverity(records.map((record) => dependabotSeverity(record))) };
 }
 
 async function runCollect(configuration: Configuration, argv: Arguments): Promise<number> {
@@ -183,22 +234,43 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
 
   const production = configuration.production_list_url === null ? undefined : await fetchProductionRepositories(configuration.production_list_url);
 
-  // `behaviourCollectableRepositories` AND NOT `cohortRepositories`, which is the one call site that keeps
-  // admitting stale repositories to the report from costing anything. The estate is 1,880 and this walks the
-  // roughly 1,230 pushed to inside `cohort.active_within_days`; a named `--repository` overrides both, since
-  // somebody asking for one repository has said which.
-  const repositories = argv.repository === undefined ? await behaviourCollectableRepositories(configuration, reference) : [argv.repository];
+  // THE WHOLE ESTATE, at two depths. Every repository gets its assurance answers; only the ones inside
+  // `cohort.active_within_days` get their merge history walked, which is where the calls are. `behaviourCollectable`
+  // rides on the entry so this call site reads the cohort's own decision rather than recomputing the window.
+  //
+  // A named `--repository` is collected in FULL whatever its last push, because somebody asking for one repository
+  // has said which and wants everything about it.
+  const cohort = argv.repository === undefined ? await readCohort(configuration, reference) : undefined;
+  const walk =
+    cohort === undefined
+      ? [{ repository: argv.repository as string, behaviour: true }]
+      : cohort.map((entry) => ({ repository: entry.repository, behaviour: entry.behaviourCollectable }));
+
+  // Batched 50 to a document AHEAD of the per-repository loop, because these two signals are GraphQL-only and
+  // aliasing them is the difference between 38 documents and 1,880 requests. A repository the batch could not read
+  // is simply absent from the map, which the domain grades as unknown rather than as tooling switched off.
+  const assurance = await collectAssuranceSignals(
+    client,
+    configuration.organization,
+    walk.map((entry) => entry.repository)
+  );
+
   let observed = 0;
   let failures = 0;
 
-  for (const repository of repositories) {
-    const result = await collectRepository(configuration, client, repository, window, reference, production);
+  for (const entry of walk) {
+    const result = await collectRepository(configuration, client, entry.repository, window, reference, production, {
+      behaviour: entry.behaviour,
+      assurance: assurance.get(entry.repository)
+    });
     observed += result.observed ? 1 : 0;
     failures += result.failures;
   }
 
   await stampCollection(reference);
-  console.info(`collected ${observed} of ${repositories.length} repositories in ${client.requestsIssued()} GitHub calls`);
+  const repositories = walk;
+  const walked = walk.filter((entry) => entry.behaviour).length;
+  console.info(`collected ${observed} of ${repositories.length} repositories (${walked} walked for behaviour) in ${client.requestsIssued()} GitHub calls`);
   for (const { outcome, count } of client.callOutcomes()) {
     console.info(`  ${outcome.status} ${outcome.outcome} ${outcome.method} ${outcome.endpoint} (x${count})`);
   }

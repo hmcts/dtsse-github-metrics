@@ -1,3 +1,4 @@
+import type { AssuranceEvidence } from "../domain/assurance.ts";
 import type { MergeGateReport } from "../domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import { prisma } from "./prisma.ts";
@@ -19,6 +20,17 @@ export interface RepositoryStatePayload {
   securityAlerts: SecurityAlertEvidence;
   /** Tri-state: absent means the production list could not be read, which is not the same as `false`. */
   deploysToProduction?: boolean;
+  /**
+   * The assurance-criteria signals, added 2026-09-14 and needing NO MIGRATION.
+   *
+   * That is the promise this table's own header makes — "facts are stored as jsonb payloads beside the few
+   * queryable columns, so adding a field to a fact needs no migration" — and this is the first field to take it
+   * up. Nothing selects on any of these, so none of them earns a column.
+   *
+   * Optional because a row written by a collection older than the field carries none, and the report reads that
+   * as unmeasured rather than as a repository with its tooling switched off.
+   */
+  assurance?: AssuranceEvidence;
 }
 
 /** Records what a collection observed, replacing whatever the last one recorded. */

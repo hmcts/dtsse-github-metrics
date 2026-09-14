@@ -324,26 +324,14 @@ export async function readCohort(configuration: Configuration, reference = new D
  * repository — but the ordering is, and stating it in one place is what keeps `runCollect` and `repositoryRows`
  * walking the same estate in the same sequence.
  *
- * THIS IS THE WHOLE ESTATE AND NOT WHAT `collect` WALKS. Once the activity window stopped removing entries,
- * this widened from roughly 1,230 repositories to 1,880 — so a caller that pays per repository must ask
- * `behaviourCollectableRepositories` instead. `doctor` uses this one deliberately: it reports what a reader
- * would see, and a repository the dashboard lists but nobody can read is exactly the fault it exists to find.
+ * THIS IS THE WHOLE ESTATE AND NOT WHAT `collect` WALKS AT FULL DEPTH. Once the activity window stopped removing
+ * entries, this widened from roughly 1,230 repositories to 1,880 — so a caller that pays per repository per
+ * WINDOW must read `behaviourCollectable` off the entry rather than iterate this, which is why `runCollect` takes
+ * `readCohort` and this is left to the callers that want names alone. `doctor` is one deliberately: it reports
+ * what a reader would see, and a repository the dashboard lists but nobody can read is the fault it exists for.
  */
 export async function cohortRepositories(configuration: Configuration, reference = new Date()): Promise<string[]> {
   return (await readCohort(configuration, reference)).map((entry) => entry.repository);
-}
-
-/**
- * The repositories whose merge history this run should walk.
- *
- * SEPARATE FROM `cohortRepositories` BY DESIGN, and the separation is the cost control: the pull-request and
- * direct-commit walks are most of a collection's 15,500 calls, so widening the estate had to leave them
- * untouched. Measured on AAT, this returns roughly 1,230 of the estate's 1,880 — the same set the activity
- * window used to define membership by, which is why admitting the other 650 to the report costs no behaviour
- * call at all.
- */
-export async function behaviourCollectableRepositories(configuration: Configuration, reference = new Date()): Promise<string[]> {
-  return (await readCohort(configuration, reference)).filter((entry) => entry.behaviourCollectable).map((entry) => entry.repository);
 }
 
 /** Each cohort repository mapped to the identifiers of the teams that own it, in reporting order. */
