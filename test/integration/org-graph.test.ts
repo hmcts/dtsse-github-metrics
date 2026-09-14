@@ -79,7 +79,43 @@ async function wipe(): Promise<void> {
 
 beforeEach(wipe);
 
+/**
+ * A statement counter for the touch pass, installed only for the case that measures it.
+ *
+ * Kept beside `dropStatementProbe` rather than inline so the two cannot drift, and so `afterAll` can drop the
+ * trigger a crashed process left behind.
+ */
+async function installStatementProbe(): Promise<void> {
+  await prisma.$executeRawUnsafe("CREATE TABLE IF NOT EXISTS statement_probe (counted bigint NOT NULL DEFAULT 0)");
+  await prisma.$executeRawUnsafe("DELETE FROM statement_probe");
+  await prisma.$executeRawUnsafe("INSERT INTO statement_probe (counted) VALUES (0)");
+  // Dollar-quoted with a NAMED tag rather than bare `$$`, so the body survives every layer it passes through: a
+  // template literal, a shell heredoc, an editor's find-and-replace. A bare `$$` is one careless substitution away
+  // from `$`, which Postgres answers with `syntax error at or near "$"` and no clue as to which layer ate it.
+  await prisma.$executeRawUnsafe(
+    "CREATE OR REPLACE FUNCTION count_statement() RETURNS trigger AS $probe$ " +
+      "BEGIN UPDATE statement_probe SET counted = counted + 1; RETURN NULL; END; " +
+      "$probe$ LANGUAGE plpgsql"
+  );
+  await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS probe_touch ON org_team_repositories");
+  await prisma.$executeRawUnsafe("CREATE TRIGGER probe_touch AFTER UPDATE ON org_team_repositories FOR EACH STATEMENT EXECUTE FUNCTION count_statement()");
+}
+
+/**
+ * THE TRIGGER FIRST, then the table it writes to.
+ *
+ * In that order because the reverse leaves a window where the trigger references a table that is already gone,
+ * which is the state that breaks every later write to `org_team_repositories`.
+ */
+async function dropStatementProbe(): Promise<void> {
+  await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS probe_touch ON org_team_repositories");
+  await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS count_statement()");
+  await prisma.$executeRawUnsafe("DROP TABLE IF EXISTS statement_probe");
+}
+
 afterAll(async () => {
+  // Belt and braces: `finally` covers a failing assertion, this covers a killed process.
+  await dropStatementProbe();
   await wipe();
   await prisma.$disconnect();
 });
@@ -254,21 +290,21 @@ describe("statement chunking", () => {
     // needs `shared_preload_libraries`, which the compose container does not set and CI therefore would not
     // either. `FOR EACH STATEMENT` fires once per statement whatever the row count, which is precisely the
     // distinction being asserted.
-    await prisma.$executeRawUnsafe("CREATE TABLE IF NOT EXISTS statement_probe (counted bigint NOT NULL DEFAULT 0)");
-    await prisma.$executeRawUnsafe("DELETE FROM statement_probe");
-    await prisma.$executeRawUnsafe("INSERT INTO statement_probe (counted) VALUES (0)");
-    await prisma.$executeRawUnsafe(`
-      CREATE OR REPLACE FUNCTION count_statement() RETURNS trigger AS $$
-      BEGIN UPDATE statement_probe SET counted = counted + 1; RETURN NULL; END;
-      $$ LANGUAGE plpgsql`);
-    await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS probe_touch ON org_team_repositories");
-    await prisma.$executeRawUnsafe("CREATE TRIGGER probe_touch AFTER UPDATE ON org_team_repositories FOR EACH STATEMENT EXECUTE FUNCTION count_statement()");
-
-    const summary = await recordOrgTeamRepositories(ORGANIZATION, SECOND, edges, new Set(["platform-operations"]));
-
-    const stamped = await prisma.$queryRawUnsafe<{ counted: bigint }[]>("SELECT counted FROM statement_probe");
-    await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS probe_touch ON org_team_repositories");
-    await prisma.$executeRawUnsafe("DROP TABLE IF EXISTS statement_probe");
+    //
+    // INSTALLED AND DROPPED IN `try`/`finally`, and dropped again in `afterAll`, because a trigger outliving this
+    // case does not merely leave litter: it references `statement_probe`, so once that table is gone every later
+    // write to `org_team_repositories` fails with `relation "statement_probe" does not exist` — an error naming a
+    // table nobody reading the failure has heard of. The database is not recreated between runs, so one failure
+    // here would break the suite until somebody dropped it by hand.
+    await installStatementProbe();
+    let stamped: { counted: bigint }[];
+    let summary: Awaited<ReturnType<typeof recordOrgTeamRepositories>>;
+    try {
+      summary = await recordOrgTeamRepositories(ORGANIZATION, SECOND, edges, new Set(["platform-operations"]));
+      stamped = await prisma.$queryRawUnsafe<{ counted: bigint }[]>("SELECT counted FROM statement_probe");
+    } finally {
+      await dropStatementProbe();
+    }
 
     // Every row unchanged, which is the steady state of a daily collection over an estate that barely moves.
     expect(summary).toMatchObject({ inserted: 0, changed: 0, superseded: 0, unchanged: 9000 });
