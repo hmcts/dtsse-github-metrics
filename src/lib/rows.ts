@@ -6,13 +6,14 @@
  * hide a team the reader searched for, and a readiness filter that resolved an unknown key to "no
  * matches" would show an empty table for a mistyped URL instead of the whole list.
  *
- * The default order is team then repository, so a reader scanning the list reads one team's
- * repositories together. It is deliberately not an order by any figure: the reader can sort by a
- * column, but the list does not open ranked by findings, which would read as a league table.
+ * The default order is MOST RECENTLY PUSHED FIRST, from 2026-09-14, where it was team then repository
+ * before. It is still deliberately not an order by any figure the page grades: the reader can sort by
+ * any column, but the list does not open ranked by how well repositories do against the criteria, which
+ * would read as a league table. When a repository was last pushed to is not a grade.
  */
 
 import { matches } from "@/lib/filter";
-import { distributionState, RAG_HEX, RAG_LABEL, RAG_STATES, state } from "@/lib/rag";
+import { distributionState, RAG_HEX, RAG_LABEL, RAG_STATES, type RAGState, state } from "@/lib/rag";
 import { compare, type SortValue } from "@/lib/sort";
 import {
   type Band,
@@ -27,7 +28,7 @@ import {
   UNREVIEWED_BANDS,
   unreviewedBand
 } from "@/lib/tone";
-import type { RepositoryRow } from "@/lib/types";
+import type { AssuranceCriterion, AssuranceCriterionResult, AssuranceGrade, AssuranceOutcome, RepositoryRow, Visibility } from "@/lib/types";
 
 /**
  * Every team that owns the row, which is not always the one name its team cell prints.
@@ -70,16 +71,34 @@ export function ownedByIndividual(row: Pick<RepositoryRow, "owner_kind">): boole
 }
 
 /**
- * The default order: one team's repositories together, alphabetically within the team.
+ * The default order: MOST RECENTLY PUSHED FIRST.
  *
- * Ordered by the PRIMARY owner alone, which is a stated decision rather than an oversight beside the two functions
- * above and below that read every owner. `team` is the head of the reporting order, and a shared repository has to
- * appear once in the list at one position: ordering it by any of its other owners would either put it under a
- * heading it is not led by, or — if it were placed under each — list it several times in a table whose row count
- * the reader compares against the donuts.
+ * This replaced an order by `(team, repository)`, whose reasoning was that a reader scanning the list reads one
+ * team's repositories together. At 1,880 rows that is not what a reader arriving at the page is doing: they are
+ * asking what has been happening, and the alphabet answers with whichever team begins with `a`. A team's own
+ * repositories are still readable together — the term filters on the team name and the Team header still sorts —
+ * so what changed is only which question the page opens on.
+ *
+ * A ROW WITH NO `pushed_at` SORTS LAST, both here and under a header click. GitHub omits it for a repository never
+ * pushed to, and its absence is meaningful: it must not be defaulted to the epoch, which would put every empty
+ * repository at the bottom as though it were the stalest, nor to now, which would put it at the top. `sorted`
+ * already holds `undefined` back from both ends and this follows that precedent explicitly.
+ *
+ * THE TIEBREAK IS THE REPOSITORY NAME AND IT IS LOAD-BEARING. Two repositories pushed at the same instant is not
+ * hypothetical — the instant has second resolution and a `for_each` Terraform apply touches many at once — and
+ * "two reports of one window must not differ" is a rule this codebase states in three other places. Without it,
+ * two renders of one estate could order those rows differently.
+ *
+ * The old order's reasoning about shared repositories is PRESERVED and still applies: a repository appears once,
+ * at one position. It just no longer appears under a heading.
  */
 export function orderRepositories(rows: readonly RepositoryRow[]): RepositoryRow[] {
-  return [...rows].sort((left, right) => compare(left.team, right.team) || compare(left.repository, right.repository));
+  const pushed = rows.filter((row) => row.pushed_at !== undefined);
+  const never = rows.filter((row) => row.pushed_at === undefined);
+  // Descending on the instant, ascending on the name: `compare` orders text and instants alike, and an ISO-8601
+  // string sorts lexicographically in instant order, which is why the contract carries these as strings.
+  const ordered = [...pushed].sort((left, right) => -compare(left.pushed_at, right.pushed_at) || compare(left.repository, right.repository));
+  return [...ordered, ...[...never].sort((left, right) => compare(left.repository, right.repository))];
 }
 
 /**
@@ -243,11 +262,20 @@ export function parseFilters(read: (parameter: string) => string | null): Reposi
  * repository nobody could classify is not an answer to that — leaving it in would put rows under a
  * count that did not count them, and letting it in as `false` would be the same guess in reverse.
  */
-export function filterRepositories(rows: readonly RepositoryRow[], term: string, filters: RepositoryFilters, production = false): RepositoryRow[] {
+export function filterRepositories(
+  rows: readonly RepositoryRow[],
+  term: string,
+  filters: RepositoryFilters,
+  production = false,
+  visibilities: ReadonlySet<Visibility> = new Set(VISIBILITIES)
+): RepositoryRow[] {
   const active = ESTATE_FILTERS.filter((filter) => filters[filter.parameter] !== undefined);
   return rows.filter(
     (row) =>
-      matchesRepository(row, term) && (!production || row.production === true) && active.every((filter) => filter.band(row) === filters[filter.parameter])
+      matchesRepository(row, term) &&
+      matchesVisibility(row, visibilities) &&
+      (!production || row.production === true) &&
+      active.every((filter) => filter.band(row) === filters[filter.parameter])
   );
 }
 
@@ -265,14 +293,73 @@ export function productionCount(rows: readonly RepositoryRow[], term: string, fi
 }
 
 /**
- * Whether the repository holds a CODEOWNERS file, or nothing where nobody could read its contents.
+ * The visibilities the table can show, each its own INDEPENDENT TOGGLE.
  *
- * Three-valued on purpose. `0` files is a real answer — every location CODEOWNERS is allowed to live
- * in was looked at and none held one — while an absent count is a repository whose contents the token
- * could not read, which says nothing about whether ownership is declared there.
+ * Three, not two, and not a tri-state. `INTERNAL` is a real GitHub visibility and the estate's second largest —
+ * 1,043 public, 441 internal, 396 private among the non-archived — so a two-way control could not name 441
+ * repositories, and a single tri-state could not express "public and internal but not private", which is the
+ * obvious thing somebody reviewing what HMCTS publishes wants to ask.
+ *
+ * Ordered most-open first, which is the order the assurance question reads in: "coding in the open" is about what
+ * is public, so public leads and private is the exception.
  */
-export function codeownersPresent(row: RepositoryRow): boolean | undefined {
-  return row.codeowners_files === undefined ? undefined : row.codeowners_files >= 1;
+export const VISIBILITIES: readonly Visibility[] = ["public", "internal", "private"];
+
+/**
+ * The visibilities shown when the URL says nothing: PUBLIC ONLY.
+ *
+ * A deliberate narrowing rather than the whole estate, and the argument is what the page is for. `/repositories`
+ * answers whether repositories meet the criteria for coding IN THE OPEN, and a private repository is not coding in
+ * the open — it is not failing the criteria, it is outside them. Opening on all three would put 837 rows the
+ * question does not apply to in front of a reader who has not asked for them.
+ *
+ * The other two are one click away and the chips say which are showing, so nothing is hidden — the default states
+ * a question rather than restricting an answer.
+ */
+export const DEFAULT_VISIBILITIES: readonly Visibility[] = ["public"];
+
+/** The parameter each visibility toggle reads and writes, one per visibility. */
+export function visibilityParameter(visibility: Visibility): string {
+  return visibility;
+}
+
+/**
+ * The value a toggle writes, and the only one that reads back as on.
+ *
+ * `false` is written EXPLICITLY rather than being the parameter's absence, which is the one place this control
+ * differs from the production toggle. Absence has to mean "the reader has said nothing", so it can fall back to
+ * the public-only default — and if turning public off were expressed as absence, `?public=` and a bare URL would
+ * be the same string and the reader could never turn the default off.
+ */
+export const VISIBILITY_ON = "true";
+
+export const VISIBILITY_OFF = "false";
+
+/**
+ * Which visibilities the reader has selected, or the default where they have selected nothing.
+ *
+ * A URL naming EVERY visibility as off returns an empty set, which filters the table to nothing. That is the
+ * honest answer rather than a silent fallback to the default: the reader turned all three off, and showing them
+ * the whole estate instead would be ignoring three clicks. `filterRepositories` says the same for a dimension
+ * nothing satisfies.
+ */
+export function parseVisibilities(read: (parameter: string) => string | null): Set<Visibility> {
+  const stated = VISIBILITIES.filter((visibility) => read(visibilityParameter(visibility)) !== null);
+  if (stated.length === 0) {
+    return new Set(DEFAULT_VISIBILITIES);
+  }
+  return new Set(stated.filter((visibility) => read(visibilityParameter(visibility)) === VISIBILITY_ON));
+}
+
+/**
+ * Whether a row's visibility is one the reader is showing.
+ *
+ * A row whose visibility the service did not send is KEPT. The field only exists from 2026-09-14, and a
+ * deployment serving rows without it would otherwise show an empty table — the same guess `ownedByIndividual`
+ * makes for `owner_kind` and in the same direction: absent means "this predates the field", never "exclude it".
+ */
+export function matchesVisibility(row: RepositoryRow, showing: ReadonlySet<Visibility>): boolean {
+  return row.visibility === undefined || showing.has(row.visibility);
 }
 
 /**
@@ -283,4 +370,80 @@ export function codeownersPresent(row: RepositoryRow): boolean | undefined {
  */
 export function answerOrder(answer: boolean | undefined): SortValue {
   return answer === undefined ? undefined : Number(answer);
+}
+
+/**
+ * The assurance criteria in the order the table's columns read, so a column and a grade cannot disagree.
+ *
+ * Mirrors `domain.AssuranceCriteria`. Restated here rather than imported because `src/lib/**` is the UI half of
+ * the contract and imports nothing from `src/evidence/**` — the same separation `types.ts` keeps.
+ */
+export const ASSURANCE_CRITERIA: readonly AssuranceCriterion[] = ["named-owner", "automated-hygiene", "patching", "maintained"];
+
+/** The heading each criterion's column carries, in the criteria's own words rather than the field's. */
+export const ASSURANCE_LABEL: Record<AssuranceCriterion, string> = {
+  "named-owner": "Team owner",
+  "automated-hygiene": "Hygiene",
+  patching: "Oldest alert",
+  maintained: "Maintained"
+};
+
+/**
+ * How each assurance grade reads.
+ *
+ * DELIBERATELY NOT `RAG_LABEL`'s WORDS. That map reads "Ready / Caution / Blocked" about readiness for AI
+ * enablement, and a repository can be ready for that and still fail the assurance criteria. These say what they
+ * are about: whether the criteria are met.
+ */
+export const ASSURANCE_GRADE_LABEL: Record<AssuranceGrade, string> = {
+  met: "Meets criteria",
+  partial: "Partly meets",
+  unknown: "Cannot assess"
+};
+
+/**
+ * The RAG state each assurance grade is DRAWN in, so the colours are `rag.ts`'s and the words are not.
+ *
+ * `partial` is amber rather than red on the domain's own reasoning: none of the four criteria is a disqualifier
+ * on its own, so a shortfall is something to act on and not a repository to stop using. `unknown` maps to
+ * `cannot_assess`, which `rag.ts` already draws slate for exactly this reason — a half-read question must not be
+ * coloured warm, or a missing permission reads as a bad result.
+ */
+export const ASSURANCE_GRADE_STATE: Record<AssuranceGrade, RAGState> = {
+  met: "green",
+  partial: "amber",
+  unknown: "cannot_assess"
+};
+
+/** One criterion's result off a row, or nothing where the report sent no assurance block. */
+export function criterionResult(row: RepositoryRow, criterion: AssuranceCriterion): AssuranceCriterionResult | undefined {
+  return row.assurance?.criteria.find((entry) => entry.criterion === criterion);
+}
+
+/**
+ * Where an assurance grade sorts: met, then partly, then the one that could not be read.
+ *
+ * The same shape as `severity` in `rag.ts` and for its reason — the English words sort as "Cannot assess, Meets,
+ * Partly", which is an order about spelling. `unknown` sorts as unmeasured, which `sorted` holds back from both
+ * ends: "which repositories fail the criteria" is a question about the graded ones.
+ */
+export function assuranceOrder(grade: AssuranceGrade | undefined): SortValue {
+  if (grade === undefined || grade === "unknown") {
+    return undefined;
+  }
+  return grade === "met" ? 0 : 1;
+}
+
+/**
+ * Where one criterion's outcome sorts: met, then unmet, then unreadable.
+ *
+ * Met FIRST so that clicking a criterion's header ascending opens on the repositories that satisfy it and
+ * descending on the ones that do not — which is the way round a reader means by "sort by this column". Reversed,
+ * the useful end would need two clicks.
+ */
+export function outcomeOrder(outcome: AssuranceOutcome | undefined): SortValue {
+  if (outcome === undefined || outcome === "unknown") {
+    return undefined;
+  }
+  return outcome === "met" ? 0 : 1;
 }

@@ -8,25 +8,36 @@
 
 import { describe, expect, it } from "vitest";
 import { checksSlices, coverageSlices, distributionSlices, type PieSlice, reviewSlices, securitySlices, unreviewedSlices } from "@/lib/chart";
-import { RAG_STATES, state } from "@/lib/rag";
+import { RAG_LABEL, RAG_STATES, state } from "@/lib/rag";
 import {
+  ASSURANCE_CRITERIA,
+  ASSURANCE_GRADE_LABEL,
+  ASSURANCE_GRADE_STATE,
+  ASSURANCE_LABEL,
   answerOrder,
-  codeownersPresent,
+  assuranceOrder,
+  criterionResult,
   ESTATE_FILTERS,
   FILTER_PARAMETERS,
   type FilterParameter,
   filterRepositories,
   INDIVIDUAL_LABEL,
   matchesRepository,
+  matchesVisibility,
   orderRepositories,
+  outcomeOrder,
   ownedByIndividual,
   owners,
   PRODUCTION_PARAMETER,
   PRODUCTION_VALUE,
   parseFilters,
   parseProduction,
-  productionCount
+  parseVisibilities,
+  productionCount,
+  VISIBILITIES,
+  visibilityParameter
 } from "@/lib/rows";
+import { sorted } from "@/lib/sort";
 import type { RepositoryRow } from "@/lib/types";
 
 function row(fields: Partial<RepositoryRow> & { repository: string }): RepositoryRow {
@@ -43,6 +54,15 @@ function row(fields: Partial<RepositoryRow> & { repository: string }): Repositor
  * All three production answers are represented, which is what the toggle's rule needs: two
  * repositories the list names, one it was read and does not name, and one whose list could not be
  * read at all — the row that has to be left out rather than guessed either way.
+ *
+ * THE `pushed_at` VALUES DELIBERATELY CROSS THE ALPHABETICAL ORDER, which is what makes the default-sort cases
+ * able to fail. `hmcts/web` is the most recently pushed and sorts LAST by `(team, repository)`; `hmcts/api` is
+ * the least recent of the three that have one and sorted second. A fixture where the two orders agreed would
+ * assert the new default while the old one still passed — the exact failure the brief warned about, and one that
+ * was found in an earlier attempt at this change.
+ *
+ * `hmcts/legacy` carries NO `pushed_at` at all, so absence is exercised rather than assumed: it is the row the
+ * order has to hold back from both ends.
  */
 const ROWS: RepositoryRow[] = [
   row({
@@ -55,7 +75,8 @@ const ROWS: RepositoryRow[] = [
     unreviewed_substantial: "above",
     sonar_coverage: 12.5,
     sonar_security_issues: 4,
-    production: true
+    production: true,
+    pushed_at: "2026-09-10T00:00:00Z"
   }),
   row({
     repository: "hmcts/api",
@@ -67,7 +88,8 @@ const ROWS: RepositoryRow[] = [
     unreviewed_substantial: "none",
     sonar_coverage: 95,
     sonar_security_issues: 0,
-    production: true
+    production: true,
+    pushed_at: "2026-07-01T00:00:00Z"
   }),
   row({
     repository: "hmcts/tools",
@@ -78,7 +100,8 @@ const ROWS: RepositoryRow[] = [
     unreviewed_substantial: "within",
     sonar_coverage: 85,
     sonar_security_rating: { value: 4 },
-    production: false
+    production: false,
+    pushed_at: "2026-08-15T00:00:00Z"
   }),
   row({ repository: "hmcts/legacy", team: "platform", detail: "no window was collected" })
 ];
@@ -147,21 +170,81 @@ describe("ownedByIndividual", () => {
 });
 
 describe("orderRepositories", () => {
-  it("groups a team together, alphabetically within it, ordered by no figure", () => {
-    expect(orderRepositories(ROWS).map((entry) => entry.repository)).toEqual(["hmcts/web", "hmcts/api", "hmcts/legacy", "hmcts/tools"]);
+  it("opens on the most recently pushed, which is what a reader arriving is asking", () => {
+    // THE ORDER THIS REPLACED was `(team, repository)`, which put these rows web, api, legacy, tools. Every
+    // instant here crosses that order, so this case cannot pass under the old rule.
+    expect(orderRepositories(ROWS).map((entry) => entry.repository)).toEqual(["hmcts/web", "hmcts/tools", "hmcts/api", "hmcts/legacy"]);
   });
 
-  it("places a shared repository under its primary owner, once", () => {
-    // The stated decision: `team` is the head of the reporting order, and a row appears at one position. Ordering
-    // by any other owner would file it under a heading it is not led by; placing it under each would print it
-    // twice in a table whose row count the reader holds against the donuts.
-    const shared = row({ repository: "hmcts/shared", team: "delivery", teams: ["delivery", "platform"] });
+  it("places a repository with no last push last, never at the top as though it were the freshest", () => {
+    // GitHub omits `pushedAt` for a repository never pushed to, and the tempting fix is to default it. Defaulted
+    // to NOW it would head the list, which is the direction that misleads: a reader opening the page would meet
+    // the repositories nobody has ever pushed to under a heading saying "most recently pushed".
+    //
+    // Worth being precise about what this case can and cannot catch, since a weaker version of it passed under
+    // both rules. Defaulting to the EPOCH is indistinguishable here — 1970 is older than anything real, so a
+    // descending sort puts it last either way — and the two rules only part company in the ASCENDING direction,
+    // which is the header-click path below rather than this one.
+    expect(
+      orderRepositories(ROWS)
+        .map((entry) => entry.repository)
+        .at(-1)
+    ).toBe("hmcts/legacy");
+    expect(orderRepositories([row({ repository: "hmcts/none" }), row({ repository: "hmcts/pushed", pushed_at: "2014-01-01T00:00:00Z" })])[0]?.repository).toBe(
+      "hmcts/pushed"
+    );
+  });
+
+  it("orders two repositories with no last push by name, so the tail is stable too", () => {
+    // The absent rows are a set, not a heap: without an order among them, two renders of one estate could differ
+    // in the tail — the same diffability rule the tiebreak above exists for, applied to the other bucket.
+    const rows = [row({ repository: "hmcts/zebra" }), row({ repository: "hmcts/alpha" })];
+
+    expect(orderRepositories(rows).map((entry) => entry.repository)).toEqual(["hmcts/alpha", "hmcts/zebra"]);
+    expect(orderRepositories([...rows].reverse()).map((entry) => entry.repository)).toEqual(["hmcts/alpha", "hmcts/zebra"]);
+  });
+
+  it("holds a repository with no last push back from BOTH ends when the column is clicked", () => {
+    // WHERE THE TWO RULES ACTUALLY PART COMPANY, and so where a default would be caught. `sorted` holds
+    // `undefined` back from either direction, so a repository never pushed to is not the answer to "which was
+    // pushed longest ago" any more than to "which was pushed most recently". An epoch default would put it FIRST
+    // here; a `now` default would put it first the other way round.
+    const read = (entry: RepositoryRow) => entry.pushed_at;
+
+    expect(
+      sorted(ROWS, read, "ascending")
+        .map((entry) => entry.repository)
+        .at(-1)
+    ).toBe("hmcts/legacy");
+    expect(
+      sorted(ROWS, read, "descending")
+        .map((entry) => entry.repository)
+        .at(-1)
+    ).toBe("hmcts/legacy");
+  });
+
+  it("breaks a tie on the instant by name, so two renders of one estate cannot differ", () => {
+    // Not hypothetical: the instant has second resolution and a Terraform `for_each` apply touches many
+    // repositories at once. "Two reports of one window must not differ" is a rule stated in three other places
+    // in this codebase, and without the tiebreak the two rows could swap between renders.
+    const same = "2026-09-01T12:00:00Z";
+    const rows = [row({ repository: "hmcts/zebra", pushed_at: same }), row({ repository: "hmcts/alpha", pushed_at: same })];
+
+    expect(orderRepositories(rows).map((entry) => entry.repository)).toEqual(["hmcts/alpha", "hmcts/zebra"]);
+    expect(orderRepositories([...rows].reverse()).map((entry) => entry.repository)).toEqual(["hmcts/alpha", "hmcts/zebra"]);
+  });
+
+  it("places a shared repository once, at one position", () => {
+    // The old order's stated decision, PRESERVED: a row appears once. It no longer appears under a heading, but
+    // placing it under each of its owners would still print it twice in a table whose count the reader compares.
+    const shared = row({ repository: "hmcts/shared", team: "delivery", teams: ["delivery", "platform"], pushed_at: "2026-09-12T00:00:00Z" });
+
     expect(orderRepositories([...ROWS, shared]).map((entry) => entry.repository)).toEqual([
       "hmcts/shared",
       "hmcts/web",
+      "hmcts/tools",
       "hmcts/api",
-      "hmcts/legacy",
-      "hmcts/tools"
+      "hmcts/legacy"
     ]);
   });
 
@@ -386,15 +469,161 @@ describe("productionCount", () => {
   });
 });
 
-describe("codeownersPresent", () => {
-  it("answers yes on a file found and no on a repository that was read and held none", () => {
-    expect(codeownersPresent(row({ repository: "hmcts/api", codeowners_files: 1 }))).toBe(true);
-    expect(codeownersPresent(row({ repository: "hmcts/api", codeowners_files: 3 }))).toBe(true);
-    expect(codeownersPresent(row({ repository: "hmcts/api", codeowners_files: 0 }))).toBe(false);
+/**
+ * The visibility filter: three independent toggles, defaulting to public only.
+ *
+ * `INTERNAL` is the case worth having tests for. It is a real GitHub visibility and the estate's second largest —
+ * 1,043 public, 441 internal, 396 private — so a two-way control or a single tri-state could not express what a
+ * reader wants to ask.
+ */
+describe("the visibility filter", () => {
+  function reader(query: Record<string, string>) {
+    return (parameter: string) => query[parameter] ?? null;
+  }
+
+  it("offers all three visibilities, most open first", () => {
+    expect(VISIBILITIES).toEqual(["public", "internal", "private"]);
   });
 
-  it("answers nothing where the count is absent, which is contents nobody could read", () => {
-    expect(codeownersPresent(row({ repository: "hmcts/api" }))).toBeUndefined();
+  it("shows public only when the URL says nothing", () => {
+    // A DELIBERATE NARROWING. The page asks whether repositories meet the criteria for coding IN THE OPEN, and a
+    // private repository is outside that question rather than failing it — so opening on all three would put 837
+    // rows in front of a reader who has not asked for them.
+    expect([...parseVisibilities(reader({}))]).toEqual(["public"]);
+  });
+
+  it("reads each toggle independently, so two can be on and one off", () => {
+    // The combination a single tri-state could not express, and the obvious one to want.
+    expect([...parseVisibilities(reader({ public: "true", internal: "true", private: "false" }))]).toEqual(["public", "internal"]);
+  });
+
+  it("lets the default itself be turned off, which is why off is written rather than absent", () => {
+    // Were off expressed as the parameter's absence, `?public=` and a bare URL would be the same string and the
+    // reader could never see the internal repositories alone.
+    expect([...parseVisibilities(reader({ public: "false", internal: "true" }))]).toEqual(["internal"]);
+  });
+
+  it("selects nothing when the reader turns all three off, rather than silently showing everything", () => {
+    // Three clicks are three clicks. Falling back to the default here would ignore them, which is what
+    // `filterRepositories` refuses to do for a dimension nothing satisfies.
+    expect([...parseVisibilities(reader({ public: "false", internal: "false", private: "false" }))]).toEqual([]);
+  });
+
+  it("names one parameter per visibility, and no other control's", () => {
+    expect(VISIBILITIES.map(visibilityParameter)).toEqual(["public", "internal", "private"]);
+    expect(VISIBILITIES.map(visibilityParameter)).not.toContain(PRODUCTION_PARAMETER);
+  });
+
+  it("filters the table to the visibilities showing", () => {
+    const rows = [
+      row({ repository: "hmcts/open", visibility: "public" }),
+      row({ repository: "hmcts/inner", visibility: "internal" }),
+      row({ repository: "hmcts/closed", visibility: "private" })
+    ];
+
+    expect(filterRepositories(rows, "", {}, false, new Set(["public"])).map((entry) => entry.repository)).toEqual(["hmcts/open"]);
+    expect(filterRepositories(rows, "", {}, false, new Set(["internal", "private"])).map((entry) => entry.repository)).toEqual(["hmcts/inner", "hmcts/closed"]);
+    expect(filterRepositories(rows, "", {}, false, new Set())).toEqual([]);
+  });
+
+  it("keeps a row whose visibility the service did not send, rather than emptying the table", () => {
+    // The field only exists from 2026-09-14. Absent has to mean "this predates the field" and never "exclude it",
+    // which is the same guess `ownedByIndividual` makes for `owner_kind` and in the same direction.
+    expect(matchesVisibility(row({ repository: "hmcts/old" }), new Set(["public"]))).toBe(true);
+    expect(filterRepositories(ROWS, "", {}, false, new Set(["public"]))).toHaveLength(ROWS.length);
+  });
+
+  it("ANDs with the term and with the production toggle", () => {
+    const rows = [
+      row({ repository: "hmcts/open", visibility: "public", production: true }),
+      row({ repository: "hmcts/inner", visibility: "internal", production: true })
+    ];
+
+    expect(filterRepositories(rows, "", {}, true, new Set(["public"])).map((entry) => entry.repository)).toEqual(["hmcts/open"]);
+    expect(filterRepositories(rows, "inner", {}, true, new Set(["public"]))).toEqual([]);
+  });
+});
+
+/**
+ * The assurance presentation: the grade's words, its colours, and where each column sorts.
+ *
+ * What these mostly assert is that the assurance vocabulary is NOT readiness's. A repository can be ready to
+ * enable agentic tooling on and still fail the assurance criteria, so reusing "Ready" and "Blocked" here would
+ * state something false about it.
+ */
+describe("the assurance grade's presentation", () => {
+  it("reads in its own words and never in readiness's", () => {
+    expect(Object.values(ASSURANCE_GRADE_LABEL)).toEqual(["Meets criteria", "Partly meets", "Cannot assess"]);
+    // "Ready" and "Blocked" are readiness's answers to a different question.
+    expect(Object.values(ASSURANCE_GRADE_LABEL)).not.toContain(RAG_LABEL.green);
+    expect(Object.values(ASSURANCE_GRADE_LABEL)).not.toContain(RAG_LABEL.red);
+  });
+
+  it("draws in the RAG palette, so one page looks like one thing", () => {
+    expect(ASSURANCE_GRADE_STATE.met).toBe("green");
+    // Amber and not red: none of the four criteria is a disqualifier on its own.
+    expect(ASSURANCE_GRADE_STATE.partial).toBe("amber");
+    // Slate, on `rag.ts`'s own rule — a half-read question must not be coloured warm.
+    expect(ASSURANCE_GRADE_STATE.unknown).toBe("cannot_assess");
+  });
+
+  it("names a column per criterion, in the criteria's own order", () => {
+    expect(ASSURANCE_CRITERIA).toEqual(["named-owner", "automated-hygiene", "patching", "maintained"]);
+    expect(ASSURANCE_CRITERIA.map((criterion) => ASSURANCE_LABEL[criterion])).toEqual(["Team owner", "Hygiene", "Oldest alert", "Maintained"]);
+  });
+
+  it("carries no emoji in any label: the word is the information", () => {
+    for (const label of [...Object.values(ASSURANCE_GRADE_LABEL), ...Object.values(ASSURANCE_LABEL)]) {
+      expect(label).not.toMatch(/\p{Extended_Pictographic}/u);
+    }
+  });
+});
+
+describe("assuranceOrder", () => {
+  it("sorts met above partly, so ascending opens on the repositories that meet the criteria", () => {
+    expect(assuranceOrder("met")).toBeLessThan(assuranceOrder("partial") as number);
+  });
+
+  it("holds an ungraded repository back from both ends", () => {
+    // "Which repositories fail the criteria" is a question about the graded ones, read either way round.
+    expect(assuranceOrder("unknown")).toBeUndefined();
+    expect(assuranceOrder(undefined)).toBeUndefined();
+  });
+});
+
+describe("outcomeOrder", () => {
+  it("sorts met first, so one click on a criterion opens on the useful end", () => {
+    expect(outcomeOrder("met")).toBeLessThan(outcomeOrder("unmet") as number);
+  });
+
+  it("holds an unreadable outcome back from both ends", () => {
+    expect(outcomeOrder("unknown")).toBeUndefined();
+    expect(outcomeOrder(undefined)).toBeUndefined();
+  });
+});
+
+describe("criterionResult", () => {
+  const assured = row({
+    repository: "hmcts/api",
+    assurance: {
+      grade: "partial",
+      criteria: [
+        { criterion: "named-owner", outcome: "met", detail: "assigned to a team" },
+        { criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: secret scanning" }
+      ]
+    }
+  });
+
+  it("finds one criterion's result by its own name, not by position", () => {
+    // By name because the columns are generated from `ASSURANCE_CRITERIA` while the report sends whatever it
+    // judged: a positional read would silently pair a column with another criterion's answer if either list
+    // ever changed.
+    expect(criterionResult(assured, "automated-hygiene")).toMatchObject({ outcome: "unmet", detail: "not configured: secret scanning" });
+  });
+
+  it("finds nothing for a criterion the report did not judge, or a row with no assurance at all", () => {
+    expect(criterionResult(assured, "patching")).toBeUndefined();
+    expect(criterionResult(row({ repository: "hmcts/old" }), "named-owner")).toBeUndefined();
   });
 });
 

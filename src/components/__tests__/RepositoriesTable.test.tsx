@@ -39,48 +39,75 @@ function url(query: string): void {
 }
 
 /**
- * Three rows that separate every column: no two share a value on any of them, and `platform/api`
- * carries no figures at all so the unmeasured-sorts-last rule is exercised by the numeric columns.
+ * Three rows that separate every column: no two share a value on any of them, and `api` carries no
+ * figures at all so the unmeasured-sorts-last rule is exercised.
+ *
+ * THE `pushed_at` VALUES CROSS THE ALPHABETICAL AND THE TEAM ORDER, which is what makes the default-sort case
+ * able to fail. Under the old `(team, repository)` rule these read docs, web, api; by last push they read web,
+ * docs, api. A fixture where the two agreed would assert the new default while the old one still passed.
+ *
+ * Each row also states its own assurance outcomes, crossed over between rows so a column wired to the wrong
+ * criterion sorts the rows the other way and fails rather than agreeing by coincidence.
+ *
+ * ALL THREE ARE PUBLIC, deliberately, because the table now opens filtered to public only. A fixture with an
+ * internal or private row would silently hide it from every ordering and column assertion here — which is what
+ * happened on the first attempt at this change. The visibility filter has its own describe below, with its own
+ * rows, so what it does is asserted where the reader can see the intent.
  */
 const ROWS: RepositoryRow[] = [
   {
     repository: "web",
     team: "delivery",
+    pushed_at: "2026-09-10T00:00:00Z",
+    visibility: "public",
+    // Still on the row though no longer a COLUMN here: the readiness donut above the table filters on it, and
+    // the label moved to /teams rather than being deleted.
     readiness: "red",
     merged_pull_requests: 3,
     direct_commits: 9,
-    currently_open: 2,
-    stale_open: 5,
-    finding_occurrences: 7,
-    codeowners_files: 2,
-    sonar_reported: false,
     // A second dimension the donuts filter on, so two parameters in the URL can be seen to AND
     // rather than to overwrite one another: `web` requires no approval and `docs` requires two.
     required_approving_reviews: 0,
     // The only production service here, so the toggle's count is one and the row it leaves is
     // known: `docs` was read and is not one, and `api`'s answer is absent entirely.
-    production: true
+    production: true,
+    assurance: {
+      grade: "partial",
+      criteria: [
+        { criterion: "named-owner", outcome: "met", detail: "assigned to a team" },
+        // Crossed over from `docs`: this one fails hygiene and meets maintenance, and `docs` is the reverse.
+        { criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: secret scanning" },
+        { criterion: "patching", outcome: "met", detail: "the oldest open critical or high alert is 120 days old" },
+        { criterion: "maintained", outcome: "met", detail: "pushed to recently enough to read as maintained" }
+      ],
+      oldest_severe_alert_days: 120
+    }
   },
   {
     repository: "api",
     team: "platform",
+    visibility: "public",
     detail: "No merge activity in this window."
   },
   {
     repository: "docs",
     team: "content",
+    pushed_at: "2026-08-01T00:00:00Z",
+    visibility: "public",
     readiness: "green",
     merged_pull_requests: 8,
     direct_commits: 1,
-    currently_open: 6,
-    stale_open: 0,
-    finding_occurrences: 2,
-    // The two answers are crossed over from `web`'s, so a header wired to the other column's reader
-    // sorts the rows the other way round and fails rather than agreeing by coincidence.
-    codeowners_files: 0,
-    sonar_reported: true,
     required_approving_reviews: 2,
-    production: false
+    production: false,
+    assurance: {
+      grade: "partial",
+      criteria: [
+        { criterion: "named-owner", outcome: "unmet", detail: "assigned to one individual rather than a team" },
+        { criterion: "automated-hygiene", outcome: "met", detail: "every hygiene signal is on" },
+        { criterion: "patching", outcome: "met", detail: "no critical or high alert is open" },
+        { criterion: "maintained", outcome: "unmet", detail: "not archived and not pushed to for years, so it should be archived" }
+      ]
+    }
   }
 ];
 
@@ -94,48 +121,44 @@ function order(): string[] {
 }
 
 /**
- * One row's CODEOWNERS and Sonar cells, found where the header order puts those two columns.
+ * One row's cell under a named column, found by the HEADER'S POSITION rather than a hardcoded index.
  *
- * Read by header name rather than by a hardcoded pair of positions: a column inserted before Stale
- * would otherwise leave these tests silently comparing two unrelated cells, and passing.
+ * By name because these tests are mostly about which column is wired to which field: a column inserted to the
+ * left of one being asserted would otherwise leave the assertion reading its neighbour, and passing. That is not
+ * hypothetical here — the table gained six columns and lost eight in one change.
  */
-function governanceCells(entry: HTMLElement): (HTMLElement | undefined)[] {
+function cellOf(repository: string, label: string): HTMLElement | undefined {
   const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-  const row = within(entry).getAllByRole("cell");
-  return ["CODEOWNERS", "Sonar"].map((label) => row[headers.indexOf(label)]);
-}
-
-/** One row's two governance answers as text. */
-function answers(repository: string): (string | undefined)[] {
   const entry = screen
     .getAllByRole("row")
     .slice(1)
     .find((row) => within(row).getAllByRole("cell")[1]?.textContent?.startsWith(repository));
-  return governanceCells(entry as HTMLElement).map((cell) => cell?.textContent);
+  return within(entry as HTMLElement).getAllByRole("cell")[headers.indexOf(label)];
+}
+
+/** One row's Production cell, kept as its own reader because several cases read only it. */
+function productionCell(repository: string): HTMLElement | undefined {
+  return cellOf(repository, "Production");
+}
+
+/** Every cell in one criterion's column, whatever each of them answers. */
+function criterionCells(label: string): (HTMLElement | undefined)[] {
+  return ["web", "api", "docs"].map((repository) => cellOf(repository, label));
 }
 
 /**
- * One row's Production cell, found under the header rather than at a fixed position.
+ * A column's header cell, matched on the WHOLE name rather than a substring.
  *
- * By name for `governanceCells`' reason: a column inserted to its left would otherwise leave these
- * assertions reading the readiness label beside it, and agreeing with itself.
+ * Anchored because two headings are now prefixes of others: `Team` of `Team owner`, and `Maintained` would be of
+ * anything beginning with it. An unanchored match throws "found multiple elements" — which is at least loud, but
+ * a substring that matched exactly one heading by luck would silently assert against the wrong column.
  */
-function productionCell(repository: string): HTMLElement | undefined {
-  const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-  const entry = screen
-    .getAllByRole("row")
-    .slice(1)
-    .find((row) => within(row).getAllByRole("cell")[1]?.textContent?.startsWith(repository));
-  return within(entry as HTMLElement).getAllByRole("cell")[headers.indexOf("Production")];
-}
-
-/** Every CODEOWNERS and Sonar cell in the table, whatever each of them answers. */
-function governance(): (HTMLElement | undefined)[] {
-  return screen.getAllByRole("row").slice(1).flatMap(governanceCells);
+function headerCell(label: string): HTMLElement {
+  return screen.getByRole("columnheader", { name: new RegExp(`^${label}$`) });
 }
 
 function header(label: string): HTMLElement {
-  return within(screen.getByRole("columnheader", { name: new RegExp(label) })).getByRole("button");
+  return within(headerCell(label)).getByRole("button");
 }
 
 /** Sort on a column and report the order it left, so a click reads as one line in a test. */
@@ -156,132 +179,196 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("RepositoriesTable sorting", () => {
-  it("opens on team then repository, which is neither column sorted", () => {
+  it("opens on the most recently pushed, which is no column sorted", () => {
+    // THE DEFAULT THIS REPLACED put these rows docs, web, api — by team, `content` before `delivery` before
+    // `platform`. The fixture's instants cross that order, so this case cannot pass under the old rule.
     mount();
 
-    expect(order()).toEqual(["docs", "web", "api"]);
-    for (const label of ["Team", "Repository", "Readiness", "Merged"]) {
+    expect(order()).toEqual(["web", "docs", "api"]);
+    for (const label of ["Team", "Repository", "Last pushed", "Assurance"]) {
       expect(announced(label)).toBe("none");
     }
   });
 
   // Every column at once: each header hands the table its own reader function, and a mis-wired one
   // sorts by the column beside it, which no single-column assertion would catch.
-  it("sorts on each column ascending, putting a repository with no figure last", () => {
+  it("sorts on each column ascending, putting a repository with no answer last", () => {
     mount();
 
     // By team: content, then delivery, then platform.
     expect(sortBy("Team")).toEqual(["docs", "web", "api"]);
     expect(sortBy("Repository")).toEqual(["api", "docs", "web"]);
-    // `api` has no grade, and an ungraded repository is not an answer to "which is worst".
-    expect(sortBy("Readiness")).toEqual(["docs", "web", "api"]);
+    // Oldest push first, and `api` — which has none — last rather than read as the oldest.
+    expect(sortBy("Last pushed")).toEqual(["docs", "web", "api"]);
+    // Every fixture row is public — see the fixture's own note — so this asserts only that the header is wired
+    // and that equal values keep their order. What the column DOES is asserted in the visibility describe below,
+    // where the rows differ; a fixture that differed here would be hidden by the public-only default instead.
+    expect(sortBy("Visibility")).toEqual(["web", "api", "docs"]);
+    // Both rows are `partial`, so this orders them by nothing and only proves the header is wired: what it
+    // must NOT do is put `api`, whose grade could not be read, anywhere but last.
+    expect(sortBy("Assurance").at(-1)).toBe("api");
+    // The four criteria. `web` meets the owner criterion and `docs` does not; hygiene and maintenance are
+    // crossed over between them, so a header reading the wrong criterion sorts the pair the other way round.
+    expect(sortBy("Team owner")).toEqual(["web", "docs", "api"]);
+    expect(sortBy("Hygiene")).toEqual(["docs", "web", "api"]);
+    // The AGE, ascending. `web` has 120 days; `docs` has nothing severe open and `api` was never collected, and
+    // BOTH sort last — the column orders the repositories that have an alert, and "no alert open" is not an
+    // answer to "which has the oldest" any more than "nobody looked" is.
+    expect(sortBy("Oldest alert")[0]).toBe("web");
+    expect(sortBy("Maintained")).toEqual(["web", "docs", "api"]);
     // No below Yes, and `api`, whose list could not be read, last rather than counted as either.
     expect(sortBy("Production")).toEqual(["docs", "web", "api"]);
-    expect(sortBy("Merged")).toEqual(["web", "docs", "api"]);
-    expect(sortBy("Direct commits")).toEqual(["docs", "web", "api"]);
-    expect(sortBy("Open")).toEqual(["web", "docs", "api"]);
-    expect(sortBy("Stale")).toEqual(["docs", "web", "api"]);
-    // No below Yes, and `api`'s unreadable answer last — the two columns disagree on which
-    // repository answers Yes, so each header has to be reading its own field.
-    expect(sortBy("CODEOWNERS")).toEqual(["docs", "web", "api"]);
-    expect(sortBy("Sonar")).toEqual(["web", "docs", "api"]);
-    expect(sortBy("Findings")).toEqual(["docs", "web", "api"]);
   });
 
-  it("keeps the unreadable answer last when either governance column is reversed", () => {
+  it("keeps the unreadable answer last when a criterion column is reversed", () => {
     mount();
 
-    sortBy("CODEOWNERS");
-    expect(sortBy("CODEOWNERS")).toEqual(["web", "docs", "api"]);
-    expect(announced("CODEOWNERS")).toBe("descending");
+    sortBy("Team owner");
+    expect(sortBy("Team owner")).toEqual(["docs", "web", "api"]);
+    expect(announced("Team owner")).toBe("descending");
 
-    sortBy("Sonar");
-    expect(sortBy("Sonar")).toEqual(["docs", "web", "api"]);
-    expect(announced("Sonar")).toBe("descending");
+    sortBy("Hygiene");
+    expect(sortBy("Hygiene")).toEqual(["web", "docs", "api"]);
+    expect(announced("Hygiene")).toBe("descending");
   });
 
   it("reverses the column already sorted, and opens any other one ascending", () => {
     mount();
 
-    expect(sortBy("Merged")).toEqual(["web", "docs", "api"]);
-    expect(announced("Merged")).toBe("ascending");
+    expect(sortBy("Team owner")).toEqual(["web", "docs", "api"]);
+    expect(announced("Team owner")).toBe("ascending");
 
-    expect(sortBy("Merged")).toEqual(["docs", "web", "api"]);
-    expect(announced("Merged")).toBe("descending");
+    expect(sortBy("Team owner")).toEqual(["docs", "web", "api"]);
+    expect(announced("Team owner")).toBe("descending");
 
     // A different column starts from its own top rather than inheriting the reversal.
     expect(sortBy("Repository")).toEqual(["api", "docs", "web"]);
     expect(announced("Repository")).toBe("ascending");
-    expect(announced("Merged")).toBe("none");
+    expect(announced("Team owner")).toBe("none");
   });
 
-  it("keeps the unmeasured rows last when the direction is reversed", () => {
+  it("keeps a repository with no last push last in both directions", () => {
+    // `api` has no `pushed_at`. It is not the answer to "pushed longest ago" any more than to "pushed most
+    // recently", which is what `sorted` holding `undefined` back from both ends buys.
     mount();
 
-    sortBy("Stale");
-    expect(sortBy("Stale")).toEqual(["web", "docs", "api"]);
+    expect(sortBy("Last pushed").at(-1)).toBe("api");
+    expect(sortBy("Last pushed").at(-1)).toBe("api");
+    expect(announced("Last pushed")).toBe("descending");
   });
 
   it("sorts without navigating: how one reader is looking at the list is not in the URL", () => {
     mount();
 
-    sortBy("Merged");
+    sortBy("Team owner");
 
     expect(replaced).toEqual([]);
   });
 });
 
 describe("RepositoriesTable columns", () => {
-  it("heads the eleven columns in order, Production right of Readiness", () => {
+  it("heads the identity columns, then the grade, then one per criterion", () => {
+    // EIGHT COLUMNS WENT and five of them rendered a dash for the whole estate before they did — Open, Stale,
+    // Sonar, Findings and CODEOWNERS all read fields the report layer never emitted. Readiness went for a
+    // different reason: it grades readiness for AI enablement, which is a different question from these
+    // criteria, and it moved to `/teams` rather than being deleted.
     mount();
 
     expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
       "Team",
       "Repository",
-      "Readiness",
-      "Production",
-      "Merged",
-      "Direct commits",
-      "Open",
-      "Stale",
-      "CODEOWNERS",
-      "Sonar",
-      "Findings"
+      "Last pushed",
+      "Visibility",
+      "Assurance",
+      "Team owner",
+      "Hygiene",
+      "Oldest alert",
+      "Maintained",
+      "Production"
     ]);
   });
 
-  // All three answers a governance cell can print, on the three rows that produce them: a file
-  // found, a repository read that held none, and one nobody could read.
-  it("prints Yes, No and a dash, never a zero for an answer that was not read", () => {
+  it("prints Yes, No and a dash, never a zero for a criterion that was not read", () => {
     mount();
 
-    expect(answers("web")).toEqual(["Yes", "No"]);
-    expect(answers("docs")).toEqual(["No", "Yes"]);
-    expect(answers("api")).toEqual(["-", "-"]);
+    expect(cellOf("web", "Team owner")?.textContent).toBe("Yes");
+    expect(cellOf("docs", "Team owner")?.textContent).toBe("No");
+    // `api` carries no assurance block at all, which is a repository nothing has been collected for.
+    expect(cellOf("api", "Team owner")?.textContent).toBe("-");
+  });
+
+  it("prints the alert AGE with no threshold and no colour", () => {
+    // "Measurement first": no SLA has been agreed, so the number is the finding and the reader is the judge.
+    // A tone here would publish a policy nobody chose — which is why this asserts the ABSENCE of one.
+    mount();
+
+    expect(cellOf("web", "Oldest alert")?.textContent).toBe("120d");
+    // Nothing severe open reads as a dash rather than as `0d`, which would claim an alert was raised today.
+    expect(cellOf("docs", "Oldest alert")?.textContent).toBe("-");
+    expect(cellOf("web", "Oldest alert")?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
+  });
+
+  it("prints the last push as a day and the visibility as a word", () => {
+    mount();
+
+    expect(cellOf("web", "Last pushed")?.textContent).toBe("2026-09-10");
+    expect(cellOf("api", "Last pushed")?.textContent).toBe("-");
+    expect(cellOf("api", "Visibility")?.textContent).toBe("public");
+  });
+
+  it("grades the assurance column in its own words, never in readiness's", () => {
+    // A repository can be ready to enable agentic tooling on and still fail these criteria, so "Ready" and
+    // "Blocked" here would say something false about it.
+    mount();
+
+    expect(cellOf("web", "Assurance")?.textContent).toBe("Partly meets");
+    expect(cellOf("api", "Assurance")?.textContent).toBe("Cannot assess");
+    for (const repository of ["web", "docs", "api"]) {
+      expect(cellOf(repository, "Assurance")?.textContent).not.toMatch(/Ready|Blocked|Caution/);
+    }
   });
 
   // Header and cell together: a centred column whose header still read from the left, or the other
   // way round, would put the title off the answers under it.
-  it("centres both governance answers under centred headers", () => {
+  it("centres the three outcome columns under centred headers", () => {
     mount();
 
-    for (const cell of governance()) {
-      expect(cell?.className).toContain("text-center");
+    for (const label of ["Team owner", "Hygiene", "Maintained"]) {
+      for (const cell of criterionCells(label)) {
+        expect(cell?.className).toContain("text-center");
+      }
+      expect(headerCell(label).className).toContain("text-center");
     }
-    for (const label of ["CODEOWNERS", "Sonar"]) {
-      const heading = screen.getByRole("columnheader", { name: new RegExp(label) });
-      expect(heading.className).toContain("text-center");
-    }
+    // The age is a figure and reads down a right edge instead.
+    expect(cellOf("web", "Oldest alert")?.className).toContain("text-right");
+  });
+
+  it("tones the criteria, which ARE the grade on this page", () => {
+    // THE REVERSAL from the old table, whose every cell was deliberately untoned because none of them was a
+    // grade. These are the grade, so a met criterion reads green and an unmet one amber — and the WORD carries
+    // the information, so the colour is support rather than the answer.
+    mount();
+
+    expect(cellOf("web", "Team owner")?.outerHTML).toContain("text-rag-green");
+    expect(cellOf("docs", "Team owner")?.outerHTML).toContain("text-rag-amber");
+    // An unreadable criterion stays slate: a missing permission is not a bad result.
+    expect(cellOf("api", "Team owner")?.outerHTML).toContain("text-slate-500");
   });
 
   // Read off the whole cell rather than its own class list: the readiness cell three columns to the
   // left is toned by a span INSIDE an uncoloured `<td>`, so a governance answer coloured the same way
   // would slip past an assertion that only looked at the cell element.
-  it("tones neither answer: no cell in this table carries a grade", () => {
+  it("tones neither identity column, which state facts rather than grades", () => {
+    // The old table's rule, kept where it still holds. Every cell there was untoned because none was a grade;
+    // now four of them ARE the grade — see the case above — and these two are not. When a repository was last
+    // pushed to and whether it is public are facts about the estate's shape, neither better nor worse, which is
+    // the same argument `production.ts` makes for its own attribute.
     mount();
 
-    for (const cell of governance()) {
-      expect(cell?.outerHTML).not.toMatch(/emerald|amber|rose|rag-|red|green/);
+    for (const label of ["Last pushed", "Visibility"]) {
+      for (const repository of ["web", "api", "docs"]) {
+        expect(cellOf(repository, label)?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
+      }
     }
   });
 });
@@ -394,7 +481,7 @@ describe("RepositoriesTable filter chips", () => {
     mount();
 
     expect(chips()).toEqual([]);
-    expect(order()).toEqual(["docs", "web", "api"]);
+    expect(order()).toEqual(["web", "docs", "api"]);
   });
 
   it("reads one chip per filtered dimension, each naming its donut and the slice", () => {
@@ -409,7 +496,7 @@ describe("RepositoriesTable filter chips", () => {
     mount();
 
     expect(chips()).toEqual([]);
-    expect(order()).toEqual(["docs", "web", "api"]);
+    expect(order()).toEqual(["web", "docs", "api"]);
   });
 
   it("applies every filter in the URL together, not just the last one read", () => {
@@ -526,7 +613,13 @@ describe("RepositoriesTable production toggle", () => {
     // The chips' × is an `svg` inside the chip. The toggle holds a dot and two words and no icon,
     // so there is nothing on it a reader could read as a dismissal.
     expect(toggle().innerHTML).not.toContain("<svg");
-    expect(within(bar()).getAllByRole("button")).toEqual([toggle()]);
+    // The toggle FIRST, then the three visibility toggles and no chip. Every one of the four is a control the
+    // reader turns on and off rather than something they added to the bar, so none carries a ×.
+    expect(within(bar()).getAllByRole("button")[0]).toBe(toggle());
+    expect(within(bar()).getAllByRole("button")).toHaveLength(4);
+    for (const button of within(bar()).getAllByRole("button")) {
+      expect(button.innerHTML).not.toContain("<svg");
+    }
   });
 
   it("holds only the production repositories while it is on", () => {
@@ -555,14 +648,112 @@ describe("RepositoriesTable production toggle", () => {
   });
 });
 
+/**
+ * The visibility toggles, which have their OWN rows because the table opens filtered to public only.
+ *
+ * A fixture mixing visibilities into `ROWS` would be hidden from every other assertion in this file by that
+ * default — which happened on the first attempt at this change — so what the filter does is asserted here, where
+ * a reader can see that the rows differ on purpose.
+ */
+describe("RepositoriesTable visibility toggles", () => {
+  const MIXED: RepositoryRow[] = [
+    { repository: "open", team: "platform", visibility: "public", pushed_at: "2026-09-03T00:00:00Z" },
+    { repository: "inner", team: "platform", visibility: "internal", pushed_at: "2026-09-02T00:00:00Z" },
+    { repository: "closed", team: "platform", visibility: "private", pushed_at: "2026-09-01T00:00:00Z" }
+  ];
+
+  /** One visibility's toggle, found by the word on it as a reader would. */
+  function visibilityToggle(visibility: string): HTMLElement {
+    return within(bar()).getByRole("button", { name: new RegExp(`^${visibility}`) });
+  }
+
+  it("shows public only when the URL says nothing", () => {
+    // THE DEFAULT, and a deliberate narrowing: the page asks whether repositories meet the criteria for coding
+    // IN THE OPEN, and a private repository is outside that question rather than failing it.
+    mount(MIXED);
+
+    expect(order()).toEqual(["open"]);
+  });
+
+  it("offers all three visibilities, each with the estate's count for it", () => {
+    // Three because INTERNAL is real and is the estate's second largest — 441 repositories on AAT — so a
+    // two-way control could not name them. The counts are of the whole estate rather than the filtered rows, so
+    // they say what turning each on would bring in.
+    mount(MIXED);
+
+    expect(["public", "internal", "private"].map((visibility) => visibilityToggle(visibility).textContent)).toEqual(["public1", "internal1", "private1"]);
+  });
+
+  it("marks only the visibilities showing as pressed", () => {
+    mount(MIXED);
+
+    expect(visibilityToggle("public").getAttribute("aria-pressed")).toBe("true");
+    expect(visibilityToggle("internal").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("adds one visibility without dropping another, which is what independent means", () => {
+    // The combination a single tri-state could not express, and the one somebody reviewing what HMCTS publishes
+    // actually wants: public and internal, not private.
+    url("weeks=12&public=true&internal=true");
+    mount(MIXED);
+
+    expect(order()).toEqual(["open", "inner"]);
+  });
+
+  it("writes the parameter explicitly on both clicks, keeping the span and the term", () => {
+    // EXPLICIT IN BOTH DIRECTIONS, unlike the production toggle. Absence has to keep meaning "the reader has
+    // said nothing" so it can fall back to public-only; were off expressed as absence, turning public off would
+    // produce the same URL as never having touched it.
+    url("weeks=26&repository=e");
+    mount(MIXED);
+
+    fireEvent.click(visibilityToggle("internal"));
+    expect(replaced).toEqual(["/repositories?weeks=26&repository=e&internal=true"]);
+  });
+
+  it("turns the default itself off rather than being unable to", () => {
+    url("weeks=12&public=true");
+    mount(MIXED);
+
+    fireEvent.click(visibilityToggle("public"));
+
+    expect(replaced).toEqual(["/repositories?weeks=12&public=false"]);
+  });
+
+  it("says nothing matches when every visibility is off, rather than showing the estate", () => {
+    // Three clicks are three clicks: falling back to the default here would ignore them.
+    url("weeks=12&public=false&internal=false&private=false");
+    mount(MIXED);
+
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText(/No repository matches this filter/)).toBeTruthy();
+  });
+
+  it("keeps a row whose visibility the service did not send", () => {
+    // The field only exists from 2026-09-14, so absence must mean "this predates it" and never "exclude it" —
+    // otherwise a deployment pointed at an older collection would render an empty table.
+    mount([{ repository: "old", team: "platform" }]);
+
+    expect(order()).toEqual(["old"]);
+  });
+});
+
 /** The filter bar, which is always drawn: it holds the Production toggle whether or not a chip is. */
 function bar(): HTMLElement {
   return screen.getByRole("group", { name: "Repository filters" });
 }
 
-/** What each chip reads, in the order the bar puts them — the toggle first, so past it. */
+/**
+ * What each chip reads, in the order the bar puts them.
+ *
+ * PAST THE FOUR TOGGLES rather than only the first, from 2026-09-14. The bar holds the Production toggle and the
+ * three visibility ones ahead of any chip, and each is a `<button>` where a chip is a `<span>` — so the chips are
+ * the non-button children rather than a fixed offset, which cannot drift as controls are added.
+ */
 function chips(): string[] {
-  return Array.from(bar().children, (chip) => chip.textContent ?? "").slice(1);
+  return Array.from(bar().children)
+    .filter((child) => child.tagName !== "BUTTON")
+    .map((chip) => chip.textContent ?? "");
 }
 
 /** The Production toggle, found the way a reader does: by the word on it. */
@@ -577,5 +768,5 @@ function remove(title: string): HTMLElement {
 
 /** What a screen reader is told about a column's sort — the property of the `<th>`, not the button. */
 function announced(label: string): string | null {
-  return screen.getByRole("columnheader", { name: new RegExp(label) }).getAttribute("aria-sort");
+  return headerCell(label).getAttribute("aria-sort");
 }

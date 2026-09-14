@@ -2,11 +2,12 @@ import "server-only";
 import { readinessPolicy } from "../assessment/assessment.ts";
 import { deserialiseMerges } from "../behaviour/fill.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
+import { type AssuranceEvidence, assuranceGrade, judgeAssurance } from "../domain/assurance.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
 import type { Merges } from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
-import { cohortTeams, servedCohort } from "../org/cohort.ts";
+import { type CohortEntry, cohortTeams, servedCohort } from "../org/cohort.ts";
 import { OwnerKind } from "../org/graph.ts";
 import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
@@ -139,23 +140,40 @@ function reportedFamily(family: OpenAlertCount | undefined): Record<string, unkn
  */
 function repositoryRow(
   configuration: Configuration,
-  repository: string,
-  teams: string[],
-  ownerKind: OwnerKind,
+  entry: CohortEntry,
   state: { fetchedAt: Date; payload: unknown } | undefined,
   merges: Merges,
   production: boolean | undefined
 ): Record<string, unknown> {
   const policy = readinessPolicy(configuration);
+  const teams = entry.owners;
+  const ownerKind = entry.ownerKind;
+  const repository = entry.repository;
   const team = teams[0] ?? "";
   // Absent for the ordinary single-owner repository, so a reader is not shown a one-element list restating
   // `team` on every row of an estate where sharing is the exception.
   const shared = teams.length > 1 ? teams : undefined;
 
+  // WHAT A REPOSITORY IS, rather than what happened in the window, so these are on BOTH branches — the rule
+  // `owner_kind` already follows. `pushed_at` is the table's default sort and `visibility` its default filter,
+  // so a row missing either would sort and filter as unmeasured on a fact the graph knows perfectly well.
+  //
+  // `pushed_at` is an ISO STRING and never a `Date`. `stripAbsent` passes a `Date` through untouched and
+  // `SortValue` has no `Date` case, so a raw one would fall to `String(...).localeCompare(...)` and sort
+  // alphabetically by weekday name — plausible-looking and wrong. Every other instant on the contract is a
+  // string for the same reason; `overviewSummary` below is the pattern.
+  const facts = {
+    owner_kind: ownerKind,
+    pushed_at: entry.pushedAt?.toISOString(),
+    visibility: entry.visibility.toLowerCase(),
+    archived: entry.archived,
+    unmaintained: entry.unmaintained,
+    assurance: reportedAssurance(entry, state?.payload)
+  };
+
   if (state === undefined) {
-    // Nothing collected: the row exists so the estate is complete, and says why it carries no figures. Who
-    // owns it is not a fact about the window, so the row still says what kind of owner that is.
-    return { repository, team, teams: shared, owner_kind: ownerKind, detail: "nothing has been collected for this repository" };
+    // Nothing collected: the row exists so the estate is complete, and says why it carries no figures.
+    return { repository, team, teams: shared, ...facts, detail: "nothing has been collected for this repository" };
   }
 
   const gate = storedGate(state.payload);
@@ -166,7 +184,7 @@ function repositoryRow(
     repository,
     team,
     teams: shared,
-    owner_kind: ownerKind,
+    ...facts,
     readiness: assessment?.label,
     merged_pull_requests: merges.pullRequests.length,
     direct_commits: merges.directCommits.length,
@@ -178,6 +196,33 @@ function repositoryRow(
     security: reportedAlerts(payload.securityAlerts),
     production: production ?? payload.deploysToProduction,
     detail: gate.gate === undefined ? gate.detail : undefined
+  };
+}
+
+/**
+ * The assurance criteria judged for one row, in the shape `src/lib/types.ts` declares.
+ *
+ * Judged HERE rather than in the UI, on the precedent every other graded figure on this contract follows: the
+ * page renders a verdict the report reached, so the JSON a reader can curl and the table carry the same answer.
+ *
+ * TWO SOURCES, and that is why it takes the cohort entry as well as the payload. Ownership and maintenance are
+ * facts about the repository that the GRAPH holds, so they answer on a repository nothing has been collected for;
+ * hygiene and patching come from the collection. A criterion whose source is missing reads unknown, never unmet.
+ */
+function reportedAssurance(entry: CohortEntry, payload: unknown): Record<string, unknown> {
+  const stored = (payload as { assurance?: AssuranceEvidence } | null | undefined)?.assurance;
+  const judgements = judgeAssurance({
+    ownerKind: entry.ownerKind,
+    archived: entry.archived,
+    unmaintained: entry.unmaintained,
+    ...(stored === undefined ? {} : { evidence: stored })
+  });
+  return {
+    grade: assuranceGrade(judgements),
+    criteria: judgements.map((judgement) => ({ criterion: judgement.criterion, outcome: judgement.outcome, detail: judgement.detail })),
+    // Lifted out of the criteria beside it so a column can print the number and a threshold can one day compare
+    // it without either having to find the right judgement and parse its sentence.
+    oldest_severe_alert_days: stored?.oldestSevereAlertDays
   };
 }
 
@@ -220,15 +265,7 @@ async function buildRepositoryRows(configuration: Configuration, weeks: number, 
   ]);
 
   const rows = cohort.map((entry) =>
-    repositoryRow(
-      configuration,
-      entry.repository,
-      entry.owners,
-      entry.ownerKind,
-      states.get(entry.repository),
-      deserialiseMerges(facts.get(entry.repository)),
-      undefined
-    )
+    repositoryRow(configuration, entry, states.get(entry.repository), deserialiseMerges(facts.get(entry.repository)), undefined)
   );
   return stripAbsent(rows);
 }

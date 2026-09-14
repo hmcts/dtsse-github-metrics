@@ -391,12 +391,19 @@ describe("the three list routes", () => {
     expect(panel).not.toContain("C or worse");
   });
 
-  /** The panel of one donut, from its heading to the next one's. */
+  /**
+   * The panel of one donut, from its heading to the next one's — or to the filter bar below the last.
+   *
+   * BOUNDED AT THE FILTER BAR and not only at the next `<h3>`. The last donut has no heading after it, so a
+   * slice running to the end of the markup swallows the table's own controls: the visibility toggles added on
+   * 2026-09-14 carry `aria-pressed` exactly as a legend entry does, so `pressed` read them as slices of the
+   * Security donut and every "no slice is pressed" assertion failed. The bar is where the donuts stop.
+   */
   function panelOf(markup: string, title: string): string {
     const opened = markup.indexOf(`>${title}</h3>`);
     expect(opened).toBeGreaterThan(-1);
-    const next = markup.indexOf("<h3", opened + 1);
-    return markup.slice(opened, next === -1 ? undefined : next);
+    const ends = [markup.indexOf("<h3", opened + 1), markup.indexOf('aria-label="Repository filters"', opened + 1)].filter((at) => at !== -1);
+    return markup.slice(opened, ends.length === 0 ? undefined : Math.min(...ends));
   }
 
   /** The labels of one donut's legend entries drawn as pressed, which is what it is filtered to. */
