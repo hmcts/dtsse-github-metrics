@@ -22,7 +22,18 @@ test.describe("navigation @regression", () => {
     await expect(page).toHaveURL(/\/repositories/);
   });
 
+  /**
+   * A LONGER TIMEOUT THAN THE SUITE'S, because this is the only case that lands on a span the warmer may not
+   * have reached yet. The pipeline installs a fresh `-staging` release and starts testing seconds later — build
+   * 30 deployed at 16:48:10 and this navigated at 16:48:26 — so the 26-week report is being built on demand
+   * rather than served from the cache the warmer fills. Warm it is under a second in the pod; cold over a VPN it
+   * took 40 s, which is what the default 30 s was failing on.
+   *
+   * The right fix is patience rather than speed: 26 weeks is a real span a reader can choose, and a cold build of
+   * it is correct behaviour on a pod that started moments ago.
+   */
   test("should carry the chosen span across a navigation @regression", async ({ page }) => {
+    test.setTimeout(120_000);
     await page.goto("/repositories?weeks=26");
     await page.getByRole("link", { name: "Teams" }).first().click();
     await expect(page).toHaveURL(/\/teams/);
