@@ -5,6 +5,7 @@ import {
   DefaultExcludedTeams,
   DefaultMaximumTeamMembers,
   DefaultMaximumTeamShare,
+  DefaultMinimumAuthoredMerges,
   DefaultPrefixDominance,
   DefaultPrefixSupport,
   type OrgFacts,
@@ -66,8 +67,20 @@ function orgFacts(overrides: Partial<OrgFacts> = {}): OrgFacts {
     people: [],
     codeowners: new Map(),
     directAdmins: new Map(),
+    authorship: new Map(),
     ...overrides
   };
+}
+
+/**
+ * Merges authored in one repository, keyed by login.
+ *
+ * The counts are what the `authoring-team` rung's floor and tie-breaks read, so every case that is about
+ * that rung states them rather than taking a default: a fixture with one merge each and a floor of two
+ * would decline for reasons the case was not about.
+ */
+function authored(repository: string, merges: Record<string, number>): OrgFacts["authorship"] {
+  return new Map([[repository, { repository, merges: new Map(Object.entries(merges)) }]]);
 }
 
 /**
@@ -87,6 +100,7 @@ function ownershipOptions(overrides: Partial<OwnershipOptions> = {}): OwnershipO
     maximumTeamMembers: Number.POSITIVE_INFINITY,
     excludedTeams: new Set(DefaultExcludedTeams),
     configured: new Map(),
+    minimumAuthoredMerges: DefaultMinimumAuthoredMerges,
     ...overrides
   };
 }
@@ -310,6 +324,237 @@ describe("ownershipEvidence", () => {
   });
 });
 
+/**
+ * The `authoring-team` rung: the team whose own members merge here, above every declared claim.
+ *
+ * The cases that matter are the ones with an ADMIN TEAM PRESENT AND LOSING, because that is the estate's
+ * actual shape — `teams-api-admin` decided 1,346 of 1,846 repositories and most of those owners were access
+ * administrators. A fixture with no admin team would pass under the old ladder too.
+ */
+describe("the authoring team", () => {
+  /** `cdm-admin` holds admin and `cdm` holds push, which is `aac-manage-case-assignment` on AAT. */
+  function administeredButAuthored(merges: Record<string, number>): OrgFacts {
+    return orgFacts({
+      repositories: repositories("aac-manage-case-assignment"),
+      teamRepositories: [owns("cdm-admin", "aac-manage-case-assignment", "admin"), owns("cdm", "aac-manage-case-assignment", "push")],
+      memberships: [
+        { teamSlug: "cdm", login: "alice", role: "MEMBER" },
+        { teamSlug: "cdm", login: "bob", role: "MEMBER" },
+        { teamSlug: "cdm-admin", login: "carol", role: "MEMBER" }
+      ],
+      authorship: authored("aac-manage-case-assignment", merges)
+    });
+  }
+
+  it("should outrank the admin team when the delivery team's members author the merges", () => {
+    // THE MEASURED FAILURE. `cdm-admin` holds admin and would win `teams-api-admin`; `cdm` holds only push
+    // and wrote the code. 1,073 of roughly 1,900 rows read as an administrator before this rung existed.
+    const resolved = attributeOwnership(administeredButAuthored({ alice: 3, bob: 2 }), ownershipOptions());
+
+    expect(primaryOf(resolved, "aac-manage-case-assignment")).toEqual({
+      kind: OwnerKind.Team,
+      owner: "cdm",
+      rung: OwnershipRung.AuthoringTeam,
+      detail: "2 members authored 5 merges here"
+    });
+  });
+
+  it("should fall back to the admin team when the authorship is one merge, which is a visitor", () => {
+    // The floor's whole job. One merge is somebody fixing a typo in a repository their team happens to hold
+    // access to, and 310 of 1,124 team-repository pairs on this estate sit at exactly one.
+    expect(primaryOf(attributeOwnership(administeredButAuthored({ alice: 1 }), ownershipOptions()), "aac-manage-case-assignment")).toMatchObject({
+      owner: "cdm-admin",
+      rung: OwnershipRung.TeamsApiAdmin
+    });
+  });
+
+  it("should read the admin team as the authoring one when it is the admin team that merges", () => {
+    // The rung is not anti-admin, it is pro-evidence: where the team holding admin is also the team doing the
+    // work, it wins on authorship and the row says so. A rule that demoted `admin` by name could not do this.
+    const resolved = attributeOwnership(administeredButAuthored({ carol: 4 }), ownershipOptions());
+
+    expect(primaryOf(resolved, "aac-manage-case-assignment")).toMatchObject({ owner: "cdm-admin", rung: OwnershipRung.AuthoringTeam });
+  });
+
+  it("should prefer the team with more distinct authors, not the one with more merges", () => {
+    // `cdm` has two people writing 4 and `cdm-admin` one person writing 9. Breadth of involvement is the
+    // signal that separates a delivery team from one person with a script; measured on AAT, ordering on
+    // merges first moves 12 repositories, every one onto a narrower admin-shaped team.
+    const resolved = attributeOwnership(administeredButAuthored({ alice: 2, bob: 2, carol: 9 }), ownershipOptions());
+
+    expect(primaryOf(resolved, "aac-manage-case-assignment")).toMatchObject({ owner: "cdm", rung: OwnershipRung.AuthoringTeam });
+    expect(primaryOf(resolved, "aac-manage-case-assignment").detail).toBe(
+      "2 members authored 4 merges here, ahead of 1 other team with access whose members merged here"
+    );
+  });
+
+  it("should break a tie on authors by merges, then by the smaller team", () => {
+    // One author each and equal merges, so the third key decides: `narrow` holds one repository of the
+    // population and `broad` holds three, and the specific claim is the informative one — `mostSpecificClaim`'s
+    // own argument, applied to this rung.
+    const facts = orgFacts({
+      repositories: repositories("shared", "other-one", "other-two"),
+      teamRepositories: [
+        owns("broad", "shared", "push"),
+        owns("broad", "other-one", "push"),
+        owns("broad", "other-two", "push"),
+        owns("narrow", "shared", "push")
+      ],
+      memberships: [
+        { teamSlug: "broad", login: "alice", role: "MEMBER" },
+        { teamSlug: "narrow", login: "bob", role: "MEMBER" }
+      ],
+      authorship: authored("shared", { alice: 3, bob: 3 })
+    });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "shared")).toMatchObject({ owner: "narrow", rung: OwnershipRung.AuthoringTeam });
+  });
+
+  it("should ignore an author who is in no team holding the repository", () => {
+    // Somebody from another team merging here is not evidence about who owns it, and counting them would
+    // attribute the repository to whatever team that person happens to belong to.
+    const facts = orgFacts({
+      repositories: repositories("civil"),
+      teamRepositories: [owns("civil-admin", "civil", "admin")],
+      memberships: [{ teamSlug: "elsewhere", login: "stranger", role: "MEMBER" }],
+      authorship: authored("civil", { stranger: 40 })
+    });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil")).toMatchObject({ owner: "civil-admin", rung: OwnershipRung.TeamsApiAdmin });
+  });
+
+  it("should not read a team the exclusion filters removed as the authoring one", () => {
+    // `claims` is the one definition of "could this handle own something", and the rung reads it for exactly
+    // this: `platform-operations` holds 397 of 1,880 repositories and 56 people, so reaching past the share
+    // filter to the raw edges would give it a fifth of the estate on one pipeline fix.
+    const facts = orgFacts({
+      repositories: repositories("one", "two", "three", "four"),
+      teamRepositories: [...["one", "two", "three", "four"].map((repository) => owns("platform", repository, "push")), owns("service-admins", "one", "admin")],
+      memberships: [
+        { teamSlug: "platform", login: "engineer", role: "MEMBER" },
+        { teamSlug: "service-admins", login: "carol", role: "MEMBER" }
+      ],
+      authorship: authored("one", { engineer: 12 })
+    });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions({ maximumTeamShare: DefaultMaximumTeamShare })), "one")).toMatchObject({
+      owner: "service-admins",
+      rung: OwnershipRung.TeamsApiAdmin
+    });
+  });
+
+  it("should decline on a repository with no authorship at all, leaving the rungs below to answer", () => {
+    // The `UiPath-*` case: no recent merges means no authorship to read, which is why this rung is an
+    // addition above `teams-api-admin` and never a replacement for it.
+    const facts = orgFacts({ repositories: repositories("UiPath-thing"), teamRepositories: [owns("rpa", "UiPath-thing", "admin")] });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "UiPath-thing")).toMatchObject({ owner: "rpa", rung: OwnershipRung.TeamsApiAdmin });
+  });
+
+  it("should fold a login's case, since the two sources spell one person differently", () => {
+    const facts = orgFacts({
+      repositories: repositories("civil"),
+      teamRepositories: [owns("civil-admin", "civil", "admin"), owns("civil", "civil", "push")],
+      memberships: [{ teamSlug: "Civil", login: "Alice", role: "MEMBER" }],
+      authorship: authored("civil", { alice: 4 })
+    });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil")).toMatchObject({ owner: "civil", rung: OwnershipRung.AuthoringTeam });
+  });
+
+  it("should name one owner even where several teams with access merged here", () => {
+    // Unlike `teams-api-admin`, which returns every admin team. Several teams merging into a platform
+    // repository is ordinary and they are not all owners; the ranking has chosen, and the detail says so.
+    const facts = orgFacts({
+      repositories: repositories("shared"),
+      teamRepositories: [owns("alpha", "shared", "push"), owns("beta", "shared", "push")],
+      memberships: [
+        { teamSlug: "alpha", login: "one", role: "MEMBER" },
+        { teamSlug: "alpha", login: "two", role: "MEMBER" },
+        { teamSlug: "beta", login: "three", role: "MEMBER" }
+      ],
+      authorship: authored("shared", { one: 2, two: 2, three: 9 })
+    });
+
+    const resolved = attributeOwnership(facts, ownershipOptions());
+
+    expect(resolved[0]?.owners).toHaveLength(1);
+    expect(resolved[0]?.primary.owner).toBe("alpha");
+  });
+
+  it("should let a configured override still short-circuit it", () => {
+    const facts = administeredButAuthored({ alice: 9, bob: 9 });
+    const options = ownershipOptions({ configured: new Map([["aac-manage-case-assignment", ["reviewed-team"]]]) });
+
+    expect(primaryOf(attributeOwnership(facts, options), "aac-manage-case-assignment")).toMatchObject({
+      owner: "reviewed-team",
+      rung: OwnershipRung.Configured
+    });
+  });
+});
+
+/**
+ * The CODEOWNERS demotion: a committed file answers only where no access rung will.
+ *
+ * Every case here had the OPPOSITE expectation before 2026-09-14, which is what makes them the record of the
+ * change rather than a restatement of the ladder.
+ */
+describe("CODEOWNERS as a last resort", () => {
+  it("should let a contested write claim outrank a sole CODEOWNERS team", () => {
+    // THE REVERSAL. Access is administered continuously and a CODEOWNERS file is a review-routing rule
+    // committed once, so the live signal wins. 31 of the 70 repositories a CODEOWNERS rung decided on AAT
+    // have team access and move here.
+    const facts = orgFacts({
+      repositories: repositories("civil"),
+      teamRepositories: [owns("platform", "civil", "push"), owns("tooling", "civil", "push")],
+      codeowners: codeownersFor([{ repository: "civil", teams: ["reviewers"] }])
+    });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil")).toMatchObject({ rung: OwnershipRung.TeamsApiWrite });
+  });
+
+  it("should let a direct collaborator holding admin outrank a sole CODEOWNERS team", () => {
+    // The other half of the reversal, and the placement worth arguing: a grant of admin to a login is
+    // current and per-person where a file is neither. Every rung above it names a team, so the
+    // team-before-person rule is preserved where it means something.
+    const facts = orgFacts({
+      repositories: repositories("civil"),
+      codeowners: codeownersFor([{ repository: "civil", teams: ["reviewers"] }]),
+      directAdmins: new Map([["civil", ["carol"]]])
+    });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil")).toMatchObject({
+      kind: OwnerKind.Person,
+      owner: "carol",
+      rung: OwnershipRung.DirectCollaborator
+    });
+  });
+
+  it("should still answer from CODEOWNERS where no access rung can, rather than reporting unowned", () => {
+    // WHY THE RUNG IS DEMOTED AND NOT DELETED. 39 of those 70 repositories have no team access at all, so
+    // deleting it would take the unowned bucket from 141 to 180.
+    const facts = orgFacts({ repositories: repositories("civil"), codeowners: codeownersFor([{ repository: "civil", teams: ["reviewers"] }]) });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil")).toMatchObject({ owner: "reviewers", rung: OwnershipRung.CodeownersSole });
+  });
+
+  it("should keep the name-prefix inference below every CODEOWNERS rung", () => {
+    // A file is something a human wrote about this repository; a name family is a guess this codebase makes.
+    const facts = orgFacts({
+      knownTeams: new Set(["sscs", "reviewers"]),
+      ...family([
+        ["sscs-one", "sscs"],
+        ["sscs-two", "sscs"],
+        ["sscs-three", "sscs"]
+      ]),
+      repositories: repositories("sscs-one", "sscs-two", "sscs-three", "sscs-later"),
+      codeowners: codeownersFor([{ repository: "sscs-later", teams: ["reviewers"] }])
+    });
+
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "sscs-later")).toMatchObject({ owner: "reviewers", rung: OwnershipRung.CodeownersSole });
+  });
+});
+
 describe("soleAdmin", () => {
   it("should name the one team holding admin", () => {
     expect(
@@ -469,18 +714,6 @@ describe("decideFromEvidence", () => {
     });
   });
 
-  it("should let a sole CODEOWNERS team outrank a contested API claim", () => {
-    // Access says who CAN merge and CODEOWNERS says who is EXPECTED to review; where they disagree the less
-    // ambiguous of the two is the better guess.
-    const facts = orgFacts({
-      repositories: repositories("civil"),
-      teamRepositories: [owns("platform", "civil", "push"), owns("tooling", "civil", "push")],
-      codeowners: codeownersFor([{ repository: "civil", teams: ["reviewers"] }])
-    });
-
-    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil")).toMatchObject({ owner: "reviewers", rung: OwnershipRung.CodeownersSole });
-  });
-
   it("should attribute a contested write claim to the smallest of the claiming teams", () => {
     const facts = orgFacts({
       repositories: repositories("civil", "other", "third"),
@@ -552,14 +785,20 @@ describe("decideFromEvidence", () => {
     });
   });
 
-  it("should let a person CODEOWNERS names outrank a direct collaborator", () => {
+  it("should let a direct collaborator outrank a person CODEOWNERS names", () => {
+    // REVERSED on 2026-09-14 with the rest of the demotion. Both name a person, so the team-before-person
+    // rule does not separate them; what does is that `admin` on a login is administered now and a handle in a
+    // file was written once.
     const facts = orgFacts({
       repositories: repositories("civil"),
       codeowners: codeownersFor([{ repository: "civil", people: ["alice"] }]),
       directAdmins: new Map([["civil", ["carol"]]])
     });
 
-    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil").rung).toBe(OwnershipRung.CodeownersPerson);
+    expect(primaryOf(attributeOwnership(facts, ownershipOptions()), "civil")).toMatchObject({
+      owner: "carol",
+      rung: OwnershipRung.DirectCollaborator
+    });
   });
 
   it("should decide the CODEOWNERS rungs without the per-repository paths, which are only detail", () => {
@@ -783,7 +1022,7 @@ describe("attributeOwnership", () => {
     expect(resolved[0]?.primary.kind).toBe(OwnerKind.None);
     expect(resolved[0]?.primary.owner).toBe("");
     expect(resolved[0]?.primary.detail).toBe(
-      "no rung answered; walked configured, teams-api-admin, codeowners-sole, teams-api-write, codeowners-first, codeowners-person, direct-collaborator-admin, name-prefix"
+      "no rung answered; walked configured, authoring-team, teams-api-admin, teams-api-write, direct-collaborator-admin, codeowners-sole, codeowners-first, codeowners-person, name-prefix"
     );
   });
 
@@ -858,17 +1097,17 @@ describe("unresolvedRepositories", () => {
     expect(unresolvedRepositories(facts, evidence, configured)).toEqual(["named", "orphan"]);
   });
 
-  it("should include a repository whose only claims are write, because codeowners-sole outranks teams-api-write", () => {
-    // The bug this replaced: the residue filtered on "no claim at all", so a repository with several teams holding
-    // push never had its CODEOWNERS read and was decided by `teams-api-write` — even though a sole CODEOWNERS team
-    // outranks any contested API claim. Measured on the real estate, 270 repositories sit in exactly this state.
+  it("should exclude a repository with any owning claim, since no CODEOWNERS rung can now outrank one", () => {
+    // REVERSED BY THE DEMOTION, and it is what makes the walk cheaper rather than dearer. The residue once had
+    // to include these 270 repositories precisely because `codeowners-sole` outranked `teams-api-write` and
+    // their files therefore decided them. Now an access claim settles them for free and no file is fetched.
     const facts = orgFacts({
       repositories: repositories("contested"),
       teamRepositories: [owns("alpha", "contested", "push"), owns("beta", "contested", "push"), owns("gamma", "contested", "push")]
     });
     const evidence = ownershipEvidence(facts, ownershipOptions());
 
-    expect(unresolvedRepositories(facts, evidence)).toEqual(["contested"]);
+    expect(unresolvedRepositories(facts, evidence)).toEqual([]);
   });
 
   it("should exclude a repository a sole admin team already decided, since nothing above that rung is left", () => {

@@ -1,15 +1,13 @@
 import { cookies } from "next/headers";
 import { CollectionNotice } from "@/components/CollectionNotice";
-import { SummaryPieChart } from "@/components/charts/SummaryPieChart";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { MetricCard } from "@/components/MetricCard";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
-import { LABEL_PARAMETER, RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTable";
+import { RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTable";
 import { Panel, Section } from "@/components/Section";
 import { getOverview, getRepositories, getWindows } from "@/lib/api";
-import { checksSlices, coverageSlices, distributionSlices, reviewSlices, securitySlices, unreviewedSlices } from "@/lib/chart";
 import { count, span } from "@/lib/format";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
@@ -60,56 +58,23 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
         </div>
       </Panel>
 
-      {/* Six donuts over the same estate, so each one's total is the number of repositories
-          configured — including the ones nothing could be measured on, which are counted in an
-          unknown slice rather than dropped. None of them is filtered by the search box below, for
-          the reason the readiness donut never was: they describe the estate, not the table.
+      {/* THE SIX DONUTS ARE GONE, and what they drew is not lost — it moved. Five of the six were
+          ways-of-working dimensions: the readiness distribution, the declared gate's two halves,
+          unreviewed substantial merges. That is the same material `/teams` now reports per team,
+          which is where a reader asks how a team works. The sixth, test coverage, read a field the
+          report layer has never emitted and so drew an all-unknown circle.
 
-          Each one is also the filter control for the dimension it draws — its `parameter` is the
-          query parameter the table below reads back, and the names are `rows.ts`'s `ESTATE_FILTERS`
-          so a wedge and the chip it raises are the same dimension. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <SummaryPieChart
-          title="Readiness"
-          parameter={LABEL_PARAMETER}
-          // `overview.labels` distributes the reported repositories only, so the unreportable ones
-          // are added here: without them this donut would total less than the five beside it.
-          data={distributionSlices(overview.labels, overview.unavailable)}
-          tooltip="How many repositories carry each readiness label at this span. Repositories the span could not be reported for carry no label and are counted as not assessed instead."
-        />
-        <SummaryPieChart
-          title="Enforces review"
-          parameter="review"
-          data={reviewSlices(repositories)}
-          tooltip="How many approving reviews each repository's merge gate requires on its default branch: multiple is two or more, enforced is one. An unprotected branch is counted as unenforced, because its gate was read and it requires nothing. Unknown is a repository whose gate was not collected, whose branch is protected and whose rules GitHub withheld, or that this span could not be reported for at all."
-        />
-        <SummaryPieChart
-          title="Enforces CI"
-          parameter="checks"
-          data={checksSlices(repositories)}
-          tooltip="Whether each repository's merge gate requires any status check to pass on its default branch. This is the configuration: enforced says a check is required, not which check it is or whether it passed. Unknown is a repository whose gate was not collected, whose branch is protected and whose rules GitHub withheld, or that this span could not be reported for at all."
-        />
-        <SummaryPieChart
-          title="Unreviewed substantial merges"
-          parameter="unreviewed"
-          data={unreviewedSlices(repositories)}
-          tooltip="How the readiness policy graded each repository's substantial merges that reached the default branch without independent review. Clear means none merged unreviewed; within allowance means some did and the allowance the policy was configured with forgives them. Unknown is a repository with too few merges to grade, a window holding no substantial merge, an assessment that is switched off, or a span that could not be reported for at all."
-        />
-        <SummaryPieChart
-          title="Test coverage"
-          parameter="coverage"
-          data={coverageSlices(repositories)}
-          tooltip="The line coverage each repository's SonarCloud project reports, banded where the repository's own page bands it. Unknown is a repository that resolved to no SonarCloud project, one whose measures could not be read, one whose project sent no coverage metric, or one this span could not be reported for at all — and never a project reporting 0%."
-        />
-        <SummaryPieChart
-          title="Security issues"
-          parameter="security"
-          data={securitySlices(repositories)}
-          tooltip="The worst of each repository's security signals: its open Dependabot, code scanning and secret scanning alerts, and its SonarCloud security rating and issues. High is a critical or high alert open, any secret scanning alert open, or a security rating of D or worse; medium is any other alert open, a rating of B or C, or an open Sonar security issue. Unknown is a repository with no security data at all — every alert family withheld and no SonarCloud measures, or a span that could not be reported for at all — and never one whose alerts were read and whose only gap is a SonarCloud project."
-        />
-      </div>
+          They were also the only way to CREATE a table filter — clicking a wedge wrote the query
+          parameter the chips read back — so `ESTATE_FILTERS` and the chips went with them rather
+          than leaving a reader able to dismiss a filter they had no way to apply. The controls that
+          remain are the ones with their own affordance: the term box, the Production toggle and the
+          three visibility toggles. */}
 
-      <Section heading="Repositories" detail={window} action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}>
+      <Section
+        heading="Repositories"
+        detail={`${window}, most recently pushed first`}
+        action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}
+      >
         {repositories.length === 0 ? (
           <EmptyState
             message="No repository is configured for this organisation."
@@ -119,6 +84,23 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
           <RepositoriesTable rows={repositories} weeks={weeks} />
         )}
       </Section>
+
+      {/* WHAT THESE COLUMNS DO NOT COVER, stated on the page and not only in the code.
+          A reader holding them against the published criteria will count six where there are seven, and one of
+          the six is only half evidenced. Both facts are stated, because a tick under Secrets otherwise reads as
+          a broader assurance than it is — and because an unexplained gap gets read as an oversight or, worse,
+          filled with a proxy. */}
+      <p className="text-xs text-slate-500">
+        <strong className="text-slate-400">Secrets is a partial answer.</strong> The column reads open secret-scanning alerts, so it evidences committed{" "}
+        <em>credentials</em> only. The rest of that criterion — sensitive operational detail such as hostnames, IP ranges, admin endpoints and capacity
+        thresholds — needs a human reading the content and is not evidenced here. A tick means no credential was found and left unresolved, not that the
+        repository is free of sensitive detail. <strong className="text-slate-400">Secure by design is not reported at all</strong>, because it needs a threat
+        model and a review of what a service exposes, and no GitHub signal stands in for that.{" "}
+        <strong className="text-slate-400">Security contact is shown but not graded</strong>: GitHub reports a policy for nearly every repository, inherited
+        from the organisation’s <code className="text-slate-400">.github</code> repository, so it evidences one organisation-level intake route rather than
+        anything per repository — counted towards the grade it would be a free pass on every row. Readiness for AI enablement is a different question and is
+        reported per team.
+      </p>
     </div>
   );
 }

@@ -23,7 +23,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ContributorsPage from "@/app/contributors/page";
 import RepositoriesPage from "@/app/repositories/page";
 import TeamsPage from "@/app/teams/page";
-import { ESTATE_FILTERS } from "@/lib/rows";
 import type { ActorRow, OverviewSummary, RepositoryRow, TeamRow, WindowOptions } from "@/lib/types";
 
 const WINDOWS: WindowOptions = {
@@ -283,216 +282,63 @@ describe("the three list routes", () => {
     expect(reported).toContain("all reported");
   });
 
-  /** The six donut titles, in the order they are drawn in. */
-  const DONUTS = ["Readiness", "Enforces review", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"];
-
   /**
-   * The legend of one donut, read off the rendered page as the band words and the counts under them.
+   * THE SIX DONUTS ARE GONE, and this asserts the absence rather than describing it.
    *
-   * The chart canvas is a recharts wedge and says nothing a test can read, so the legend is where the
-   * figures are — which is also where a reader finds them for a band drawn at zero.
-   */
-  function legend(markup: string, title: string): Record<string, number> {
-    const panel = panelOf(markup, title);
-    const bands: Record<string, number> = {};
-    // `text-slate-400[^"]*` because every legend here is interactive now and its label carries the
-    // hover class beside that one — the words and the count are what is being read either way.
-    const entries = panel.matchAll(/text-slate-400[^"]*">([^<]+)<\/span><span class="text-xs text-slate-600 tabular-nums">(\d+)</g);
-    for (const match of entries) {
-      bands[match[1] ?? ""] = Number(match[2]);
-    }
-    return bands;
-  }
-
-  /**
-   * The six estate donuts, each counting EVERY repository at the span.
+   * Five drew ways-of-working dimensions — the readiness distribution, the declared gate's two halves, unreviewed
+   * substantial merges — which `/teams` now reports per team. The sixth read `sonar_coverage`, which the report
+   * layer has never emitted, so it drew an all-unknown circle.
    *
-   * The counts are the point rather than the titles: a donut wired to the wrong slice builder, or one
-   * quietly dropping the rows whose field is absent, renders six headings just the same. So the
-   * unmeasured repository is asserted into each ungraded band, and every donut — the readiness one
-   * included, which is distributed over the REPORTED repositories and has to be told about the rest —
-   * is asserted to total the three the estate holds.
+   * Worth a test rather than left to the eye, because a donut reintroduced by a merge would render perfectly well
+   * while drawing from a field nothing populates, and the chips are worse: the donuts were the only way to CREATE
+   * one of those filters, so a chip surviving here would be a control a reader can dismiss and never apply.
    */
-  it("draws six donuts over the estate, counting the unmeasured repository in each", async () => {
+  it("draws no donut and no filter chip, the dimensions they carried having moved to /teams", async () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    // Drawn in this order, which is the order the plan states and the order they read in.
-    const positions = DONUTS.map((title) => markup.indexOf(`>${title}</h3>`));
-    expect(positions).toEqual([...positions].sort((left, right) => left - right));
-    expect(Math.min(...positions)).toBeGreaterThan(-1);
-    // The grid `SkeletonChart` stands in for while the page is cold, asserted at both ends: the
-    // bones and the charts drawn at different widths is the layout shift the boundary exists to stop.
-    expect(markup).toContain("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4");
-
-    expect(legend(markup, "Enforces review")).toEqual({
-      Multiple: 1,
-      Enforced: 0,
-      Unenforced: 1,
-      Unknown: 1
-    });
-    expect(legend(markup, "Enforces CI")).toEqual({ Enforced: 1, Unenforced: 1, Unknown: 1 });
-    expect(legend(markup, "Unreviewed substantial merges")).toEqual({
-      Clear: 1,
-      "Within allowance": 0,
-      "Above allowance": 1,
-      Unknown: 1
-    });
-    expect(legend(markup, "Test coverage")).toEqual({
-      "90% or more": 1,
-      "80% to under 90%": 0,
-      "Below 80%": 1,
-      Unknown: 1
-    });
-    // Clear alerts and an A rating against a critical Dependabot alert, which outranks the B rating
-    // and the open issues beside it: the band is the worst signal on the row, not a tally of them.
-    expect(legend(markup, "Security issues")).toEqual({
-      Clear: 1,
-      Medium: 0,
-      High: 1,
-      Unknown: 1
-    });
-    expect(legend(markup, "Readiness")).toEqual({
-      Ready: 1,
-      Caution: 1,
-      Blocked: 0,
-      "Cannot assess": 0,
-      "Not assessed": 1
-    });
-
-    // And each of the five totals the whole estate, which is what counting the unmeasured row into
-    // an ungraded band rather than dropping it buys: the donuts and the table agree on how many
-    // repositories there are.
-    for (const title of DONUTS) {
-      const counts = Object.values(legend(markup, title));
-      expect(counts.reduce((total, value) => total + value, 0)).toBe(REPOSITORIES.length);
+    for (const title of ["Readiness", "Enforces review", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"]) {
+      expect(markup).not.toContain(`>${title}</h3>`);
     }
+    // A chip's own marks rather than a class shared with every heading on the page: it carried a dismiss button
+    // labelled "Remove <dimension> filter" and a coloured dot styled inline from the slice's hex. Both are gone,
+    // and asserting on `uppercase tracking-wide` — which the chips did use — would have failed against the section
+    // headings that also use it, so the two specific marks are what this checks.
+    expect(markup).not.toContain("Remove ");
+    expect(markup).not.toContain("backgroundColor");
   });
 
-  /**
-   * The security donut's own explanation of its band, pinned to what `securityBand` actually reads.
-   *
-   * The tooltip is the only place a reader learns what the band means, and stale prose is the one
-   * thing a coverage gate cannot see: a sentence naming a signal the row no longer carries renders
-   * exactly as well as a correct one. Both halves are asserted — the signal list, which lost the
-   * hotspot count when Sonar retired it on 2026-09-04, and the rating boundary, which puts C at
-   * Medium since the same day's reversal. `tone.test.ts` grades the letters; this says the page
-   * tells the reader the same thing.
-   */
-  it("explains the security band with the signals and the boundary the code applies", async () => {
+  it("ignores a stale donut parameter rather than filtering the estate on it", async () => {
+    // Links shared before this change carry `?coverage=high`. The page must show the whole estate: the dimension
+    // no longer exists, so the honest reading is that the parameter means nothing.
+    search = new URLSearchParams("coverage=high&label=green");
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    const panel = panelOf(markup, "Security issues");
-    expect(panel).toContain("security rating and issues");
-    expect(panel).toContain("a security rating of D or worse");
-    expect(panel).toContain("a rating of B or C");
-    expect(panel).not.toContain("hotspot");
-    expect(panel).not.toContain("C or worse");
-  });
-
-  /** The panel of one donut, from its heading to the next one's. */
-  function panelOf(markup: string, title: string): string {
-    const opened = markup.indexOf(`>${title}</h3>`);
-    expect(opened).toBeGreaterThan(-1);
-    const next = markup.indexOf("<h3", opened + 1);
-    return markup.slice(opened, next === -1 ? undefined : next);
-  }
-
-  /** The labels of one donut's legend entries drawn as pressed, which is what it is filtered to. */
-  function pressed(markup: string, title: string): string[] {
-    return panelOf(markup, title)
-      .split("<button")
-      .filter((entry) => entry.includes('aria-pressed="true"'))
-      .map((entry) => /text-slate-400[^"]*">([^<]+)</.exec(entry)?.[1] ?? "unlabelled");
-  }
-
-  /**
-   * The chips the table reports its filters with, as the words a reader sees on each one.
-   *
-   * Read out of the filter bar alone rather than off the page, because every word a chip prints is
-   * also in the donut heading and the legend entry it came from — an assertion against the whole
-   * markup passes just as well when no chip was rendered at all. The bar itself is always drawn now
-   * that it holds the Production toggle, so failing to find it is a broken render and not an
-   * unfiltered one.
-   */
-  function chips(markup: string): string[] {
-    const opened = markup.indexOf('aria-label="Repository filters"');
-    expect(opened).toBeGreaterThan(-1);
-    const group = markup.slice(opened, markup.indexOf("</div>", opened));
-    return [...group.matchAll(/<span class="text-slate-400 uppercase tracking-wide">([^<]*)<\/span>([^<]*)</g)].map((match) =>
-      `${match[1] ?? ""}${match[2] ?? ""}`.trim()
-    );
-  }
-
-  /** Every donut is a filter control, so each legend is a labelled group of buttons. */
-  it("makes each donut the filter control for its own dimension", async () => {
-    stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
-
-    for (const title of DONUTS) {
-      expect(panelOf(markup, title)).toContain(`aria-label="${title} filter"`);
-      expect(pressed(markup, title)).toEqual([]);
-    }
-  });
-
-  /**
-   * Which parameter each donut was wired to, read back off a URL that filters on one of them.
-   *
-   * Six donuts and six parameter names is six chances to hand a donut the parameter beside it, and
-   * the page renders identically either way — the mistake only shows in what a click filters. So the
-   * URL is set to a coverage band and the coverage donut has to be the one showing it: `high` is a
-   * key in the security bands too, so a coverage donut wired to `security` would light up there
-   * instead. The table below reads the same parameter, which is why the chip and the rows say so.
-   */
-  it("wires each donut to its own parameter, and the table reads them back", async () => {
-    search = new URLSearchParams("coverage=high");
-    stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
-
-    expect(pressed(markup, "Test coverage")).toEqual(["90% or more"]);
-    for (const title of DONUTS.filter((each) => each !== "Test coverage")) {
-      expect(pressed(markup, title)).toEqual([]);
-    }
-    // The chip names the dimension the donut drew, read off the chip row rather than off the page:
-    // both of its words are in the donut's own heading and legend whatever the chips hold, so
-    // asserting them against the whole markup would pass with no chip row rendered at all.
-    expect(chips(markup)).toEqual(["Test coverage: 90% or more"]);
-    expect(markup).toContain("Remove Test coverage filter");
-    // And the table holds only the row in that band.
     expect(markup).toContain('href="/repositories/api?weeks=4"');
-    expect(markup).not.toContain('href="/repositories/web?weeks=4"');
+    expect(markup).toContain('href="/repositories/web?weeks=4"');
+  });
 
-    // While every donut still counts the whole estate: they describe the estate, not the table, and
-    // a donut fed the filtered rows would shrink to one as the reader clicked it.
-    for (const title of DONUTS) {
-      const counts = Object.values(legend(markup, title));
-      expect(counts.reduce((total, value) => total + value, 0)).toBe(REPOSITORIES.length);
+  it("keeps the term box and the four toggles, which are the controls that remain", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+
+    expect(markup).toContain('aria-label="Repository filters"');
+    expect(markup).toContain("Filter by repository or team…");
+    for (const visibility of ["public", "internal", "private"]) {
+      expect(markup).toContain(`>${visibility}<`);
     }
   });
 
-  /**
-   * Every dimension round-tripped: the URL its donut writes is the URL that donut reads back.
-   *
-   * The case above proves the join on one parameter. This one walks all six, because five donuts
-   * handed a neighbour's parameter render identically to five wired correctly — the mistake shows
-   * only when a value is put in the URL and the wrong legend lights up, or none of them does.
-   */
-  it("reads every dimension back on the donut that writes it", async () => {
-    for (const filter of ESTATE_FILTERS) {
-      const option = filter.options[0];
-      if (option === undefined) {
-        throw new Error(`${filter.parameter} offers no option to filter on`);
-      }
-      search = new URLSearchParams(`${filter.parameter}=${option.key}`);
-      stubService();
-      const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+  it("names the criteria it cannot fully evidence, so a tick is not read as more than it is", async () => {
+    // The footnote. One omission and one PARTIAL, which are different things: a tick under Secrets means no
+    // credential was found and left open, not that the repository is free of sensitive operational detail.
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-      expect(pressed(markup, filter.title)).toEqual([option.name]);
-      for (const title of DONUTS.filter((each) => each !== filter.title)) {
-        expect(pressed(markup, title)).toEqual([]);
-      }
-      expect(chips(markup)).toEqual([`${filter.title}: ${option.name}`]);
-    }
+    expect(markup).toContain("Secrets is a partial answer");
+    expect(markup).toContain("sensitive operational detail");
+    expect(markup).toContain("Secure by design is not reported at all");
+    expect(markup).toContain("Security contact is shown but not graded");
   });
 });

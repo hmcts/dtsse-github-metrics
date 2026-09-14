@@ -48,11 +48,21 @@ and stores every repository it holds; `metrics.yaml` then states which of them c
 
 ```yaml
 cohort:
-  visibilities: [public]     # narrow to what the credential can actually read
-  include_archived: false    # nobody is working in an archived repository
-  active_within_days: 90     # 1,872 repositories becomes roughly 1,210
-excluded_repositories: []    # removed outright, whatever the graph says
+  visibilities: [public]        # narrow to what the credential can actually read
+  include_archived: false       # nobody is working in an archived repository
+  active_within_days: 90        # what `collect` WALKS: 1,889 repositories becomes roughly 1,240
+  unmaintained_after_days: 730  # past this, a repository reads "should be archived"
+excluded_repositories: []       # removed outright, whatever the graph says
 ```
+
+**`active_within_days` decides what is COLLECTED, not who is in the estate.** It used to decide both, and
+dropping stale repositories from the report hid exactly the ones an assurance report is most about: 148
+unarchived repositories are two or more years stale, and not one of them had ever been collected. They are
+reported now, carrying the assurance answers that need no merge history and none of the behaviour figures that
+do — so the window still keeps the expensive half of collection as narrow as it was.
+
+Two windows therefore exist and they answer different questions. A repository quiet for six months has no
+behaviour collected AND is not flagged as unmaintained; that is a real third state rather than a gap.
 
 `teams:` used to list the estate one repository at a time. It doesn't any more — at 1,872 repositories a
 committed list is stale the day it lands, because a repository created on Tuesday stays invisible and one

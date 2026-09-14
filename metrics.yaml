@@ -49,9 +49,19 @@ cohort:
     - public
     - internal
     - private
-  # 90 days. Takes the estate from 1,872 repositories to roughly 1,210, and what it drops would report
-  # "no merges in the window" anyway.
+  # 90 days, and from 2026-09-14 this decides what `collect` WALKS rather than who is in the estate. The
+  # merge walks are most of a run's 15,500 calls, so it is still the cheapest lever on cost — it walks
+  # roughly 1,230 of the estate's 1,880 — but the 650 it skips are now REPORTED, carrying the assurance
+  # answers that need no merge history and no behaviour figures at all. Dropping them outright hid exactly
+  # the repositories the assurance criteria are about: 148 unarchived repositories here are two or more
+  # years stale, and not one of them had ever been collected.
   active_within_days: 90
+  # How long since the last push before a repository reads "should be archived" on /repositories. A wider,
+  # separate window from the one above: at six months a repository has no behaviour collected AND is not
+  # flagged, which is a real third state rather than a gap. Two years is measured — non-archived
+  # repositories here sit 1,228 inside 90 days, 316 within a year, 188 within two, 101 within three and 47
+  # beyond, so a year would flag annually-released services and two years flags 148.
+  unmaintained_after_days: 730
 # The organisation graph `collect-org` walks, which is now what the cohort is read from. Thresholds are left
 # at their defaults, documented with the measurements behind them in metrics.example.yaml; only `enabled` is
 # stated, because it is the switch that decides whether the daily walk runs at all and that belongs in a

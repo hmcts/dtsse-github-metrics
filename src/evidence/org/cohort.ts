@@ -49,12 +49,38 @@ export interface CohortPolicy {
   /** Whether an archived repository is still part of the estate. Normally not: nobody is working in it. */
   includeArchived: boolean;
   /**
-   * How recently a repository must have been pushed to, in days, or `undefined` for no window.
+   * How recently a repository must have been pushed to for its BEHAVIOUR to be collected, in days, or
+   * `undefined` to collect every repository's.
    *
-   * The cheapest single lever on cost and on noise: 90 days takes 1,872 repositories to roughly 1,210, and the
-   * ones it drops are the ones whose figures would all be "no merges in the window" anyway.
+   * IT NO LONGER DECIDES WHO IS IN THE ESTATE, which reverses what it did until 2026-09-14 and is the whole
+   * point of the change. It remains the cheapest lever on collection cost — 90 days takes 1,880 repositories
+   * to roughly 1,230, and the ones it drops would report "no merges in the window" anyway — but dropping them
+   * from the ESTATE hid exactly the repositories the assurance criteria are about. A repository nobody has
+   * pushed to in three years is the strongest possible finding for "unmaintained code is safely handled", and
+   * it was invisible: measured on AAT, 148 unarchived repositories are two or more years stale and not one had
+   * a `repository_state` row.
+   *
+   * So it now decides `behaviourCollectable` on the entry rather than membership. Every repository is reported;
+   * the stale ones carry their assurance answers, which come from the graph and from cheap per-repository
+   * reads, and carry no behaviour figures at all — absent, on the same absent-means-unmeasured rule as every
+   * other unread count.
    */
   activeWithinDays?: number;
+  /**
+   * How long since a repository's last push before it is FLAGGED as unmaintained, in days, or `undefined`
+   * to flag none.
+   *
+   * A SECOND AND WIDER WINDOW, and the two must not be confused. `activeWithinDays` decides whether behaviour
+   * is collected; this decides whether a repository reads as one that should have been archived. They are
+   * different questions with different answers, and a repository can sit between them: at six months nothing
+   * is collected for it AND it is not flagged, which is a real third state rather than a gap.
+   *
+   * Measured on AAT, the distribution of non-archived repositories by time since last push is 1,228 inside 90
+   * days, 316 between 90 days and a year, 188 between one and two years, 101 between two and three, and 47
+   * beyond three. Two years is where "quiet" stops being a plausible description: a service released annually
+   * has pushed inside a year, and 148 repositories sit past the boundary.
+   */
+  unmaintainedAfterDays?: number;
   /** Repositories removed outright, whatever the graph says about them. */
   excluded: Set<string>;
 }
@@ -76,6 +102,30 @@ export interface CohortEntry {
   archived: boolean;
   visibility: string;
   pushedAt?: Date;
+  /**
+   * Whether this run should walk the repository's merge history.
+   *
+   * THE COST CONTROL, moved here from the membership filter it used to be. `runCollect` reads it and walks only
+   * the repositories it is true for, so admitting roughly 650 stale repositories to the estate adds no
+   * behaviour call at all — the pull-request and direct-commit walks are what a collection's 15,500 calls are
+   * mostly spent on.
+   *
+   * `true` where no window is configured, which is the honest reading of "no window": a deployment that has
+   * not narrowed collection collects everything.
+   */
+  behaviourCollectable: boolean;
+  /**
+   * Whether the repository is past the unmaintained boundary — code that is dead and not marked as such.
+   *
+   * DISTINCT FROM `archived`, and the pairing is the finding. An archived repository is handled: somebody said
+   * so, and GitHub enforces it. An unarchived repository nobody has pushed to in years is the risk the
+   * criterion is actually about, and it is the one that carries no signal anywhere else on the page.
+   *
+   * `false` where no boundary is configured, and `false` for a repository with no `pushedAt` at all: GitHub
+   * omits that for a repository never pushed to, and flagging one as unmaintained would report an absence as a
+   * finding. See `pushedWithin` for the same argument in the other direction.
+   */
+  unmaintained: boolean;
 }
 
 /**
@@ -103,6 +153,7 @@ export function cohortPolicy(configuration: Configuration): CohortPolicy {
     visibilities: new Set(cohort.visibilities.map((visibility) => visibility.toLowerCase())),
     includeArchived: cohort.include_archived,
     ...(cohort.active_within_days === null ? {} : { activeWithinDays: cohort.active_within_days }),
+    ...(cohort.unmaintained_after_days === null ? {} : { unmaintainedAfterDays: cohort.unmaintained_after_days }),
     excluded: new Set(configuration.excluded_repositories)
   };
 }
@@ -132,6 +183,22 @@ export function pushedWithin(pushedAt: Date | undefined, days: number, reference
     return false;
   }
   return reference.getTime() - pushedAt.getTime() <= days * 24 * 60 * 60 * 1000;
+}
+
+/**
+ * Whether a repository is past the unmaintained boundary.
+ *
+ * NOT `!pushedWithin`, and that is the whole reason it is a function of its own rather than a negation at the
+ * call site. An absent `pushedAt` is "not active" for collection — the conservative direction there, since
+ * treating it as active would collect the entire organisation — and it is ALSO not evidence of neglect, which
+ * is the conservative direction here. Negating the other function would make one of those two wrong, and the
+ * one it would make wrong is the one that puts a red flag on a repository nobody measured.
+ */
+export function unmaintainedSince(pushedAt: Date | undefined, days: number | undefined, reference: Date): boolean {
+  if (pushedAt === undefined || days === undefined) {
+    return false;
+  }
+  return reference.getTime() - pushedAt.getTime() > days * 24 * 60 * 60 * 1000;
 }
 
 /**
@@ -186,10 +253,10 @@ export function selectCohort(
     // `PUBLIC` 1,887 times, `PRIVATE` 962 and `INTERNAL` 547, and not one lower-case row. The configuration
     // enum is lower-case because that is what somebody writes in YAML. Compared as stored, the policy would
     // select nothing and the cohort would look like an uncollected graph.
-    if (!policy.visibilities.has(repository.visibility.toLowerCase())) {
-      return false;
-    }
-    return policy.activeWithinDays === undefined || pushedWithin(repository.pushedAt, policy.activeWithinDays, reference);
+    // The activity window is DELIBERATELY NOT A MEMBERSHIP TEST any more — see `CohortPolicy`. It decides
+    // `behaviourCollectable` below instead, so a repository nobody has pushed to in three years is reported
+    // with the assurance answers that do not need merge history and none of the figures that do.
+    return policy.visibilities.has(repository.visibility.toLowerCase());
   });
 
   const entries = selected.map((repository) => {
@@ -203,6 +270,8 @@ export function selectCohort(
       ownerKind: owned.kind,
       archived: repository.archived,
       visibility: repository.visibility,
+      behaviourCollectable: policy.activeWithinDays === undefined || pushedWithin(repository.pushedAt, policy.activeWithinDays, reference),
+      unmaintained: unmaintainedSince(repository.pushedAt, policy.unmaintainedAfterDays, reference),
       ...(repository.pushedAt === undefined ? {} : { pushedAt: repository.pushedAt })
     };
   });
@@ -242,7 +311,7 @@ export async function readCohort(configuration: Configuration, reference = new D
   if (entries.length === 0) {
     throw new CohortUncollectedError(
       `the graph holds ${repositories.length} repositories for ${configuration.organization} but the cohort policy selects none of them:` +
-        ` widen cohort.visibilities, cohort.active_within_days or cohort.include_archived`
+        ` widen cohort.visibilities or cohort.include_archived (cohort.active_within_days no longer decides membership)`
     );
   }
   return entries;
@@ -254,6 +323,12 @@ export async function readCohort(configuration: Configuration, reference = new D
  * Deduplication is not needed here the way it was in the file era — `selectCohort` emits one entry per
  * repository — but the ordering is, and stating it in one place is what keeps `runCollect` and `repositoryRows`
  * walking the same estate in the same sequence.
+ *
+ * THIS IS THE WHOLE ESTATE AND NOT WHAT `collect` WALKS AT FULL DEPTH. Once the activity window stopped removing
+ * entries, this widened from roughly 1,230 repositories to 1,880 — so a caller that pays per repository per
+ * WINDOW must read `behaviourCollectable` off the entry rather than iterate this, which is why `runCollect` takes
+ * `readCohort` and this is left to the callers that want names alone. `doctor` is one deliberately: it reports
+ * what a reader would see, and a repository the dashboard lists but nobody can read is the fault it exists for.
  */
 export async function cohortRepositories(configuration: Configuration, reference = new Date()): Promise<string[]> {
   return (await readCohort(configuration, reference)).map((entry) => entry.repository);

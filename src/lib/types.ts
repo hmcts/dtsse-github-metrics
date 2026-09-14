@@ -330,6 +330,71 @@ export type AlertFamily = "dependabot" | "code-scanning" | "secret-scanning";
  */
 export type OwnerKind = "team" | "person" | "none";
 
+/**
+ * Which repository visibility, folded to the lower case the cohort compares by.
+ *
+ * THREE VALUES AND NOT TWO. `INTERNAL` is a real GitHub visibility and on this estate it is the second largest:
+ * 1,043 public, 441 internal, 396 private among the non-archived. A filter offering "public or private" would
+ * silently have no way to name 441 repositories.
+ *
+ * Lower-cased here even though `org_repositories` stores GitHub's capitals, so the UI compares one spelling —
+ * `selectCohort` already folds it for exactly this reason.
+ */
+export type Visibility = "public" | "internal" | "private";
+
+/**
+ * Which "coding in the open" assurance criterion an answer is about.
+ *
+ * `domain.AssuranceCriterion` verbatim. SIX OF THE SEVEN, one of them partial, which is a set of decisions rather
+ * than a gap:
+ *
+ *   • `no-committed-secrets` evidences HALF of "no secrets or sensitive operational detail" — the credential half,
+ *     read from open secret-scanning alerts. Hostnames, IP ranges and thresholds need a human and are not covered,
+ *     which is why the criterion is named for the half it answers.
+ *   • `security-contact` is reported and NOT graded: `isSecurityPolicyEnabled` reads true for nearly the whole
+ *     estate off the organisation's inherited `.github` policy, so counting it would be a free pass on every row.
+ *   • Secure by design is absent entirely — it needs a threat model, and no GitHub signal stands in for one.
+ *   • The seventh, a maintenance plan, has no column: a plan is a document, and `named-owner` is the collectable
+ *     half of it.
+ */
+export type AssuranceCriterion = "named-owner" | "automated-hygiene" | "no-committed-secrets" | "security-contact" | "patching" | "maintained";
+
+/** Met, not met, or nobody could read it. The third is never folded into the second. */
+export type AssuranceOutcome = "met" | "unmet" | "unknown";
+
+/**
+ * How a repository's assurance reads overall.
+ *
+ * A DIFFERENT GRADE FROM `ReadinessLabel` and deliberately in different words. That one grades READINESS FOR AI
+ * ENABLEMENT off ways-of-working conditions — branch protection, review coverage, force pushes — and reads
+ * "Ready / Caution / Blocked". This grades whether the repository meets the published assurance criteria for
+ * working in the open. A repository can be perfectly ready to enable agentic tooling on and still fail the
+ * assurance criteria, and the reverse, so reusing the other's vocabulary would state something false. The two
+ * share `lib/rag.ts`'s colours and nothing else, and they live on different pages: assurance on `/repositories`,
+ * readiness on `/teams` and on a repository's own page.
+ */
+export type AssuranceGrade = "met" | "partial" | "unknown";
+
+export interface AssuranceCriterionResult {
+  criterion: AssuranceCriterion;
+  outcome: AssuranceOutcome;
+  /** Which control is missing, how old the alert is, how long since the last push. */
+  detail: string;
+}
+
+export interface AssuranceReport {
+  grade: AssuranceGrade;
+  criteria: AssuranceCriterionResult[];
+  /**
+   * The oldest open critical or high alert, in days.
+   *
+   * Lifted out of `criteria` so the column can print the number and a threshold can one day compare it, rather
+   * than either having to find the right judgement and parse its sentence. ABSENT means nothing severe is open OR
+   * that the alerts could not be read — the `patching` criterion's own outcome is what separates those.
+   */
+  oldest_severe_alert_days?: number;
+}
+
 export interface TrendThroughput {
   merges: number;
   merged_pull_requests: number;
@@ -430,20 +495,31 @@ export interface OverviewSummary {
 /**
  * One repository in a list, whether this window could be reported for it or not.
  *
- * Everything after `finding_occurrences` says what the row's own counts cannot, so `/repositories`
- * can distribute the estate and answer for its governance without loading every evidence block. Each
- * is UNMEASURED WHEN ABSENT, as every count above it is: the two gate figures where there is no gate
- * to read or its rules were withheld, `unreviewed_substantial` where the policy graded nothing,
- * `sonar_coverage` and the two Sonar security measures where no SonarCloud project resolved, its
- * measures could not be read, or it sent no such metric, `codeowners_files` where nobody could read
- * the repository's contents, and `security` where the whole alert block carries a reason instead of
- * alerts. All of them are absent besides on a repository the window could not be reported for at all,
- * the row that carries `detail`. None of them is zero by default — an unprotected default branch is
+ * TWO KINDS OF FIELD, and the split is worth reading before adding a third. `pushed_at`, `visibility`,
+ * `archived`, `unmaintained`, `owner_kind` and `assurance` are facts about WHAT THE REPOSITORY IS, so
+ * the report sends them on every row including the one it could collect nothing for — when a repository
+ * was last pushed to is not a fact about a reporting window. Everything else is a fact about the WINDOW
+ * and is absent on that row.
+ *
+ * Each is UNMEASURED WHEN ABSENT: the two gate figures where there is no gate to read or its rules were
+ * withheld, `unreviewed_substantial` where the policy graded nothing, `sonar_coverage` and the two
+ * Sonar security measures where no SonarCloud project resolved, and `security` where the whole alert
+ * block carries a reason instead of alerts. None is zero by default — an unprotected default branch is
  * the one thing that reads as a real `0`, because the gate was read and it requires nothing.
  *
- * `sonar_reported` is the one exception, and is `false` RATHER THAN ABSENT on a reportable repository
- * whose measures could not be read or whose project never resolved: the column it feeds answers "is
- * there Sonar information here", so "no Sonar" and "no report" have to stay apart.
+ * FOUR OF THESE ARE NEVER SENT BY THIS SERVICE and are kept on the contract rather than deleted:
+ * `currently_open`, `stale_open`, `finding_occurrences`, `sonar_coverage`, `sonar_reported`,
+ * `sonar_security_rating` and `sonar_security_issues`. The report layer emits none of them — the open
+ * pull-request summary, the practice findings and the Sonar resolution ladder are all collected but not
+ * yet assembled into rows — so every column keyed on one rendered a dash for the whole estate. The
+ * `/repositories` columns that read them have gone; the fields stay because the components on a
+ * repository's own page read them through `lib/repository.ts` and because `map-sonar` reports itself as
+ * "not yet wired", so these are a contract waiting on an assembly rather than dead weight.
+ *
+ * `codeowners_files` DID go, along with `codeownersPresent` in `lib/rows.ts`. It was in the same state and
+ * differs in one way that matters: nothing anywhere else reads it, and `owner_kind` answers the question
+ * its column was drawn to answer — whether a repository is assigned to a team — off a field that is
+ * populated on every row.
  *
  * `security` carries `SecurityAlertEvidence` verbatim rather than flattened into scalars, because the
  * per-family `open`/`by_severity`/`detail` is what `securityBand` needs — a family with nothing open
@@ -471,6 +547,32 @@ export interface RepositoryRow {
    * team-owned, so guessing the other way would mark most of the estate as somebody's personal project.
    */
   owner_kind?: OwnerKind;
+  /**
+   * When the repository was last pushed to, as an ISO-8601 string.
+   *
+   * AN INSTANT AS TEXT, like every other instant on this contract, and here that is load-bearing rather than
+   * consistent: this is the table's default sort key, and `SortValue` in `lib/sort.ts` has no `Date` case — a
+   * `Date` would fall through to `String(...).localeCompare(...)` and order the estate alphabetically by weekday
+   * name, which looks plausible and is wrong.
+   *
+   * ABSENT IS MEANINGFUL AND IS NOT AN OLD PUSH. GitHub omits it for a repository never pushed to, so it must not
+   * be defaulted to the epoch or to now — `sorted` holds an absent value back from both ends of the order, which
+   * is exactly right here: "which repositories are stalest" is a question about the ones with a last push.
+   */
+  pushed_at?: string;
+  /** Which visibility, folded to lower case. The table's default filter selects on it. */
+  visibility?: Visibility;
+  /** Whether GitHub has the repository archived, which the maintained criterion reads as handled. */
+  archived?: boolean;
+  /**
+   * Whether the repository is past `cohort.unmaintained_after_days` — dead code that is not marked as such.
+   *
+   * Distinct from `archived`, and the pair is the finding: an archived repository is handled and an unarchived
+   * one nobody has pushed to in years is the risk the criterion is about.
+   */
+  unmaintained?: boolean;
+  /** How the repository reads against the assurance criteria. See `AssuranceGrade` for why it is not readiness. */
+  assurance?: AssuranceReport;
   readiness?: ReadinessLabel;
   merged_pull_requests?: number;
   direct_commits?: number;
@@ -481,7 +583,6 @@ export interface RepositoryRow {
   required_status_checks?: number;
   unreviewed_substantial?: UnreviewedSubstantialOutcome;
   sonar_coverage?: number;
-  codeowners_files?: number;
   sonar_reported?: boolean;
   security?: SecurityAlertEvidence;
   sonar_security_rating?: SonarRating;
@@ -569,11 +670,70 @@ export interface TeamActorRow {
   contributions: number;
 }
 
+/**
+ * How one team works, counted over the repositories it owns.
+ *
+ * COUNTS OVER A STATED DENOMINATOR, never a score. Each `*_measured` field is the denominator its neighbours are
+ * out of, and it is deliberately NOT the team's repository count: a repository whose gate GitHub withheld has no
+ * answer, so dividing by the holding would report an unreadable gate as a repository that fails.
+ *
+ * This is the ways-of-working material — the merge gate and review mechanics — which lives on `/teams` because
+ * that is where a reader asks how a team works. `/repositories` asks a different question, whether a repository
+ * meets the assurance criteria, and carries `AssuranceReport` instead.
+ *
+ * Nothing here is combined into a team label and nothing orders the cards, which is the boundary `TeamsList`
+ * states: the cards arrive largest-holding-first, and a holding is what a team is on the hook for rather than a
+ * grade.
+ */
+export interface TeamPractice {
+  /** How many of the team's repositories had a readable merge gate. The denominator for the two below. */
+  gates_measured: number;
+  enforces_review: number;
+  requires_multiple_reviews: number;
+  checks_measured: number;
+  enforces_checks: number;
+  /** How many the readiness policy graded for unreviewed substantial merging. */
+  unreviewed_measured: number;
+  unreviewed_clear: number;
+  /** The allowance forgiving what it was configured to forgive, which is not the same as nothing merging. */
+  unreviewed_within: number;
+  unreviewed_above: number;
+  /**
+   * The CHANGES rather than the repositories: how many substantial changes reached the default branch with no
+   * independent review, out of how many there were.
+   *
+   * A different denominator from the four counts above, and the one with teeth. Those say how many of a team's
+   * repositories the policy graded clear; these say how much actually got through. Absent where the policy graded
+   * nothing — `minimum_merges` declines thin evidence, and the team page must not state a rate the policy refused.
+   */
+  unreviewed_substantial_merges?: number;
+  substantial_merges?: number;
+  merged_pull_requests: number;
+  direct_commits: number;
+  /**
+   * The typical repository's typical wait, in hours — a MEDIAN OF MEDIANS.
+   *
+   * Not the median across the team's changes, which would need every per-change value rather than each
+   * repository's summary. Named as what it is on the page, because the two are different numbers and the
+   * distinction is not obvious from a label. Absent where no repository observed one, never zero.
+   */
+  time_to_first_review_hours?: number;
+  merge_cycle_time_hours?: number;
+}
+
 export interface TeamRow {
   team: string;
   repositories: number;
   unavailable: number;
+  /**
+   * How many people authored a reported merge in this team's repositories.
+   *
+   * A NUMBER here and a LIST on `TeamDetail`, which is not an inconsistency to tidy: a card prints a count and
+   * the team page lists the people. Contributor attribution is not assembled yet, so this is 0 and that is 0
+   * everywhere rather than a figure nobody measured.
+   */
   actors: number;
+  practice?: TeamPractice;
   labels: Record<string, number>;
 }
 
@@ -582,5 +742,7 @@ export interface TeamDetail {
   repositories: RepositoryRow[];
   actors: TeamActorRow[];
   unavailable: number;
+  /** How this team works, which is what the team page carries and `/repositories` does not. */
+  practice?: TeamPractice;
   labels: Record<string, number>;
 }

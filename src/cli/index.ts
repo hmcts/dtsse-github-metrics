@@ -2,17 +2,34 @@ import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge } from "../evidence/behaviour/collect.ts";
 import { directCommitCacheWriter, fillCachedSource, loadCachedMerges, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
+import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
+import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
+import {
+  assuranceEvidence,
+  collectAssuranceSignals,
+  collectOrganisationSecretAlerts,
+  type GraphAssurance,
+  readDependabotAlerts
+} from "../evidence/inventory/assurance.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
-import { collectSecurityAlerts } from "../evidence/inventory/security-alerts.ts";
+import { collectSecurityAlerts, countBySeverity, dependabotSeverity, FEATURE_NOT_ENABLED } from "../evidence/inventory/security-alerts.ts";
 import { CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } from "../evidence/org/cohort.ts";
 import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
-import { byCodePoint, canonical, type OrgFacts, OwnerKind, type OwnershipOptions, type ResolvedOwnership } from "../evidence/org/graph.ts";
+import {
+  byCodePoint,
+  canonical,
+  type OrgFacts,
+  OwnerKind,
+  type OwnershipOptions,
+  type RepositoryAuthorship,
+  type ResolvedOwnership
+} from "../evidence/org/graph.ts";
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
 import { configuredTeamSlugs, sonarOrganizationName } from "../evidence/policy/repositories.ts";
@@ -20,6 +37,7 @@ import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
+import { authorshipForOrganisation } from "../evidence/store/facts.ts";
 import { migrate } from "../evidence/store/migrate.ts";
 import {
   recordOrgPeople,
@@ -94,17 +112,33 @@ async function assertCohortCollected(configuration: Configuration, command: stri
   }
 }
 
+/**
+ * Collects one repository.
+ *
+ * TWO DEPTHS, and the shallow one is what makes the wider estate affordable. A repository inside
+ * `cohort.active_within_days` gets everything: the two merge walks, the gate, all three alert families. A STALE
+ * one — admitted to the estate from 2026-09-14 so the assurance criteria can report on it — gets only what those
+ * criteria read, which is its metadata and its Dependabot alerts, two REST calls against roughly six.
+ *
+ * That split is a judgement rather than only a saving. A merge gate and a code-scanning posture are
+ * ways-of-working material, reported per team, and a repository nobody has pushed to in two years HAS no ways of
+ * working to report — the honest answer for it is the assurance one: who owns it, whether its tooling is on, how
+ * old its alerts are, and that it should probably be archived.
+ */
 async function collectRepository(
   configuration: Configuration,
   client: ReturnType<typeof createGitHubClient>,
   repository: string,
   window: { startsAt: Date; endsAt: Date },
   reference: Date,
-  production: Set<string> | undefined
+  production: Set<string> | undefined,
+  options: { behaviour: boolean; assurance: GraphAssurance | undefined; secrets: { read: boolean; summary?: SecretAlertSummary } }
 ): Promise<{ observed: boolean; failures: number }> {
   const organization = configuration.organization;
   let failures = 0;
 
+  // Read for the default branch, and read AGAIN for nothing: `security_and_analysis` rides on this same body, so
+  // three of the five hygiene signals cost no request of their own.
   const metadata = await client.get<{ default_branch?: string }>(`/repos/${organization}/${repository}`).catch(() => undefined);
   if (metadata === undefined) {
     console.warn(`${repository}: could not be read at all, so nothing was collected for it`);
@@ -114,6 +148,32 @@ async function collectRepository(
   if (defaultBranch === undefined || defaultBranch === "") {
     console.warn(`${repository}: GitHub named no default branch, so nothing was collected for it`);
     return { observed: false, failures: 1 };
+  }
+
+  // READ ONCE AND USED TWICE, which is the one thing this had to get right on cost. The patching criterion needs
+  // each alert's `created_at` and the security block needs the same family counted by severity, so the naive
+  // shape pays for `dependabot/alerts` twice per repository — 1,240 needless calls, which took the run from 66%
+  // of the hourly core budget to 83%. `collectSecurityAlerts` therefore takes the records this already fetched
+  // rather than fetching its own.
+  const dependabot = await readDependabotAlerts(client, organization, repository);
+  const assurance = assuranceEvidence(metadata, options.assurance, dependabot, reference, options.secrets);
+
+  if (!options.behaviour) {
+    // The shallow path. No gate, no other alert family, and above all no merge walk — which is what keeps
+    // admitting roughly 650 stale repositories from adding a behaviour call. The row they produce carries the
+    // assurance answers and, by the absent-means-unmeasured rule, no behaviour figures at all.
+    await recordRepositoryState(organization, repository, {
+      defaultBranch,
+      fetchedAt: reference,
+      mergeGate: { detail: "not collected: no push inside cohort.active_within_days, so there is no current practice to read" },
+      // The one family this path has records for, counted rather than thrown away. The other two are absent,
+      // which reads as unmeasured — a stale repository's code-scanning posture was not looked at, and saying so
+      // is the honest answer rather than reporting nothing open.
+      securityAlerts: dependabotOnly(dependabot),
+      deploysToProduction: deploysToProduction(production, organization, repository),
+      assurance
+    });
+    return { observed: true, failures };
   }
 
   const edge = mutableEdge(window, configuration.lookback.mutable_hours, reference);
@@ -141,7 +201,8 @@ async function collectRepository(
   });
 
   const gate = await collectMergeGate(client, organization, repository, defaultBranch);
-  const alerts = await collectSecurityAlerts(client, organization, repository);
+  // Handed the Dependabot records read above, so this pays for the other two families only.
+  const alerts = await collectSecurityAlerts(client, organization, repository, { dependabot });
   failures += alerts.failures.length;
   for (const failure of alerts.failures) {
     console.warn(`${repository}: ${failure.detail}`);
@@ -152,10 +213,31 @@ async function collectRepository(
     fetchedAt: reference,
     mergeGate: gate,
     securityAlerts: alerts.evidence,
-    deploysToProduction: deploysToProduction(production, organization, repository)
+    deploysToProduction: deploysToProduction(production, organization, repository),
+    assurance
   });
 
   return { observed: true, failures };
+}
+
+/**
+ * The alert block for the shallow path: the one family it has records for, and two stated absences.
+ *
+ * The shallow path never calls `collectSecurityAlerts`, so this is what keeps its Dependabot records from being
+ * thrown away — they are in hand, and counting them costs nothing. The other two families are EMPTY OBJECTS,
+ * which is the block's own way of saying nobody looked: `open` absent rather than zero, on the rule
+ * `OpenAlertCount` states. A stale repository's code-scanning posture was not read, and reporting it as clean
+ * would be the one thing this codebase refuses to do with an absence.
+ */
+function dependabotOnly(records: readonly unknown[] | undefined): SecurityAlertEvidence {
+  if (records === undefined) {
+    return { dependabot: { detail: `dependabot/alerts ${FEATURE_NOT_ENABLED}` }, codeScanning: {}, secretScanning: {} };
+  }
+  return {
+    dependabot: { open: records.length, bySeverity: countBySeverity(records.map((record) => dependabotSeverity(record))) },
+    codeScanning: {},
+    secretScanning: {}
+  };
 }
 
 async function runCollect(configuration: Configuration, argv: Arguments): Promise<number> {
@@ -174,18 +256,64 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
 
   const production = configuration.production_list_url === null ? undefined : await fetchProductionRepositories(configuration.production_list_url);
 
-  const repositories = argv.repository === undefined ? await cohortRepositories(configuration, reference) : [argv.repository];
+  // THE WHOLE ESTATE, at two depths. Every repository gets its assurance answers; only the ones inside
+  // `cohort.active_within_days` get their merge history walked, which is where the calls are. `behaviourCollectable`
+  // rides on the entry so this call site reads the cohort's own decision rather than recomputing the window.
+  //
+  // A named `--repository` is collected in FULL whatever its last push, because somebody asking for one repository
+  // has said which and wants everything about it.
+  const cohort = argv.repository === undefined ? await readCohort(configuration, reference) : undefined;
+  const walk =
+    cohort === undefined
+      ? [{ repository: argv.repository as string, behaviour: true }]
+      : cohort.map((entry) => ({ repository: entry.repository, behaviour: entry.behaviourCollectable }));
+
+  // Batched 50 to a document AHEAD of the per-repository loop, because these two signals are GraphQL-only and
+  // aliasing them is the difference between 38 documents and 1,880 requests. A repository the batch could not read
+  // is simply absent from the map, which the domain grades as unknown rather than as tooling switched off.
+  const assurance = await collectAssuranceSignals(
+    client,
+    configuration.organization,
+    walk.map((entry) => entry.repository)
+  );
+
   let observed = 0;
   let failures = 0;
 
-  for (const repository of repositories) {
-    const result = await collectRepository(configuration, client, repository, window, reference, production);
+  // ONE CALL FOR THE WHOLE ESTATE, which is what makes the committed-secrets criterion affordable — and what makes
+  // "this repository has none" a real answer rather than an untested assumption, since the response covers every
+  // repository. `undefined` on failure, so every repository reads unknown rather than clean.
+  //
+  // COUNTED AS ONE FAILURE when it fails, not one per repository: it is a single call, and inflating it to 1,889
+  // would swamp the exit status with one refusal. `--tolerate-partial` still reports the run as success, which is
+  // right — the rest of the estate was collected.
+  const secretAlerts = await collectOrganisationSecretAlerts(client, configuration.organization, reference);
+  if (secretAlerts === undefined) {
+    failures += 1;
+  } else {
+    const open = [...secretAlerts.values()].reduce((total, summary) => total + summary.open, 0);
+    console.info(`${open} open secret-scanning alerts across ${secretAlerts.size} repositories`);
+  }
+
+  for (const entry of walk) {
+    const result = await collectRepository(configuration, client, entry.repository, window, reference, production, {
+      behaviour: entry.behaviour,
+      assurance: assurance.get(entry.repository),
+      // Absent from the map is CLEAN rather than unread, because the org-wide read covers every repository — which
+      // is why `read` is carried separately from the summary rather than inferred from its absence.
+      secrets: {
+        read: secretAlerts !== undefined,
+        ...(secretAlerts?.get(entry.repository) === undefined ? {} : { summary: secretAlerts.get(entry.repository) })
+      }
+    });
     observed += result.observed ? 1 : 0;
     failures += result.failures;
   }
 
   await stampCollection(reference);
-  console.info(`collected ${observed} of ${repositories.length} repositories in ${client.requestsIssued()} GitHub calls`);
+  const repositories = walk;
+  const walked = walk.filter((entry) => entry.behaviour).length;
+  console.info(`collected ${observed} of ${repositories.length} repositories (${walked} walked for behaviour) in ${client.requestsIssued()} GitHub calls`);
   for (const { outcome, count } of client.callOutcomes()) {
     console.info(`  ${outcome.status} ${outcome.outcome} ${outcome.method} ${outcome.endpoint} (x${count})`);
   }
@@ -370,11 +498,19 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     maximumTeamMembers: graph.maximum_team_members,
     excludedTeams: new Set(graph.excluded_teams.map(canonical)),
     // Slugs, not identifiers: this feeds the ladder, whose answer is stored in a column joined to `org_teams`.
-    configured: configuredTeamSlugs(configuration)
+    configured: configuredTeamSlugs(configuration),
+    minimumAuthoredMerges: graph.minimum_authored_merges
   };
 
+  // Read from the fact cache `collect` fills rather than fetched, so the top rung of the ladder costs no
+  // GitHub call. An EMPTY MAP is a legitimate outcome and not a failure — on a database where `collect` has
+  // never run there is no authorship, the rung declines for every repository, and the rungs below answer
+  // exactly as they did before it existed. That is why `collect-org` does not refuse on it.
+  const authorship = await authoredMerges(organization, graph.authorship_days, observedAt);
+  progress(`read authorship for ${authorship.size} repositories from the ${graph.authorship_days}-day fact cache`);
+
   // Resolved once from the free rungs to find the residue, then again once the paid rungs have answered.
-  const free: OrgFacts = { organization, ...teamFacts, repositories, people, codeowners: new Map(), directAdmins: new Map() };
+  const free: OrgFacts = { organization, ...teamFacts, repositories, people, codeowners: new Map(), directAdmins: new Map(), authorship };
   const evidence = ownershipEvidence(free, options);
 
   // Named, not just counted. A filter that quietly stops a team being an owner is the one thing in this walk
@@ -524,6 +660,19 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     progress("part of the organisation would not answer, which a scheduled run reports as success; see collector.exit_status");
   }
   return complete ? EXIT_COMPLETE : collectionStatus(CollectionStatus.Partial, argv.toleratePartial);
+}
+
+/**
+ * Who authored merges in each repository, in the shape the ownership ladder reads.
+ *
+ * The store returns login→count maps and the ladder wants `RepositoryAuthorship`; the reshaping is here
+ * rather than in the store so that `facts.ts` stays a reader of its own tables and knows nothing about the
+ * ownership rungs that happen to consume it.
+ */
+async function authoredMerges(organization: string, days: number, reference: Date): Promise<Map<string, RepositoryAuthorship>> {
+  const since = new Date(reference.getTime() - days * 24 * 60 * 60 * 1000);
+  const counted = await authorshipForOrganisation(organization, since);
+  return new Map([...counted].map(([repository, merges]) => [repository, { repository, merges }]));
 }
 
 /** The bucket a repository nothing owns is grouped under. Not a GitHub team, and never given a slug. */

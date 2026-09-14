@@ -115,7 +115,16 @@ const orgGraph = z
     // A ceiling on the repositories one run may pay the per-repository rungs for, not a target. The residue
     // left after the free rungs is not knowable in advance at this scale, and a run that walks all of it is
     // better discovered as an incomplete exit than as a six-hour job.
-    unresolved_repository_limit: positiveInt.default(500)
+    unresolved_repository_limit: positiveInt.default(500),
+    // How many merges a team's members must have authored before the `authoring-team` rung reads it as the
+    // owner. Two, because one merge is a person passing through: measured on this estate, 310 of 1,124
+    // team-repository pairs sit at exactly one, and dropping them is what separates an owner from a visitor.
+    // See DefaultMinimumAuthoredMerges.
+    minimum_authored_merges: positiveInt.default(2),
+    // How far back authorship is read, in days. Matches `lookback.operational_days` rather than being a
+    // second window nobody reconciles — `collect` fills the fact cache over exactly that span, so a wider
+    // one here reads a cache that does not reach. See DefaultAuthorshipDays.
+    authorship_days: positiveInt.default(90)
   })
   .strict();
 
@@ -143,10 +152,21 @@ const cohort = z
     // Archived repositories are out by default: nobody is working in one, so every figure it carries is a fact
     // about the past that no team can act on.
     include_archived: z.boolean().default(false),
-    // How recently a repository must have been pushed to. The cheapest lever on both cost and noise — 90 days
-    // takes 1,872 repositories to roughly 1,210, and what it drops would report "no merges in the window"
-    // anyway. `null` turns the window off and reports every repository the other rules admit.
-    active_within_days: positiveInt.nullable().default(90)
+    // How recently a repository must have been pushed to for its BEHAVIOUR to be collected. It no longer
+    // decides who is in the estate: dropping stale repositories from the report hid exactly the ones the
+    // assurance criteria are about — 148 unarchived repositories on this estate are two or more years stale and
+    // not one had ever been collected. Still the cheapest lever on cost, since the merge walks are most of a
+    // run: 90 days walks roughly 1,230 of 1,880. `null` collects every repository's behaviour.
+    active_within_days: positiveInt.nullable().default(90),
+    // How long since the last push before a repository reads as one that should have been archived. A WIDER
+    // AND SEPARATE window from the one above, and the two answer different questions — a repository at six
+    // months has no behaviour collected and is not flagged, which is a real third state.
+    //
+    // Two years, measured: non-archived repositories on this estate sit 1,228 inside 90 days, 316 within a
+    // year, 188 within two, 101 within three and 47 beyond. A service released annually has pushed inside a
+    // year, so a year would flag working code; two years is where "quiet" stops being plausible, and it flags
+    // 148. `null` flags none, for a deployment that would rather report the age and judge it by eye.
+    unmaintained_after_days: positiveInt.nullable().default(730)
   })
   .strict();
 

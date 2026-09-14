@@ -6,9 +6,10 @@ import { EmptyState } from "@/components/EmptyState";
 import { EntityHeader } from "@/components/EntityHeader";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
-import { LABEL_PARAMETER, RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTable";
+import { RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTable";
 import { Section } from "@/components/Section";
 import { TeamActorsTable } from "@/components/TeamActorsTable";
+import { TeamPractice, TeamThroughput } from "@/components/TeamPractice";
 import { getTeam, getWindows, isNotFound } from "@/lib/api";
 import { distributionSlices } from "@/lib/chart";
 import { holdings, people, unreported } from "@/lib/team";
@@ -54,22 +55,40 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Clickable here for the same reason it is on the repositories list: the table below is the
-            same component reading the same parameter, and a donut that filters on one page and not
-            the other is one control with two behaviours. Filtering a team's own repositories is
-            still a count per label — it narrows a list, and grades nothing. */}
+        {/* NOT CLICKABLE ANY MORE, and the reason is the repositories table rather than this page. It used to
+            filter on `?label=`, which the shared table read back through `ESTATE_FILTERS`; those filters went
+            with the donuts on `/repositories`, so a wedge here would write a parameter nothing reads. A control
+            that silently does nothing is worse than a picture, so it is a picture. The term box below still
+            narrows the list, which is what a reader of one team's repositories actually reaches for. */}
         <SummaryPieChart
           title="Readiness"
-          parameter={LABEL_PARAMETER}
           // `detail.labels` distributes the reported repositories only while the table below holds
-          // every configured one, so the unreportable ones are added here: without them a reader
-          // clicking "Not assessed" would get rows the legend beside it counted at zero.
+          // every configured one, so the unreportable ones are added here: without them the legend would
+          // total less than the table beneath it.
           data={distributionSlices(detail.labels, detail.unavailable)}
-          tooltip="How many of this team’s repositories carry each readiness label at this span. The counts are per repository: they are not combined into a label for the team, and no team is ranked against another."
+          // NAMES WHICH QUESTION IT GRADES, from 2026-09-14, because there are now two and they are not versions
+          // of each other. This one is readiness for AI enablement, judged from the ways of working below it;
+          // `/repositories` grades whether a repository meets the assurance criteria for coding in the open.
+          tooltip="How many of this team’s repositories carry each readiness label for AI enablement at this span, judged from the ways of working below. This is not the coding-in-the-open assurance grade, which the repositories list carries. The counts are per repository: they are not combined into a label for the team, and no team is ranked against another."
         />
       </div>
 
-      <Section heading="Repositories" detail="team then repository" action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository…" />}>
+      {/* HOW THIS TEAM WORKS, which is what moved here from the repositories table. That page answers whether a
+          repository meets the assurance criteria for coding in the open; this answers the merge-gate and review
+          mechanics, which are a fact about the team rather than about any one repository. Counts over stated
+          denominators and nothing combined — see `TeamPractice`. */}
+      {detail.practice === undefined ? null : (
+        <Section heading="Ways of working" detail="counted across this team’s repositories">
+          <TeamPractice practice={detail.practice} />
+          <TeamThroughput practice={detail.practice} />
+        </Section>
+      )}
+
+      <Section
+        heading="Repositories"
+        detail="most recently pushed first"
+        action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository…" />}
+      >
         {detail.repositories.length === 0 ? (
           <EmptyState
             message={`No repository is configured for ${detail.team}.`}

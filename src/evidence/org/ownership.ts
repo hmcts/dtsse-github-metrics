@@ -20,16 +20,21 @@ import {
 /**
  * Attribution: turning the collected organisation graph into one owner per repository, with its provenance.
  *
- * A faithful port of the decision half of `scripts/build_team_configuration.py` in `hmcts/github-metrics`,
- * which was left behind when that collector was rewritten. The bar for "faithful" is a measured one: the
- * script's committed output is a 2,841-line `config.yml` covering 151 teams and 1,863 repositories, with the
- * provenance counts `teams-api-admin 949 / codeowners-sole 200 / teams-api-write 324 / codeowners-first 15 /
- * name-prefix 56 / unknown 319`. Reproducing those counts is what this module is judged against, so where a
- * rule here looks improvable it was still ported as it stood.
+ * Originally a faithful port of the decision half of `scripts/build_team_configuration.py` in
+ * `hmcts/github-metrics`, whose committed output was the bar the port was judged against: a 2,841-line
+ * `config.yml` with the provenance counts `teams-api-admin 949 / codeowners-sole 200 / teams-api-write 324 /
+ * codeowners-first 15 / name-prefix 56 / unknown 319`.
  *
- * Two deliberate departures, both named where they happen: several `admin` teams now yield several owners
- * rather than being discarded as a tie (`decideFromEvidence`), and a repository owned by a PERSON has rungs of
- * its own, which the Python script had no concept of.
+ * THAT IS NO LONGER THE BAR, and this is where the port stops being one. Reproducing the Python script's
+ * counts proved the mechanics were faithful and, in doing so, proved the ANSWER was wrong: reading `admin`
+ * as ownership named an access administrator for most of the estate, which is what `authoring-team` fixes and
+ * what the CODEOWNERS demotion follows from. Both departures are argued in `OwnershipRung`, with the AAT
+ * measurements behind them. The rungs the script had still behave as it did; they just no longer decide
+ * first.
+ *
+ * Three further departures, each named where it happens: several `admin` teams yield several owners rather
+ * than being discarded as a tie (`decideFromEvidence`), a repository owned by a PERSON has rungs of its own,
+ * and the `authoring-team` rung reads observed behaviour where every other rung reads a declaration.
  *
  * Everything here is a pure function of the facts. Nothing fetches, and the two rungs that need the expensive
  * fetches — CODEOWNERS and direct collaborators — are reached only for the residue `unresolvedRepositories`
@@ -66,6 +71,28 @@ export interface Evidence {
   memberCounts: Map<string, number>;
   /** Bare `@login` handles CODEOWNERS names, per repository. */
   codeownerPeople: Map<string, string[]>;
+  /**
+   * The teams whose own members authored merges here, per repository, best first.
+   *
+   * Already reduced to the ranking the rung reads, rather than left as raw scores for
+   * `decideFromEvidence` to sort: the ranking is over the whole estate's memberships and access, so
+   * computing it per repository inside the ladder would be the same join 1,880 times.
+   */
+  authoringTeams: Map<string, AuthoringClaim[]>;
+}
+
+/**
+ * One team's claim to be the authoring team of one repository, with the evidence behind it.
+ *
+ * All three figures are carried because all three are the `detail` a stored row keeps: a reader weighing
+ * "attributed by authorship" needs to see how many people and how many merges, not just the rule's name.
+ */
+export interface AuthoringClaim {
+  team: string;
+  /** Distinct members of this team who authored a merge here. */
+  authors: number;
+  /** Merges those members authored between them. */
+  merges: number;
 }
 
 /**
@@ -101,6 +128,11 @@ export interface NameInference {
  *
  * Both sizes are counted over THIS population only — the non-archived repositories. A team's weight ought to
  * be how much of the organisation it holds now, not how much it once held or holds in archived repositories.
+ *
+ * `claims` IS THE ONE DEFINITION OF "THIS HANDLE COULD OWN SOMETHING" and every access-based rung reads it,
+ * `authoring-team` included. That is deliberate: the filters below are the whole reason a platform team holding
+ * a fifth of the estate does not absorb it, and a rung reaching around them to the raw edges would reintroduce
+ * exactly that.
  *
  * TWO FILTERS keep a team from being read as an owner, and they answer different questions. `excludedTeams` is
  * identity: `all-org-members` is not a team that owns things, it is the organisation wearing a team's clothes,
@@ -190,7 +222,88 @@ export function ownershipEvidence(facts: OrgFacts, options: OwnershipOptions): E
     }
   }
 
-  return { claims, teamSizes, codeowners, codeownerSizes, broadTeams, populousTeams, memberCounts, codeownerPeople };
+  const authoringTeams = rankAuthoringTeams(facts, claims, teamSizes, options);
+
+  return { claims, teamSizes, codeowners, codeownerSizes, broadTeams, populousTeams, memberCounts, codeownerPeople, authoringTeams };
+}
+
+/**
+ * Rank, per repository, the teams with access whose OWN MEMBERS authored merges in it.
+ *
+ * READ OFF `claims` RATHER THAN OFF THE RAW ACCESS EDGES, which is what makes the three exclusion filters
+ * apply to this rung too. It matters most for the largest handles: `platform-operations` holds 397 of the
+ * 1,880 non-archived repositories and 56 people are in it, so without the share filter it would win the
+ * authorship comparison across a fifth of the estate on the strength of a platform engineer merging a
+ * pipeline fix — the same "confident wrong answer replaces an honest one" failure `ownershipEvidence`
+ * describes for the rungs below. Going through `claims` means one definition of "is this handle an owner at
+ * all" serves every rung.
+ *
+ * THE THRESHOLD IS ON MERGES AND THE FIRST TIE-BREAK IS ON AUTHORS, which is not redundant. The floor
+ * answers "is this evidence at all" and one merge is a visitor, so it is counted in merges — a one-person
+ * team is a real owner on this estate and an author floor would disown it. The tie-break answers "which of
+ * two teams is more plausibly the owner", and there the breadth of involvement is the better signal: five of
+ * `cdm`'s people wrote `aac-manage-case-assignment`'s merges against four of `cdm-admin`'s, and the wider
+ * team is the delivery one. Measured on AAT, ordering on merges first instead moves 12 repositories, all of
+ * them onto a narrower admin-shaped team.
+ *
+ * The third key is TEAM SIZE ASCENDING, on `mostSpecificClaim`'s own reasoning: where two teams are equally
+ * involved the more specific claim is the informative one. The fourth is the slug, so two runs over one
+ * estate produce byte-identical rows.
+ */
+function rankAuthoringTeams(
+  facts: OrgFacts,
+  claims: ReadonlyMap<string, ReadonlyMap<string, AccessLevel>>,
+  teamSizes: ReadonlyMap<string, number>,
+  options: OwnershipOptions
+): Map<string, AuthoringClaim[]> {
+  const teamsByMember = new Map<string, string[]>();
+  for (const membership of facts.memberships) {
+    const login = canonical(membership.login);
+    const slug = canonical(membership.teamSlug);
+    const held = teamsByMember.get(login);
+    if (held === undefined) {
+      teamsByMember.set(login, [slug]);
+    } else if (!held.includes(slug)) {
+      held.push(slug);
+    }
+  }
+
+  const ranked = new Map<string, AuthoringClaim[]>();
+  for (const [repository, authorship] of facts.authorship) {
+    const holders = claims.get(repository);
+    if (holders === undefined) {
+      // No team holds this repository in a way any rung would read as ownership, so there is nothing for
+      // authorship to choose between. The rungs below still answer it.
+      continue;
+    }
+    const scores = new Map<string, { authors: number; merges: number }>();
+    for (const [login, merges] of authorship.merges) {
+      for (const slug of teamsByMember.get(login) ?? []) {
+        if (!holders.has(slug)) {
+          continue;
+        }
+        const score = scores.get(slug) ?? { authors: 0, merges: 0 };
+        score.authors += 1;
+        score.merges += merges;
+        scores.set(slug, score);
+      }
+    }
+    const qualified = [...scores]
+      .filter(([, score]) => score.merges >= options.minimumAuthoredMerges)
+      .map(([team, score]) => ({ team, authors: score.authors, merges: score.merges }));
+    if (qualified.length === 0) {
+      continue;
+    }
+    qualified.sort(
+      (left, right) =>
+        right.authors - left.authors ||
+        right.merges - left.merges ||
+        (teamSizes.get(left.team) ?? 0) - (teamSizes.get(right.team) ?? 0) ||
+        byCodePoint(left.team, right.team)
+    );
+    ranked.set(repository, qualified);
+  }
+  return ranked;
 }
 
 /** Name the one team holding admin, or nothing when none or several do. */
@@ -263,10 +376,11 @@ function citedPaths(paths: readonly string[] | undefined): string {
 /**
  * Attribute one repository from evidence alone, or return `undefined` for the name pass to try.
  *
- * The rungs are in precedence order and the FIRST TO ANSWER DECIDES. That order is deliberate about one thing
- * in particular: a sole `admin` team outranks CODEOWNERS, but a sole CODEOWNERS team outranks any contested
- * API claim. Access describes who CAN merge and CODEOWNERS describes who is EXPECTED to review, and neither is
- * ownership; where they disagree the less ambiguous of the two is the better guess.
+ * The rungs are in precedence order and the FIRST TO ANSWER DECIDES. The order encodes one judgement, stated
+ * in full at `OwnershipRung`: OBSERVED BEHAVIOUR beats ADMINISTERED ACCESS beats A COMMITTED FILE. Authorship
+ * is what a team did last quarter, access is a grant somebody maintains, and CODEOWNERS is a review-routing
+ * rule written once — so the CODEOWNERS rungs answer only where nothing else will, which on AAT is 39 of the
+ * 70 repositories they used to decide.
  *
  * `detail` carries the evidence the rung acted on — the access level, the paths read, how many claims it beat.
  * A reader weighing an attribution needs the thing that produced it, not just the name of the rule.
@@ -298,6 +412,25 @@ export function decideFromEvidence(
     }));
   }
 
+  // THE TOP COLLECTED RUNG, and the fix for this ladder's largest error — see `OwnershipRung.AuthoringTeam`
+  // for the measurements. ONE OWNER, unlike the admin rung below: several teams' members merging here is the
+  // ordinary case on a platform repository, and every one of them is not an owner. The ranking has already
+  // chosen, and `detail` carries what it beat so the choice is auditable.
+  const authoring = evidence.authoringTeams.get(repository) ?? [];
+  const authored = authoring[0];
+  if (authored !== undefined) {
+    const contested =
+      authoring.length > 1 ? `, ahead of ${authoring.length - 1} other team${authoring.length === 2 ? "" : "s"} with access whose members merged here` : "";
+    return [
+      {
+        kind: OwnerKind.Team,
+        owner: authored.team,
+        rung: OwnershipRung.AuthoringTeam,
+        detail: `${authored.authors} member${authored.authors === 1 ? "" : "s"} authored ${authored.merges} merge${authored.merges === 1 ? "" : "s"} here${contested}`
+      }
+    ];
+  }
+
   // EXTENSION over the Python script, which required a SOLE admin and discarded the repository to the next
   // rung whenever two teams held it. The schema here permits several owners, so both are returned: a
   // repository with two `admin` teams has two owners, and collapsing that to one invents a tie-break nobody
@@ -314,17 +447,6 @@ export function decideFromEvidence(
     }));
   }
 
-  if (owners.length === 1) {
-    return [
-      {
-        kind: OwnerKind.Team,
-        owner: owners[0] as string,
-        rung: OwnershipRung.CodeownersSole,
-        detail: `sole team in CODEOWNERS (${paths})`
-      }
-    ];
-  }
-
   if (claims.size > 0) {
     const slug = mostSpecificClaim(claims, evidence.teamSizes);
     return [
@@ -333,6 +455,30 @@ export function decideFromEvidence(
         owner: slug,
         rung: OwnershipRung.TeamsApiWrite,
         detail: `holds ${claims.get(slug)} among ${claims.size} claiming teams, and holds ${evidence.teamSizes.get(slug) ?? 0} repositories`
+      }
+    ];
+  }
+
+  // Above the CODEOWNERS rungs from 2026-09-14, which reverses the old order. `OwnershipRung` argues it: a
+  // grant of `admin` to a login is current and per-person, a committed file is neither, and the team-before-
+  // person rule the old order encoded is preserved by every rung above this one naming a team.
+  const admins = detailFacts.directAdmins.get(repository) ?? [];
+  if (admins.length > 0) {
+    return admins.map((login) => ({
+      kind: OwnerKind.Person,
+      owner: canonical(login),
+      rung: OwnershipRung.DirectCollaborator,
+      detail: "direct collaborator holding admin"
+    }));
+  }
+
+  if (owners.length === 1) {
+    return [
+      {
+        kind: OwnerKind.Team,
+        owner: owners[0] as string,
+        rung: OwnershipRung.CodeownersSole,
+        detail: `sole team in CODEOWNERS (${paths})`
       }
     ];
   }
@@ -349,8 +495,7 @@ export function decideFromEvidence(
     ];
   }
 
-  // Below every team rung: an individual owner is the outlier the ladder falls back to once no team answered,
-  // never a competitor to a team.
+  // The last collected rung: a bare `@login` in a file, once no team the same file names has answered.
   const people = evidence.codeownerPeople.get(repository) ?? [];
   if (people.length > 0) {
     return people.map((login) => ({
@@ -358,16 +503,6 @@ export function decideFromEvidence(
       owner: login,
       rung: OwnershipRung.CodeownersPerson,
       detail: `named in CODEOWNERS (${paths})`
-    }));
-  }
-
-  const admins = detailFacts.directAdmins.get(repository) ?? [];
-  if (admins.length > 0) {
-    return admins.map((login) => ({
-      kind: OwnerKind.Person,
-      owner: canonical(login),
-      rung: OwnershipRung.DirectCollaborator,
-      detail: "direct collaborator holding admin"
     }));
   }
 
@@ -552,9 +687,11 @@ export function attributeOwnership(facts: OrgFacts, options: OwnershipOptions): 
 /**
  * How many repositories each rung attributed, counted by `primary` and read in precedence order.
  *
- * This is the provenance figure the CLI reports and the one a port is checked against: the Python script's
- * committed output counted `teams-api-admin 949 / codeowners-sole 200 / teams-api-write 324 /
- * codeowners-first 15 / name-prefix 56 / unknown 319`.
+ * THIS IS THE FIGURE THE LADDER IS JUDGED BY, and the one to read after changing any rung's precedence. It
+ * was once checked against the Python script's committed counts; those are no longer the target — see this
+ * module's header — and what it is read for now is whether a change moved the estate where it was meant to.
+ * Measured on AAT before and after the 2026-09-14 change: `teams-api-admin` 1,346 → 923, `authoring-team`
+ * 0 → 457, `codeowners-*` 70 → 39, `unowned` 141 either way.
  *
  * Rungs that attributed nothing are omitted rather than reported as zero, as the original's report did: a
  * rung with no rows says nothing about this organisation, and a column of zeroes reads as a failure.
@@ -578,16 +715,18 @@ export function rungCounts(resolved: Iterable<ResolvedOwnership>): Map<Ownership
  * The repositories no free rung answered, so the caller can scope the expensive fetches to the residue.
  *
  * THIS IS THE COST-CONTROL MECHANISM, and it has to agree with the ladder's precedence or it silently changes
- * the answer. It once filtered on "no claim at all", which was wrong: `codeowners-sole` sits ABOVE
- * `teams-api-write`, so a repository with three teams holding push and a CODEOWNERS naming exactly one team
- * should be decided by that file — and never had its file read. Measured on this estate, 270 repositories have a
- * claim but no `admin` team, which is exactly the set that was being decided by the wrong rung; the predecessor's
- * `codeowners-sole 200` could not be reproduced while they were skipped.
+ * the answer. The rule is mechanical: every rung that decides from data ALREADY IN HAND is free, and the
+ * residue is what none of them answered. Free rungs are `configured`, `authoring-team`, `teams-api-admin` and
+ * `teams-api-write` — an override is in the file, and the other three read the team walk and the fact cache,
+ * both of which are complete before this is called. What is paid for is CODEOWNERS (up to three content
+ * requests) and the direct-collaborator listing (one more).
  *
- * So the residue is what NO RUNG ABOVE `codeowners-sole` answered: no configured override, and no `admin` team.
- * A configured override and a sole `admin` team decide from data already in hand and stay free; everything else
- * pays up to three content requests, plus one more for direct collaborators. On the measured estate that is a few
- * hundred repositories rather than 1,878.
+ * THE RESIDUE SHRANK WITH THE CODEOWNERS DEMOTION, which is worth stating because it reads the other way at
+ * first glance. It once had to include any repository with a `push` claim but no `admin` team — 270 of them —
+ * because `codeowners-sole` outranked `teams-api-write` and their files therefore had to be read to decide
+ * them. Now no CODEOWNERS rung can outrank an access claim, so a repository with any owning claim is settled
+ * for free and its file is never fetched. Measured on AAT, the residue falls from roughly 530 repositories to
+ * roughly 260, so the demotion makes the walk CHEAPER as well as more current.
  *
  * `configured` is a parameter rather than read from `OwnershipOptions` so that a caller holding only facts can
  * still ask; left out, a repository with a reviewed override is fetched needlessly rather than skipped, which
@@ -597,6 +736,6 @@ export function unresolvedRepositories(facts: OrgFacts, evidence: Evidence, conf
   return facts.repositories
     .filter((repository) => !repository.archived)
     .map((repository) => repository.name)
-    .filter((name) => (configured.get(name) ?? []).length === 0 && adminTeams(evidence.claims.get(name) ?? new Map()).length === 0)
+    .filter((name) => (configured.get(name) ?? []).length === 0 && (evidence.claims.get(name)?.size ?? 0) === 0)
     .sort(byCodePoint);
 }

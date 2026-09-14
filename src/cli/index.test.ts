@@ -5,6 +5,14 @@ import { EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE } from "./exit-
 const migrate = vi.hoisted(() => vi.fn<() => Promise<string[]>>());
 const loadConfiguration = vi.hoisted(() => vi.fn());
 const cohortRepositories = vi.hoisted(() => vi.fn());
+// What `collect` walks, as the entries carrying `behaviourCollectable`. Stubbed here rather than derived, so a
+// case can state a stale repository beside a fresh one without also stating a `pushedAt` and a policy.
+const readCohort = vi.hoisted(() => vi.fn());
+// The `authoring-team` rung's input. Stubbed EMPTY by default, which is the honest default for these cases: an
+// empty fact cache means the rung declines and the access rungs decide, so a fixture that says nothing about
+// authorship is attributed exactly as it was before the rung existed. The cases that are about the rung live in
+// `org/ownership.test.ts`, against the real ladder.
+const authorshipForOrganisation = vi.hoisted(() => vi.fn(async () => new Map<string, Map<string, number>>()));
 const collectionState = vi.hoisted(() => vi.fn());
 const resolveCredentials = vi.hoisted(() => vi.fn());
 const createGitHubClient = vi.hoisted(() => vi.fn());
@@ -25,6 +33,7 @@ const recordOrgTeamRepositories = vi.hoisted(() => vi.fn());
 const recordOrgRepositories = vi.hoisted(() => vi.fn());
 const recordOrgPeople = vi.hoisted(() => vi.fn());
 const recordRepositoryOwnership = vi.hoisted(() => vi.fn());
+const recordRepositoryState = vi.hoisted(() => vi.fn());
 
 vi.mock("../evidence/store/migrate.ts", () => ({ migrate }));
 vi.mock("../evidence/store/prisma.ts", () => ({ prisma: { $disconnect: vi.fn().mockResolvedValue(undefined) } }));
@@ -49,7 +58,20 @@ vi.mock("../evidence/org/cohort.ts", async () => ({
   ...(await vi.importActual<typeof import("../evidence/org/cohort.ts")>("../evidence/org/cohort.ts")),
   cohortRepositories,
   cohortOwners: async () => new Map(),
-  readCohort: async () => [{ repository: "repo-a", owners: ["team"], archived: false, visibility: "public" }]
+  readCohort
+}));
+vi.mock("../evidence/store/facts.ts", () => ({ authorshipForOrganisation }));
+// The per-repository writers `collect` ends each repository with. Stubbed because they reach Postgres and
+// `prisma` here is a bare `$disconnect` — left real, the FIRST repository throws a TypeError out of the walk and
+// the run ends, which silently makes any assertion about which repositories were walked true of a loop that
+// only ever ran once. Found exactly that way.
+vi.mock("../evidence/store/repository-state.ts", () => ({ recordRepositoryState, storedRepositoryState: async () => undefined }));
+vi.mock("../evidence/behaviour/fill.ts", () => ({
+  fillCachedSource: async () => [],
+  loadCachedMerges: async () => ({ pullRequests: [], directCommits: [] }),
+  requestedCoverage: () => ({}),
+  pullRequestCacheWriter: () => undefined,
+  directCommitCacheWriter: () => undefined
 }));
 vi.mock("../evidence/store/collection-state.ts", () => ({ collectionState, stampCollection: vi.fn(), stampRevision }));
 vi.mock("../evidence/github/credentials.ts", () => ({ resolveCredentials }));
@@ -70,8 +92,25 @@ vi.mock("../evidence/store/org-graph.ts", () => ({
 
 const { main } = await import("./index.ts");
 
+/** One cohort entry, defaulting to a repository behaviour IS collected for — the ordinary case. */
+function cohortEntry(repository: string, overrides: Record<string, unknown> = {}) {
+  return {
+    repository,
+    owners: ["team"],
+    ownerKind: "team",
+    archived: false,
+    visibility: "public",
+    behaviourCollectable: true,
+    unmaintained: false,
+    ...overrides
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // A one-repository estate by default, so the cases that are not about the cohort do not have to state one.
+  // `assertCohortCollected` calls this too, so it must always resolve.
+  readCohort.mockResolvedValue([cohortEntry("repo-a")]);
   vi.spyOn(console, "info").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -227,6 +266,89 @@ describe("doctor", () => {
   });
 });
 
+/**
+ * What `collect` walks, which from 2026-09-14 is NOT the whole estate.
+ *
+ * The activity window stopped deciding cohort membership so that stale repositories could be reported against
+ * the assurance criteria — see `CohortPolicy`. That widened the estate from roughly 1,230 repositories to 1,880,
+ * and the merge walks are most of a run's 15,500 calls, so this is the seam where that either costs nothing or
+ * costs 50%.
+ */
+describe("what collect walks", () => {
+  const CONFIG = {
+    organization: "hmcts",
+    lookback: { operational_days: 90, mutable_hours: 6 },
+    teams: [],
+    cohort: { excluded_authors: [] },
+    production_list_url: null,
+    assessment: { enabled: false },
+    org_graph: { enabled: true }
+  };
+
+  /** A collect run over one fresh and one stale repository, reporting every REST path it asked for. */
+  async function pathsAskedFor(): Promise<string[]> {
+    loadConfiguration.mockResolvedValue(CONFIG);
+    readCohort.mockResolvedValue([cohortEntry("fresh"), cohortEntry("stale", { behaviourCollectable: false, unmaintained: true })]);
+    resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
+    const get = vi.fn().mockResolvedValue({ default_branch: "main" });
+    const paths: string[] = [];
+    createGitHubClient.mockReturnValue({
+      get,
+      graphql: vi.fn().mockResolvedValue({}),
+      paginate: function paginate(path: string) {
+        paths.push(String(path));
+        return (async function* pages() {
+          yield [];
+        })();
+      },
+      requestsIssued: () => 1,
+      callOutcomes: () => []
+    });
+
+    await main(["collect", "--config", "m.yaml", "--tolerate-partial"]);
+    return [...get.mock.calls.map(([path]) => String(path)), ...paths];
+  }
+
+  it("should read every repository in the estate, stale ones included, so the assurance columns are populated", async () => {
+    // The other half of the change: a stale repository must still be COLLECTED, or the criteria it exists to be
+    // judged against have nothing to read. 148 unarchived repositories on AAT are two or more years stale, and
+    // not one of them had a `repository_state` row before this.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path))).toEqual(["/repos/hmcts/fresh", "/repos/hmcts/stale"]);
+  });
+
+  it("should not read a stale repository's merge gate, which is ways-of-working rather than assurance", async () => {
+    // THE QUOTA GUARANTEE, read at a seam that actually costs: the gate is several requests per repository, and a
+    // repository nobody has pushed to in two years has no current practice to report. Asserted here rather than
+    // on the merge walk because `fillCachedSource` is stubbed in this file, so the gate is the deep-path call
+    // this test can see.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => path.includes("/branches/") || path.includes("/rules/"))).toEqual([
+      "/repos/hmcts/fresh/branches/main/protection",
+      "/repos/hmcts/fresh/rules/branches/main"
+    ]);
+  });
+
+  it("should read each repository's Dependabot alerts ONCE, for two purposes", async () => {
+    // TWO THINGS AT ONCE. The shallow path keeps the read because the patching age is an assurance answer — a
+    // stale repository's unpatched criticals are exactly what the criterion reports — and the deep path must not
+    // read the same endpoint twice, which it did in the first version of this: the assurance age needs each
+    // alert's `created_at` and the security block needs the family counted by severity, and paying separately
+    // for both cost 1,240 needless calls, taking the run from 66% of the hourly core budget to 83%.
+    //
+    // One entry per repository is the whole assertion, so a regression in either direction fails: dropping the
+    // shallow read loses `stale`, and re-fetching for the security block duplicates `fresh`.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => path.includes("dependabot/alerts"))).toEqual([
+      "/repos/hmcts/fresh/dependabot/alerts",
+      "/repos/hmcts/stale/dependabot/alerts"
+    ]);
+  });
+});
+
 describe("the collector lock", () => {
   it.each([["collect"], ["collect-org"]])("should stand %s down as SUCCESS when another run holds the lock", async (command) => {
     // Both AAT clusters run the same schedule against one database, so one of them loses the lock EVERY DAY.
@@ -261,7 +383,9 @@ describe("collect-org", () => {
       maximum_team_share: 1,
       maximum_team_members: 100,
       excluded_teams: ["all-org-members"],
-      unresolved_repository_limit: 500
+      unresolved_repository_limit: 500,
+      minimum_authored_merges: 2,
+      authorship_days: 90
     }
   };
 

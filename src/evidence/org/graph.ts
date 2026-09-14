@@ -11,6 +11,10 @@
  * says who CAN merge; `codeownersSole` and `codeownersFirst` read who is EXPECTED to review. Neither is a
  * declaration of ownership, because GitHub has no field for one. Every row therefore carries the rung that
  * produced it, so a reader can weigh the answer instead of trusting it.
+ *
+ * `authoringTeam` is the one rung here that reads something stronger than either: who ACTUALLY MERGES. It
+ * sits at the top of the collected rungs for that reason — access and review expectations are both
+ * declarations somebody configured once, and authorship is behaviour observed over a window.
  */
 
 /**
@@ -35,29 +39,73 @@ export const OwningAccessLevels: readonly AccessLevel[] = ["admin", "maintain", 
 /**
  * Which rung of the ladder attributed a repository, in precedence order.
  *
- * A sole `admin` team outranks CODEOWNERS, but a sole CODEOWNERS team outranks any contested API claim:
- * where the two disagree, the less ambiguous of them is the better guess.
+ * THE CODEOWNERS RUNGS ARE A FALLBACK OF LAST RESORT, above `unowned` and `name-prefix` only. That
+ * REVERSES the order this ladder shipped with, where `codeowners-sole` outranked every contested access
+ * claim on the argument that a file naming one team is less ambiguous than three teams holding `push`. The
+ * argument was about ambiguity and the answer it produced was about staleness: a CODEOWNERS file is a
+ * REVIEW ROUTING RULE somebody committed once and nobody revisits, while access is administered
+ * continuously and authorship is observed. Where the two disagree, the live signal is now preferred and
+ * the committed file answers only when no access rung will.
+ *
+ * The distinction the old comments drew still holds and is still why the rung exists: access says who CAN
+ * merge and CODEOWNERS says who is EXPECTED to review. What changed is which wins when both answer.
+ * Measured on AAT, 70 repositories were decided by a CODEOWNERS rung — 31 of them have team access and are
+ * now decided by it, and 39 have none at all, which is why the rungs are demoted rather than deleted:
+ * removing them would move those 39 to `unowned` and take that bucket from 141 to 180.
  *
  * `codeownersPerson` and `directCollaborator` are NEW here and have no counterpart in the Python script,
- * which had no concept of a repository owned by a person. They sit below every team rung deliberately — an
- * individual owner is the outlier the ladder falls back to, never a competitor to a team.
+ * which had no concept of a repository owned by a person.
+ *
+ * `directCollaborator` sits ABOVE the CODEOWNERS rungs, which reverses the other half of the old order and
+ * is the one placement worth arguing. It names a PERSON, and this ladder's stated rule is that an
+ * individual owner is the outlier a ladder falls back to rather than a competitor to a team — so putting
+ * one above a named team looks wrong. It is not, on this estate: `admin` granted directly to a login is a
+ * grant somebody made to that person for this repository, administered in the same place as team access and
+ * revoked when they leave, and it answers 203 repositories. A CODEOWNERS file is neither current nor
+ * per-person. The rule the old order encoded — team before person — is preserved where it means something:
+ * every rung above this one names a team, so a person only wins once no team's access claims the
+ * repository at all.
  */
 export const OwnershipRung = {
   /** A reviewed `metrics.yaml` entry. An override short-circuits every collected rung. */
   Configured: "configured",
+  /**
+   * A team with access whose OWN MEMBERS author the merges in this repository.
+   *
+   * ABOVE `teams-api-admin` deliberately, and it is the rung that fixed this ladder's largest error.
+   * `teams-api-admin` names whoever holds `admin`, and at HMCTS `admin` is granted to an ACCESS
+   * ADMINISTRATOR rather than to a delivery team: measured on AAT, 1,346 of 1,846 attributed
+   * repositories were decided by that rung, and its largest owners were `platform-operations` (288),
+   * `cpp-development-admin` (178), `idam-admins` (139) and `bots` (44). `aac-manage-case-assignment`
+   * read `cdm-admin` while `cdm` held `push` and wrote all five of the window's merges;
+   * `adoption-cos-api` read `fpl-admins` while `reform-adoption` wrote 23 of its 40.
+   *
+   * NOT A NAME BLOCKLIST. A `-admin`/`-admins`/`-tl` suffix rule is brittle in both directions: it
+   * misses `bots` and `platform-operations`, and it would strip any team legitimately named that way.
+   * What separates an administrator from a delivery team is not the slug but whether the people in it
+   * merge code here, which is a fact the collector already holds — `pull_request_facts` carries
+   * `authorLogin`, and `org_team_memberships` says who is in what.
+   */
+  AuthoringTeam: "authoring-team",
   /** Exactly one GitHub team holds `admin`: the closest thing to a declared owner the API has. */
   TeamsApiAdmin: "teams-api-admin",
-  /** CODEOWNERS names exactly one team, so there is nothing to choose between. */
-  CodeownersSole: "codeowners-sole",
   /** Several teams hold write-or-better; most permissive wins, ties to the smallest team. */
   TeamsApiWrite: "teams-api-write",
+  /** A direct collaborator holding admin, once no team's access claims the repository. */
+  DirectCollaborator: "direct-collaborator-admin",
+  /** CODEOWNERS names exactly one team, once no access rung has answered. */
+  CodeownersSole: "codeowners-sole",
   /** CODEOWNERS names several teams; the one owning fewest wins, then alphabetical order. */
   CodeownersFirst: "codeowners-first",
-  /** A bare `@login` in CODEOWNERS, once no team rung has answered. */
+  /** A bare `@login` in CODEOWNERS, once no team the file names has answered. */
   CodeownersPerson: "codeowners-person",
-  /** A direct collaborator holding admin, once CODEOWNERS names nobody. */
-  DirectCollaborator: "direct-collaborator-admin",
-  /** The name shares a family prefix with repositories the evidenced rungs agreed on. */
+  /**
+   * The name shares a family prefix with repositories the evidenced rungs agreed on.
+   *
+   * Last before `unowned` and BELOW every CODEOWNERS rung, unchanged by the demotion: an inferred name
+   * family is a guess this codebase makes, and a committed CODEOWNERS file is at least something a human
+   * wrote about this repository. A stale statement outranks an inference.
+   */
   NamePrefix: "name-prefix",
   /** No rung answered. A normal outcome, and not a failure. */
   Unowned: "unowned"
@@ -68,12 +116,13 @@ export type OwnershipRung = (typeof OwnershipRung)[keyof typeof OwnershipRung];
 /** Every rung in precedence order, so a report reads as the order it describes. */
 export const RungOrder: readonly OwnershipRung[] = [
   OwnershipRung.Configured,
+  OwnershipRung.AuthoringTeam,
   OwnershipRung.TeamsApiAdmin,
-  OwnershipRung.CodeownersSole,
   OwnershipRung.TeamsApiWrite,
+  OwnershipRung.DirectCollaborator,
+  OwnershipRung.CodeownersSole,
   OwnershipRung.CodeownersFirst,
   OwnershipRung.CodeownersPerson,
-  OwnershipRung.DirectCollaborator,
   OwnershipRung.NamePrefix,
   OwnershipRung.Unowned
 ];
@@ -81,12 +130,13 @@ export const RungOrder: readonly OwnershipRung[] = [
 /** The rungs decided from evidence alone, before the name pass may run. */
 export const EvidenceRungs: readonly OwnershipRung[] = [
   OwnershipRung.Configured,
+  OwnershipRung.AuthoringTeam,
   OwnershipRung.TeamsApiAdmin,
-  OwnershipRung.CodeownersSole,
   OwnershipRung.TeamsApiWrite,
+  OwnershipRung.DirectCollaborator,
+  OwnershipRung.CodeownersSole,
   OwnershipRung.CodeownersFirst,
-  OwnershipRung.CodeownersPerson,
-  OwnershipRung.DirectCollaborator
+  OwnershipRung.CodeownersPerson
 ];
 
 /** What an owner IS, since a repository may be owned by a team or — the outlier — by a person. */
@@ -168,6 +218,22 @@ export interface CodeownersFact {
 }
 
 /**
+ * Who authored the merges in one repository, and how many each of them wrote.
+ *
+ * READ FROM THE COLLECTED FACTS RATHER THAN FETCHED. `pull_request_facts.payload->>'authorLogin'` is
+ * already stored by every `collect` run, so the `authoring-team` rung costs no GitHub call at all — it is
+ * a database read of evidence somebody has already paid for.
+ *
+ * Logins are FOLDED, on `canonical`'s rule: the memberships this is joined against are folded too, and a
+ * person whose commits are attributed to `Alice` must not fail to match their membership as `alice`.
+ */
+export interface RepositoryAuthorship {
+  repository: string;
+  /** Folded login → how many merges in the window that person authored. Never zero. */
+  merges: Map<string, number>;
+}
+
+/**
  * Everything collected, before anything is decided.
  *
  * `teamsRead` is kept separate from an empty `teams` so that a token which was not permitted to list teams
@@ -190,6 +256,16 @@ export interface OrgFacts {
   codeowners: Map<string, CodeownersFact>;
   /** Direct collaborators holding admin, keyed by repository. Only fetched for what CODEOWNERS left open. */
   directAdmins: Map<string, string[]>;
+  /**
+   * Who authored merges in each repository, keyed by repository.
+   *
+   * EMPTY IS A LEGITIMATE STATE and not a degraded one: a repository with no recent merges has no
+   * authorship to read, and the `authoring-team` rung simply declines for it and lets the rungs below
+   * answer. That is why the rung is an ADDITION above `teams-api-admin` rather than a replacement of it —
+   * measured on AAT, authorship answers 457 of 1,880 non-archived repositories, and the `UiPath-*` family
+   * has none at all.
+   */
+  authorship: Map<string, RepositoryAuthorship>;
 }
 
 /** One owner of one repository, and which rung said so. */
@@ -235,6 +311,21 @@ export interface OwnershipOptions {
   excludedTeams: Set<string>;
   /** Reviewed `metrics.yaml` ownership, which outranks every collected rung. */
   configured: Map<string, string[]>;
+  /**
+   * How many merges a team's members must have authored before the team is read as the authoring one.
+   *
+   * MEASURED, not chosen freely. The distribution of "merges by the best-scoring team with access" over
+   * this estate has a long tail at one: 310 of 1,124 team-repository pairs sit at exactly one merge, and
+   * one merge is a person passing through — somebody fixing a typo in a repository their team happens to
+   * hold access to. At two the rung answers 498 repositories rather than 614, and it drops precisely the
+   * pairs that cannot distinguish an owner from a visitor.
+   *
+   * This is a FLOOR on merges rather than on distinct authors, because a one-person team is a real thing
+   * on this estate — `cdm-tl` has 2 members and 38 repositories — and requiring two authors would disown
+   * them for their size. The author COUNT is still the leading tie-break, where it is the informative
+   * signal.
+   */
+  minimumAuthoredMerges: number;
 }
 
 /**
@@ -249,6 +340,26 @@ export const MinimumPrefixLength = 3;
 
 export const DefaultPrefixSupport = 3;
 export const DefaultPrefixDominance = 0.8;
+
+/**
+ * How many merges a team's members must have authored before it is read as the authoring team.
+ *
+ * Two, and the figure comes from the measurement `OwnershipOptions.minimumAuthoredMerges` records: one
+ * merge is the mode of the tail and is a visitor rather than an owner.
+ */
+export const DefaultMinimumAuthoredMerges = 2;
+
+/**
+ * How far back authorship is read, in days.
+ *
+ * Matches `lookback.operational_days`' own default rather than being a second window nobody reconciles:
+ * "who works in this repository" is the same question the operational window asks, and `collect` fills the
+ * fact cache over exactly that span — so a wider window here would read a cache that does not reach and a
+ * narrower one would discard evidence already paid for. Ownership is a fact about NOW, so a team that
+ * stopped merging two years ago is not the answer; 90 days is a working quarter, which survives a holiday
+ * and a release freeze without surviving a reorganisation.
+ */
+export const DefaultAuthorshipDays = 90;
 
 /**
  * A quarter of an organisation is far past any team that could be said to own what it holds.
