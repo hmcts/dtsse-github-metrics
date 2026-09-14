@@ -106,6 +106,28 @@ export async function openAlerts(
   }
 }
 
+/**
+ * Counts records somebody else fetched, in the same shape `openAlerts` returns.
+ *
+ * `undefined` records mean the family was UNREAD rather than empty, and that stays absent rather than becoming a
+ * zero — the distinction this whole module is built around. No `reason` is reported with it: the caller that
+ * fetched it has already decided the family is not enabled, and raising a second failure for one refusal would
+ * double-count it in the exit status.
+ */
+function countFetched(records: readonly unknown[] | undefined, family: string, severityOf: (record: unknown) => string | undefined): AlertFamilyResult {
+  if (records === undefined) {
+    return { count: { detail: `${family} ${FEATURE_NOT_ENABLED}` } };
+  }
+  try {
+    return { count: { open: records.length, bySeverity: countBySeverity(records.map((record) => severityOf(record))) } };
+  } catch (error) {
+    return {
+      count: { detail: `GitHub returned invalid ${family} records: ${error instanceof Error ? error.message : String(error)}` },
+      reason: AvailabilityReason.CollectionFailed
+    };
+  }
+}
+
 /** Reads one Dependabot alert's severity from the advisory that carries it. */
 export function dependabotSeverity(record: unknown): string | undefined {
   return dependabotAlertSchema.parse(record).security_advisory?.severity ?? undefined;
@@ -140,10 +162,28 @@ export function noSeverity(): string | undefined {
 export async function collectSecurityAlerts(
   client: GitHubClient,
   organization: string,
-  repository: string
+  repository: string,
+  /**
+   * Dependabot alert records the caller has ALREADY FETCHED, so this family costs no second request.
+   *
+   * The assurance criteria need each alert's `created_at` for the patching age and this needs the same family
+   * counted by severity — the same endpoint, read for two purposes. Passing the records in rather than fetching
+   * again saves one call per repository, which at 1,240 walked repositories is the difference between 66% and 83%
+   * of the hourly core budget.
+   *
+   * `undefined` means the caller has nothing to offer and this fetches as it always did; `alerts` present but
+   * `undefined` INSIDE means the caller tried and the family was unreadable, which is reported as such rather
+   * than retried — a refusal does not become readable on a second ask.
+   */
+  fetched?: { dependabot: readonly unknown[] | undefined }
 ): Promise<{ evidence: SecurityAlertEvidence; failures: { family: string; reason: AvailabilityReason; detail: string }[] }> {
   const families: [string, AlertFamilyResult][] = [
-    ["dependabot/alerts", await openAlerts(client, organization, repository, "dependabot/alerts", dependabotSeverity)],
+    [
+      "dependabot/alerts",
+      fetched === undefined
+        ? await openAlerts(client, organization, repository, "dependabot/alerts", dependabotSeverity)
+        : countFetched(fetched.dependabot, "dependabot/alerts", dependabotSeverity)
+    ],
     ["code-scanning/alerts", await openAlerts(client, organization, repository, "code-scanning/alerts", codeScanningSeverity)],
     ["secret-scanning/alerts", await openAlerts(client, organization, repository, "secret-scanning/alerts", noSeverity)]
   ];

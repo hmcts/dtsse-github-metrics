@@ -331,13 +331,18 @@ describe("what collect walks", () => {
     ]);
   });
 
-  it("should read both repositories' Dependabot alerts, the patching age being an assurance answer", async () => {
-    // What the shallow path KEEPS, and the counterpart to the case above: a stale repository is still asked for
-    // its alerts, because how old its unpatched criticals are is exactly what the criterion reports.
+  it("should read each repository's Dependabot alerts ONCE, for two purposes", async () => {
+    // TWO THINGS AT ONCE. The shallow path keeps the read because the patching age is an assurance answer — a
+    // stale repository's unpatched criticals are exactly what the criterion reports — and the deep path must not
+    // read the same endpoint twice, which it did in the first version of this: the assurance age needs each
+    // alert's `created_at` and the security block needs the family counted by severity, and paying separately
+    // for both cost 1,240 needless calls, taking the run from 66% of the hourly core budget to 83%.
+    //
+    // One entry per repository is the whole assertion, so a regression in either direction fails: dropping the
+    // shallow read loses `stale`, and re-fetching for the security block duplicates `fresh`.
     const asked = await pathsAskedFor();
 
     expect(asked.filter((path) => path.includes("dependabot/alerts"))).toEqual([
-      "/repos/hmcts/fresh/dependabot/alerts",
       "/repos/hmcts/fresh/dependabot/alerts",
       "/repos/hmcts/stale/dependabot/alerts"
     ]);

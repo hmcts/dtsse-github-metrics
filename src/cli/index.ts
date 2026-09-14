@@ -5,7 +5,7 @@ import { mergedPullRequestQuery, sourceSignature } from "../evidence/behaviour/q
 import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
-import type { AlertSeverity } from "../evidence/domain/security-alerts.ts";
+import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
 import { assuranceEvidence, collectAssuranceSignals, type GraphAssurance, readDependabotAlerts } from "../evidence/inventory/assurance.ts";
@@ -143,6 +143,11 @@ async function collectRepository(
     return { observed: false, failures: 1 };
   }
 
+  // READ ONCE AND USED TWICE, which is the one thing this had to get right on cost. The patching criterion needs
+  // each alert's `created_at` and the security block needs the same family counted by severity, so the naive
+  // shape pays for `dependabot/alerts` twice per repository — 1,240 needless calls, which took the run from 66%
+  // of the hourly core budget to 83%. `collectSecurityAlerts` therefore takes the records this already fetched
+  // rather than fetching its own.
   const dependabot = await readDependabotAlerts(client, organization, repository);
   const assurance = assuranceEvidence(metadata, options.assurance, dependabot, reference);
 
@@ -154,7 +159,10 @@ async function collectRepository(
       defaultBranch,
       fetchedAt: reference,
       mergeGate: { detail: "not collected: no push inside cohort.active_within_days, so there is no current practice to read" },
-      securityAlerts: { dependabot: dependabotCount(dependabot), codeScanning: {}, secretScanning: {} },
+      // The one family this path has records for, counted rather than thrown away. The other two are absent,
+      // which reads as unmeasured — a stale repository's code-scanning posture was not looked at, and saying so
+      // is the honest answer rather than reporting nothing open.
+      securityAlerts: dependabotOnly(dependabot),
       deploysToProduction: deploysToProduction(production, organization, repository),
       assurance
     });
@@ -186,7 +194,8 @@ async function collectRepository(
   });
 
   const gate = await collectMergeGate(client, organization, repository, defaultBranch);
-  const alerts = await collectSecurityAlerts(client, organization, repository);
+  // Handed the Dependabot records read above, so this pays for the other two families only.
+  const alerts = await collectSecurityAlerts(client, organization, repository, { dependabot });
   failures += alerts.failures.length;
   for (const failure of alerts.failures) {
     console.warn(`${repository}: ${failure.detail}`);
@@ -205,17 +214,23 @@ async function collectRepository(
 }
 
 /**
- * The Dependabot family's count, off the records the assurance read already fetched.
+ * The alert block for the shallow path: the one family it has records for, and two stated absences.
  *
- * The shallow path does not call `collectSecurityAlerts`, so this is what stops its one alert family being thrown
- * away: the records are in hand, and counting them costs nothing. `undefined` records mean the family was unread,
- * which stays absent rather than becoming a zero — a family nobody could read is not a family with nothing open.
+ * The shallow path never calls `collectSecurityAlerts`, so this is what keeps its Dependabot records from being
+ * thrown away — they are in hand, and counting them costs nothing. The other two families are EMPTY OBJECTS,
+ * which is the block's own way of saying nobody looked: `open` absent rather than zero, on the rule
+ * `OpenAlertCount` states. A stale repository's code-scanning posture was not read, and reporting it as clean
+ * would be the one thing this codebase refuses to do with an absence.
  */
-function dependabotCount(records: readonly unknown[] | undefined): { open?: number; bySeverity?: Partial<Record<AlertSeverity, number>>; detail?: string } {
+function dependabotOnly(records: readonly unknown[] | undefined): SecurityAlertEvidence {
   if (records === undefined) {
-    return { detail: `dependabot/alerts ${FEATURE_NOT_ENABLED}` };
+    return { dependabot: { detail: `dependabot/alerts ${FEATURE_NOT_ENABLED}` }, codeScanning: {}, secretScanning: {} };
   }
-  return { open: records.length, bySeverity: countBySeverity(records.map((record) => dependabotSeverity(record))) };
+  return {
+    dependabot: { open: records.length, bySeverity: countBySeverity(records.map((record) => dependabotSeverity(record))) },
+    codeScanning: {},
+    secretScanning: {}
+  };
 }
 
 async function runCollect(configuration: Configuration, argv: Arguments): Promise<number> {
