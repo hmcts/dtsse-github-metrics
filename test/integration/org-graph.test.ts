@@ -262,9 +262,7 @@ describe("statement chunking", () => {
       BEGIN UPDATE statement_probe SET counted = counted + 1; RETURN NULL; END;
       $$ LANGUAGE plpgsql`);
     await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS probe_touch ON org_team_repositories");
-    await prisma.$executeRawUnsafe(
-      "CREATE TRIGGER probe_touch AFTER UPDATE ON org_team_repositories FOR EACH STATEMENT EXECUTE FUNCTION count_statement()"
-    );
+    await prisma.$executeRawUnsafe("CREATE TRIGGER probe_touch AFTER UPDATE ON org_team_repositories FOR EACH STATEMENT EXECUTE FUNCTION count_statement()");
 
     const summary = await recordOrgTeamRepositories(ORGANIZATION, SECOND, edges, new Set(["platform-operations"]));
 
