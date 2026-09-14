@@ -216,6 +216,67 @@ describe("statement chunking", () => {
     expect(summary.superseded).toBe(5000);
     expect(await liveTeamRepositories(ORGANIZATION)).toEqual([]);
   });
+
+  /**
+   * THE REGRESSION NET FOR THE BUG THAT FROZE THE GRAPH FOR FIVE DAYS.
+   *
+   * `collect-org` failed on every scheduled AAT run from 2026-09-09 with "a query cannot be executed on an
+   * expired transaction": the unchanged-row pass built one `updateMany` with an `OR` per key, so PostgreSQL
+   * evaluated 6,662 disjuncts against every candidate row. Measured over the real live set, the two shapes are
+   * 23,310 ms and 326 ms — 71 times — and Prisma's interactive-transaction ceiling is 5 s, so the write did not
+   * merely slow down, it aborted and wrote nothing.
+   *
+   * ASSERTED AS A STATEMENT COUNT AND NOT AS A DURATION, and the reason is worth recording because the obvious
+   * version of this case does not work. The correctness of the touch pass is already covered — `lastObservedAt`
+   * moving with `observedAt` held still is two cases above — so a third correctness case would pass just as well
+   * with the quadratic shape restored, which is exactly what shipped. What separates the two is cost.
+   *
+   * BUT A TIMING BOUND CANNOT SEPARATE THEM HERE, which was found by trying it. `inChunks` splits the old
+   * `updateMany` into 4,000-row batches, so the `OR` chain is never longer than 4,000 disjuncts however large the
+   * estate — the quadratic term is capped and the whole pass finishes in about 5 s locally at any row count. Two
+   * attempts at a duration passed under both shapes: 8,000 rows measured 2.0 s against 34 ms, and 15,000 measured
+   * 4.6 s against a bound of 20 s. A bound tight enough to fail the chunked `OR` would be flaky on CI.
+   *
+   * The statement count is the claim itself and is exact. One `unnest` is ONE statement whatever the estate does;
+   * a chunked `OR` is one per 4,000 rows, so 9,000 rows is three of them. That is what the AAT figures are a
+   * consequence of rather than a proxy for: the real 6,662 live rows took 23.3 s as an `OR` chain and 326 ms
+   * through `unnest`, past Prisma's 5 s interactive-transaction ceiling, and the graph stopped being collected.
+   */
+  it("should stamp every unchanged row in ONE statement rather than one per chunk", async () => {
+    const edges = Array.from({ length: 9000 }, (_unused, at) => ({
+      teamSlug: "platform-operations",
+      repository: `repository-${String(at).padStart(5, "0")}`,
+      access: "admin" as const
+    }));
+    await recordOrgTeamRepositories(ORGANIZATION, FIRST, edges, new Set(["platform-operations"]));
+
+    // A STATEMENT-LEVEL TRIGGER counts the UPDATE statements, rather than `pg_stat_statements`: that extension
+    // needs `shared_preload_libraries`, which the compose container does not set and CI therefore would not
+    // either. `FOR EACH STATEMENT` fires once per statement whatever the row count, which is precisely the
+    // distinction being asserted.
+    await prisma.$executeRawUnsafe("CREATE TABLE IF NOT EXISTS statement_probe (counted bigint NOT NULL DEFAULT 0)");
+    await prisma.$executeRawUnsafe("DELETE FROM statement_probe");
+    await prisma.$executeRawUnsafe("INSERT INTO statement_probe (counted) VALUES (0)");
+    await prisma.$executeRawUnsafe(`
+      CREATE OR REPLACE FUNCTION count_statement() RETURNS trigger AS $$
+      BEGIN UPDATE statement_probe SET counted = counted + 1; RETURN NULL; END;
+      $$ LANGUAGE plpgsql`);
+    await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS probe_touch ON org_team_repositories");
+    await prisma.$executeRawUnsafe(
+      "CREATE TRIGGER probe_touch AFTER UPDATE ON org_team_repositories FOR EACH STATEMENT EXECUTE FUNCTION count_statement()"
+    );
+
+    const summary = await recordOrgTeamRepositories(ORGANIZATION, SECOND, edges, new Set(["platform-operations"]));
+
+    const stamped = await prisma.$queryRawUnsafe<{ counted: bigint }[]>("SELECT counted FROM statement_probe");
+    await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS probe_touch ON org_team_repositories");
+    await prisma.$executeRawUnsafe("DROP TABLE IF EXISTS statement_probe");
+
+    // Every row unchanged, which is the steady state of a daily collection over an estate that barely moves.
+    expect(summary).toMatchObject({ inserted: 0, changed: 0, superseded: 0, unchanged: 9000 });
+    // ONE. Three under the shape this replaced, at 4,000 rows a chunk.
+    expect(Number(stamped[0]?.counted ?? 0)).toBe(1);
+  });
 });
 
 describe("scoped supersession", () => {
