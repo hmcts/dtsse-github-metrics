@@ -658,3 +658,107 @@ describe("the warmer", () => {
     }
   });
 });
+
+/**
+ * What the TEAM half of the report sends, which is where two bugs and one new section meet.
+ *
+ * `/teams/<team>` was throwing for every team on the estate before this: `teamRows` emitted neither `actors` nor
+ * `unavailable`, and `src/app/teams/[team]/page.tsx` calls `.length` on the first — a TypeError caught as
+ * `notFound()`, so the page reported "no such team" for every team there is. A component test could not see it,
+ * because it is handed rows somebody wrote by hand; only the seam between the report layer and the contract shows
+ * it. Pre-existing on master and unrelated to the table rework, fixed here because the ways-of-working section is
+ * added to that same page and would otherwise be unreachable.
+ */
+/**
+ * A collected state whose merge gate is readable, requiring two approvals and one status check.
+ *
+ * Shared because two cases need it and for one reason worth stating: a payload with NO `mergeGate` is not an
+ * "empty" fixture — the row it produces carries `detail`, which is what `unavailable` counts and what keeps every
+ * gate figure absent. So a case about the ways-of-working denominators has to state a real gate or it is asserting
+ * against a repository the report could not grade.
+ */
+function readableGate() {
+  return {
+    defaultBranch: "main",
+    mergeGate: {
+      gate: {
+        branch: "main",
+        protected: true,
+        rulesObserved: true,
+        pullRequests: [{ requiredApprovingReviewCount: 2, dismissStaleReviewsOnPush: true, requireCodeOwnerReview: false, requireLastPushApproval: false }],
+        statusChecks: [{ contexts: ["build"], strictRequiredStatusChecksPolicy: true }],
+        restrictsDeletions: true,
+        blocksForcePushes: true,
+        requiresLinearHistory: false,
+        restrictsBranchNames: false,
+        unmodelledRules: []
+      }
+    }
+  };
+}
+
+describe("the team rows", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  it("should send actors as a LIST and unavailable as a count, which the team page reads", async () => {
+    // THE TWO FIELDS WHOSE ABSENCE BROKE THE PAGE. `actors` is typed `TeamActorRow[]` on `TeamDetail` and the
+    // page calls `.length` on it; `unavailable` feeds the readiness donut and `lib/team.ts`.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { team: string; actors?: unknown; unavailable?: number }[];
+
+    expect(cards[0]?.actors).toEqual([]);
+    expect(cards[0]?.unavailable).toBe(1);
+  });
+
+  it("should count a repository whose gate could not be read as unavailable rather than as reported", async () => {
+    // `unavailable` counts the rows carrying `detail`, and a row carries one when there is no merge gate to grade
+    // — whether nothing was collected at all or the collection could not read the gate. Both fixtures here are
+    // collected; only one has a readable gate, which is what separates them.
+    await graphRepository("gated", new Date(Date.UTC(2026, 7, 20)));
+    await graphRepository("ungated", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.createMany({
+      data: [
+        { organization: ORGANIZATION, repository: "gated", fetchedAt: new Date(), payload: readableGate() },
+        // Collected, and GitHub would not disclose the rules — a real state, and a different one from uncollected.
+        { organization: ORGANIZATION, repository: "ungated", fetchedAt: new Date(), payload: { defaultBranch: "main" } }
+      ]
+    });
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { repositories: number; unavailable?: number }[];
+
+    expect(cards[0]).toMatchObject({ repositories: 2, unavailable: 1 });
+  });
+
+  it("should count the ways of working over what was MEASURED, not over the holding", async () => {
+    // The denominator is the point. One repository's gate is readable and requires two approvals; the other was
+    // never collected, so it has no answer — and counting it against the holding would report a repository nobody
+    // could read as one that fails to enforce review.
+    await graphRepository("gated", new Date(Date.UTC(2026, 7, 20)));
+    await graphRepository("unread", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({
+      data: { organization: ORGANIZATION, repository: "gated", fetchedAt: new Date(), payload: readableGate() }
+    });
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { practice?: Record<string, number> }[];
+
+    expect(cards[0]?.practice).toMatchObject({
+      // ONE, not two: the uncollected repository is not in the denominator at all.
+      gates_measured: 1,
+      enforces_review: 1,
+      requires_multiple_reviews: 1,
+      checks_measured: 1,
+      enforces_checks: 1
+    });
+  });
+
+  it("should count no ways-of-working figure for a team whose gates were all unreadable", async () => {
+    // Every denominator zero rather than every count zero, which is what lets the page say "not measured" instead
+    // of printing "0 of 0" — a figure that reads as a finding about the team.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { practice?: Record<string, number> }[];
+
+    expect(cards[0]?.practice).toMatchObject({ gates_measured: 0, checks_measured: 0, unreviewed_measured: 0 });
+  });
+});

@@ -8,8 +8,8 @@
 
 import { describe, expect, it } from "vitest";
 import { owners } from "@/lib/rows";
-import { holdings, people, unreported } from "@/lib/team";
-import type { TeamDetail } from "@/lib/types";
+import { holdings, type PracticeFigure, people, practiceFigures, unreported } from "@/lib/team";
+import type { TeamDetail, TeamPractice } from "@/lib/types";
 
 function team(detail: Partial<TeamDetail> = {}): TeamDetail {
   return {
@@ -72,6 +72,85 @@ describe("unreported", () => {
 
   it("says nothing at all where every repository was reported", () => {
     expect(unreported(team())).toBeUndefined();
+  });
+});
+
+/**
+ * The ways-of-working figures, which moved here from the repositories table.
+ *
+ * What these are mostly about is the DENOMINATOR. Each figure is out of what was measured rather than what the
+ * team holds, because a repository whose merge gate GitHub withheld has no answer — and counting it against the
+ * holding would report a missing permission as a repository that fails its team.
+ */
+describe("practiceFigures", () => {
+  function practice(overrides: Partial<TeamPractice> = {}): TeamPractice {
+    return {
+      gates_measured: 10,
+      enforces_review: 8,
+      requires_multiple_reviews: 3,
+      checks_measured: 10,
+      enforces_checks: 6,
+      unreviewed_measured: 7,
+      unreviewed_clear: 4,
+      unreviewed_within: 2,
+      unreviewed_above: 1,
+      merged_pull_requests: 120,
+      direct_commits: 4,
+      ...overrides
+    };
+  }
+
+  function figureOf(label: string, given = practice()): PracticeFigure {
+    const found = practiceFigures(given).find((figure) => figure.label === label);
+    if (found === undefined) {
+      throw new Error(`${label} was not reported at all`);
+    }
+    return found;
+  }
+
+  it("states every count out of what was MEASURED, never out of the holding", () => {
+    // Eight of the ten readable gates, not eight of however many the team owns: two repositories whose gate
+    // nobody could read are not two repositories that fail to enforce review.
+    expect(figureOf("Enforces review").value).toBe("8 of 10");
+    expect(figureOf("Enforces CI").value).toBe("6 of 10");
+    expect(figureOf("Substantial merges reviewed").value).toBe("4 of 7");
+  });
+
+  it("computes no share, so nothing here is a figure two teams could be ordered by", () => {
+    // The boundary `TeamsList` states: per-team counts are permitted and a team score is not. A percentage is
+    // the thing a reader would sort on, so none is produced — the reader compares 8 of 10 with 38 of 40.
+    for (const figure of practiceFigures(practice())) {
+      expect(`${figure.value} ${figure.detail}`).not.toMatch(/%|score|rank|average|overall/i);
+    }
+  });
+
+  it("says a figure was not measured rather than printing 0 of 0", () => {
+    // "0 of 0" reads as a finding about the team. A gate nobody could read is not a gate requiring nothing —
+    // the same distinction the row's own absent-means-unmeasured rule keeps.
+    const unread = practice({ gates_measured: 0, enforces_review: 0, requires_multiple_reviews: 0, checks_measured: 0, enforces_checks: 0 });
+
+    expect(figureOf("Enforces review", unread).value).toBe("not measured");
+    expect(figureOf("Enforces review", unread).detail).toBe("no merge gate could be read");
+    expect(figureOf("Enforces CI", unread).value).toBe("not measured");
+  });
+
+  it("says too few merges rather than nothing where the policy graded no repository", () => {
+    // `minimum_merges` declines to grade thin evidence, which is a different answer from a team whose merges all
+    // went unreviewed.
+    const thin = practice({ unreviewed_measured: 0, unreviewed_clear: 0, unreviewed_within: 0, unreviewed_above: 0 });
+
+    expect(figureOf("Substantial merges reviewed", thin).value).toBe("not measured");
+    expect(figureOf("Substantial merges reviewed", thin).detail).toBe("too few merges to grade");
+  });
+
+  it("keeps the allowance apart from nothing having merged unreviewed", () => {
+    // The policy's own three words. `within` is the allowance forgiving what it was configured to forgive, and
+    // folding it into a pass would report a habit as a clean result.
+    expect(figureOf("Substantial merges reviewed").detail).toBe("2 within the allowance, 1 above it");
+  });
+
+  it("carries the stronger review requirement as detail rather than as a second verdict", () => {
+    expect(figureOf("Enforces review").detail).toBe("3 require two or more approvals");
   });
 });
 

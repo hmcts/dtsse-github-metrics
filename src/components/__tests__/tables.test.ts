@@ -13,6 +13,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { ActorsTable } from "@/components/ActorsTable";
 import { TeamActorsTable } from "@/components/TeamActorsTable";
+import { TeamPractice, TeamThroughput } from "@/components/TeamPractice";
 import { TeamsList } from "@/components/TeamsList";
 
 describe("ActorsTable", () => {
@@ -221,6 +222,73 @@ describe("TeamsList", () => {
   });
 
   it("contains no emoji: a label is a word and a colour", () => {
+    expect(markup).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+});
+
+/**
+ * The ways-of-working panel, which is the material that moved off the repositories table.
+ *
+ * What these assert is the boundary rather than the arithmetic — `lib/__tests__/team.test.ts` grades the figures.
+ * This is about what the panel refuses to do: state a share, tone a figure, or reduce a team to one number.
+ */
+describe("TeamPractice", () => {
+  const PRACTICE = {
+    gates_measured: 10,
+    enforces_review: 8,
+    requires_multiple_reviews: 3,
+    checks_measured: 10,
+    enforces_checks: 6,
+    unreviewed_measured: 7,
+    unreviewed_clear: 4,
+    unreviewed_within: 2,
+    unreviewed_above: 1,
+    merged_pull_requests: 120,
+    direct_commits: 4
+  };
+
+  const markup = renderToStaticMarkup(createElement(TeamPractice, { practice: PRACTICE }));
+
+  it("states each figure over its own denominator", () => {
+    expect(markup).toContain("8 of 10");
+    expect(markup).toContain("6 of 10");
+    expect(markup).toContain("4 of 7");
+  });
+
+  it("names every figure it draws, so no count is printed without its question", () => {
+    for (const label of ["Enforces review", "Enforces CI", "Substantial merges reviewed"]) {
+      expect(markup).toContain(label);
+    }
+  });
+
+  it("TONES NOTHING, which is the whole difference from the assurance columns", () => {
+    // `assessment.ts` already grades these conditions per repository and the readiness donut above carries its
+    // verdict. Colouring them again here would be a second opinion on a judgement already given, and colouring
+    // them per TEAM would be the team score this page does not have.
+    expect(markup).not.toMatch(/rag-|emerald|amber|rose|text-green|text-red/);
+  });
+
+  it("computes no share and offers nothing to sort by", () => {
+    expect(markup).not.toContain("%");
+    expect(markup).not.toContain("<button");
+  });
+
+  it("reports the throughput the figures are read against", () => {
+    // 2 of 40 gates unenforced reads differently for a team that merged 400 changes and one that merged none.
+    const throughput = renderToStaticMarkup(createElement(TeamThroughput, { practice: PRACTICE }));
+
+    expect(throughput).toContain("120 merged pull requests");
+    expect(throughput).toContain("4 direct commits");
+  });
+
+  it("pluralises the throughput against its own nouns", () => {
+    const single = renderToStaticMarkup(createElement(TeamThroughput, { practice: { ...PRACTICE, merged_pull_requests: 1, direct_commits: 1 } }));
+
+    expect(single).toContain("1 merged pull request ");
+    expect(single).toContain("1 direct commit ");
+  });
+
+  it("contains no emoji: the word is the information", () => {
     expect(markup).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 });

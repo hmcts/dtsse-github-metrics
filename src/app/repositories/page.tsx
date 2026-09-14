@@ -109,7 +109,11 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
         />
       </div>
 
-      <Section heading="Repositories" detail={window} action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}>
+      <Section
+        heading="Repositories"
+        detail={`${window}, most recently pushed first`}
+        action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}
+      >
         {repositories.length === 0 ? (
           <EmptyState
             message="No repository is configured for this organisation."
@@ -119,6 +123,20 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
           <RepositoriesTable rows={repositories} weeks={weeks} />
         )}
       </Section>
+
+      {/* WHICH CRITERIA THIS TABLE DOES NOT COVER, stated on the page and not only in the code.
+          A reader holding these columns against the published criteria will count four where there are seven,
+          and the honest answer is that three of them cannot be evidenced from GitHub — so the page says which
+          and why, rather than leaving the gap to be read as an oversight or, worse, filled with a proxy. */}
+      <p className="text-xs text-slate-500">
+        These columns cover four of the seven coding-in-the-open assurance criteria. Three are not reported:{" "}
+        <strong className="text-slate-400">no secrets or sensitive detail</strong> and <strong className="text-slate-400">secure by design</strong> both need
+        human judgement — a threat model, a review of what a service exposes — and secret scanning evidences neither, since it matches known credential patterns
+        and says nothing about a hostname or a customer name. A <strong className="text-slate-400">security contact and intake route</strong> is collectable and
+        is deliberately left out: GitHub reports it as present for every repository in the organisation, inherited from the{" "}
+        <code className="text-slate-400">.github</code> repository, so it evidences one organisation-level policy rather than anything about an individual
+        repository. Readiness for AI enablement is a different question and is reported per team.
+      </p>
     </div>
   );
 }

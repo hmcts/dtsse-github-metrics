@@ -663,11 +663,51 @@ export interface TeamActorRow {
   contributions: number;
 }
 
+/**
+ * How one team works, counted over the repositories it owns.
+ *
+ * COUNTS OVER A STATED DENOMINATOR, never a score. Each `*_measured` field is the denominator its neighbours are
+ * out of, and it is deliberately NOT the team's repository count: a repository whose gate GitHub withheld has no
+ * answer, so dividing by the holding would report an unreadable gate as a repository that fails.
+ *
+ * This is the ways-of-working material — the merge gate and review mechanics — which lives on `/teams` because
+ * that is where a reader asks how a team works. `/repositories` asks a different question, whether a repository
+ * meets the assurance criteria, and carries `AssuranceReport` instead.
+ *
+ * Nothing here is combined into a team label and nothing orders the cards, which is the boundary `TeamsList`
+ * states: the cards arrive largest-holding-first, and a holding is what a team is on the hook for rather than a
+ * grade.
+ */
+export interface TeamPractice {
+  /** How many of the team's repositories had a readable merge gate. The denominator for the two below. */
+  gates_measured: number;
+  enforces_review: number;
+  requires_multiple_reviews: number;
+  checks_measured: number;
+  enforces_checks: number;
+  /** How many the readiness policy graded for unreviewed substantial merging. */
+  unreviewed_measured: number;
+  unreviewed_clear: number;
+  /** The allowance forgiving what it was configured to forgive, which is not the same as nothing merging. */
+  unreviewed_within: number;
+  unreviewed_above: number;
+  merged_pull_requests: number;
+  direct_commits: number;
+}
+
 export interface TeamRow {
   team: string;
   repositories: number;
   unavailable: number;
+  /**
+   * How many people authored a reported merge in this team's repositories.
+   *
+   * A NUMBER here and a LIST on `TeamDetail`, which is not an inconsistency to tidy: a card prints a count and
+   * the team page lists the people. Contributor attribution is not assembled yet, so this is 0 and that is 0
+   * everywhere rather than a figure nobody measured.
+   */
   actors: number;
+  practice?: TeamPractice;
   labels: Record<string, number>;
 }
 
@@ -676,5 +716,7 @@ export interface TeamDetail {
   repositories: RepositoryRow[];
   actors: TeamActorRow[];
   unavailable: number;
+  /** How this team works, which is what the team page carries and `/repositories` does not. */
+  practice?: TeamPractice;
   labels: Record<string, number>;
 }

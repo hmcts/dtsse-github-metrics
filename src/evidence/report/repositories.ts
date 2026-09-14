@@ -320,7 +320,7 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
  * teams, and both numbers are right.
  */
 export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  const rows = (await repositoryRows(configuration, weeks, reference)) as { team?: string; teams?: string[]; owner_kind?: string; readiness?: string }[];
+  const rows = (await repositoryRows(configuration, weeks, reference)) as TeamAggregableRow[];
   const names = teamDisplayNames(configuration);
   // The teams come from the cohort now, not from the file. The file names only the teams somebody has overridden
   // an owner for, so iterating it would have reported a handful of cards for an estate of 154 teams.
@@ -347,10 +347,82 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
         // rather than prettifying the slug, because a generated title would read as a name somebody chose.
         display_name: names.get(identifier) ?? identifier,
         repositories: owned.length,
+        // BOTH OF THESE WERE MISSING, and their absence made `/teams/<team>` throw for every team on the estate:
+        // `TeamDetail.actors` is typed as a list and `src/app/teams/[team]/page.tsx` calls `.length` on it, so an
+        // absent field was a TypeError caught as `notFound()` — a page reporting "no such team" for every team
+        // there is. `unavailable` is read by the readiness donut on the same page and by `lib/team.ts`.
+        //
+        // `actors` is `[]` rather than a count: the contract types it as `TeamActorRow[]` and contributor
+        // attribution is not assembled yet, so an empty list is the honest shape. `overviewSummary` sends
+        // `actors: 0` for the same unbuilt figure because ITS contract types that one as a number.
+        actors: [],
+        unavailable: owned.filter((row) => row.detail !== undefined).length,
+        practice: teamPractice(owned),
         labels
       };
     })
   );
+}
+
+/** What the team aggregation reads off a repository row. */
+interface TeamAggregableRow {
+  team?: string;
+  teams?: string[];
+  owner_kind?: string;
+  readiness?: string;
+  detail?: string;
+  required_approving_reviews?: number;
+  required_status_checks?: number;
+  unreviewed_substantial?: string;
+  merged_pull_requests?: number;
+  direct_commits?: number;
+}
+
+/**
+ * How one team works, aggregated over the repositories it owns.
+ *
+ * PROPORTIONS OF A STATED DENOMINATOR, and not a score. Three shapes were possible — a count, a proportion, or a
+ * worst-case — and the choice matters because `TeamsList` is explicit that there is "no combined team label and no
+ * team score", and that ordering teams by a label count would be a ranking. So:
+ *
+ *   • NOT A WORST CASE. "This team's weakest repository requires no review" reduces a team to its worst holding,
+ *     which is a grade in everything but name, and it makes a team of forty repositories look worse than a team
+ *     of one for holding the same lapse.
+ *   • NOT A BARE COUNT ALONE. "12 enforce review" says nothing without the 40 beside it.
+ *   • A COUNT OVER A DENOMINATOR, which is what the readiness distribution already does on the same page: it
+ *     states how many of a team's repositories are in each state and stops. A reader compares 12 of 40 with
+ *     38 of 40 themselves, and nothing here computes a share, a percentage or a position.
+ *
+ * `measured` is the denominator and is NOT the team's repository count: a repository whose gate GitHub withheld
+ * has no answer, and dividing by the holding would report an unreadable gate as a repository that fails. Where a
+ * figure is unmeasured for every repository the count is absent rather than zero, which `stripAbsent` then drops.
+ *
+ * NOTHING HERE IS ORDERED BY, which `cohortTeams` guarantees rather than this function: the cards arrive
+ * largest-holding-first and that is a count of what a team is on the hook for, not a grade.
+ */
+function teamPractice(owned: readonly TeamAggregableRow[]): Record<string, unknown> {
+  const reviewed = owned.filter((row) => row.required_approving_reviews !== undefined);
+  const checked = owned.filter((row) => row.required_status_checks !== undefined);
+  const graded = owned.filter((row) => row.unreviewed_substantial !== undefined);
+  return {
+    // How many of the team's gates were readable at all, so every figure below has its denominator stated.
+    gates_measured: reviewed.length,
+    enforces_review: reviewed.filter((row) => (row.required_approving_reviews ?? 0) >= 1).length,
+    requires_multiple_reviews: reviewed.filter((row) => (row.required_approving_reviews ?? 0) >= 2).length,
+    checks_measured: checked.length,
+    enforces_checks: checked.filter((row) => (row.required_status_checks ?? 0) >= 1).length,
+    // The policy's own verdict on unreviewed substantial merging, counted in its own three words rather than
+    // folded into a pass and a fail: `within` is the allowance forgiving what it was configured to forgive,
+    // which is a different fact from nothing having merged unreviewed at all.
+    unreviewed_measured: graded.length,
+    unreviewed_clear: graded.filter((row) => row.unreviewed_substantial === "none").length,
+    unreviewed_within: graded.filter((row) => row.unreviewed_substantial === "within").length,
+    unreviewed_above: graded.filter((row) => row.unreviewed_substantial === "above").length,
+    // Throughput, stated because the figures above are unreadable without it: 2 of 40 gates unenforced reads
+    // differently for a team that merged 400 changes and one that merged none.
+    merged_pull_requests: owned.reduce((total, row) => total + (row.merged_pull_requests ?? 0), 0),
+    direct_commits: owned.reduce((total, row) => total + (row.direct_commits ?? 0), 0)
+  };
 }
 
 /** When the last collection landed, for the notice the dashboard shows above every page. */
