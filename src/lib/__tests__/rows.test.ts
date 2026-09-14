@@ -569,7 +569,7 @@ describe("the assurance grade's presentation", () => {
 
   it("names a column per criterion, in the criteria's own order", () => {
     expect(ASSURANCE_CRITERIA).toEqual(["named-owner", "automated-hygiene", "patching", "maintained"]);
-    expect(ASSURANCE_CRITERIA.map((criterion) => ASSURANCE_LABEL[criterion])).toEqual(["Team owner", "Hygiene", "Oldest alert", "Maintained"]);
+    expect(ASSURANCE_CRITERIA.map((criterion) => ASSURANCE_LABEL[criterion])).toEqual(["Code owner", "Hygiene", "Oldest alert", "Maintained"]);
   });
 
   it("carries no emoji in any label: the word is the information", () => {

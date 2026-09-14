@@ -149,7 +149,7 @@ function criterionCells(label: string): (HTMLElement | undefined)[] {
 /**
  * A column's header cell, matched on the WHOLE name rather than a substring.
  *
- * Anchored because two headings are now prefixes of others: `Team` of `Team owner`, and `Maintained` would be of
+ * Anchored because two headings are now prefixes of others: `Team` of `Code owner`, and `Maintained` would be of
  * anything beginning with it. An unanchored match throws "found multiple elements" — which is at least loud, but
  * a substring that matched exactly one heading by luck would silently assert against the wrong column.
  */
@@ -209,7 +209,7 @@ describe("RepositoriesTable sorting", () => {
     expect(sortBy("Assurance").at(-1)).toBe("api");
     // The four criteria. `web` meets the owner criterion and `docs` does not; hygiene and maintenance are
     // crossed over between them, so a header reading the wrong criterion sorts the pair the other way round.
-    expect(sortBy("Team owner")).toEqual(["web", "docs", "api"]);
+    expect(sortBy("Code owner")).toEqual(["web", "docs", "api"]);
     expect(sortBy("Hygiene")).toEqual(["docs", "web", "api"]);
     // The AGE, ascending. `web` has 120 days; `docs` has nothing severe open and `api` was never collected, and
     // BOTH sort last — the column orders the repositories that have an alert, and "no alert open" is not an
@@ -223,9 +223,9 @@ describe("RepositoriesTable sorting", () => {
   it("keeps the unreadable answer last when a criterion column is reversed", () => {
     mount();
 
-    sortBy("Team owner");
-    expect(sortBy("Team owner")).toEqual(["docs", "web", "api"]);
-    expect(announced("Team owner")).toBe("descending");
+    sortBy("Code owner");
+    expect(sortBy("Code owner")).toEqual(["docs", "web", "api"]);
+    expect(announced("Code owner")).toBe("descending");
 
     sortBy("Hygiene");
     expect(sortBy("Hygiene")).toEqual(["web", "docs", "api"]);
@@ -235,16 +235,16 @@ describe("RepositoriesTable sorting", () => {
   it("reverses the column already sorted, and opens any other one ascending", () => {
     mount();
 
-    expect(sortBy("Team owner")).toEqual(["web", "docs", "api"]);
-    expect(announced("Team owner")).toBe("ascending");
+    expect(sortBy("Code owner")).toEqual(["web", "docs", "api"]);
+    expect(announced("Code owner")).toBe("ascending");
 
-    expect(sortBy("Team owner")).toEqual(["docs", "web", "api"]);
-    expect(announced("Team owner")).toBe("descending");
+    expect(sortBy("Code owner")).toEqual(["docs", "web", "api"]);
+    expect(announced("Code owner")).toBe("descending");
 
     // A different column starts from its own top rather than inheriting the reversal.
     expect(sortBy("Repository")).toEqual(["api", "docs", "web"]);
     expect(announced("Repository")).toBe("ascending");
-    expect(announced("Team owner")).toBe("none");
+    expect(announced("Code owner")).toBe("none");
   });
 
   it("keeps a repository with no last push last in both directions", () => {
@@ -260,7 +260,7 @@ describe("RepositoriesTable sorting", () => {
   it("sorts without navigating: how one reader is looking at the list is not in the URL", () => {
     mount();
 
-    sortBy("Team owner");
+    sortBy("Code owner");
 
     expect(replaced).toEqual([]);
   });
@@ -280,7 +280,7 @@ describe("RepositoriesTable columns", () => {
       "Last pushed",
       "Visibility",
       "Assurance",
-      "Team owner",
+      "Code owner",
       "Hygiene",
       "Oldest alert",
       "Maintained",
@@ -291,10 +291,10 @@ describe("RepositoriesTable columns", () => {
   it("prints Yes, No and a dash, never a zero for a criterion that was not read", () => {
     mount();
 
-    expect(cellOf("web", "Team owner")?.textContent).toBe("Yes");
-    expect(cellOf("docs", "Team owner")?.textContent).toBe("No");
+    expect(cellOf("web", "Code owner")?.textContent).toBe("Yes");
+    expect(cellOf("docs", "Code owner")?.textContent).toBe("No");
     // `api` carries no assurance block at all, which is a repository nothing has been collected for.
-    expect(cellOf("api", "Team owner")?.textContent).toBe("-");
+    expect(cellOf("api", "Code owner")?.textContent).toBe("-");
   });
 
   it("prints the alert AGE with no threshold and no colour", () => {
@@ -333,7 +333,7 @@ describe("RepositoriesTable columns", () => {
   it("centres the three outcome columns under centred headers", () => {
     mount();
 
-    for (const label of ["Team owner", "Hygiene", "Maintained"]) {
+    for (const label of ["Code owner", "Hygiene", "Maintained"]) {
       for (const cell of criterionCells(label)) {
         expect(cell?.className).toContain("text-center");
       }
@@ -349,10 +349,10 @@ describe("RepositoriesTable columns", () => {
     // the information, so the colour is support rather than the answer.
     mount();
 
-    expect(cellOf("web", "Team owner")?.outerHTML).toContain("text-rag-green");
-    expect(cellOf("docs", "Team owner")?.outerHTML).toContain("text-rag-amber");
+    expect(cellOf("web", "Code owner")?.outerHTML).toContain("text-rag-green");
+    expect(cellOf("docs", "Code owner")?.outerHTML).toContain("text-rag-amber");
     // An unreadable criterion stays slate: a missing permission is not a bad result.
-    expect(cellOf("api", "Team owner")?.outerHTML).toContain("text-slate-500");
+    expect(cellOf("api", "Code owner")?.outerHTML).toContain("text-slate-500");
   });
 
   // Read off the whole cell rather than its own class list: the readiness cell three columns to the
@@ -374,14 +374,14 @@ describe("RepositoriesTable columns", () => {
 });
 
 describe("RepositoriesTable production column", () => {
-  it("badges a production repository and leaves every other cell empty", () => {
+  it("answers Yes, No or a dash, as every other governance column on the row does", () => {
     mount();
 
-    expect(productionCell("web")?.textContent).toBe("Production");
-    // A repository the list was read for and does not name, and one whose list could not be read
-    // at all: both cells are empty, because there is no non-production badge to draw.
-    expect(productionCell("docs")?.textContent).toBe("");
-    expect(productionCell("api")?.textContent).toBe("");
+    expect(productionCell("web")?.textContent).toBe("Yes");
+    // Read the list and it does not name this one: that is an answer, and No says it.
+    expect(productionCell("docs")?.textContent).toBe("No");
+    // The list could not be read at all, which is not the same claim and must not read as No.
+    expect(productionCell("api")?.textContent).toBe("-");
   });
 
   it("holds an unread answer back from both ends of its own sort", () => {

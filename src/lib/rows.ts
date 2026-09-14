@@ -382,7 +382,7 @@ export const ASSURANCE_CRITERIA: readonly AssuranceCriterion[] = ["named-owner",
 
 /** The heading each criterion's column carries, in the criteria's own words rather than the field's. */
 export const ASSURANCE_LABEL: Record<AssuranceCriterion, string> = {
-  "named-owner": "Team owner",
+  "named-owner": "Code owner",
   "automated-hygiene": "Hygiene",
   patching: "Oldest alert",
   maintained: "Maintained"

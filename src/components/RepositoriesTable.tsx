@@ -115,7 +115,7 @@ const COLUMNS: readonly Column[] = [
   })),
   // Kept from the old table, and the only one of the eight that was both populated and not ways-of-working:
   // whether a repository deploys to production qualifies every assurance answer beside it.
-  { key: "production", label: "Production", read: (row) => answerOrder(row.production) }
+  { key: "production", label: "Production", align: "center", read: (row) => answerOrder(row.production) }
 ];
 
 export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRow[]; weeks: number }) {
@@ -284,11 +284,11 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
                       <Outcome key={criterion} result={criterionResult(row, criterion)} />
                     )
                   )}
-                  {/* Empty for a repository the list does not name and for one it could not be read
-                      for alike: there is no non-production badge, which `ProductionBadge` states. */}
-                  <td className="py-2 pr-3">
-                    <ProductionBadge production={row.production} />
-                  </td>
+                  {/* Yes/No/dash like every other governance answer on this row, rather than the badge the
+                      entity headers carry: in a column of columns, a lone badge reads as decoration and its
+                      absence reads as an empty cell rather than as "no". The dash keeps "not in the list" apart
+                      from "the list could not be read", which a blank could not say. */}
+                  <Answer value={row.production} />
                 </tr>
               ))}
             </tbody>
@@ -324,6 +324,20 @@ function activeChips(filters: ReturnType<typeof parseFilters>): { filter: Estate
  * The `title` is the judgement's own detail, which is what names the missing control on a composite: a reader
  * seeing "No" under Hygiene can hover for "not configured: Dependabot security updates".
  */
+/**
+ * A three-valued answer: Yes, No, or a dash where nothing could be read.
+ *
+ * UNCOLOURED, unlike `Outcome`. Deploying to production is an attribute rather than a verdict — it qualifies
+ * every assurance answer beside it without being one — so it is stated in the same words as the graded columns
+ * and deliberately not in their colours. A green Yes here would read as a criterion met.
+ *
+ * The dash is load-bearing: a repository the production list was read for and does not name answers No, and one
+ * whose list could not be read answers neither. A blank cell could not tell those apart.
+ */
+function Answer({ value }: { value?: boolean }) {
+  return <td className="py-2 pr-3 text-center text-slate-300">{value === undefined ? ABSENT : value ? "Yes" : "No"}</td>;
+}
+
 function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: string } }) {
   const outcome = result?.outcome;
   return (
