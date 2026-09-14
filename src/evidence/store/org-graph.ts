@@ -100,6 +100,65 @@ async function inChunks<Row>(rows: readonly Row[], write: (chunk: Row[]) => Prom
   }
 }
 
+/**
+ * Stamps `last_observed_at` or `superseded_at` on many keys, in ONE statement per table, through `unnest`.
+ *
+ * THIS REPLACED A 6,662-WAY `OR` AND IT WAS NOT AN OPTIMISATION — `collect-org` had been failing outright in AAT
+ * since 2026-09-09, every scheduled run, with "a query cannot be executed on an expired transaction": Prisma's
+ * interactive-transaction ceiling is 5 s and the touch pass on `org_team_repositories` alone took 8.7 s. A hard
+ * failure, so `--tolerate-partial` could not rescue it, and the graph simply stopped being collected.
+ *
+ * MEASURED ON THE REAL ESTATE, both shapes, over the same 6,662 live rows:
+ *
+ *     one 6,662-way OR   23,310 ms
+ *     one unnest          326 ms
+ *
+ * 71 times faster, and the reason is planner arithmetic rather than luck. `updateMany({ where: { OR: [...] } })`
+ * emits one predicate per key, so PostgreSQL evaluates 6,662 disjuncts against every candidate row — quadratic in
+ * the estate. `unnest` builds a 6,662-row relation and hash-joins it against the index, which is linear. Raising
+ * the timeout instead would have bought one release: the walk is 8.7 s at 3,399 repositories today, and this
+ * change admits roughly 650 more.
+ *
+ * The parameter count is FIXED at four however large the estate grows, which is the second reason to prefer it —
+ * a `VALUES` list or an `OR` chain puts one placeholder per row into the statement text and eventually meets
+ * PostgreSQL's 65,535 int16 ceiling, which is what `MaximumRowsPerStatement` exists to keep the insert path under.
+ * Nothing here needs chunking at all.
+ *
+ * `syncPushedAt` below already used exactly this shape for exactly this reason. This generalises it rather than
+ * inventing anything, which is why the SQL is hand-written: the query API cannot express a join against a
+ * constructed relation, as that function's own comment records.
+ */
+async function stampByKey(
+  tx: GraphTransaction,
+  table: string,
+  column: "last_observed_at" | "superseded_at",
+  organization: string,
+  observedAt: Date,
+  keys: readonly Record<string, string>[]
+): Promise<void> {
+  if (keys.length === 0) {
+    return;
+  }
+  // Read off the FIRST key rather than passed in, so a caller cannot hand a column list that disagrees with the
+  // keys it is stamping. Every key in one call has the same shape by construction — they come from one plan.
+  const columns = Object.keys(keys[0] as Record<string, string>);
+  const values = columns.map((column) => keys.map((key) => key[column] as string));
+  // Interpolated, and both are CONSTANTS IN THIS CODEBASE rather than values from anywhere: `table` and `column`
+  // come from the six call sites below, and the keys themselves travel as parameters. That is the same
+  // distinction `ownershipFilesQuery` draws about the CODEOWNERS paths it interpolates.
+  const joins = columns.map((name) => `t.${name} = v.${name}`).join(" AND ");
+  const declarations = columns.map((_name, at) => `$${at + 3}::text[]`).join(", ");
+  const named = columns.join(", ");
+  await tx.$executeRawUnsafe(
+    `UPDATE ${table} AS t SET ${column} = $2
+     FROM (SELECT * FROM unnest(${declarations}) AS v(${named})) AS v
+     WHERE t.organization = $1 AND t.superseded_at IS NULL AND ${joins}`,
+    organization,
+    observedAt,
+    ...values
+  );
+}
+
 /** The single scope covering a table read in one walk, so the flat cases stay one-liners. */
 export const WholeOrganization = "";
 
@@ -239,11 +298,14 @@ export async function recordOrgTeams(organization: string, observedAt: Date, fac
         (key) => key.teamSlug,
         wholeOrganization(complete)
       );
-      if (plan.toClose.length > 0) {
-        await inChunks(plan.toClose, (chunk) =>
-          tx.orgTeam.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_teams",
+        "superseded_at",
+        organization,
+        observedAt,
+        plan.toClose.map((key) => ({ team_slug: key.teamSlug }))
+      );
       if (plan.toInsert.length > 0) {
         await inChunks(plan.toInsert, (chunk) =>
           tx.orgTeam.createMany({
@@ -259,11 +321,14 @@ export async function recordOrgTeams(organization: string, observedAt: Date, fac
           })
         );
       }
-      if (plan.toTouch.length > 0) {
-        await inChunks(plan.toTouch, (chunk) =>
-          tx.orgTeam.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_teams",
+        "last_observed_at",
+        organization,
+        observedAt,
+        plan.toTouch.map((key) => ({ team_slug: key.teamSlug }))
+      );
       return plan.summary;
     });
   } catch (error) {
@@ -303,11 +368,14 @@ export async function recordOrgTeamMemberships(
         (key) => `${key.teamSlug}\u0000${key.login}`,
         { scopeOf: (key) => key.teamSlug, observed: observed }
       );
-      if (plan.toClose.length > 0) {
-        await inChunks(plan.toClose, (chunk) =>
-          tx.orgTeamMembership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_team_memberships",
+        "superseded_at",
+        organization,
+        observedAt,
+        plan.toClose.map((key) => ({ team_slug: key.teamSlug, login: key.login }))
+      );
       if (plan.toInsert.length > 0) {
         await inChunks(plan.toInsert, (chunk) =>
           tx.orgTeamMembership.createMany({
@@ -323,11 +391,14 @@ export async function recordOrgTeamMemberships(
           })
         );
       }
-      if (plan.toTouch.length > 0) {
-        await inChunks(plan.toTouch, (chunk) =>
-          tx.orgTeamMembership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_team_memberships",
+        "last_observed_at",
+        organization,
+        observedAt,
+        plan.toTouch.map((key) => ({ team_slug: key.teamSlug, login: key.login }))
+      );
       return plan.summary;
     });
   } catch (error) {
@@ -365,11 +436,14 @@ export async function recordOrgTeamRepositories(
         (key) => `${key.teamSlug}\u0000${key.repository}`,
         { scopeOf: (key) => key.teamSlug, observed: observed }
       );
-      if (plan.toClose.length > 0) {
-        await inChunks(plan.toClose, (chunk) =>
-          tx.orgTeamRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_team_repositories",
+        "superseded_at",
+        organization,
+        observedAt,
+        plan.toClose.map((key) => ({ team_slug: key.teamSlug, repository: key.repository }))
+      );
       if (plan.toInsert.length > 0) {
         await inChunks(plan.toInsert, (chunk) =>
           tx.orgTeamRepository.createMany({
@@ -385,11 +459,14 @@ export async function recordOrgTeamRepositories(
           })
         );
       }
-      if (plan.toTouch.length > 0) {
-        await inChunks(plan.toTouch, (chunk) =>
-          tx.orgTeamRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_team_repositories",
+        "last_observed_at",
+        organization,
+        observedAt,
+        plan.toTouch.map((key) => ({ team_slug: key.teamSlug, repository: key.repository }))
+      );
       return plan.summary;
     });
   } catch (error) {
@@ -429,11 +506,14 @@ export async function recordOrgRepositories(
         (key) => key.repository,
         wholeOrganization(complete)
       );
-      if (plan.toClose.length > 0) {
-        await inChunks(plan.toClose, (chunk) =>
-          tx.orgRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_repositories",
+        "superseded_at",
+        organization,
+        observedAt,
+        plan.toClose.map((key) => ({ repository: key.repository }))
+      );
       if (plan.toInsert.length > 0) {
         await inChunks(plan.toInsert, (chunk) =>
           tx.orgRepository.createMany({
@@ -451,11 +531,14 @@ export async function recordOrgRepositories(
           })
         );
       }
-      if (plan.toTouch.length > 0) {
-        await inChunks(plan.toTouch, (chunk) =>
-          tx.orgRepository.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_repositories",
+        "last_observed_at",
+        organization,
+        observedAt,
+        plan.toTouch.map((key) => ({ repository: key.repository }))
+      );
       await syncPushedAt(tx, organization, facts);
       return plan.summary;
     });
@@ -515,11 +598,14 @@ export async function recordOrgPeople(organization: string, observedAt: Date, fa
         (key) => key.login,
         wholeOrganization(complete)
       );
-      if (plan.toClose.length > 0) {
-        await inChunks(plan.toClose, (chunk) =>
-          tx.orgPerson.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_people",
+        "superseded_at",
+        organization,
+        observedAt,
+        plan.toClose.map((key) => ({ login: key.login }))
+      );
       if (plan.toInsert.length > 0) {
         await inChunks(plan.toInsert, (chunk) =>
           tx.orgPerson.createMany({
@@ -535,11 +621,14 @@ export async function recordOrgPeople(organization: string, observedAt: Date, fa
           })
         );
       }
-      if (plan.toTouch.length > 0) {
-        await inChunks(plan.toTouch, (chunk) =>
-          tx.orgPerson.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "org_people",
+        "last_observed_at",
+        organization,
+        observedAt,
+        plan.toTouch.map((key) => ({ login: key.login }))
+      );
       return plan.summary;
     });
   } catch (error) {
@@ -597,11 +686,14 @@ export async function recordRepositoryOwnership(
         (key) => `${key.repository}\u0000${key.ownerKind}\u0000${key.owner}`,
         { scopeOf: (key) => key.repository, observed: observed }
       );
-      if (plan.toClose.length > 0) {
-        await inChunks(plan.toClose, (chunk) =>
-          tx.repositoryOwnership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { supersededAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "repository_ownership",
+        "superseded_at",
+        organization,
+        observedAt,
+        plan.toClose.map((key) => ({ repository: key.repository, owner_kind: key.ownerKind, owner: key.owner }))
+      );
       if (plan.toInsert.length > 0) {
         await inChunks(plan.toInsert, (chunk) =>
           tx.repositoryOwnership.createMany({
@@ -619,11 +711,14 @@ export async function recordRepositoryOwnership(
           })
         );
       }
-      if (plan.toTouch.length > 0) {
-        await inChunks(plan.toTouch, (chunk) =>
-          tx.repositoryOwnership.updateMany({ where: { organization, supersededAt: null, OR: chunk }, data: { lastObservedAt: observedAt } })
-        );
-      }
+      await stampByKey(
+        tx,
+        "repository_ownership",
+        "last_observed_at",
+        organization,
+        observedAt,
+        plan.toTouch.map((key) => ({ repository: key.repository, owner_kind: key.ownerKind, owner: key.owner }))
+      );
       return plan.summary;
     });
   } catch (error) {
