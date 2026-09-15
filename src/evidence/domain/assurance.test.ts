@@ -193,23 +193,65 @@ describe("the security-contact criterion", () => {
     // THE REASON IT IS EXCLUDED, asserted rather than only argued in a comment: a repository failing one graded
     // criterion is `partial` whether or not the security contact is met, so the always-true signal cannot flatter
     // it. Counted, the same repository would read three-of-four met instead of two-of-three.
-    const failing = subjectOf({ ownerKind: "person" });
+    const failing = subjectOf({ ownerKind: "person", ownerIsCurrentMember: false });
 
     expect(assuranceGrade(judgeAssurance(failing))).toBe(AssuranceGrade.Partial);
     expect(assuranceGrade(judgeAssurance({ ...failing, evidence: evidenceOf({ securityPolicy: false }) }))).toBe(AssuranceGrade.Partial);
   });
 });
 
+/**
+ * The named-owner criterion, which asks whether SOMEBODY WHO STILL WORKS HERE is accountable for the code.
+ *
+ * Not "is it a team". Any individual owner at all was `unmet` until 2026-09-15, on the reading that the criterion
+ * asks for a team — and measured on AAT that marked down 215 repositories whose named owner is a current member
+ * of the organisation, reporting 367 findings where there are 152.
+ */
 describe("the named-owner criterion", () => {
-  it("should be met by a team and unmet by one individual", () => {
-    // 206 repositories on this estate are one person's. That is the finding the criterion exists to state, so it
-    // is `unmet` rather than `unknown` — the ladder answered, and the answer is a person.
+  it("should be met by a team, whoever is currently in it", () => {
+    // A team needs no membership read at all: it is the criterion met whoever its members are, and asking about
+    // them would fail an emptied team for a criterion it satisfies.
     expect(outcomeOf(subjectOf({ ownerKind: "team" }), AssuranceCriterion.NamedOwner)).toBe(AssuranceOutcome.Met);
-    expect(outcomeOf(subjectOf({ ownerKind: "person" }), AssuranceCriterion.NamedOwner)).toBe(AssuranceOutcome.Unmet);
+    expect(detailOf(subjectOf({ ownerKind: "team" }), AssuranceCriterion.NamedOwner)).toBe("assigned to a team");
+  });
+
+  it("should be met by an individual who is still a member of the organisation", () => {
+    // A named person somebody can go and ask IS a named owner. 215 of this estate's 217 person-owned repositories
+    // are this case, and every one of them used to be reported as a finding.
+    const subject = subjectOf({ ownerKind: "person", ownerIsCurrentMember: true });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NamedOwner)).toBe(AssuranceOutcome.Met);
+    expect(detailOf(subject, AssuranceCriterion.NamedOwner)).toBe("assigned to an individual who is still a member of the organisation");
+  });
+
+  it("should be unmet where the only individual owner has left the organisation", () => {
+    // THE FINDING THE CRITERION EXISTS FOR, alongside the unowned bucket: code whose one named owner is gone has
+    // nobody accountable for it, and nothing else on the page says so.
+    const subject = subjectOf({ ownerKind: "person", ownerIsCurrentMember: false });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NamedOwner)).toBe(AssuranceOutcome.Unmet);
+    expect(detailOf(subject, AssuranceCriterion.NamedOwner)).toBe("assigned to an individual who has left the organisation, so nobody is accountable for it");
+  });
+
+  it("should be unknown where an individual owner's membership could not be read, never met and never unmet", () => {
+    // Met would claim an owner nobody checked for; unmet would blame an unread member list on the team that owns
+    // the code. The same third value `secretsRead` and `severeAlertsRead` exist for one level down.
+    const subject = subjectOf({ ownerKind: "person", ownerIsCurrentMember: undefined });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NamedOwner)).toBe(AssuranceOutcome.Unknown);
+    expect(detailOf(subject, AssuranceCriterion.NamedOwner)).toBe("assigned to an individual whose organisation membership could not be read");
   });
 
   it("should be unmet by the unowned bucket, which is an answer rather than a gap", () => {
+    // 150 repositories on this estate. The ladder ran and attributed nothing, so it is a finding.
     expect(outcomeOf(subjectOf({ ownerKind: "none" }), AssuranceCriterion.NamedOwner)).toBe(AssuranceOutcome.Unmet);
+    expect(detailOf(subjectOf({ ownerKind: "none" }), AssuranceCriterion.NamedOwner)).toBe("no owner could be attributed");
+  });
+
+  it("should not let a membership answer reach a repository nothing owns", () => {
+    // `ownerIsCurrentMember` is about the individual named as owner, so an unowned repository is unmet whatever a
+    // caller passes beside it — read the other way, a stray true would give the unowned bucket an owner.
+    expect(outcomeOf(subjectOf({ ownerKind: "none", ownerIsCurrentMember: true }), AssuranceCriterion.NamedOwner)).toBe(AssuranceOutcome.Unmet);
   });
 
   it("should be unknown where no ownership was attributed at all", () => {
@@ -314,12 +356,19 @@ describe("the maintained criterion", () => {
   });
 
   it("should be unmet by an unarchived repository past the boundary, which should be archived", () => {
-    // The criterion's whole point, and why stale repositories had to be admitted to the estate: 148 unarchived
-    // HMCTS repositories are two or more years stale, and the cohort's activity window used to remove every one.
+    // The criterion's whole point, and why stale repositories had to be admitted to the estate: 334 unarchived
+    // HMCTS repositories are a year or more stale, and the cohort's activity window used to remove every one.
     const subject = subjectOf({ archived: false, unmaintained: true });
 
     expect(outcomeOf(subject, AssuranceCriterion.Maintained)).toBe(AssuranceOutcome.Unmet);
-    expect(detailOf(subject, AssuranceCriterion.Maintained)).toBe("not archived and not pushed to for years, so it should be archived");
+    expect(detailOf(subject, AssuranceCriterion.Maintained)).toBe("not archived and not pushed to for longer than the policy allows, so it should be archived");
+  });
+
+  it("should name no duration in the detail, so a change of boundary cannot falsify the sentence", () => {
+    // The string read "not pushed to for years", written against a two-year boundary, and became wrong the day
+    // the boundary moved to one without any test failing. The number is policy — `cohort.unmaintained_after_days`
+    // — and the detail is the verdict.
+    expect(detailOf(subjectOf({ archived: false, unmaintained: true }), AssuranceCriterion.Maintained)).not.toMatch(/year|month|\d/);
   });
 
   it("should be met by a repository being pushed to", () => {
@@ -334,18 +383,76 @@ describe("the maintained criterion", () => {
 });
 
 describe("assuranceGrade", () => {
-  it("should read met when every graded criterion is met", () => {
+  it("should read met when every graded criterion is met AND every one of them was read", () => {
     expect(assuranceGrade(judgeAssurance(subjectOf()))).toBe(AssuranceGrade.Met);
   });
 
   it("should read partial on any shortfall", () => {
-    expect(assuranceGrade(judgeAssurance(subjectOf({ ownerKind: "person" })))).toBe(AssuranceGrade.Partial);
+    expect(assuranceGrade(judgeAssurance(subjectOf({ ownerKind: "person", ownerIsCurrentMember: false })))).toBe(AssuranceGrade.Partial);
+  });
+
+  /**
+   * THE CASE THAT MOVES THE WHOLE ESTATE AT ONCE, and the reason this grade exists.
+   *
+   * `GET /orgs/{org}/secret-scanning/alerts` is ONE call for every repository, so when it fails `secretsRead` is
+   * false on all ~1,889 rows in the same collection. Read as neutral, that made `met` a three-criterion claim
+   * across the estate with nothing on the page changing — no column moved, because the criterion's own cell
+   * already read as a dash and the grade beside it still said "Meets criteria".
+   */
+  it("should not read met when the org-wide secret read failed, on a repository that is otherwise fully compliant", () => {
+    const unread = subjectOf({ evidence: evidenceOf({ secretsRead: false, secrets: undefined }) });
+
+    expect(outcomeOf(unread, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unknown);
+    expect(assuranceGrade(judgeAssurance(unread))).toBe(AssuranceGrade.PartlyRead);
+    expect(assuranceGrade(judgeAssurance(unread))).not.toBe(AssuranceGrade.Met);
+  });
+
+  it("should read partly-read where an individual owner's membership could not be read", () => {
+    // The named-owner criterion's own third value reaching the grade. This is also what an estate looks like
+    // before the member list is plumbed through to the report: 217 person-owned repositories with no shortfall to
+    // report and one criterion nobody answered.
+    expect(assuranceGrade(judgeAssurance(subjectOf({ ownerKind: "person" })))).toBe(AssuranceGrade.PartlyRead);
+  });
+
+  it("should read met where an individual owner is still a member, the criterion needing no team", () => {
+    expect(assuranceGrade(judgeAssurance(subjectOf({ ownerKind: "person", ownerIsCurrentMember: true })))).toBe(AssuranceGrade.Met);
+  });
+
+  it("should read partly-read for a repository the batched hygiene read missed, the other single point of failure", () => {
+    // A repository simply absent from the batched GraphQL map loses `AutomatedHygiene` the same way one failed
+    // org-wide call loses the secrets criterion. Three met of four, and no shortfall to report.
+    expect(assuranceGrade(judgeAssurance(subjectOf({ evidence: evidenceOf({ hygiene: {} }) })))).toBe(AssuranceGrade.PartlyRead);
+  });
+
+  it("should read partly-read where nothing has been collected at all but the graph still answers two criteria", () => {
+    // Ownership and maintenance come from the graph, so a repository with no collection is answerable on two of
+    // the four. Two of four met used to be `met`, which is the claim this whole change is about.
+    expect(assuranceGrade(judgeAssurance(subjectOf({ evidence: undefined })))).toBe(AssuranceGrade.PartlyRead);
+  });
+
+  it("should not read met on a judgement list a graded criterion is missing from entirely", () => {
+    // Counted against the judgements PRESENT rather than against `GradedAssuranceCriteria`, a list of three met
+    // criteria would grade `met` — and a criterion nobody judged has not been shown met. The report layer always
+    // judges all six, so this guards the contract of the function rather than a reachable row.
+    const short = judgeAssurance(subjectOf()).filter((judgement) => judgement.criterion !== AssuranceCriterion.Maintained);
+
+    expect(assuranceGrade(short)).toBe(AssuranceGrade.PartlyRead);
+  });
+
+  it("should keep a shortfall apart from an unread criterion rather than grading both partial", () => {
+    // The distinction the fourth grade buys, on this module's own argument for excluding `SecurityContact`:
+    // "three of four met reads better than two of three met, on identical evidence." An unread criterion is not a
+    // finding against the repository, and a criterion read and failed is.
+    const shortfall = judgeAssurance(subjectOf({ ownerKind: "person", ownerIsCurrentMember: false }));
+    const unread = judgeAssurance(subjectOf({ evidence: evidenceOf({ secretsRead: false, secrets: undefined }) }));
+
+    expect(assuranceGrade(shortfall)).not.toBe(assuranceGrade(unread));
   });
 
   it("should let a shortfall outrank an unreadable signal rather than the other way round", () => {
     // THE PRECEDENCE THAT MATTERS, and the same argument `assessment.ts` makes for putting red above
     // cannot-assess: read the other way, one withheld signal would hide a criterion the repository plainly fails.
-    const subject = subjectOf({ ownerKind: "person", evidence: evidenceOf({ hygiene: {} }) });
+    const subject = subjectOf({ ownerKind: "person", ownerIsCurrentMember: false, evidence: evidenceOf({ hygiene: {} }) });
 
     expect(assuranceGrade(judgeAssurance(subject))).toBe(AssuranceGrade.Partial);
   });

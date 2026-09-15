@@ -154,7 +154,7 @@ const cohort = z
     include_archived: z.boolean().default(false),
     // How recently a repository must have been pushed to for its BEHAVIOUR to be collected. It no longer
     // decides who is in the estate: dropping stale repositories from the report hid exactly the ones the
-    // assurance criteria are about — 148 unarchived repositories on this estate are two or more years stale and
+    // assurance criteria are about — 334 unarchived repositories on this estate are a year or more stale and
     // not one had ever been collected. Still the cheapest lever on cost, since the merge walks are most of a
     // run: 90 days walks roughly 1,230 of 1,880. `null` collects every repository's behaviour.
     active_within_days: positiveInt.nullable().default(90),
@@ -162,11 +162,18 @@ const cohort = z
     // AND SEPARATE window from the one above, and the two answer different questions — a repository at six
     // months has no behaviour collected and is not flagged, which is a real third state.
     //
-    // Two years, measured: non-archived repositories on this estate sit 1,228 inside 90 days, 316 within a
-    // year, 188 within two, 101 within three and 47 beyond. A service released annually has pushed inside a
-    // year, so a year would flag working code; two years is where "quiet" stops being plausible, and it flags
-    // 148. `null` flags none, for a deployment that would rather report the age and judge it by eye.
-    unmaintained_after_days: positiveInt.nullable().default(730)
+    // ONE YEAR from 2026-09-15, where it was two, and THE DEFAULT MOVED WITH `metrics.yaml` rather than being
+    // left behind. The reasoning behind a boundary is the reasoning behind the default: a default of two years
+    // under a deployment running one would be this file recommending a policy the service does not hold, and the
+    // measurements below would have to argue both.
+    //
+    // Measured at the move: non-archived repositories on this estate sit 1,250 inside 90 days, 306 between 90
+    // days and a year, 186 between one and two years, 100 between two and three and 48 beyond three. Two years
+    // flagged 148; a year flags 334. The old boundary was set to spare annually-released services, and that is
+    // the argument this move rejects — a service released once a year is pushed to far more often than it is
+    // released, so a whole year of silence is worth an answer rather than an allowance. `null` flags none, for a
+    // deployment that would rather report the age and judge it by eye.
+    unmaintained_after_days: positiveInt.nullable().default(365)
   })
   .strict();
 

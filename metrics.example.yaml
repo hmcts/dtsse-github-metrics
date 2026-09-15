@@ -85,7 +85,7 @@ cohort:
   # the merge walks are most of a run's calls — 90 days walks roughly 1,230 of HMCTS's 1,880 — but the rest
   # are now reported, carrying the assurance answers that need no merge history and none of the behaviour
   # figures that do. Dropping them from the estate hid the repositories the assurance criteria are most
-  # about: 148 unarchived HMCTS repositories are two or more years stale and not one had been collected.
+  # about: 334 unarchived HMCTS repositories are a year or more stale and not one had been collected.
   # `null` collects every repository's behaviour.
   #
   # A repository GitHub reports NO last push for is not collected. That matters for one run after the column
@@ -98,15 +98,17 @@ cohort:
   # between them — six months quiet — has no behaviour collected and is NOT flagged, which is a third state
   # rather than a gap.
   #
-  # Two years, measured: non-archived HMCTS repositories sit 1,228 inside 90 days, 316 within a year, 188
-  # within two, 101 within three and 47 beyond. A service released annually has pushed inside a year, so a
-  # one-year boundary would flag working code; two years is where "quiet" stops being plausible and flags
-  # 148. `null` flags none, for a deployment that would rather read the age and judge it by eye.
+  # ONE YEAR from 2026-09-15, where it was two. Measured at the move: non-archived HMCTS repositories sit
+  # 1,250 inside 90 days, 306 between 90 days and a year, 186 between one and two years, 100 between two and
+  # three and 48 beyond three. Two years flagged 148; a year flags 334, the 186 in the middle band being what
+  # moved. The old boundary was set to spare annually-released services, and that is what this rejects: a
+  # service released once a year is pushed to far more often than it is released, so a whole year of silence
+  # is worth an answer. `null` flags none, for a deployment that would rather read the age and judge it by eye.
   #
   # A repository with no last push at all is NOT flagged. GitHub omits it for one never pushed to, and an
   # absence is not evidence of neglect — the opposite reading from `active_within_days` above, deliberately:
   # each defaults to the answer that does not invent a fact.
-  unmaintained_after_days: 730
+  unmaintained_after_days: 365
 # OWNERSHIP OVERRIDES, and no longer the cohort. Listing a repository here does not put it in the estate —
 # it says who owns it, feeding the ladder's `configured` rung so a hand-set owner beats every inferred one.
 # `display_name` names a team the graph only knows by slug. Empty is the normal case: most teams come from

@@ -12,6 +12,8 @@ import {
   ASSURANCE_CRITERIA,
   ASSURANCE_GRADE_LABEL,
   ASSURANCE_GRADE_STATE,
+  ASSURANCE_GRADES,
+  ASSURANCE_HINT,
   ASSURANCE_LABEL,
   answerOrder,
   assuranceOrder,
@@ -424,10 +426,26 @@ describe("the visibility filter", () => {
  */
 describe("the assurance grade's presentation", () => {
   it("reads in its own words and never in readiness's", () => {
-    expect(Object.values(ASSURANCE_GRADE_LABEL)).toEqual(["Meets criteria", "Partly meets", "Cannot assess"]);
+    expect(Object.values(ASSURANCE_GRADE_LABEL)).toEqual(["Meets criteria", "Meets what was read", "Partly meets", "Cannot assess"]);
     // "Ready" and "Blocked" are readiness's answers to a different question.
     expect(Object.values(ASSURANCE_GRADE_LABEL)).not.toContain(RAG_LABEL.green);
     expect(Object.values(ASSURANCE_GRADE_LABEL)).not.toContain(RAG_LABEL.red);
+  });
+
+  it("gives a full read and a partial one different words, which is the whole point of the fourth grade", () => {
+    // A repository that met the three criteria anybody could read must not print what a repository read in full
+    // and met prints. Until 2026-09-15 both said "Meets criteria", so one failed org-wide secret-scanning call
+    // shrank the claim behind every row on the page and changed nothing a reader could see.
+    expect(ASSURANCE_GRADE_LABEL["partly-read"]).not.toBe(ASSURANCE_GRADE_LABEL.met);
+    expect(ASSURANCE_GRADE_LABEL["partly-read"]).not.toBe(ASSURANCE_GRADE_LABEL.partial);
+  });
+
+  it("keeps the words, the colours and the sort order total over one list of grades", () => {
+    // A grade added to `AssuranceGrade` has to be given a place, a word and a colour rather than silently sorting
+    // as if it had none — the same guarantee `RAG_STATES` gives `rag.ts`'s maps.
+    expect(ASSURANCE_GRADES).toEqual(["met", "partly-read", "partial", "unknown"]);
+    expect(Object.keys(ASSURANCE_GRADE_LABEL)).toEqual([...ASSURANCE_GRADES]);
+    expect(Object.keys(ASSURANCE_GRADE_STATE)).toEqual([...ASSURANCE_GRADES]);
   });
 
   it("draws in the RAG palette, so one page looks like one thing", () => {
@@ -436,6 +454,14 @@ describe("the assurance grade's presentation", () => {
     expect(ASSURANCE_GRADE_STATE.partial).toBe("amber");
     // Slate, on `rag.ts`'s own rule — a half-read question must not be coloured warm.
     expect(ASSURANCE_GRADE_STATE.unknown).toBe("cannot_assess");
+  });
+
+  it("colours an unread criterion slate rather than green or amber", () => {
+    // Green would be the old bug in a new colour, and amber would blame a failed org-wide call on the team that
+    // owns the repository. Nothing about the repository is wanting; a half of the question could not be read.
+    expect(ASSURANCE_GRADE_STATE["partly-read"]).toBe("cannot_assess");
+    expect(ASSURANCE_GRADE_STATE["partly-read"]).not.toBe(ASSURANCE_GRADE_STATE.met);
+    expect(ASSURANCE_GRADE_STATE["partly-read"]).not.toBe(ASSURANCE_GRADE_STATE.partial);
   });
 
   it("names a column per criterion, in the criteria's own order", () => {
@@ -452,6 +478,22 @@ describe("the assurance grade's presentation", () => {
     ]);
   });
 
+  it("explains Code owner as accountability rather than as team membership", () => {
+    // The rule the hint describes changed on 2026-09-15: an individual who is still in the organisation MEETS the
+    // criterion, and what fails it is nobody accountable at all. A hint still saying "No if it is owned by an
+    // individual" would contradict 215 of this estate's rows.
+    expect(ASSURANCE_HINT["named-owner"]).toContain("still a member");
+    expect(ASSURANCE_HINT["named-owner"]).toContain("left the organisation");
+    expect(ASSURANCE_HINT["named-owner"]).not.toMatch(/No if it is owned by an individual/);
+  });
+
+  it("explains Maintained against the boundary the policy actually holds", () => {
+    // `cohort.unmaintained_after_days` is one year from 2026-09-15. A hint saying two would tell a reader their
+    // repository is fine for another year when the column has already flagged it.
+    expect(ASSURANCE_HINT.maintained).toContain("within the last year");
+    expect(ASSURANCE_HINT.maintained).not.toMatch(/two years/);
+  });
+
   it("carries no emoji in any label: the word is the information", () => {
     for (const label of [...Object.values(ASSURANCE_GRADE_LABEL), ...Object.values(ASSURANCE_LABEL)]) {
       expect(label).not.toMatch(/\p{Extended_Pictographic}/u);
@@ -462,6 +504,20 @@ describe("the assurance grade's presentation", () => {
 describe("assuranceOrder", () => {
   it("sorts met above partly, so ascending opens on the repositories that meet the criteria", () => {
     expect(assuranceOrder("met")).toBeLessThan(assuranceOrder("partial") as number);
+  });
+
+  it("sorts a partial read between a full one and a shortfall", () => {
+    // Less assured than a repository read in full, and not a finding against the repository the way a criterion
+    // read and failed is. The English words would sort it between "Meets criteria" and "Partly meets" by accident
+    // and stop doing so the moment either is reworded.
+    expect(assuranceOrder("met")).toBeLessThan(assuranceOrder("partly-read") as number);
+    expect(assuranceOrder("partly-read")).toBeLessThan(assuranceOrder("partial") as number);
+  });
+
+  it("keeps a partly-read repository IN the order, unlike one nothing could be read for", () => {
+    // Held back with `unknown` it would take most of the estate out of the column the moment one org-wide read
+    // failed — and sorting by assurance is how a reader finds the repositories that fail.
+    expect(assuranceOrder("partly-read")).toBeDefined();
   });
 
   it("holds an ungraded repository back from both ends", () => {

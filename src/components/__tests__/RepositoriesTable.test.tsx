@@ -105,12 +105,12 @@ const ROWS: RepositoryRow[] = [
     assurance: {
       grade: "partial",
       criteria: [
-        { criterion: "named-owner", outcome: "unmet", detail: "assigned to one individual rather than a team" },
+        { criterion: "named-owner", outcome: "unmet", detail: "assigned to an individual who has left the organisation, so nobody is accountable for it" },
         { criterion: "automated-hygiene", outcome: "met", detail: "every hygiene signal is on" },
         { criterion: "no-committed-secrets", outcome: "met", detail: "no secret-scanning alert is open" },
         { criterion: "security-contact", outcome: "met", detail: "a security policy applies, usually the organisation's own rather than this repository's" },
         { criterion: "patching", outcome: "met", detail: "no critical or high alert is open" },
-        { criterion: "maintained", outcome: "unmet", detail: "not archived and not pushed to for years, so it should be archived" }
+        { criterion: "maintained", outcome: "unmet", detail: "not archived and not pushed to for longer than the policy allows, so it should be archived" }
       ]
     }
   }
@@ -392,6 +392,41 @@ describe("RepositoriesTable columns", () => {
     for (const repository of ["web", "docs", "api"]) {
       expect(cellOf(repository, "Assurance")?.textContent).not.toMatch(/Ready|Blocked|Caution/);
     }
+  });
+
+  /**
+   * THE CASE THAT WAS INVISIBLE, and the reason the grade gained a fourth value.
+   *
+   * `GET /orgs/{org}/secret-scanning/alerts` is one call for the whole estate, so when it fails every row loses
+   * the secrets criterion at once. The cell already read as a dash — and the grade beside it still said "Meets
+   * criteria", on three criteria instead of four, with nothing on the page saying the claim had shrunk.
+   */
+  it("distinguishes a repository read in full from one that met only what could be read", () => {
+    const criteria = (secrets: "met" | "unknown"): RepositoryRow["assurance"] => ({
+      grade: secrets === "met" ? "met" : "partly-read",
+      criteria: [
+        { criterion: "named-owner", outcome: "met", detail: "assigned to a team" },
+        { criterion: "automated-hygiene", outcome: "met", detail: "every hygiene signal is on" },
+        secrets === "met"
+          ? { criterion: "no-committed-secrets", outcome: "met", detail: "no secret-scanning alert is open" }
+          : { criterion: "no-committed-secrets", outcome: "unknown", detail: "the secret-scanning alerts could not be read" },
+        { criterion: "security-contact", outcome: "met", detail: "a security policy applies, usually the organisation's own rather than this repository's" },
+        { criterion: "patching", outcome: "met", detail: "no critical or high alert is open" },
+        { criterion: "maintained", outcome: "met", detail: "pushed to recently enough to read as maintained" }
+      ]
+    });
+    mount([
+      { repository: "read", team: "delivery", visibility: "public", pushed_at: "2026-09-10T00:00:00Z", assurance: criteria("met") },
+      { repository: "unread", team: "delivery", visibility: "public", pushed_at: "2026-09-09T00:00:00Z", assurance: criteria("unknown") }
+    ]);
+
+    expect(cellOf("read", "Assurance")?.textContent).toBe("Meets criteria");
+    expect(cellOf("unread", "Assurance")?.textContent).toBe("Meets what was read");
+    // Both rows print a dash for the criterion, which is why the GRADE is the only place the shrunken claim can
+    // show. The unread one is drawn slate rather than green: a half-read question is not coloured warm.
+    expect(cellOf("unread", "Secrets")?.textContent).toBe("-");
+    expect(cellOf("unread", "Assurance")?.outerHTML).toContain("slate");
+    expect(cellOf("unread", "Assurance")?.outerHTML).not.toContain("green");
   });
 
   // Header and cell together: a centred column whose header still read from the left, or the other
