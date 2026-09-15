@@ -450,6 +450,21 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
  * a GitHub login is unique case-insensitively; the ORIGINAL spelling is kept alongside for display, because
  * lower-casing somebody's login on screen is a small wrongness with no upside.
  */
+/**
+ * Where one readiness label sits in the order a combination is read in: best first, ungraded last.
+ *
+ * The same order `lib/rag.ts` gives the labels through `COMBINATION_DIGIT` — green 1, amber 2, red 3, and the
+ * ungraded ones no digit at all. Restated here rather than imported, because the report layer does not read the
+ * UI's modules; an unknown label sorts last rather than throwing, so a label added to the domain appears at the
+ * end of a badge row instead of taking a page down.
+ */
+const READINESS_ORDER: readonly string[] = ["green", "amber", "red", "cannot_assess"];
+
+function readinessRank(label: string): number {
+  const rank = READINESS_ORDER.indexOf(label);
+  return rank === -1 ? READINESS_ORDER.length : rank;
+}
+
 export async function actorRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
   return await builtReport(configuration.organization, weeks, () => buildActorRows(configuration, weeks, reference), "actors");
 }
@@ -484,9 +499,17 @@ async function buildActorRows(configuration: Configuration, weeks: number, refer
   }
 
   const actors = [...appearances.entries()].map(([login, repositories]) => {
-    // Their repositories' labels, deduplicated, in the estate's own order rather than discovery order — the
-    // readiness column keys on the COMBINATION, so two people with the same set have to produce the same key.
-    const labels = [...new Set([...repositories].map((repository) => readinessOf.get(repository)).filter((label) => label !== undefined))].sort();
+    // Their repositories' labels, deduplicated, in the estate's own order rather than discovery order: the
+    // contributor row RENDERS them in the order sent, so two people carrying the same set must be shown the
+    // same badges in the same sequence.
+    //
+    // A bare `.sort()` did this alphabetically until 2026-09-15 — `amber, cannot_assess, green, red`, which is
+    // neither the order the labels mean anything in nor stable across locales. `combinationKey` normalises the
+    // SORT key on its own, so this order was only ever the rendered one, and alphabetical was the wrong choice
+    // for it.
+    const labels = [...new Set([...repositories].map((repository) => readinessOf.get(repository)).filter((label) => label !== undefined))].sort(
+      (left, right) => readinessRank(left) - readinessRank(right)
+    );
     return {
       login: spelling.get(login) ?? login,
       repositories: repositories.size,
