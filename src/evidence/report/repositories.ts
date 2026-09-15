@@ -317,13 +317,46 @@ export function forgetBuiltRows(): void {
  * never on a clock.
  */
 export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  return await builtReport(configuration.organization, weeks, () => buildRepositoryRows(configuration, weeks, reference));
+  return (await estateReports(configuration, weeks, reference)).rows;
 }
 
-async function buildRepositoryRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
+/** The four reports one window's facts produce, built together because they read the same facts. */
+interface EstateReports {
+  rows: unknown[];
+  actors: unknown[];
+  merges: unknown[];
+  directPushes: unknown[];
+}
+
+/** A repository the window holds no facts for: measured, and measured as nothing. */
+const NO_MERGES: Merges = { pullRequests: [], directCommits: [] };
+
+/**
+ * Every report one span produces, built from ONE read of the fact cache and held as one entry.
+ *
+ * FOUR REPORTS, ONE LOAD, and that is the whole point of this function. They were four builds each calling
+ * `loadCachedFactsForOrganisation` for itself, which read the window's facts four times over — at 26 weeks that is
+ * four passes over 23,000 pull-request payloads. Worse, only the repositories report was warmed, so the first
+ * reader of `/contributors` or any team page paid for a fresh load on a cold pod; measured on a staging install,
+ * `page.goto` did not finish inside 30 seconds and the regression suite timed out.
+ *
+ * The facts are deserialised once here and DROPPED when this returns. What is held is the four reports, which are
+ * counts, labels and small rows — the facts themselves are far larger than everything derived from them, and
+ * holding those per span is how a 2Gi pod runs out of heap.
+ *
+ * Warming the repositories report now warms all four, because there is only one build to warm.
+ */
+async function estateReports(configuration: Configuration, weeks: number, reference: Date): Promise<EstateReports> {
+  // Wrapped in a one-element array because `builtReport` holds `unknown[]`. The alternative is widening the cache
+  // to `unknown`, which buys nothing: every reader of it goes through the four accessors below.
+  const held = await builtReport(configuration.organization, weeks, async () => [await buildEstateReports(configuration, weeks, reference)]);
+  return held[0] as EstateReports;
+}
+
+async function buildEstateReports(configuration: Configuration, weeks: number, reference: Date): Promise<EstateReports> {
   const { window } = await resolveReportWindow(configuration, weeks, reference);
   const organization = configuration.organization;
-  const [cohort, states, facts] = await Promise.all([
+  const [cohort, states, stored] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryStates(organization),
     loadCachedFactsForOrganisation(
@@ -334,10 +367,17 @@ async function buildRepositoryRows(configuration: Configuration, weeks: number, 
     )
   ]);
 
-  const rows = cohort.map((entry) =>
-    repositoryRow(configuration, entry, states.get(entry.repository), deserialiseMerges(facts.get(entry.repository)), undefined)
+  const facts = new Map([...stored].map(([repository, payload]) => [repository, deserialiseMerges(payload)] as const));
+  const rows = stripAbsent(
+    cohort.map((entry) => repositoryRow(configuration, entry, states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, undefined))
   );
-  return stripAbsent(rows);
+
+  return {
+    rows,
+    actors: builtActorRows(rows as { repository: string; readiness?: string }[], facts),
+    merges: builtMergeRows(facts),
+    directPushes: builtDirectPushRows(facts)
+  };
 }
 
 /** The estate's summary for one window. */
@@ -466,17 +506,17 @@ function readinessRank(label: string): number {
 }
 
 export async function actorRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  return await builtReport(configuration.organization, weeks, () => buildActorRows(configuration, weeks, reference), "actors");
+  return (await estateReports(configuration, weeks, reference)).actors;
 }
 
-async function buildActorRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
-  const [rows, facts] = await Promise.all([
-    // Read for the readiness labels only. It is the same built-and-held report `/repositories` renders, so this
-    // costs a map lookup rather than a second walk that could disagree with it.
-    repositoryRows(configuration, weeks, reference) as Promise<{ repository: string; readiness?: string }[]>,
-    windowFacts(configuration, weeks, reference)
-  ]);
-
+/**
+ * Pure over the rows and facts `estateReports` already holds.
+ *
+ * It used to await `repositoryRows` for the readiness labels and load the facts again for itself. Both are in hand
+ * by the time this is called, which is the point of building the four together — and it removes a report reading
+ * another report, which was one build waiting on a second that shared its data.
+ */
+function builtActorRows(rows: readonly { repository: string; readiness?: string }[], facts: ReadonlyMap<string, Merges>): unknown[] {
   const readinessOf = new Map(rows.map((row) => [row.repository, row.readiness]));
   const spelling = new Map<string, string>();
   const appearances = new Map<string, Set<string>>();
@@ -709,11 +749,10 @@ function metricSummaries(configuration: Configuration, merges: Merges): Record<s
  * team merged lately" rather than "what did it merge first".
  */
 export async function mergeRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  return await builtReport(configuration.organization, weeks, () => buildMergeRows(configuration, weeks, reference), "merges");
+  return (await estateReports(configuration, weeks, reference)).merges;
 }
 
-async function buildMergeRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
-  const facts = await windowFacts(configuration, weeks, reference);
+function builtMergeRows(facts: ReadonlyMap<string, Merges>): unknown[] {
   const rows = [];
   for (const [repository, merges] of facts) {
     for (const pullRequest of merges.pullRequests) {
@@ -741,11 +780,10 @@ async function buildMergeRows(configuration: Configuration, weeks: number, refer
 }
 
 export async function directPushRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  return await builtReport(configuration.organization, weeks, () => buildDirectPushRows(configuration, weeks, reference), "direct-pushes");
+  return (await estateReports(configuration, weeks, reference)).directPushes;
 }
 
-async function buildDirectPushRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
-  const facts = await windowFacts(configuration, weeks, reference);
+function builtDirectPushRows(facts: ReadonlyMap<string, Merges>): unknown[] {
   const rows = [];
   for (const [repository, merges] of facts) {
     for (const commit of merges.directCommits) {
@@ -763,18 +801,6 @@ async function buildDirectPushRows(configuration: Configuration, weeks: number, 
     }
   }
   return stripAbsent(rows.sort((left, right) => right.committed_at.localeCompare(left.committed_at)));
-}
-
-/** The window's cached facts per repository, which four reports read and none of them should re-query. */
-async function windowFacts(configuration: Configuration, weeks: number, reference: Date): Promise<Map<string, Merges>> {
-  const { window } = await resolveReportWindow(configuration, weeks, reference);
-  const facts = await loadCachedFactsForOrganisation(
-    configuration.organization,
-    { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) },
-    window.startsAt,
-    window.endsAt
-  );
-  return new Map([...facts].map(([repository, payload]) => [repository, deserialiseMerges(payload)]));
 }
 
 /** What the team aggregation reads off a repository row. */
