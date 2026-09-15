@@ -53,15 +53,24 @@ export type AssuranceOutcome = (typeof AssuranceOutcome)[keyof typeof AssuranceO
  */
 export const AssuranceCriterion = {
   /**
-   * A named owner and a maintenance plan: the repository is assigned to a TEAM rather than to an individual.
+   * A named owner and a maintenance plan: SOMEBODY is accountable for the code.
    *
    * Read from `owner_kind`, which the ownership ladder already resolves — NOT from CODEOWNERS. The distinction
    * matters because a CODEOWNERS column shipped on this table for months and rendered a dash for the entire
    * estate: nothing ever populated `codeowners_files`. `owner_kind` is on every row, on both branches, from
-   * PR #17. Measured on AAT: 1,499 team-owned, 206 person-owned, 141 unowned, and no repository has both.
+   * PR #17.
    *
-   * A PERSON IS UNMET RATHER THAN UNKNOWN. The criterion asks for a team, the ladder answered with a person, and
-   * that is an answer — 206 repositories whose maintenance rests on one individual is the finding, not a gap.
+   * AN INDIVIDUAL OWNER IS MET, from 2026-09-15, where any individual at all used to be `Unmet` on the grounds
+   * that the criterion asks for a team. It does not: it asks for a named owner, and a named person is one —
+   * somebody a reader can go and ask. What the criterion exists to find is an ORPHAN, and `OwnerKind.None` is
+   * exactly that. Measured on AAT: 1,523 team-owned, 217 person-owned and 150 unowned, so the old rule reported
+   * 367 findings where there are 150 and the 217 it marked down had an owner all along.
+   *
+   * NO MEMBERSHIP CHECK, and the ladder is why rather than a judgement about departed owners being acceptable.
+   * A login that has left the organisation is not resolved as an owner in the first place — `org/ownership.ts`
+   * reads its rungs from the graph's live people, teams and memberships — so a surviving individual owner is a
+   * current one by construction. Asking again here would be a second, weaker copy of a decision already made
+   * upstream, and one that could disagree with it.
    */
   NamedOwner: "named-owner",
   /**
@@ -130,9 +139,18 @@ export const AssuranceCriterion = {
    * Unmaintained code is handled safely: archived, or being pushed to.
    *
    * The one criterion that grades an ABSENCE of activity. An archived repository is handled — somebody said so
-   * and GitHub enforces it — and an unarchived one nobody has pushed to in years is the risk. The boundary is
-   * `cohort.unmaintained_after_days`, two years by default and measured: 148 unarchived HMCTS repositories sit
-   * past it.
+   * and GitHub enforces it — and an unarchived one nobody has pushed to for long enough is the risk. The
+   * boundary is `cohort.unmaintained_after_days`, ONE YEAR from 2026-09-15 where it was two.
+   *
+   * Measured on AAT at the move: of 1,890 unarchived repositories, 1,250 were pushed to inside 90 days, 306
+   * between 90 days and a year, 186 between one and two years, 100 between two and three, and 48 beyond three.
+   * So a two-year boundary flagged 148 and a one-year boundary flags 334 — the 186 in the middle band are what
+   * moved, and they are a year without a commit each.
+   *
+   * NO DURATION IS NAMED IN THE JUDGEMENT'S DETAIL, deliberately. The sentence used to read "not pushed to for
+   * years", which was written against the two-year boundary and became wrong the day the boundary moved without
+   * anything failing. The boundary is policy and the detail states the verdict, so the number lives in
+   * `metrics.yaml` and in this comment and in neither of the strings a reader sees.
    *
    * This criterion is why stale repositories had to be admitted to the estate at all. Until 2026-09-14 the
    * cohort's activity window removed them, so the column would have been structurally empty — the repositories
@@ -284,8 +302,27 @@ export interface AssuranceJudgement {
  * shares only the colours and the sort order. The two grades sit on different pages for the same reason.
  */
 export const AssuranceGrade = {
-  /** Every graded criterion met. */
+  /** Every graded criterion met, AND every one of them read. */
   Met: "met",
+  /**
+   * Nothing was found wanting and not everything could be looked at.
+   *
+   * A FOURTH GRADE FROM 2026-09-15, and the bug it fixes is that `Met` used to mean this too. `Unknown` was
+   * folded in as neutral, so a repository whose hygiene and secret signals nobody could read graded `met` — which
+   * this map documents as "every graded criterion met" — on two criteria out of four.
+   *
+   * That is not a rare shape. ONE FAILED ORG-WIDE SECRET-SCANNING CALL makes `NoCommittedSecrets` unknown for the
+   * WHOLE ESTATE at once, and a repository the batched GraphQL read missed loses `AutomatedHygiene` the same way.
+   * Either way `met` silently became a three-criterion claim with nothing on the page changing, which is exactly
+   * the distinction `severeAlertsRead` and `secretsRead` exist one level down to preserve.
+   *
+   * SEPARATE FROM `Partial` RATHER THAN FOLDED INTO IT, on this module's own argument for excluding
+   * `SecurityContact` from the grade: "three of four met reads better than two of three met, on identical
+   * evidence." A repository with an unread criterion has no shortfall to report, so grading it as one would
+   * invent a finding; grading it `met` claims evidence nobody has. It is the READ that is partial here, not the
+   * meeting, and the label says so.
+   */
+  PartlyRead: "partly-read",
   /** Something was not met. Amber rather than red: none of these four is a disqualifier on its own. */
   Partial: "partial",
   /** Nothing could be graded. */
@@ -348,19 +385,31 @@ function hygieneJudgement(signals: HygieneSignals): AssuranceJudgement {
   return { criterion: AssuranceCriterion.AutomatedHygiene, outcome: AssuranceOutcome.Unmet, detail: `not configured: ${missing.join(", ")}` };
 }
 
-/** The named-owner criterion, read off the kind the ownership ladder resolved. */
+/**
+ * The named-owner criterion: has this repository got an owner at all.
+ *
+ * A FUNCTION OF `ownerKind` ALONE, and there is deliberately no second signal. `OwnerKind.None` — which
+ * `org/cohort.ts` pairs with `owners` being exactly `[UnownedIdentifier]` — is the orphan the criterion exists to
+ * find, and both of the other kinds are somebody to ask. An individual is not a weaker answer than a team here:
+ * the ladder resolves owners from the graph's live people and memberships, so a login that has left is not an
+ * owner by the time this reads one.
+ *
+ * `none` AND AN UNRECOGNISED KIND ANSWER TOGETHER, and both are `Unmet`: the ladder ran and attributed nothing,
+ * which is the finding rather than a gap. That is different from `ownerKind` being absent, which is the ladder
+ * not having run.
+ */
 function ownerJudgement(ownerKind: string | undefined): AssuranceJudgement {
+  const criterion = AssuranceCriterion.NamedOwner;
   if (ownerKind === undefined) {
-    return { criterion: AssuranceCriterion.NamedOwner, outcome: AssuranceOutcome.Unknown, detail: "no ownership has been attributed" };
+    return { criterion, outcome: AssuranceOutcome.Unknown, detail: "no ownership has been attributed" };
   }
   if (ownerKind === "team") {
-    return { criterion: AssuranceCriterion.NamedOwner, outcome: AssuranceOutcome.Met, detail: "assigned to a team" };
+    return { criterion, outcome: AssuranceOutcome.Met, detail: "assigned to a team" };
   }
-  return {
-    criterion: AssuranceCriterion.NamedOwner,
-    outcome: AssuranceOutcome.Unmet,
-    detail: ownerKind === "person" ? "assigned to one individual rather than a team" : "no owner could be attributed"
-  };
+  if (ownerKind === "person") {
+    return { criterion, outcome: AssuranceOutcome.Met, detail: "assigned to a named individual" };
+  }
+  return { criterion, outcome: AssuranceOutcome.Unmet, detail: "nothing owns it, so nobody is accountable for it" };
 }
 
 /**
@@ -431,7 +480,7 @@ function maintainedJudgement(archived: boolean, unmaintained: boolean): Assuranc
     return {
       criterion: AssuranceCriterion.Maintained,
       outcome: AssuranceOutcome.Unmet,
-      detail: "not archived and not pushed to for years, so it should be archived"
+      detail: "not archived and not pushed to for longer than the policy allows, so it should be archived"
     };
   }
   return { criterion: AssuranceCriterion.Maintained, outcome: AssuranceOutcome.Met, detail: "pushed to recently enough to read as maintained" };
@@ -478,17 +527,31 @@ export function judgeAssurance(subject: AssuranceSubject): AssuranceJudgement[] 
 /**
  * The one grade the graded criteria add up to.
  *
- * `Partial` on any shortfall and `Unknown` only when NOTHING was graded, which is the precedence worth stating:
- * a repository failing one criterion and unable to answer another is failing, not unassessable. Reading it the
- * other way would let an unreadable signal hide a real gap, which is the same argument `PRECEDENCE` in
- * `assessment.ts` makes for putting red above cannot-assess.
+ * FOUR STEPS, IN THIS ORDER, and each of the three boundaries is a decision:
+ *
+ *   • `Partial` on any shortfall FIRST, so a repository failing one criterion and unable to answer another is
+ *     failing rather than unassessable. Reading it the other way would let an unreadable signal hide a real gap,
+ *     which is the same argument `PRECEDENCE` in `assessment.ts` makes for putting red above cannot-assess.
+ *   • `Met` only where the count of met criteria reaches `GradedAssuranceCriteria` IN FULL. Counted against the
+ *     judgements that happen to be present instead, a list missing a criterion entirely would grade `met` on the
+ *     rest — and a criterion nobody judged has not been shown met.
+ *   • `Unknown` where NOT ONE of them was readable, which is a different report from some of them being
+ *     readable and all of those met. That middle case is `PartlyRead`; see its own note for why it is a grade
+ *     rather than a shade of `Partial`.
+ *
+ * ARITHMETIC ON THE MET COUNT rather than three `some` calls, because two of the three boundaries are about HOW
+ * MANY were met and a predicate cannot say four of four.
  */
 export function assuranceGrade(judgements: readonly AssuranceJudgement[]): AssuranceGrade {
   const graded = judgements.filter((judgement) => GradedAssuranceCriteria.includes(judgement.criterion));
   if (graded.some((judgement) => judgement.outcome === AssuranceOutcome.Unmet)) {
     return AssuranceGrade.Partial;
   }
-  return graded.some((judgement) => judgement.outcome === AssuranceOutcome.Met) ? AssuranceGrade.Met : AssuranceGrade.Unknown;
+  const met = graded.filter((judgement) => judgement.outcome === AssuranceOutcome.Met).length;
+  if (met === GradedAssuranceCriteria.length) {
+    return AssuranceGrade.Met;
+  }
+  return met === 0 ? AssuranceGrade.Unknown : AssuranceGrade.PartlyRead;
 }
 
 /** How many days old an instant is, floored, or `undefined` where there is no instant. */

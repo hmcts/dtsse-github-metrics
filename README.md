@@ -51,13 +51,13 @@ cohort:
   visibilities: [public]        # narrow to what the credential can actually read
   include_archived: false       # nobody is working in an archived repository
   active_within_days: 90        # what `collect` WALKS: 1,889 repositories becomes roughly 1,240
-  unmaintained_after_days: 730  # past this, a repository reads "should be archived"
+  unmaintained_after_days: 365  # past this, a repository reads "should be archived"
 excluded_repositories: []       # removed outright, whatever the graph says
 ```
 
 **`active_within_days` decides what is COLLECTED, not who is in the estate.** It used to decide both, and
-dropping stale repositories from the report hid exactly the ones an assurance report is most about: 148
-unarchived repositories are two or more years stale, and not one of them had ever been collected. They are
+dropping stale repositories from the report hid exactly the ones an assurance report is most about: 334
+unarchived repositories are a year or more stale, and not one of them had ever been collected. They are
 reported now, carrying the assurance answers that need no merge history and none of the behaviour figures that
 do — so the window still keeps the expensive half of collection as narrow as it was.
 

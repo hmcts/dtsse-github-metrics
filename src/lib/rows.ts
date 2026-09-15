@@ -286,7 +286,8 @@ export const SECRETS_CRITERION: AssuranceCriterion = "no-committed-secrets";
  * meets them at the moment they read the cell.
  */
 export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
-  "named-owner": "Yes when the repository is attributed to a GitHub team, including by a CODEOWNERS file naming one. No if it is owned by an individual.",
+  "named-owner":
+    "Yes when the repository has an owner at all — a GitHub team, including one named by a CODEOWNERS file, or a named individual. No when nothing owns it, so there is nobody to ask about it.",
   "automated-hygiene":
     "Yes when every readable signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — which either Renovate or Dependabot satisfies. Hover a cell to see which are missing.",
   // Reads as the FINDING and not the verdict — see `findingOrder` and the `Finding` cell for the one column whose
@@ -295,8 +296,18 @@ export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
   "security-contact": "Whether GitHub reports a security policy. Most will inherit the organisation policy in the hmcts .github repository.",
   patching: "Age in days of the oldest open severe alert.",
   maintained:
-    "Yes when the repository is archived, or has been pushed to within the last two years. No means it is unarchived but untouched for years, so it should probably be archived."
+    "Yes when the repository is archived, or has been pushed to within the last year. No means it is unarchived and has had no commit for over a year, so it should probably be archived."
 };
+
+/**
+ * The four grades, IN THE ORDER A READER MEANS BY "sort by assurance", which every map below is total over.
+ *
+ * `RAG_STATES`'s counterpart, and here for its reason: the order the grades are drawn in, labelled in and sorted
+ * by is one decision, and three separately-ordered maps is how a column comes to sort by the opposite of what it
+ * prints. A grade added to `AssuranceGrade` then has to be given a place here, a word and a colour, rather than
+ * silently sorting as if it had none.
+ */
+export const ASSURANCE_GRADES: readonly AssuranceGrade[] = ["met", "partly-read", "partial", "unknown"];
 
 /**
  * How each assurance grade reads.
@@ -304,9 +315,18 @@ export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
  * DELIBERATELY NOT `RAG_LABEL`'s WORDS. That map reads "Ready / Caution / Blocked" about readiness for AI
  * enablement, and a repository can be ready for that and still fail the assurance criteria. These say what they
  * are about: whether the criteria are met.
+ *
+ * "MEETS WHAT WAS READ" IS ABOUT THE EVIDENCE AND "PARTLY MEETS" IS ABOUT THE REPOSITORY, which is the whole
+ * point of there being two of them. The first has no shortfall to report and some criterion nobody could look at;
+ * the second failed one that was looked at. They read `met` as one word until 2026-09-15 — so a failed org-wide
+ * secret-scanning call graded the entire estate "Meets criteria" on three criteria out of four, and no reader
+ * could tell from the page that a claim had shrunk.
+ *
+ * IN `ASSURANCE_GRADES` ORDER rather than alphabetically, so the words and the sort cannot disagree.
  */
 export const ASSURANCE_GRADE_LABEL: Record<AssuranceGrade, string> = {
   met: "Meets criteria",
+  "partly-read": "Meets what was read",
   partial: "Partly meets",
   unknown: "Cannot assess"
 };
@@ -318,9 +338,16 @@ export const ASSURANCE_GRADE_LABEL: Record<AssuranceGrade, string> = {
  * on its own, so a shortfall is something to act on and not a repository to stop using. `unknown` maps to
  * `cannot_assess`, which `rag.ts` already draws slate for exactly this reason — a half-read question must not be
  * coloured warm, or a missing permission reads as a bad result.
+ *
+ * `partly-read` IS SLATE ON THAT SAME RULE, and it is the case the rule was written for: the unread half of the
+ * question is what makes the grade short of `met`, and nothing about the repository is wanting. Green would be
+ * the old bug in a new colour and amber would blame a failed org-wide call on the team. It shares its colour with
+ * `unknown` and not its word — `rag.ts` already has `cannot_assess` and `none` sharing slate for the same reason,
+ * the bar being decoration and the label the information.
  */
 export const ASSURANCE_GRADE_STATE: Record<AssuranceGrade, RAGState> = {
   met: "green",
+  "partly-read": "cannot_assess",
   partial: "amber",
   unknown: "cannot_assess"
 };
@@ -331,17 +358,24 @@ export function criterionResult(row: RepositoryRow, criterion: AssuranceCriterio
 }
 
 /**
- * Where an assurance grade sorts: met, then partly, then the one that could not be read.
+ * Where an assurance grade sorts: met, then met-as-far-as-read, then partly, then the one nothing could be read for.
  *
  * The same shape as `severity` in `rag.ts` and for its reason — the English words sort as "Cannot assess, Meets,
- * Partly", which is an order about spelling. `unknown` sorts as unmeasured, which `sorted` holds back from both
- * ends: "which repositories fail the criteria" is a question about the graded ones.
+ * Meets what was read, Partly", which is an order about spelling. `unknown` sorts as unmeasured, which `sorted`
+ * holds back from both ends: "which repositories fail the criteria" is a question about the graded ones.
+ *
+ * `partly-read` SORTS AND `unknown` DOES NOT, though both are short of a full read, because one of them has
+ * answers and the other has none. Held back with `unknown` it would take most of the estate out of the column the
+ * moment an org-wide read failed, which is the reader's own way of finding the repositories that fail.
+ *
+ * It sorts BELOW `met` AND ABOVE `partial`: less assured than a repository read in full, and not a finding
+ * against the repository the way a criterion read and failed is.
  */
 export function assuranceOrder(grade: AssuranceGrade | undefined): SortValue {
   if (grade === undefined || grade === "unknown") {
     return undefined;
   }
-  return grade === "met" ? 0 : 1;
+  return ASSURANCE_GRADES.indexOf(grade);
 }
 
 /**
