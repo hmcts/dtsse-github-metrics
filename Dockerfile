@@ -30,17 +30,6 @@ RUN yarn db:generate
 RUN yarn build:app
 RUN yarn build:cli
 
-FROM dependencies AS development
-
-WORKDIR /app
-USER root
-RUN apk add --no-cache bash
-USER hmcts
-
-COPY --chown=hmcts:hmcts . .
-
-ENV NODE_ENV=development
-
 FROM base AS runtime
 
 WORKDIR /app
