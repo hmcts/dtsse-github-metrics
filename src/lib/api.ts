@@ -17,6 +17,7 @@ import { ownedByIndividual, owners } from "@/lib/rows";
 import type {
   ActorDetail,
   ActorRow,
+  Contributor,
   ContributorRow,
   OverviewSummary,
   RepositoryDetail,
@@ -111,9 +112,10 @@ export async function getRepository(repository: string, weeks: number): Promise<
  * `getActor`'s reason: nothing evaluates the metric set over one person's subset of a repository's merges.
  */
 async function repositoryContributors(configured: Configuration, repository: string, weeks: number): Promise<ContributorRow[]> {
-  const [merges, pushes] = await Promise.all([
+  const [merges, pushes, names] = await Promise.all([
     mergeRows(configured, weeks) as Promise<TeamMergeRow[]>,
-    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>
+    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>,
+    contributorNames(weeks)
   ]);
   const landed = new Map<string, { login: string; contributions: number }>();
   for (const change of [...merges, ...pushes]) {
@@ -126,7 +128,7 @@ async function repositoryContributors(configured: Configuration, repository: str
     landed.set(folded, entry);
   }
   return [...landed.values()]
-    .map((entry) => ({ login: entry.login, contributions: entry.contributions, blocking: 0, metrics: [] }))
+    .map((entry) => ({ ...named(entry.login, names), contributions: entry.contributions, blocking: 0, metrics: [] }))
     .sort((left, right) => right.contributions - left.contributions || left.login.toLowerCase().localeCompare(right.login.toLowerCase()));
 }
 
@@ -145,6 +147,41 @@ export async function getActors(weeks: number): Promise<ActorRow[]> {
 }
 
 /**
+ * Every contributor's profile name in this window, keyed on their folded login.
+ *
+ * OFF THE ESTATE'S OWN CONTRIBUTOR LIST rather than a second read of the organisation graph, which is the same
+ * argument `teamActors` makes for folding the tables' own rows: the name on `/contributors` and the name on a team
+ * page have to be one derivation, or two of them will eventually disagree about who somebody is. `actorRows` is
+ * built with the other three reports and held per span, so every caller below shares one build and adds no query.
+ *
+ * Folded, for `contributorNames` in the report layer's reason: the logins on either side of this join are spelled
+ * by different walks and a case difference would read exactly like an unset name.
+ */
+async function contributorNames(weeks: number): Promise<Map<string, string>> {
+  const rows = await getActors(weeks);
+  const names = new Map<string, string>();
+  for (const row of rows) {
+    if (row.name !== undefined) {
+      names.set(row.login.toLowerCase(), row.name);
+    }
+  }
+  return names;
+}
+
+/**
+ * One person as the pages name them: the login the caller holds, and a profile name where there is one.
+ *
+ * `stripAbsent` does not run over what this builds — these rows are assembled here rather than in the report
+ * layer — so the absent case is written as a missing key rather than as `undefined`, which is the same rule stated
+ * one layer down. A `name: undefined` surviving to a component would render nothing, which is the failure the
+ * whole absent-versus-empty contract exists to prevent.
+ */
+function named(login: string, names: ReadonlyMap<string, string>): Contributor {
+  const name = names.get(login.toLowerCase());
+  return name === undefined ? { login } : { login, name };
+}
+
+/**
  * One person's page: which repositories they landed changes in over the window, and how many.
  *
  * WITHOUT PER-ACTOR BEHAVIOUR METRICS, which is a real gap and is stated rather than papered over. `metrics` is
@@ -157,10 +194,11 @@ export async function getActors(weeks: number): Promise<ActorRow[]> {
  */
 export async function getActor(login: string, weeks: number): Promise<ActorDetail> {
   const configured = await configuration();
-  const [rows, merges, pushes] = await Promise.all([
+  const [rows, merges, pushes, names] = await Promise.all([
     getRepositories(weeks),
     mergeRows(configured, weeks) as Promise<TeamMergeRow[]>,
-    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>
+    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>,
+    contributorNames(weeks)
   ]);
 
   const folded = login.toLowerCase();
@@ -182,6 +220,9 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
 
   const theirs = rows.filter((row) => contributions.has(row.repository));
   return {
+    // Keyed on the folded login rather than on the spelling a merge happened to carry, which is what the name map
+    // is built on. Absent where GitHub holds no name, so the page heads itself with the login.
+    ...(names.has(folded) ? { name: names.get(folded) } : {}),
     actor: {
       actor_login: spelling ?? login,
       repositories: [...contributions.entries()]
@@ -243,7 +284,61 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
   const ours = merges.filter((row) => held.has(row.repository));
   const pushes = directPushes.filter((row) => held.has(row.repository));
 
-  return { ...found, repositories, merges: ours, direct_pushes: pushes, actors: teamActors(ours, pushes) } as unknown as TeamDetail;
+  return {
+    ...found,
+    repositories,
+    merges: ours,
+    direct_pushes: pushes,
+    actors: teamActors(ours, pushes, await contributorNames(weeks))
+  } as unknown as TeamDetail;
+}
+
+/**
+ * Who contributed to each team's repositories in this window, named, for the estate table's export.
+ *
+ * THE SAME FOLD EVERY TEAM PAGE MAKES, run once over the whole estate rather than per team: `teamActors` off the
+ * team's own merges and direct pushes, so the people the CSV lists under `civil` are exactly the people
+ * `/teams/civil` lists and neither can drift from the other. Both read one cached span build, so this costs the
+ * ownership walk below and no query.
+ *
+ * A PERSON-OWNED REPOSITORY CONTRIBUTES TO NO TEAM, for `getTeam`'s reason: nothing stops a login matching a team
+ * slug, and one that did would file somebody's own repository's authors under that team. `owners` is the fold the
+ * report layer counts ownership by, so a shared repository's authors count for every team that owns it — which is
+ * what the team cards already claim.
+ */
+export async function getTeamContributors(weeks: number): Promise<Record<string, Contributor[]>> {
+  const configured = await configuration();
+  const [repositories, merges, directPushes, names] = await Promise.all([
+    getRepositories(weeks),
+    mergeRows(configured, weeks) as Promise<TeamMergeRow[]>,
+    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>,
+    contributorNames(weeks)
+  ]);
+
+  const teamsOf = new Map<string, readonly string[]>(repositories.filter((row) => !ownedByIndividual(row)).map((row) => [row.repository, owners(row)]));
+  const changesOf = new Map<string, { merges: TeamMergeRow[]; pushes: TeamDirectPushRow[] }>();
+  for (const change of merges) {
+    for (const team of teamsOf.get(change.repository) ?? []) {
+      held(changesOf, team).merges.push(change);
+    }
+  }
+  for (const change of directPushes) {
+    for (const team of teamsOf.get(change.repository) ?? []) {
+      held(changesOf, team).pushes.push(change);
+    }
+  }
+
+  return Object.fromEntries([...changesOf].map(([team, changes]) => [team, teamActors(changes.merges, changes.pushes, names)]));
+}
+
+/** One team's accumulating changes, created on first sight so the two loops above can share the map. */
+function held(
+  changes: Map<string, { merges: TeamMergeRow[]; pushes: TeamDirectPushRow[] }>,
+  team: string
+): { merges: TeamMergeRow[]; pushes: TeamDirectPushRow[] } {
+  const entry = changes.get(team) ?? { merges: [], pushes: [] };
+  changes.set(team, entry);
+  return entry;
 }
 
 /**
@@ -255,7 +350,7 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
  * `contributions` is every change they landed by either route, which is what makes the direct-push table's authors
  * appear here too — somebody who only ever pushes straight to the default branch is a contributor to the team.
  */
-function teamActors(merges: readonly TeamMergeRow[], pushes: readonly TeamDirectPushRow[]): TeamActorRow[] {
+function teamActors(merges: readonly TeamMergeRow[], pushes: readonly TeamDirectPushRow[], names: ReadonlyMap<string, string>): TeamActorRow[] {
   const found = new Map<string, { login: string; repositories: Set<string>; contributions: number }>();
   for (const row of [...merges, ...pushes]) {
     if (row.author === undefined) {
@@ -267,9 +362,14 @@ function teamActors(merges: readonly TeamMergeRow[], pushes: readonly TeamDirect
     entry.contributions += 1;
     found.set(folded, entry);
   }
-  return [...found.values()]
-    .map((entry) => ({ login: entry.login, repositories: entry.repositories.size, contributions: entry.contributions }))
-    .sort((left, right) => left.login.toLowerCase().localeCompare(right.login.toLowerCase()));
+  return (
+    [...found.values()]
+      .map((entry) => ({ ...named(entry.login, names), repositories: entry.repositories.size, contributions: entry.contributions }))
+      // ALPHABETICAL BY LOGIN AND NOT BY NAME, unlike the `/contributors` column that a reader can re-sort. This
+      // list has no sortable header, so its order is the one the page states in its own caption — and a name-led
+      // order would put 58% of a team under whatever letter their login starts with, interleaved with the rest.
+      .sort((left, right) => left.login.toLowerCase().localeCompare(right.login.toLowerCase()))
+  );
 }
 
 /** When the last collection landed, for the notice above every page. */

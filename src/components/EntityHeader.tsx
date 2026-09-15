@@ -25,6 +25,7 @@ export type EntityKind = "repository" | "contributor" | "team";
 export function EntityHeader({
   kind,
   name,
+  identifier = true,
   label,
   production,
   context,
@@ -33,6 +34,15 @@ export function EntityHeader({
 }: {
   kind: EntityKind;
   name: string;
+  /**
+   * Whether `name` is a machine identifier, which is what the mono face means everywhere on this site.
+   *
+   * A repository name, a team slug and a GitHub login all are, so this defaults to true and the three pages that
+   * were here before this prop existed are unchanged. A CONTRIBUTOR'S REAL NAME IS NOT ONE, and the same page
+   * shows their login in mono on its context line — so drawing "Paris Freire" in the identifier face would
+   * contradict the one signal `ContributorName` uses to tell a name from a login in a mixed column.
+   */
+  identifier?: boolean;
   /** Present only for a repository: contributors and teams are never graded. */
   label?: ReadinessLabel;
   /**
@@ -60,7 +70,7 @@ export function EntityHeader({
     <header className={clsx("bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2", label === undefined ? null : borderClass(label))}>
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{kind}</span>
-        <h1 className="font-mono text-xl text-slate-100 break-all">{name}</h1>
+        <h1 className={clsx("text-xl text-slate-100 break-all", identifier && "font-mono")}>{name}</h1>
         {label ? <RAGLabel label={label} /> : null}
         <ProductionBadge production={production} />
         {/* A PLAIN ANCHOR and not `next/link`: this leaves the app, so there is nothing to prefetch and no client

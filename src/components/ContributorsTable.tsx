@@ -1,10 +1,9 @@
 import clsx from "clsx";
-import Link from "next/link";
+import { ContributorName } from "@/components/ContributorName";
 import { contributorFigures } from "@/lib/contributor";
 import { quantity } from "@/lib/format";
 import { directCommitTone, type Tone, unreviewedMergeTone, valueClass } from "@/lib/tone";
 import type { ContributorRow } from "@/lib/types";
-import { withWeeks } from "@/lib/weeks";
 
 /**
  * Who authored this repository's window, and what each of them actually did in it.
@@ -37,8 +36,10 @@ export function ContributorsTable({ rows, weeks }: { rows: readonly ContributorR
       <table className="w-full text-xs">
         <thead className="text-slate-400 border-b border-slate-800">
           <tr>
+            {/* Named for the person and not the handle, because the cell under it leads on a name where the
+                organisation graph holds one. See `ContributorName`. */}
             <th scope="col" className="py-2 pl-3 pr-3 text-left font-medium">
-              Login
+              Contributor
             </th>
             <th scope="col" className="py-2 pr-3 text-right font-medium">
               Contributions
@@ -65,12 +66,7 @@ export function ContributorsTable({ rows, weeks }: { rows: readonly ContributorR
             return (
               <tr key={row.login} className="hover:bg-slate-800/30">
                 <td className="py-2 pl-3 pr-3">
-                  <Link
-                    href={withWeeks(`/contributors/${encodeURIComponent(row.login)}`, weeks)}
-                    className="font-mono text-indigo-400 hover:text-indigo-300 break-all"
-                  >
-                    {row.login}
-                  </Link>
+                  <ContributorName person={row} weeks={weeks} />
                 </td>
                 <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.contributions}</td>
                 <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{quantity(figures.merged)}</td>

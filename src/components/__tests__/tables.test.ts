@@ -36,8 +36,13 @@ describe("ActorsTable", () => {
     expect(markup).toContain("/contributors/bob?weeks=8");
   });
 
-  it("heads three columns, Login then Repositories then Readiness", () => {
-    expect(markup.indexOf("Login")).toBeLessThan(markup.indexOf("Repositories"));
+  it("heads three columns, Contributor then Repositories then Readiness", () => {
+    // NAMED FOR THE PERSON AND NOT THE HANDLE, because the cell under it leads on a profile name where the
+    // organisation graph holds one. `indexOf` is asserted positive as well as ordered: a heading that is not in
+    // the markup at all returns -1, which is less than every other index and would pass this vacuously.
+    expect(markup).toContain("Contributor");
+    expect(markup).not.toContain(">Login<");
+    expect(markup.indexOf("Contributor")).toBeLessThan(markup.indexOf("Repositories"));
     expect(markup.indexOf("Repositories")).toBeLessThan(markup.indexOf("Readiness"));
   });
 
@@ -140,6 +145,28 @@ describe("TeamActorsTable", () => {
     expect(markup).toContain("font-mono");
     expect(markup).toContain("/contributors/alice?weeks=12");
     expect(markup).toContain("/contributors/bob?weeks=12");
+  });
+
+  it("names a person where the graph holds a name, and their login where it does not", () => {
+    // The same cell as `/contributors`, which is the point of it being one component: a team page and the estate
+    // list must not disagree about who somebody is.
+    const named = renderToStaticMarkup(
+      createElement(TeamActorsTable, {
+        rows: [
+          { login: "ef32", name: "Tam Arah", repositories: 1, contributions: 4 },
+          { login: "nameless", repositories: 1, contributions: 1 }
+        ],
+        weeks: 12
+      })
+    );
+
+    expect(named).toContain(">Tam Arah<");
+    expect(named).toContain(">ef32<");
+    expect(named).toContain(">nameless<");
+    expect(named).not.toContain("undefined");
+    // The heading follows the cell: "Login" would be wrong on the rows that lead on a name.
+    expect(named).toContain("Contributor");
+    expect(named).not.toContain(">Login<");
   });
 
   it("states both figures as counts scoped to this team", () => {

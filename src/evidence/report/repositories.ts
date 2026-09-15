@@ -18,6 +18,7 @@ import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requir
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import { type CohortEntry, cohortTeams, servedCohort } from "../org/cohort.ts";
 import { OwnerKind } from "../org/graph.ts";
+import { contributorNames } from "../org/people.ts";
 import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
@@ -510,10 +511,14 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
   const rows = stripAbsent(
     read.cohort.map((entry) => repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, undefined))
   );
+  // The graph's names, read once per span build and held with the reports rather than per page. It is 778 rows on
+  // this estate and it does not vary by span — but the four reports are what the cache holds, so a name that rode
+  // its own entry would be a second thing to invalidate when a collection lands.
+  const names = await contributorNames(configuration.organization);
 
   return {
     rows,
-    actors: builtActorRows(rows as { repository: string; readiness?: string }[], facts),
+    actors: builtActorRows(rows as { repository: string; readiness?: string }[], facts, names),
     merges: builtMergeRows(facts),
     directPushes: builtDirectPushRows(facts)
   };
@@ -669,7 +674,11 @@ export async function actorRows(configuration: Configuration, weeks: number, ref
  * by the time this is called, which is the point of building the four together — and it removes a report reading
  * another report, which was one build waiting on a second that shared its data.
  */
-function builtActorRows(rows: readonly { repository: string; readiness?: string }[], facts: ReadonlyMap<string, Merges>): unknown[] {
+function builtActorRows(
+  rows: readonly { repository: string; readiness?: string }[],
+  facts: ReadonlyMap<string, Merges>,
+  names: ReadonlyMap<string, string>
+): unknown[] {
   const readinessOf = new Map(rows.map((row) => [row.repository, row.readiness]));
   const spelling = new Map<string, string>();
   const appearances = new Map<string, Set<string>>();
@@ -705,6 +714,10 @@ function builtActorRows(rows: readonly { repository: string; readiness?: string 
     );
     return {
       login: spelling.get(login) ?? login,
+      // `login` here is already folded, which is what the name map is keyed on. Absent for the 58% of the
+      // organisation who have set no profile name, and `stripAbsent` below drops the key rather than sending an
+      // empty string a cell would render as a blank line.
+      name: names.get(login),
       repositories: repositories.size,
       ...(labels.length === 0 ? {} : { labels })
     };

@@ -13,6 +13,29 @@
 
 export type ReadinessLabel = "green" | "amber" | "red" | "cannot_assess";
 
+/**
+ * A person, as the dashboard names them: their GitHub login, and the profile name where GitHub holds one.
+ *
+ * `name` IS ABSENT FOR MOST OF THE ORGANISATION and that is the norm rather than a collection gap. Measured on
+ * the live estate, 325 of 778 organisation members have set a profile name — 41.8% — so a list of contributors
+ * shows a real name for two people in five and a login for the other three. Every reader of this field therefore
+ * falls back to `login`, and nothing derives a name from a login: `ef32` is `Tam Arah`, which no amount of
+ * splitting on characters would have produced, and a wrong name attached to a real person is worse than a login.
+ *
+ * There is NO SECOND TIER BEHIND IT. The stored pull-request and direct-commit facts carry `authorLogin` and
+ * `authorType` and no author email or git author name, so the email-derived lookup that finds a person outside
+ * this service is not available from what is collected — an absent name here means GitHub holds none, and the
+ * only way to fill it is for the person to set it.
+ *
+ * Extended rather than repeated by every row that names somebody, so the fallback rule has one statement and a
+ * row type cannot acquire a login without the name that goes with it.
+ */
+export interface Contributor {
+  login: string;
+  /** GitHub's profile name. Absent, never an empty string — see `Contributor`. */
+  name?: string;
+}
+
 export type ObservationStatus = "observed" | "not_applicable";
 
 export type AlertSeverity = "critical" | "high" | "medium" | "low";
@@ -619,8 +642,7 @@ export interface RepositoryRow {
  * The columns the table shows are subtracted out of it by `lib/contributor.ts`: the service derives
  * nothing from these, so the page and the JSON a reader can curl carry the same figures.
  */
-export interface ContributorRow {
-  login: string;
+export interface ContributorRow extends Contributor {
   contributions: number;
   blocking: number;
   metrics: BehaviourMetricSummary[];
@@ -665,14 +687,21 @@ export interface RepositoryDetail {
  * of it would throw while rendering and take the whole `/contributors` page down, where the guard
  * shows the list unlabelled.
  */
-export interface ActorRow {
-  login: string;
+export interface ActorRow extends Contributor {
   repositories: number;
   labels?: ReadinessLabel[];
 }
 
 export interface ActorDetail {
   actor: ActorReadiness;
+  /**
+   * This person's profile name, where the organisation graph holds one.
+   *
+   * It sits beside `teams` for `teams`' reason rather than on `ActorReadiness`: that model is the contract's own
+   * and is passed through unchanged, and a name is accounting around it. `Contributor`'s fallback rule applies —
+   * absent means GitHub holds no name, and the page heads itself with the login instead.
+   */
+  name?: string;
   teams: Record<string, string>;
   /**
    * Which of THIS PERSON'S repositories deploy to production, and nothing else.
@@ -685,8 +714,7 @@ export interface ActorDetail {
   production?: string[];
 }
 
-export interface TeamActorRow {
-  login: string;
+export interface TeamActorRow extends Contributor {
   repositories: number;
   contributions: number;
 }
