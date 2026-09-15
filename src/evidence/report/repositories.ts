@@ -27,6 +27,7 @@ import { storedRepositoryState } from "../store/repository-state.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
 import { builtReport, CACHEABLE_SPANS, forgetBuiltReports } from "./cache.ts";
+import { contractObservation } from "./observation.ts";
 
 /**
  * Assembling what the dashboard reads. Ported from `metrics.evidence` and the report-building half of
@@ -569,7 +570,13 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
  * teams, and both numbers are right.
  */
 export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  const rows = (await repositoryRows(configuration, weeks, reference)) as TeamAggregableRow[];
+  // The rows AND the two activity reports off one read, where this took `repositoryRows` alone: the contributor
+  // count below is folded from the merge and direct-push rows, which are already built beside the rows in the same
+  // cache entry. See `estateReports` — asking for them separately would be a second lookup of one held report, and
+  // deriving the count from the facts instead would be the drift `authorsByRepository` records.
+  const reports = await estateReports(configuration, weeks, reference);
+  const rows = reports.rows as TeamAggregableRow[];
+  const authors = authorsByRepository([...reports.merges, ...reports.directPushes] as AttributedChange[]);
   const names = teamDisplayNames(configuration);
   // The teams come from the cohort now, not from the file. The file names only the teams somebody has overridden
   // an owner for, so iterating it would have reported a handful of cards for an estate of 154 teams.
@@ -585,9 +592,15 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
       // its absence as "owned by nobody".
       const owned = attributable.filter((row) => (row.teams ?? (row.team === undefined ? [] : [row.team])).includes(identifier));
       const labels: Record<string, number> = {};
+      const contributors = new Set<string>();
       for (const row of owned) {
         if (row.readiness !== undefined) {
           labels[row.readiness] = (labels[row.readiness] ?? 0) + 1;
+        }
+        // Unioned across the team's repositories rather than summed, so somebody working in three of them is one
+        // contributor to the team. A sum would be a count of rows dressed as a count of people.
+        for (const author of authors.get(row.repository) ?? []) {
+          contributors.add(author);
         }
       }
       return {
@@ -601,10 +614,12 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
         // absent field was a TypeError caught as `notFound()` — a page reporting "no such team" for every team
         // there is. `unavailable` is read by the readiness donut on the same page and by `lib/team.ts`.
         //
-        // `actors` is `[]` rather than a count: the contract types it as `TeamActorRow[]` and contributor
-        // attribution is not assembled yet, so an empty list is the honest shape. `overviewSummary` sends
-        // `actors: 0` for the same unbuilt figure because ITS contract types that one as a number.
-        actors: [],
+        // A COUNT, from 2026-09-15. This emitted `[]` on the reasoning that the contract types `actors` as
+        // `TeamActorRow[]` — which `TeamDetail` does, and this is a `TeamRow`, where it is declared a NUMBER. Two
+        // interfaces of one name, and the double cast in `src/lib/api.ts` is what kept the compiler out of it.
+        // `TeamsList` prints the field through `count(...)`, a template literal, so an empty array stringified to
+        // nothing and all 154 cards read " contributors" with no figure in front of the word.
+        actors: contributors.size,
         unavailable: owned.filter((row) => row.detail !== undefined).length,
         practice: teamPractice(owned),
         labels
@@ -858,6 +873,10 @@ function securityReport(alerts: SecurityAlertEvidence | undefined, fetched: stri
  * deployment and a stored summary could not. `commitClassification` returning `undefined` is a metric declining to
  * count commits — the flow metrics do, since a direct push has no cycle to time — and those samples are left out
  * rather than counted as a zero.
+ *
+ * THROUGH `contractObservation`, which is the field-renaming translation this emitted without for as long as it has
+ * existed: `metric.summary` answers in the domain's `sampleSize`/`percentile75` and the contract declares
+ * `sample_size`/`percentile_75`. See `./observation.ts` for what a reader saw instead.
  */
 function metricSummaries(configuration: Configuration, merges: Merges): Record<string, unknown>[] {
   return behaviourMetrics(configuration.traceability).map((metric) => {
@@ -872,7 +891,7 @@ function metricSummaries(configuration: Configuration, merges: Merges): Record<s
         classifications[answer] = (classifications[answer] ?? 0) + 1;
       }
     }
-    return { metric: metric.identifier, summary: metric.summary(merges), classifications };
+    return { metric: metric.identifier, summary: contractObservation(metric.summary(merges)), classifications };
   });
 }
 
@@ -959,8 +978,43 @@ function builtDirectPushRows(facts: ReadonlyMap<string, Merges>): unknown[] {
   );
 }
 
+/** What a merge or direct-push row is asked for the contributor count: which repository, and who landed it. */
+interface AttributedChange {
+  repository: string;
+  author?: string;
+}
+
+/**
+ * Who authored a reported change in each repository, case-folded.
+ *
+ * OFF THE EMITTED ROWS AND NOT THE FACTS, which is what makes a team card's count and the table on that team's own
+ * page one answer rather than two: `teamActors` in `src/lib/api.ts` folds these same two reports for the page, and a
+ * second derivation over `read.facts` would drift from it in two ways that are easy to miss — `builtDirectPushRows`
+ * falls back to the git author name where GitHub matched no account, and `contributorLogins`, which `builtActorRows`
+ * goes through, drops the logins it judges not to be people. Either difference would put a number on a card that
+ * the table below it contradicts, and the ticket's own acceptance criterion is that the two agree.
+ *
+ * FOLDED, because a GitHub login is unique case-insensitively and one person can appear spelled two ways across a
+ * window's rows — the same fold `builtActorRows` and `teamActors` both make. An unattributed change is skipped
+ * rather than counted as an anonymous contributor: it is one change nobody could attribute, not one more person.
+ */
+function authorsByRepository(changes: readonly AttributedChange[]): Map<string, Set<string>> {
+  const authors = new Map<string, Set<string>>();
+  for (const change of changes) {
+    if (change.author === undefined) {
+      continue;
+    }
+    const seen = authors.get(change.repository) ?? new Set<string>();
+    seen.add(change.author.toLowerCase());
+    authors.set(change.repository, seen);
+  }
+  return authors;
+}
+
 /** What the team aggregation reads off a repository row. */
 interface TeamAggregableRow {
+  /** Which repository the row is, so a team's holding can be matched against the window's activity. */
+  repository: string;
   team?: string;
   teams?: string[];
   owner_kind?: string;

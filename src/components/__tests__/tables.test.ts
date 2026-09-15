@@ -182,6 +182,17 @@ describe("TeamsList", () => {
     expect(markup).toContain("1 not reported");
   });
 
+  it("puts a FIGURE in front of every noun on the card, never the word alone", () => {
+    // Every one of the 154 cards read " contributors" with no number until 2026-09-15. The component was not the
+    // fault — the report layer emitted `TeamDetail`'s list shape onto a `TeamRow`, whose `actors` is a number, and
+    // `count(...)` is a template literal so `[]` stringified to nothing. This case cannot catch that on its own,
+    // because a hand-built row is typed and an empty list will not compile into one; what it holds is the rendered
+    // contract, so a card can never again print a noun with nothing measured in front of it. `teamRows` in
+    // `src/evidence/report/repositories.ts` is where the shape itself is proved.
+    expect(markup).toMatch(/\d+ contributors?/);
+    expect(markup).not.toMatch(/>\s*(repositor|contributor)/);
+  });
+
   it("carries label counts, grouped as the donut groups them, with no combined verdict", () => {
     expect(markup).toContain("Ready");
     expect(markup).toContain("Caution");
