@@ -143,6 +143,42 @@ export async function prevailingCachedCoverage(organization: string, source: Evi
 }
 
 /**
+ * How far each repository's own cached coverage reaches, per source.
+ *
+ * THE PER-REPOSITORY EDGES `prevailingCachedCoverage` TAKES THE MODE OF, kept apart instead of folded, and the
+ * same aggregate over the same rows. That one answers "where does the estate's coverage end", which is where a
+ * report anchors; this answers "was THIS repository read up to there", which is what separates a repository
+ * measured as having merged nothing from one whose merge history nobody fetched. A repository absent from the
+ * map has no coverage under the current signature at all — a source never read for it.
+ *
+ * BOTH SOURCES IN ONE QUERY, because the report needs both and neither is worth a round trip of its own. The
+ * filter is the query hashes rather than the sources, which `touchOrganisationCoverage` reads the same way: a
+ * signature is derived from one source's query, so naming it selects that source and no other, and coverage
+ * left behind by a superseded signature is not coverage this build can report from.
+ */
+export async function cachedCoverageEdges(
+  organization: string,
+  queryHashes: { pullRequests: string; directCommits: string }
+): Promise<Map<string, Map<string, Date>>> {
+  try {
+    const rows = await prisma.sourceCoverage.groupBy({
+      by: ["repository", "source"],
+      where: { organization, queryHash: { in: [queryHashes.pullRequests, queryHashes.directCommits] } },
+      _max: { endsAt: true }
+    });
+    const edges = new Map<string, Map<string, Date>>();
+    for (const row of rows.filter((row): row is typeof row & { _max: { endsAt: Date } } => row._max.endsAt !== null)) {
+      const bySource = edges.get(row.repository) ?? new Map<string, Date>();
+      bySource.set(row.source, row._max.endsAt);
+      edges.set(row.repository, bySource);
+    }
+    return edges;
+  } catch (error) {
+    throw new StorageError("could not read collection cache", error);
+  }
+}
+
+/**
  * Stamps every series of one organisation as used, in one write per source.
  *
  * The batched counterpart to `touchSourceCoverage`, and the reason a page render is not dominated by writes:
