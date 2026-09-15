@@ -194,39 +194,6 @@ function mount(rows: readonly RepositoryRow[] = ROWS) {
   return render(<RepositoriesTable rows={rows} weeks={12} />);
 }
 
-/**
- * What a SIGHTED reader sees in a cell: its text with every `sr-only` node removed.
- *
- * The criterion cells carry two renderings of the same answer since 2026-09-15 — the printed word, and the
- * judgement's detail as `sr-only` text beside it for readers who cannot hover — so raw `textContent` is now the
- * SPOKEN rendering and no longer the printed one. Cases about what is on screen read through this; the cases about
- * what is announced read `textContent` deliberately, and the difference between them is the point.
- */
-function printed(cell: HTMLElement | undefined): string {
-  const copy = cell?.cloneNode(true) as HTMLElement | undefined;
-  for (const hidden of copy?.querySelectorAll(".sr-only") ?? []) {
-    hidden.remove();
-  }
-  return copy?.textContent ?? "";
-}
-
-/**
- * Assert a cell reads as unmeasured, in the dash a sighted reader sees AND the words everybody else gets.
- *
- * These cases asserted `textContent === "-"` until 2026-09-15, and that string was the whole of what carried
- * "absent means unmeasured" — the rule the entire table rests on, since it is what keeps "nobody read this" apart
- * from "the answer is no" and from a zero. A screen reader announces a lone hyphen as "hyphen", or between two
- * empty cells skips it altogether, so the one distinction the table is built on was the one thing not conveyed.
- *
- * `Absent` renders the glyph `aria-hidden` beside an `sr-only` phrase, so both halves are checked here rather than
- * a string that could satisfy either one alone. This is strictly more than the old assertion, not less: the dash
- * must still be exactly a dash, and it must now also be named.
- */
-function expectUnmeasured(cell: HTMLElement | undefined): void {
-  expect(printed(cell)).toBe("-");
-  expect(cell?.querySelector(".sr-only")?.textContent).toBe("not measured");
-}
-
 beforeEach(() => {
   replaced = [];
   url("weeks=12");
@@ -365,10 +332,10 @@ describe("RepositoriesTable columns", () => {
   it("prints Yes, No and a dash, never a zero for a criterion that was not read", () => {
     mount();
 
-    expect(printed(cellOf("web", "Code owner"))).toBe("Yes");
-    expect(printed(cellOf("docs", "Code owner"))).toBe("No");
+    expect(cellOf("web", "Code owner")?.textContent).toBe("Yes");
+    expect(cellOf("docs", "Code owner")?.textContent).toBe("No");
     // `api` carries no assurance block at all, which is a repository nothing has been collected for.
-    expectUnmeasured(cellOf("api", "Code owner"));
+    expect(cellOf("api", "Code owner")?.textContent).toBe("-");
   });
 
   /**
@@ -383,10 +350,10 @@ describe("RepositoriesTable columns", () => {
     mount();
 
     // `web` has two open alerts; `docs` has none. Yes is the one with the problem.
-    expect(printed(cellOf("web", "Secrets"))).toBe("Yes");
-    expect(printed(cellOf("docs", "Secrets"))).toBe("No");
+    expect(cellOf("web", "Secrets")?.textContent).toBe("Yes");
+    expect(cellOf("docs", "Secrets")?.textContent).toBe("No");
     // Nobody read the org-wide alerts for `api`, which is not the same as finding none.
-    expectUnmeasured(cellOf("api", "Secrets"));
+    expect(cellOf("api", "Secrets")?.textContent).toBe("-");
 
     expect(cellOf("web", "Secrets")?.outerHTML).toContain("text-rag-amber");
     expect(cellOf("docs", "Secrets")?.outerHTML).toContain("text-rag-green");
@@ -396,38 +363,6 @@ describe("RepositoriesTable columns", () => {
     expect(cellOf("web", "Assurance")?.textContent).toBe("Partly meets");
   });
 
-  /**
-   * The criterion detail, reachable without a pointer — VIBE-576.
-   *
-   * It was in `title=` alone, which the project's own `InfoTooltip` documents as unreachable by keyboard and
-   * absent altogether on a touch screen. Which control is missing under Hygiene is the most actionable datum on
-   * the page, so it is now `sr-only` text in the cell as well. `title` is kept beside it, so a mouse loses
-   * nothing — both are asserted, because dropping either one is a regression for somebody.
-   */
-  it("says the judgement's detail in the cell as well as in its title, so no pointer is needed", () => {
-    mount();
-
-    const cell = cellOf("web", "Secrets") as HTMLElement;
-    const detail = "2 secret-scanning alerts open, the oldest for 900 days";
-
-    expect(cell.querySelector(".sr-only")?.textContent).toBe(`, ${detail}`);
-    expect(cell.getAttribute("title")).toBe(detail);
-    // And the printed cell is unchanged by it: the word is still the only thing on screen.
-    expect(printed(cell)).toBe("Yes");
-  });
-
-  /**
-   * A cell with nothing behind it gets no empty `sr-only` span, so a screen reader is not handed a stray comma.
-   */
-  it("adds no spoken detail where the criterion carries none", () => {
-    mount();
-
-    const cell = cellOf("api", "Code owner") as HTMLElement;
-    expect(cell.getAttribute("title")).toBeNull();
-    // The only `sr-only` here is the absent dash's own name.
-    expect([...cell.querySelectorAll(".sr-only")].map((node) => node.textContent)).toEqual(["not measured"]);
-  });
-
   it("prints the alert AGE with no threshold and no colour", () => {
     // "Measurement first": no SLA has been agreed, so the number is the finding and the reader is the judge.
     // A tone here would publish a policy nobody chose — which is why this asserts the ABSENCE of one.
@@ -435,7 +370,7 @@ describe("RepositoriesTable columns", () => {
 
     expect(cellOf("web", "Patching cycle")?.textContent).toBe("120d");
     // Nothing severe open reads as a dash rather than as `0d`, which would claim an alert was raised today.
-    expectUnmeasured(cellOf("docs", "Patching cycle"));
+    expect(cellOf("docs", "Patching cycle")?.textContent).toBe("-");
     expect(cellOf("web", "Patching cycle")?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
   });
 
@@ -512,7 +447,7 @@ describe("RepositoriesTable production column", () => {
     // Read the list and it does not name this one: that is an answer, and No says it.
     expect(productionCell("docs")?.textContent).toBe("No");
     // The list could not be read at all, which is not the same claim and must not read as No.
-    expectUnmeasured(productionCell("api"));
+    expect(productionCell("api")?.textContent).toBe("-");
   });
 
   it("holds an unread answer back from both ends of its own sort", () => {

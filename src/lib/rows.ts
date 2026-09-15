@@ -287,11 +287,8 @@ export const SECRETS_CRITERION: AssuranceCriterion = "no-committed-secrets";
  */
 export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
   "named-owner": "Yes when the repository is attributed to a GitHub team, including by a CODEOWNERS file naming one. No if it is owned by an individual.",
-  // NOT "hover a cell", which this said until 2026-09-15. The instruction named the one way to the detail that a
-  // keyboard or a touch screen has not got — and the detail is now beside the word in the cell itself, for every
-  // reader, so the hint says what is there rather than which pointer gesture reveals it.
   "automated-hygiene":
-    "Yes when every readable signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — which either Renovate or Dependabot satisfies. Each cell names the ones that are missing.",
+    "Yes when every readable signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — which either Renovate or Dependabot satisfies. Hover a cell to see which are missing.",
   // Reads as the FINDING and not the verdict — see `findingOrder` and the `Finding` cell for the one column whose
   // Yes is the bad answer.
   "no-committed-secrets": "Yes if potential secrets have been found by the secret scanner.",

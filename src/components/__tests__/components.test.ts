@@ -24,7 +24,6 @@ import LoadingRepository from "@/app/repositories/[repository]/loading";
 import LoadingRepositories from "@/app/repositories/loading";
 import LoadingTeam from "@/app/teams/[team]/loading";
 import LoadingTeams from "@/app/teams/loading";
-import { Absent } from "@/components/Absent";
 import { ActorRepositoriesTable } from "@/components/ActorRepositoriesTable";
 import { ActorsTable } from "@/components/ActorsTable";
 import { AssessmentSection } from "@/components/AssessmentSection";
@@ -99,33 +98,6 @@ describe("MetricCard", () => {
       const markup = renderToStaticMarkup(createElement(MetricCard, { label: "Coverage", value: "82%", tone }));
       expect(markup).toContain(TONE_VALUE[tone]);
     }
-  });
-});
-
-/**
- * The unmeasured cell — VIBE-576.
- *
- * "Absent means unmeasured" is the contract's central rule, and in a table cell the whole of it was being carried
- * by one hyphen glyph: announced as "hyphen", or skipped altogether between two empty cells. The Yes/No cells
- * beside it already honour "colour is never the sole carrier of meaning" by printing the word; this is the third
- * answer finally saying what it means too.
- */
-describe("Absent", () => {
-  it("shows the dash and says what it means, so a screen reader is not left with a hyphen", () => {
-    const markup = renderToStaticMarkup(createElement(Absent));
-
-    expect(markup).toBe('<span aria-hidden="true">-</span><span class="sr-only">not measured</span>');
-  });
-
-  /**
-   * The glyph is hidden and the words are not shown, which is the whole mechanism. If either span lost its class
-   * the cell would either announce "hyphen not measured" twice over or print the phrase in the table.
-   */
-  it("hides the glyph from assistive technology and the phrase from the page", () => {
-    const markup = renderToStaticMarkup(createElement(Absent));
-
-    expect(markup).toContain('<span aria-hidden="true">-</span>');
-    expect(markup).toContain('<span class="sr-only">not measured</span>');
   });
 });
 
