@@ -22,7 +22,7 @@ import { contributorNames } from "../org/people.ts";
 import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
-import { prevailingCachedCoverage } from "../store/coverage.ts";
+import { cachedCoverageEdges, prevailingCachedCoverage } from "../store/coverage.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
 import { storedRepositoryState } from "../store/repository-state.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
@@ -155,7 +155,8 @@ function repositoryRow(
   entry: CohortEntry,
   state: { fetchedAt: Date; payload: unknown } | undefined,
   merges: Merges,
-  production: boolean | undefined
+  production: boolean | undefined,
+  measured: MeasuredRow
 ): Record<string, unknown> {
   const policy = readinessPolicy(configuration);
   const teams = entry.owners;
@@ -197,25 +198,89 @@ function repositoryRow(
     team,
     teams: shared,
     ...facts,
+    // GRADED ON BOTH BRANCHES OF MEASURED-NESS, unlike the figures below, and the label is why: an unread merge
+    // history grades `cannot_assess` through `insufficient-merges`, which is the right verdict for a repository
+    // nobody walked. Suppressing it would take 650 repositories out of the readiness distribution the donut
+    // accounts for, to say in an absence what the label already says in a word.
     readiness: assessment?.label,
-    merged_pull_requests: merges.pullRequests.length,
-    direct_commits: merges.directCommits.length,
     // The two gate figures are ABSENT where there is no gate to read them off, rather than zero: a repository
     // whose rules nobody may see is not a repository requiring no reviews.
     required_approving_reviews: gate.gate === undefined ? undefined : requiredApprovals(gate.gate),
     required_status_checks: gate.gate === undefined ? undefined : requiredContexts(gate.gate).length,
-    unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
-    // THE COUNTS BEHIND THAT VERDICT, which the team page aggregates: how many substantial changes reached the
-    // default branch with no independent review, out of how many substantial changes there were. The verdict alone
-    // cannot be summed across a team's repositories, and the policy already computes both.
-    ...substantialCounts(policy, merges),
-    // The two timing medians. Read off `BehaviourMetric.summary`, so the page and the assessment compare the same
-    // number at the same percentile rather than two derivations that could disagree.
-    ...timingMedians(merges),
+    ...behaviourFigures(policy, merges, measured),
     security: reportedAlerts(payload.securityAlerts),
     production: production ?? payload.deploysToProduction,
-    detail: gate.gate === undefined ? gate.detail : undefined
+    detail: unreportedDetail(gate, measured)
   };
+}
+
+/** Whether each of one repository's two behaviour sources was read. See `measuredSources`. */
+interface MeasuredRow {
+  pullRequests: boolean;
+  directCommits: boolean;
+}
+
+/**
+ * Everything the window's merge cohort supports, or nothing for a source that was not read.
+ *
+ * ABSENT MEANS UNMEASURED AND ZERO MEANS MEASURED-AS-NOTHING, applied to the figures where the difference is
+ * invisible. A repository walked through a quiet window merged nothing and says `0`; one whose walk was refused
+ * and one the stale path skipped merged an unknown amount, and a `0` on either is the estate's throughput
+ * quietly counting a repository nobody read. `detail` below names which it was.
+ *
+ * THE TWO COUNTS ARE GATED INDEPENDENTLY, because they are two walks recording two coverage series: a repository
+ * whose pull requests were refused and whose commits came back has one honest figure and one absence. The graded
+ * figures need BOTH — `sufficient` counts merges and direct commits together, and a verdict over half a cohort
+ * would be a finding about the half that answered.
+ */
+function behaviourFigures(policy: ReadinessPolicy, merges: Merges, measured: MeasuredRow): Record<string, unknown> {
+  return {
+    ...(measured.pullRequests ? { merged_pull_requests: merges.pullRequests.length } : {}),
+    ...(measured.directCommits ? { direct_commits: merges.directCommits.length } : {}),
+    ...(measured.pullRequests && measured.directCommits
+      ? {
+          unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
+          // THE COUNTS BEHIND THAT VERDICT, which the team page aggregates: how many substantial changes reached
+          // the default branch with no independent review, out of how many substantial changes there were. The
+          // verdict alone cannot be summed across a team's repositories, and the policy already computes both.
+          ...substantialCounts(policy, merges),
+          // The two timing medians. Read off `BehaviourMetric.summary`, so the page and the assessment compare the
+          // same number at the same percentile rather than two derivations that could disagree.
+          ...timingMedians(merges)
+        }
+      : {})
+  };
+}
+
+/**
+ * Why a row carries less than a full set of figures, or nothing where it carries them all.
+ *
+ * WHAT `unavailable` COUNTS, on both pages that count it, and what the estate table prints under a repository's
+ * name — so a reader meeting an empty Merged column is told whether nobody merged or nobody looked. Before this,
+ * a refused merge walk left the whole row indistinguishable from a quiet repository: the only `detail` a
+ * populated row could carry came from the merge gate, which is a separate REST call that usually succeeds.
+ *
+ * TWO INDEPENDENT ABSENCES, joined rather than ranked. An unread source and an unreadable gate are different
+ * failures of different calls, a stale repository has both, and dropping either sentence would leave a figure on
+ * the row with nothing to explain it.
+ */
+function unreportedDetail(gate: MergeGateReport, measured: MeasuredRow): string | undefined {
+  const unread = unreadSources(measured);
+  const reasons = [...(unread === undefined ? [] : [unread]), ...(gate.gate === undefined && gate.detail !== undefined ? [gate.detail] : [])];
+  return reasons.length === 0 ? undefined : reasons.join("; ");
+}
+
+/** Which merge sources went unread, as the sentence a reader of the row is owed. */
+function unreadSources(measured: MeasuredRow): string | undefined {
+  if (measured.pullRequests && measured.directCommits) {
+    return undefined;
+  }
+  if (!measured.pullRequests && !measured.directCommits) {
+    return "no merge history was read for this repository, so its merges are unmeasured rather than none";
+  }
+  return measured.pullRequests
+    ? "the direct commits were not read for this repository, so they are unmeasured rather than none"
+    : "the merged pull requests were not read for this repository, so they are unmeasured rather than none";
 }
 
 /**
@@ -340,7 +405,7 @@ interface EstateReports {
   directPushes: unknown[];
 }
 
-/** A repository the window holds no facts for: measured, and measured as nothing. */
+/** A repository the window holds no facts for. Whether that is a measured nothing is `measuredSources`' answer. */
 const NO_MERGES: Merges = { pullRequests: [], directCommits: [] };
 
 /** The widest span on offer, and so the one window a read has to cover to answer for all of them. */
@@ -374,26 +439,32 @@ export interface Estate {
   cohort: CohortEntry[];
   states: Map<string, { fetchedAt: Date; payload: unknown }>;
   facts: Map<string, DatedFacts>;
+  /** Which repositories each behaviour source was actually read for. See `measuredSources`. */
+  measured: MeasuredSources;
+}
+
+/** The repositories each behaviour source was read for, by the collection every span derived here is anchored at. */
+interface MeasuredSources {
+  pullRequests: Set<string>;
+  directCommits: Set<string>;
 }
 
 /**
- * The estate over one window: the cohort, the collected states, and the window's facts deserialised ONCE.
+ * The estate over one window: the cohort, the collected states, the coverage edges, and the window's facts
+ * deserialised ONCE.
  *
- * The three reads go together because none of them needs another's answer, and because the two that are not the
+ * The four reads go together because none of them needs another's answer, and because the three that are not the
  * fact cache are the ones a per-span build was paying for five times over: `servedCohort` is two queries against
  * the change-versioned graph and `storedRepositoryStates` is 1,891 rows of `jsonb`.
  */
 async function readEstate(configuration: Configuration, window: ReportingWindow, reference: Date): Promise<Estate> {
   const organization = configuration.organization;
-  const [cohort, states, stored] = await Promise.all([
+  const signatures = { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) };
+  const [cohort, states, stored, edges] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryStates(organization),
-    loadCachedFactsForOrganisation(
-      organization,
-      { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) },
-      window.startsAt,
-      window.endsAt
-    )
+    loadCachedFactsForOrganisation(organization, signatures, window.startsAt, window.endsAt),
+    cachedCoverageEdges(organization, signatures)
   ]);
 
   return {
@@ -401,6 +472,7 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
     endsAt: window.endsAt,
     cohort,
     states,
+    measured: measuredSources(edges, window.endsAt),
     facts: new Map(
       [...stored].map(([repository, cached]) => [
         repository,
@@ -413,6 +485,46 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
       ])
     )
   };
+}
+
+/**
+ * Which repositories each source was READ for, over the window every span derived from this read shares.
+ *
+ * WAS IT MEASURED, NOT WAS IT COLLECTABLE, and that distinction is the whole of this function. A collection
+ * records coverage only for what it actually walked, so a repository whose merge walk was refused — `FORBIDDEN:
+ * Resource not accessible by integration`, a 502, an exhausted rate limit — leaves a `repository_state` row and
+ * no coverage, and one on the stale path never walks at all. Neither holds a merge history anybody fetched, and
+ * `0 merged pull requests` on either is a measurement nobody made. Gating on the collection POLICY instead would
+ * answer for the second and miss the first.
+ *
+ * READ UP TO THE ANCHOR, rather than covering the span, and the weaker test is the correct one here. Collection
+ * fills `lookback.operational_days` — 90 days, against a widest offered span of 26 weeks — so no repository's
+ * coverage contains a long window, and asking for containment would report the whole estate as unmeasured at 12
+ * and 26 weeks. What a report can ask is whether the last run to reach the estate reached THIS repository:
+ * `endsAt` is the modal edge `collectedAnchor` snapped to, so a repository that run walked sits at that edge or
+ * past it and one it did not sits behind. That is the property `modalEdge` was chosen for — it holds the anchor
+ * still against a straggler and against a minority collected ahead — so falling short of it says something
+ * about a repository rather than about arithmetic.
+ *
+ * The residual `modalEdge` already names is inherited and not introduced: a `collect` that dies past halfway
+ * moves the mode, and the repositories it never reached report their merges as unmeasured until the next run
+ * reaches them. Unmeasured is what they are.
+ */
+function measuredSources(edges: ReadonlyMap<string, ReadonlyMap<string, Date>>, endsAt: Date): MeasuredSources {
+  const measured: MeasuredSources = { pullRequests: new Set<string>(), directCommits: new Set<string>() };
+  for (const [repository, bySource] of edges) {
+    if (reachesAnchor(bySource.get(EvidenceSource.PullRequests), endsAt)) {
+      measured.pullRequests.add(repository);
+    }
+    if (reachesAnchor(bySource.get(EvidenceSource.DirectCommits), endsAt)) {
+      measured.directCommits.add(repository);
+    }
+  }
+  return measured;
+}
+
+function reachesAnchor(edge: Date | undefined, endsAt: Date): boolean {
+  return edge !== undefined && edge.getTime() >= endsAt.getTime();
 }
 
 /**
@@ -508,8 +620,15 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
   // would otherwise be answered from facts that stop short of the window and reported as a quiet drop in merges.
   const read = shared !== undefined && covers(shared, weeks, window) ? shared : await readEstate(configuration, window, reference);
   const facts = mergesSince(read, spanStartsAt(read.endsAt, weeks));
+  // The measured-ness comes off the shared read like everything else the row is handed: it is a fact about which
+  // sources a collection reached, so it is settled once for the estate rather than asked per row or per span.
   const rows = stripAbsent(
-    read.cohort.map((entry) => repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, undefined))
+    read.cohort.map((entry) =>
+      repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, undefined, {
+        pullRequests: read.measured.pullRequests.has(entry.repository),
+        directCommits: read.measured.directCommits.has(entry.repository)
+      })
+    )
   );
   // The graph's names, read once per span build and held with the reports rather than per page. It is 778 rows on
   // this estate and it does not vary by span — but the four reports are what the cache holds, so a name that rode

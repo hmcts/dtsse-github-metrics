@@ -99,7 +99,7 @@ export async function loadCachedMerges(organization: string, repository: string,
  * Split out of `loadCachedMerges` so the batched reader can share it: one deserialiser means the per-repository
  * path and the whole-estate path cannot drift in how a payload becomes a fact. An absent entry is a repository
  * the window holds no facts for, which is empty lists rather than a missing row — the row still appears in the
- * report, carrying zeroes it was measured to have.
+ * report, and whether it carries zeroes or absences is what the source's own coverage says.
  */
 export function deserialiseMerges(payloads: { pullRequests: unknown[]; directCommits: unknown[] } | undefined): Merges {
   return {

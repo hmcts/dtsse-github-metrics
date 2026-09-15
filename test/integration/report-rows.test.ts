@@ -3,7 +3,7 @@ import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
 import { builtReport, builtSpanCount, CACHEABLE_SPANS } from "../../src/evidence/report/cache.ts";
-import { forgetBuiltRows, mergeRows, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
+import { forgetBuiltRows, mergeRows, overviewSummary, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
 import { startReportWarmer, warmEverySpan } from "../../src/evidence/report/warmer.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
@@ -89,6 +89,42 @@ async function personOwnedRepository(repository: string, login: string): Promise
     }
   });
   await graphOwnership(repository, "person", login, "direct-collaborator-admin");
+}
+
+/** Where a fixture's coverage starts. Only its edge is read, so this is far enough back to be out of the way. */
+const COVERAGE_FROM = new Date(Date.UTC(2026, 0, 1));
+
+/**
+ * The coverage a completed merge walk leaves behind, which is what says a repository was READ.
+ *
+ * A `repository_state` row does not say it. The stale path writes one having walked nothing, and a refused walk
+ * writes one too — so a fixture whose zeroes are meant to be reported has to state its coverage, exactly as a
+ * collection does. `endsAt` is where the report anchors: `prevailingCachedCoverage` takes the mode of these edges
+ * and every row is reported against it.
+ */
+async function walked(repository: string, endsAt: Date = WINDOW.endsAt): Promise<void> {
+  await prisma.sourceCoverage.createMany({
+    data: [
+      {
+        organization: ORGANIZATION,
+        repository,
+        source: EvidenceSource.PullRequests,
+        queryHash: PULL_REQUESTS,
+        startsAt: COVERAGE_FROM,
+        endsAt,
+        accessedAt: new Date()
+      },
+      {
+        organization: ORGANIZATION,
+        repository,
+        source: EvidenceSource.DirectCommits,
+        queryHash: DIRECT_COMMITS,
+        startsAt: COVERAGE_FROM,
+        endsAt,
+        accessedAt: new Date()
+      }
+    ]
+  });
 }
 
 /**
@@ -342,6 +378,8 @@ describe("repositoryRows", () => {
         { organization: ORGANIZATION, repository: "beta", fetchedAt: new Date(), payload: { defaultBranch: "main" } }
       ]
     });
+    await walked("alpha");
+    await walked("beta");
     await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 10)));
     await mergedPullRequest("alpha", 2n, new Date(Date.UTC(2026, 7, 11)));
     await mergedPullRequest("beta", 3n, new Date(Date.UTC(2026, 7, 12)));
@@ -381,6 +419,150 @@ describe("repositoryRows", () => {
 });
 
 /**
+ * Absent where a merge history was never read, zero where it was read and held nothing.
+ *
+ * THE CONTRACT'S CENTRAL RULE, applied to the two figures that were exempt from it. A refused merge walk and the
+ * stale path both leave a `repository_state` row and NO coverage, and the row built from either used to carry
+ * `merged_pull_requests: 0` — a measurement nobody made, carrying no explanation, counted as available and summed
+ * into its team's throughput. Every case here states what was WALKED rather than what was collected, because the
+ * coverage is what tells the two apart.
+ *
+ * None of it is visible from a component test, which is handed rows somebody wrote by hand, and none of it from a
+ * unit test of the store: the seam is the report reading one estate's coverage and deciding per row.
+ */
+describe("the merge figures a row states", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  interface ReportedRow {
+    repository: string;
+    merged_pull_requests?: number;
+    direct_commits?: number;
+    unreviewed_substantial?: string;
+    detail?: string;
+  }
+
+  async function rowsByRepository(): Promise<Map<string, ReportedRow>> {
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as ReportedRow[];
+    return new Map(rows.map((row) => [row.repository, row]));
+  }
+
+  /** A repository a collection reached and read a gate for, which is every fixture below's starting point. */
+  async function collected(repository: string): Promise<void> {
+    await graphRepository(repository, new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({ data: { organization: ORGANIZATION, repository, fetchedAt: new Date(), payload: readableGate() } });
+  }
+
+  it("should report absent counts when the merge walk was refused, rather than a measured zero", async () => {
+    // THE REFUSAL THIS IS ABOUT: `FORBIDDEN: Resource not accessible by integration` on the pull-request walk,
+    // which `runCollect` counts, warns about and carries on from — leaving a state row, a readable gate and no
+    // coverage. The walked repository beside it is what sets the anchor, exactly as the estate does.
+    await collected("walked");
+    await collected("refused");
+    await walked("walked");
+
+    const rows = await rowsByRepository();
+
+    expect(rows.get("refused")?.merged_pull_requests).toBeUndefined();
+    expect(rows.get("refused")?.direct_commits).toBeUndefined();
+    expect(rows.get("refused")?.detail).toBe("no merge history was read for this repository, so its merges are unmeasured rather than none");
+    // Still in the estate: the row is reported and says why it carries no figures, which is the opposite of
+    // dropping it. Its gate was readable, so the sentence above is the only one it carries.
+    expect(rows.size).toBe(2);
+  });
+
+  it("should keep a walked repository's zero, since nothing merged is a measurement", async () => {
+    // THE CASE THE GATE MUST NOT SWALLOW. A repository read over a quiet window merged nothing, and `0` is the
+    // honest answer for it — the gate asks whether the source was read, not whether anything came back.
+    await collected("quiet");
+    await walked("quiet");
+
+    const rows = await rowsByRepository();
+
+    expect(rows.get("quiet")?.merged_pull_requests).toBe(0);
+    expect(rows.get("quiet")?.direct_commits).toBe(0);
+    expect(rows.get("quiet")?.detail).toBeUndefined();
+  });
+
+  it("should report absent counts for a stale repository the collection never walked", async () => {
+    // The shallow path, which is roughly 650 repositories on this estate: a state row carrying the assurance
+    // answers, no merge gate, no merge walk. `cohort.active_within_days` already says it has no behaviour figures
+    // to report; this is the report saying the same thing rather than reporting zeroes.
+    await graphRepository("stale", new Date(Date.UTC(2024, 0, 15)));
+    await prisma.repositoryState.create({
+      data: { organization: ORGANIZATION, repository: "stale", fetchedAt: new Date(), payload: { defaultBranch: "main" } }
+    });
+    await collected("current");
+    await walked("current");
+
+    const rows = await rowsByRepository();
+
+    expect(rows.get("stale")?.merged_pull_requests).toBeUndefined();
+    expect(rows.get("stale")?.direct_commits).toBeUndefined();
+    // BOTH ABSENCES, because they are two calls and two failures: the walk was never made and the gate was never
+    // read. A row explaining one and not the other leaves a reader looking for the missing half.
+    expect(rows.get("stale")?.detail).toBe(
+      "no merge history was read for this repository, so its merges are unmeasured rather than none; the merge gate has not been collected"
+    );
+  });
+
+  it("should count a repository whose merge history was not read as unavailable", async () => {
+    // `unavailable` counts the rows carrying a detail, and until this it counted the merge GATE alone — a separate
+    // REST call that usually succeeds, so a refused walk was counted as a reported repository.
+    await collected("reported");
+    await collected("refused");
+    await walked("reported");
+
+    const summary = (await overviewSummary(CONFIGURATION, 26, REFERENCE)) as { repositories: number; unavailable: number };
+
+    expect(summary).toMatchObject({ repositories: 2, unavailable: 1 });
+  });
+
+  it("should leave a repository last walked before the anchor out of its team's throughput", async () => {
+    // WALKED, BUT NOT FOR THIS REPORT, which is the case a "has it ever been collected" test would miss. The
+    // facts in the cache are real and were read a month before the anchor, so counting them would report a
+    // month-old answer as this window's — and summing them into the team's throughput is the estate figure the
+    // ticket is about.
+    await collected("current");
+    await collected("lapsed");
+    await walked("current");
+    await walked("lapsed", new Date(Date.UTC(2026, 7, 1)));
+    await mergedPullRequest("current", 1n, new Date(Date.UTC(2026, 7, 10)), "ada");
+    await mergedPullRequest("lapsed", 2n, new Date(Date.UTC(2026, 6, 10)), "grace");
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { repositories: number; unavailable?: number; practice?: Record<string, number> }[];
+
+    // Both repositories are still the team's, and one of the two is reportable: a holding of two with one
+    // unavailable, and a throughput of the one merge anybody actually read.
+    expect(cards[0]).toMatchObject({ repositories: 2, unavailable: 1 });
+    expect(cards[0]?.practice).toMatchObject({ merged_pull_requests: 1, direct_commits: 0 });
+  });
+
+  it("should state the same absences on a warmed span as on one read for itself", async () => {
+    // THE ONE-READ INVARIANT, from the report's side. The five spans are built from a single `readEstate`, so the
+    // measured-ness has to ride on that read: computed per span it would be five queries, and computed per row it
+    // would be one per repository per span. Either mistake still renders — this is what would fail.
+    //
+    // Dated off today's midnight because a warm anchors itself at `new Date()`, the reason the shared-read case
+    // above gives.
+    const anchor = midnight(new Date());
+    await collected("walked");
+    await collected("refused");
+    await walked("walked", anchor);
+    await mergedPullRequest("walked", 1n, new Date(anchor.getTime() - 86_400_000));
+
+    const alone = (await repositoryRows(CONFIGURATION, 4, anchor)) as ReportedRow[];
+    expect(alone.map((row) => row.merged_pull_requests)).toEqual([undefined, 1]);
+
+    forgetBuiltRows();
+    await warmEverySpan(CONFIGURATION);
+
+    expect(((await repositoryRows(CONFIGURATION, 4, anchor)) as ReportedRow[]).map((row) => row.merged_pull_requests)).toEqual(
+      alone.map((row) => row.merged_pull_requests)
+    );
+  });
+});
+
+/**
  * Who each row says owns it, and which of those owners gets a team card.
  *
  * The seam this covers is the one the two changes sit on: `owner_kind` has to reach the row for
@@ -402,6 +584,10 @@ describe("the owner a row is reported under", () => {
         { organization: ORGANIZATION, repository: "person-owned", fetchedAt: new Date(), payload: { defaultBranch: "main" } }
       ]
     });
+    // WALKED, which is what makes the zeroes below measured ones. Collected and walked are different facts and
+    // only the coverage states the second.
+    await walked("team-owned");
+    await walked("person-owned");
 
     const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as {
       repository: string;
@@ -659,6 +845,9 @@ describe("the warmer", () => {
     await prisma.repositoryState.create({
       data: { organization: ORGANIZATION, repository: "alpha", fetchedAt: new Date(), payload: readableGate() }
     });
+    // Walked to the anchor, so the counts below are reported at all. The edge is that same midnight, which is
+    // also what `collectedAnchor` snaps every span to — so the windows are the ones this case was written for.
+    await walked("alpha", anchor);
     await mergedPullRequest("alpha", 1n, daysBack(1));
     await mergedPullRequest("alpha", 2n, daysBack(20));
     await mergedPullRequest("alpha", 3n, daysBack(120));
@@ -845,9 +1034,12 @@ describe("the team rows", () => {
   it("should count a repository whose gate could not be read as unavailable rather than as reported", async () => {
     // `unavailable` counts the rows carrying `detail`, and a row carries one when there is no merge gate to grade
     // — whether nothing was collected at all or the collection could not read the gate. Both fixtures here are
-    // collected; only one has a readable gate, which is what separates them.
+    // collected AND walked; only one has a readable gate, which is what separates them. An unread merge history
+    // is the other way a row carries a detail, so both are walked here or the case would count two.
     await graphRepository("gated", new Date(Date.UTC(2026, 7, 20)));
     await graphRepository("ungated", new Date(Date.UTC(2026, 7, 20)));
+    await walked("gated");
+    await walked("ungated");
     await prisma.repositoryState.createMany({
       data: [
         { organization: ORGANIZATION, repository: "gated", fetchedAt: new Date(), payload: readableGate() },
@@ -947,6 +1139,9 @@ describe("the review timings", () => {
     await prisma.repositoryState.create({
       data: { organization: ORGANIZATION, repository: "alpha", fetchedAt: new Date(), payload: readableGate() }
     });
+    // Walked, like the state row and for the same reason: the medians are figures about the window's merge cohort,
+    // so they are absent for a repository whose cohort was never read and the case would assert against that.
+    await walked("alpha");
     await reviewedMerge("alpha", {
       readyAt: new Date(Date.UTC(2026, 7, 10, 9)),
       reviewedAt: new Date(Date.UTC(2026, 7, 10, 14)),
@@ -976,11 +1171,13 @@ describe("the review timings", () => {
     // such row must not 500 the whole page.
     //
     // The state row is load-bearing: without it the row takes the unavailable branch, never reaches the metrics,
-    // and the case passes with the guard removed. Found exactly that way.
+    // and the case passes with the guard removed. Found exactly that way. The coverage is load-bearing for the
+    // same reason — an unwalked repository states no median either, so the guard would go unexercised.
     await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
     await prisma.repositoryState.create({
       data: { organization: ORGANIZATION, repository: "alpha", fetchedAt: new Date(), payload: readableGate() }
     });
+    await walked("alpha");
     await prisma.pullRequestFact.create({
       data: {
         organization: ORGANIZATION,
