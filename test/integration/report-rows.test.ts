@@ -99,7 +99,7 @@ async function personOwnedRepository(repository: string, login: string): Promise
  * produced. It read back as a fact with no `mergedAt` and no size at all, so `builtMergeRows` threw on
  * `mergedAt.toISOString()` and every case reaching the merge rows failed on the fixture rather than on the code.
  */
-async function mergedPullRequest(repository: string, identifier: bigint, mergedAt: Date): Promise<void> {
+async function mergedPullRequest(repository: string, identifier: bigint, mergedAt: Date, authorLogin?: string): Promise<void> {
   await prisma.pullRequestFact.create({
     data: {
       organization: ORGANIZATION,
@@ -107,7 +107,17 @@ async function mergedPullRequest(repository: string, identifier: bigint, mergedA
       queryHash: PULL_REQUESTS,
       identifier,
       mergedAt,
-      payload: { identifier: Number(identifier), number: Number(identifier), mergedAt: mergedAt.toISOString(), additions: 10, deletions: 1, changedFiles: 1 }
+      payload: {
+        identifier: Number(identifier),
+        number: Number(identifier),
+        mergedAt: mergedAt.toISOString(),
+        additions: 10,
+        deletions: 1,
+        changedFiles: 1,
+        // Absent unless a case is about attribution, which is a real shape: GitHub matches no account to some
+        // merges, and `builtMergeRows` sends no `author` for them.
+        ...(authorLogin === undefined ? {} : { authorLogin, authorType: "User" })
+      }
     }
   });
 }
@@ -799,15 +809,37 @@ function readableGate() {
 describe("the team rows", () => {
   const REFERENCE = new Date(Date.UTC(2026, 8, 1));
 
-  it("should send actors as a LIST and unavailable as a count, which the team page reads", async () => {
-    // THE TWO FIELDS WHOSE ABSENCE BROKE THE PAGE. `actors` is typed `TeamActorRow[]` on `TeamDetail` and the
-    // page calls `.length` on it; `unavailable` feeds the readiness donut and `lib/team.ts`.
+  it("should send actors as a COUNT and unavailable as a count, which the team card reads", async () => {
+    // THE TWO FIELDS WHOSE ABSENCE BROKE THE PAGE. `unavailable` feeds the readiness donut and `lib/team.ts`;
+    // `actors` was then emitted as `[]` because `TeamDetail` types it as `TeamActorRow[]` — but a card is a
+    // `TeamRow`, where it is a NUMBER, and `TeamsList` printed the empty list as nothing at all.
+    //
+    // Zero here, and it is measured: a repository nothing was collected for holds no merges, which is nobody
+    // having landed a change rather than nobody having counted.
     await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
 
     const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { team: string; actors?: unknown; unavailable?: number }[];
 
-    expect(cards[0]?.actors).toEqual([]);
+    expect(cards[0]?.actors).toBe(0);
     expect(cards[0]?.unavailable).toBe(1);
+  });
+
+  it("should count the people who landed changes, folded and deduplicated across the team's repositories", async () => {
+    // A COUNT OF PEOPLE AND NOT OF ROWS. Four merges by three logins across two repositories the same team owns,
+    // one of them spelled two ways — a GitHub login is unique case-insensitively — and one author GitHub matched
+    // no account to. The card must read 3, which is also what `teamActors` puts in the table on that team's page:
+    // both fold the same emitted merge rows, which is the acceptance criterion for the two agreeing.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await graphRepository("beta", new Date(Date.UTC(2026, 7, 20)));
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 21)), "Ada");
+    await mergedPullRequest("alpha", 2n, new Date(Date.UTC(2026, 7, 22)), "ada");
+    await mergedPullRequest("beta", 3n, new Date(Date.UTC(2026, 7, 23)), "grace");
+    await mergedPullRequest("beta", 4n, new Date(Date.UTC(2026, 7, 24)), "alan");
+    await mergedPullRequest("beta", 5n, new Date(Date.UTC(2026, 7, 25)));
+
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { repositories: number; actors?: unknown }[];
+
+    expect(cards[0]).toMatchObject({ repositories: 2, actors: 3 });
   });
 
   it("should count a repository whose gate could not be read as unavailable rather than as reported", async () => {
