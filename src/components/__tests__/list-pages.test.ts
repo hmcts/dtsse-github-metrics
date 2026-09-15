@@ -297,7 +297,7 @@ describe("the three list routes", () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    for (const title of ["Readiness", "Enforces review", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"]) {
+    for (const title of ["Readiness", "Peer review enforced", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"]) {
       expect(markup).not.toContain(`>${title}</h3>`);
     }
     // A chip's own marks rather than a class shared with every heading on the page: it carried a dismiss button
@@ -328,17 +328,5 @@ describe("the three list routes", () => {
     for (const visibility of ["public", "internal", "private"]) {
       expect(markup).toContain(`>${visibility}<`);
     }
-  });
-
-  it("names the criteria it cannot fully evidence, so a tick is not read as more than it is", async () => {
-    // The footnote. One omission and one PARTIAL, which are different things: a tick under Secrets means no
-    // credential was found and left open, not that the repository is free of sensitive operational detail.
-    stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
-
-    expect(markup).toContain("Secrets is a partial answer");
-    expect(markup).toContain("sensitive operational detail");
-    expect(markup).toContain("Secure by design is not reported at all");
-    expect(markup).toContain("Security contact is shown but not graded");
   });
 });

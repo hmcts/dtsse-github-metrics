@@ -430,6 +430,34 @@ describe("EntityHeader", () => {
     expect(markup.indexOf("Ready")).toBeLessThan(markup.indexOf(PRODUCTION_LABEL));
   });
 
+  /**
+   * The one link on the site that leaves it, and the three attributes that make that safe.
+   *
+   * `target="_blank"` without `rel="noopener"` hands the opened tab a handle on this one; `noreferrer` keeps our
+   * path out of the destination's logs. Both are easy to drop in a tidy-up, which is why they are asserted rather
+   * than left to review.
+   */
+  it("links out to GitHub in a new tab, without handing it a handle on this one", () => {
+    const markup = renderToStaticMarkup(
+      createElement(EntityHeader, { kind: "repository", name: "et-ccd-callbacks", href: "https://github.com/hmcts/et-ccd-callbacks" })
+    );
+
+    expect(markup).toContain('href="https://github.com/hmcts/et-ccd-callbacks"');
+    expect(markup).toContain("View on GitHub");
+    expect(markup).toContain('target="_blank"');
+    expect(markup).toContain("noopener");
+    expect(markup).toContain("noreferrer");
+  });
+
+  it("renders no outbound link for an entity that has no obvious destination", () => {
+    // A contributor and a team are both a click away through the organisation, and neither is what a reader of
+    // those pages came for — so the link is a repository's alone and its absence must not leave a dangling icon.
+    const markup = renderToStaticMarkup(createElement(EntityHeader, { kind: "team", name: "platform" }));
+
+    expect(markup).not.toContain("View on GitHub");
+    expect(markup).not.toContain("github.com");
+  });
+
   it("badges nothing where the repository is not one, or where no list was read", () => {
     for (const production of [false, undefined]) {
       const markup = renderToStaticMarkup(createElement(EntityHeader, { kind: "repository", name: "api", label: "green", production }));

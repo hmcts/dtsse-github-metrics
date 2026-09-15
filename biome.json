@@ -21,7 +21,8 @@
       "!**/.next",
       "!**/test-results",
       "!**/playwright-report",
-      "!**/test/fixtures"
+      "!**/test/fixtures",
+      "!**/.claude/worktrees"
     ]
   },
   "formatter": {

@@ -267,6 +267,38 @@ export const ASSURANCE_LABEL: Record<AssuranceCriterion, string> = {
 };
 
 /**
+ * The one criterion whose column states what was FOUND rather than whether it passed.
+ *
+ * Named rather than compared inline, so the table's cell, its sort order and this decision are all pointing at one
+ * constant — three separate string literals is how a column ends up sorting by the opposite of what it prints.
+ */
+export const SECRETS_CRITERION: AssuranceCriterion = "no-committed-secrets";
+
+/**
+ * What each criterion column answers, for the hint beside its heading.
+ *
+ * BESIDE THE LABELS RATHER THAN IN THE COMPONENT, so a criterion added to the domain cannot get a column and a
+ * heading while going unexplained — the same reason `ASSURANCE_LABEL` lives here.
+ *
+ * These say what a cell MEANS, not what the criterion is called. Two of them therefore carry a caveat: `Secrets`
+ * evidences committed credentials and not sensitive operational detail, and `security-contact` is reported without
+ * being graded. Both were a paragraph under the table until 2026-09-15; per column and on demand is where a reader
+ * meets them at the moment they read the cell.
+ */
+export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
+  "named-owner": "Yes when the repository is attributed to a GitHub team, including by a CODEOWNERS file naming one. No if it is owned by an individual.",
+  "automated-hygiene":
+    "Yes when every readable signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — which either Renovate or Dependabot satisfies. Hover a cell to see which are missing.",
+  // Reads as the FINDING and not the verdict — see `findingOrder` and the `Finding` cell for the one column whose
+  // Yes is the bad answer.
+  "no-committed-secrets": "Yes if potential secrets have been found by the secret scanner.",
+  "security-contact": "Whether GitHub reports a security policy. Most will inherit the organisation policy in the hmcts .github repository.",
+  patching: "Age in days of the oldest open severe alert.",
+  maintained:
+    "Yes when the repository is archived, or has been pushed to within the last two years. No means it is unarchived but untouched for years, so it should probably be archived."
+};
+
+/**
  * How each assurance grade reads.
  *
  * DELIBERATELY NOT `RAG_LABEL`'s WORDS. That map reads "Ready / Caution / Blocked" about readiness for AI
@@ -324,4 +356,32 @@ export function outcomeOrder(outcome: AssuranceOutcome | undefined): SortValue {
     return undefined;
   }
   return outcome === "met" ? 0 : 1;
+}
+
+/**
+ * Whether one criterion's outcome is a FINDING, for the column that states what was found rather than whether the
+ * criterion was met.
+ *
+ * `Secrets` answers "were potential secrets found", from 2026-09-15, where it used to answer "is this repository
+ * clean". The criterion underneath is unchanged and still grades a repository DOWN for open alerts — it is only
+ * the cell that speaks the finding's language, because "Secrets: Yes" reading as "no secrets" was backwards.
+ *
+ * `undefined` where nothing could be read, so an unreadable repository is not reported as clean.
+ */
+export function foundOutcome(outcome: AssuranceOutcome | undefined): boolean | undefined {
+  if (outcome === undefined || outcome === "unknown") {
+    return undefined;
+  }
+  return outcome === "unmet";
+}
+
+/**
+ * Where a finding sorts: found first, then not found, then unreadable.
+ *
+ * Found FIRST for `outcomeOrder`'s reason turned round. One click ascending has to open on the repositories a
+ * reader is looking for, and on this column those are the ones with something to fix.
+ */
+export function findingOrder(outcome: AssuranceOutcome | undefined): SortValue {
+  const found = foundOutcome(outcome);
+  return found === undefined ? undefined : found ? 0 : 1;
 }

@@ -1,4 +1,5 @@
 import clsx from "clsx";
+import { ExternalLink } from "lucide-react";
 import { ProductionBadge } from "@/components/ProductionBadge";
 import { RAGLabel } from "@/components/RAGCard";
 import { borderClass } from "@/lib/rag";
@@ -27,7 +28,8 @@ export function EntityHeader({
   label,
   production,
   context,
-  action
+  action,
+  href
 }: {
   kind: EntityKind;
   name: string;
@@ -44,6 +46,15 @@ export function EntityHeader({
   context?: React.ReactNode;
   /** The header's own control — the week selector, which every page carries at the top right. */
   action?: React.ReactNode;
+  /**
+   * Where this entity lives on GitHub, as the one link on the site that leaves it.
+   *
+   * The whole dashboard is a report ABOUT GitHub that never pointed at it: a reader looking at an unreviewed merge
+   * or a gate with no required checks had to retype the name into a new tab to go and look. Optional because only
+   * a repository has an obvious destination — a contributor's profile and a team's page are both a click away
+   * through the organisation, and neither is what a reader of this page came for.
+   */
+  href?: string;
 }) {
   return (
     <header className={clsx("bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2", label === undefined ? null : borderClass(label))}>
@@ -52,6 +63,21 @@ export function EntityHeader({
         <h1 className="font-mono text-xl text-slate-100 break-all">{name}</h1>
         {label ? <RAGLabel label={label} /> : null}
         <ProductionBadge production={production} />
+        {/* A PLAIN ANCHOR and not `next/link`: this leaves the app, so there is nothing to prefetch and no client
+            router to involve. `rel="noreferrer"` alongside `noopener` because the destination does not need to be
+            told which of our pages somebody was reading. The icon is decoration — the visible words carry the
+            meaning, so it is `aria-hidden` and the link is named by its text. */}
+        {href === undefined ? null : (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-sm text-indigo-400 transition-colors hover:text-indigo-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500 rounded"
+          >
+            View on GitHub
+            <ExternalLink className="w-3 h-3" aria-hidden="true" />
+          </a>
+        )}
 
         {action ? <div className="ml-auto">{action}</div> : null}
       </div>

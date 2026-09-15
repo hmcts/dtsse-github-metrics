@@ -2,6 +2,7 @@
 
 import clsx from "clsx";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { InfoTooltip } from "@/components/InfoTooltip";
 import type { Direction } from "@/lib/sort";
 
 /** Which edge a column reads from: its cells and its header have to agree. */
@@ -37,7 +38,8 @@ export function SortHeader({
   direction,
   onSort,
   align = "left",
-  first
+  first,
+  hint
 }: {
   label: string;
   active: boolean;
@@ -47,22 +49,42 @@ export function SortHeader({
   align?: Align;
   /** The leading column, which takes the table's left inset as its body cell does. */
   first?: boolean;
+  /**
+   * What the column answers, for a reader who cannot tell from its one-or-two-word heading.
+   *
+   * Rendered BESIDE the sort control rather than on it. `InfoTooltip` is itself a `<button>`, and a button inside
+   * a button is invalid markup that browsers reflow unpredictably — so the two controls are siblings, which also
+   * keeps them separately reachable: Tab to sort, Tab again to read what you are sorting.
+   */
+  hint?: string;
 }) {
   const Chevron = direction === "ascending" ? ChevronUp : ChevronDown;
   return (
-    <th scope="col" aria-sort={active ? direction : "none"} className={clsx("py-2 pr-3 font-medium", first ? "pl-3" : null, ALIGNMENT[align])}>
-      <button
-        type="button"
-        onClick={onSort}
-        className={clsx(
-          "inline-flex items-center gap-1 rounded transition-colors hover:text-slate-200",
-          "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
-          active ? "text-slate-200" : null
-        )}
-      >
-        {label}
-        {active ? <Chevron className="w-3 h-3" aria-hidden="true" /> : null}
-      </button>
+    // NAMED EXPLICITLY, so the column announces "Team" and not "Team" followed by the whole hint. `InfoTooltip`
+    // carries its text in an `aria-label` and repeats it in a visually hidden bubble, both of which land inside
+    // this cell — and a `columnheader` whose accessible name is two sentences of prose is read out in full every
+    // time a screen reader enters a cell beneath it. The hint stays reachable as the control beside the label.
+    <th
+      scope="col"
+      aria-label={label}
+      aria-sort={active ? direction : "none"}
+      className={clsx("py-2 pr-3 font-medium", first ? "pl-3" : null, ALIGNMENT[align])}
+    >
+      <span className="inline-flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onSort}
+          className={clsx(
+            "inline-flex items-center gap-1 rounded transition-colors hover:text-slate-200",
+            "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
+            active ? "text-slate-200" : null
+          )}
+        >
+          {label}
+          {active ? <Chevron className="w-3 h-3" aria-hidden="true" /> : null}
+        </button>
+        {hint === undefined ? null : <InfoTooltip text={hint} />}
+      </span>
     </th>
   );
 }

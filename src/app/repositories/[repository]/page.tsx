@@ -69,6 +69,7 @@ export default async function RepositoryPage({
     <EntityHeader
       kind="repository"
       name={detail.repository}
+      href={detail.url}
       label={evidence?.assessment?.label}
       // Not read from the window, so it survives the unavailable branch below: a repository this
       // span cannot report is still or is still not a production service.

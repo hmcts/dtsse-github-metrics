@@ -15,11 +15,14 @@ import {
   ASSURANCE_CRITERIA,
   ASSURANCE_GRADE_LABEL,
   ASSURANCE_GRADE_STATE,
+  ASSURANCE_HINT,
   ASSURANCE_LABEL,
   answerOrder,
   assuranceOrder,
   criterionResult,
   filterRepositories,
+  findingOrder,
+  foundOutcome,
   orderRepositories,
   outcomeOrder,
   PRODUCTION_PARAMETER,
@@ -27,6 +30,7 @@ import {
   parseProduction,
   parseVisibilities,
   productionCount,
+  SECRETS_CRITERION,
   VISIBILITIES,
   VISIBILITY_OFF,
   VISIBILITY_ON,
@@ -60,6 +64,8 @@ interface Column {
   label: string;
   align?: Align;
   read: (row: RepositoryRow) => SortValue;
+  /** What the column answers, shown beside its heading. The criteria read theirs from `ASSURANCE_HINT`. */
+  hint?: string;
 }
 
 /**
@@ -81,20 +87,29 @@ interface Column {
  * they are being ordered and narrowed by.
  */
 const COLUMNS: readonly Column[] = [
-  { key: "team", label: "Team", read: (row) => row.team },
-  { key: "repository", label: "Repository", read: (row) => row.repository },
+  {
+    key: "team",
+    label: "Team",
+    read: (row) => row.team,
+    hint: "The team this repository is attributed to. Where several teams own it, this is the primary team. The filter box matches any of them."
+  },
+  { key: "repository", label: "Repository", read: (row) => row.repository, hint: "The repository name on GitHub. Links to its own evidence page." },
   // The default sort's own column, so what the table opens on is visible rather than implicit. Sorts on the ISO
   // string, which orders lexicographically in instant order — see `RepositoryRow.pushed_at` for why the contract
   // carries it as text and not as a `Date`.
-  { key: "pushed", label: "Last pushed", read: (row) => row.pushed_at },
-  { key: "visibility", label: "Visibility", read: (row) => row.visibility },
-  // The one grade on this page. Its own vocabulary rather than readiness's — see `ASSURANCE_GRADE_LABEL`.
-  { key: "assurance", label: "Assurance", read: (row) => assuranceOrder(row.assurance?.grade) },
+  { key: "pushed", label: "Last pushed", read: (row) => row.pushed_at, hint: "The UTC day of the most recent push. The table's default order, newest first." },
+  {
+    key: "visibility",
+    label: "Visibility",
+    read: (row) => row.visibility,
+    hint: "GitHub's visibility: public, internal or private. The table opens filtered to public only."
+  },
   // One per criterion, in the criteria's own order, generated rather than listed so a criterion added to the
   // domain cannot appear in the grade and be missing from the table.
   ...ASSURANCE_CRITERIA.map((criterion) => ({
     key: criterion,
     label: ASSURANCE_LABEL[criterion],
+    hint: ASSURANCE_HINT[criterion],
     // Patching prints a NUMBER OF DAYS and sorts on it; the other three print an outcome and sort on that. The
     // criterion reports an age against no threshold, so ordering it by its outcome would sort every repository
     // level — the age is the whole information.
@@ -102,19 +117,48 @@ const COLUMNS: readonly Column[] = [
     read:
       criterion === "patching"
         ? (row: RepositoryRow) => row.assurance?.oldest_severe_alert_days
-        : (row: RepositoryRow) => outcomeOrder(criterionResult(row, criterion)?.outcome)
+        : // `Secrets` states what was FOUND, so it sorts by the finding: the repositories with open alerts lead,
+          // where the other criteria lead with the ones that pass. See `findingOrder`.
+          criterion === SECRETS_CRITERION
+          ? (row: RepositoryRow) => findingOrder(criterionResult(row, criterion)?.outcome)
+          : (row: RepositoryRow) => outcomeOrder(criterionResult(row, criterion)?.outcome)
   })),
   // Kept from the old table, and the only one of the eight that was both populated and not ways-of-working:
   // whether a repository deploys to production qualifies every assurance answer beside it.
-  { key: "production", label: "Production", align: "center", read: (row) => answerOrder(row.production) }
+  {
+    key: "production",
+    label: "Production",
+    align: "center",
+    read: (row) => answerOrder(row.production),
+    hint: "Whether the organisation's production-approvals list names this repository. An attribute rather than a verdict, so it carries no colour. Only applicable to CNP repositories."
+  },
+  // Last, from 2026-09-15: the grade is the conclusion the criterion columns build to, so it reads after its
+  // own evidence rather than before it. Its own vocabulary rather than readiness's — see `ASSURANCE_GRADE_LABEL`.
+  {
+    key: "assurance",
+    label: "Assurance",
+    read: (row) => assuranceOrder(row.assurance?.grade),
+    hint: "The grade across the four graded criteria — Code owner, Hygiene, Secrets and Maintained. Security contact and Patching cycle are shown but not graded."
+  }
 ];
+
+/**
+ * The column the table opens ordered by, so its header can say so.
+ *
+ * `column` stays `null` until a reader clicks, because the opening order is `orderRepositories` rather than
+ * `sorted` — it tie-breaks equal instants on the repository name, which `sorted` cannot express. This names the
+ * column that order belongs to, so the header renders active and descending on first paint instead of leaving
+ * the default sort invisible.
+ */
+const DEFAULT_COLUMN = COLUMNS.find((entry) => entry.key === "pushed") as Column;
 
 export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRow[]; weeks: number }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const [column, setColumn] = useState<Column | null>(null);
-  const [direction, setDirection] = useState<Direction>("ascending");
+  // Descending, matching `orderRepositories`: newest push first.
+  const [direction, setDirection] = useState<Direction>("descending");
 
   const term = searchParameters.get(TERM_PARAMETER) ?? "";
   const production = parseProduction((parameter) => searchParameters.get(parameter));
@@ -124,7 +168,10 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
   const produced = productionCount(rows, term, visibilities);
 
   function sort(next: Column) {
-    setDirection(nextDirection(column, next, direction));
+    // Against the column the table is VISIBLY ordered by, not against `null`: the first click on `Last pushed`
+    // has to reverse the order it is already showing, which `nextDirection(null, …)` would answer "ascending" to
+    // by coincidence and answer wrongly the moment the opening direction changes.
+    setDirection(nextDirection(column ?? DEFAULT_COLUMN, next, direction));
     setColumn(next);
   }
 
@@ -210,10 +257,11 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
                   <SortHeader
                     key={entry.key}
                     label={entry.label}
-                    active={entry === column}
+                    active={entry === (column ?? DEFAULT_COLUMN)}
                     direction={direction}
                     align={entry.align}
                     first={index === 0}
+                    hint={entry.hint}
                     onSort={() => sort(entry)}
                   />
                 ))}
@@ -240,9 +288,6 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
                       and `day` is the same formatter every other date on the site reads through. */}
                   <td className="py-2 pr-3 tabular-nums text-slate-300">{day(row.pushed_at)}</td>
                   <td className="py-2 pr-3 capitalize text-slate-400">{row.visibility ?? ABSENT}</td>
-                  <td className="py-2 pr-3">
-                    <AssuranceLabel grade={row.assurance?.grade} />
-                  </td>
                   {ASSURANCE_CRITERIA.map((criterion) =>
                     criterion === "patching" ? (
                       // The AGE, with no colouring and no threshold. "Measurement first": the number is the
@@ -250,6 +295,8 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
                       <td key={criterion} className="py-2 pr-3 text-right tabular-nums text-slate-300">
                         {row.assurance?.oldest_severe_alert_days === undefined ? ABSENT : `${row.assurance.oldest_severe_alert_days}d`}
                       </td>
+                    ) : criterion === SECRETS_CRITERION ? (
+                      <Finding key={criterion} result={criterionResult(row, criterion)} />
                     ) : (
                       <Outcome key={criterion} result={criterionResult(row, criterion)} />
                     )
@@ -259,6 +306,9 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
                       absence reads as an empty cell rather than as "no". The dash keeps "not in the list" apart
                       from "the list could not be read", which a blank could not say. */}
                   <Answer value={row.production} />
+                  <td className="py-2 pr-3">
+                    <AssuranceLabel grade={row.assurance?.grade} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -291,6 +341,30 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
  */
 function Answer({ value }: { value?: boolean }) {
   return <td className="py-2 pr-3 text-center text-slate-300">{value === undefined ? ABSENT : value ? "Yes" : "No"}</td>;
+}
+
+/**
+ * One criterion stated as WHAT WAS FOUND rather than as whether it passed.
+ *
+ * `Secrets` alone, from 2026-09-15. "Secrets: Yes" reading as "this repository has none" was backwards — a column
+ * headed with the name of the bad thing answers Yes when the bad thing is there. So the cell inverts, and the
+ * COLOURS invert with it: Yes is amber here where Yes is green in `Outcome`, because it is the same finding wearing
+ * the other word. Inverting the word without the tone would print a green Yes over an open credential leak.
+ *
+ * The criterion underneath is untouched — `judgeAssurance` still marks a repository with open alerts as unmet, and
+ * the Assurance grade still counts it against them. This is a presentation of that judgement, not a second one.
+ */
+function Finding({ result }: { result?: { outcome: AssuranceOutcome; detail: string } }) {
+  const found = foundOutcome(result?.outcome);
+  return (
+    <td className="py-2 pr-3 text-center" title={result?.detail}>
+      <span
+        className={clsx(found === true ? "text-rag-amber" : null, found === false ? "text-rag-green" : null, found === undefined ? "text-slate-500" : null)}
+      >
+        {found === undefined ? ABSENT : found ? "Yes" : "No"}
+      </span>
+    </td>
+  );
 }
 
 function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: string } }) {

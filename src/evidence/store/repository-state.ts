@@ -16,7 +16,14 @@ import { StorageError } from "./storage-error.ts";
 export interface RepositoryStatePayload {
   defaultBranch: string;
   fetchedAt: Date;
-  mergeGate: MergeGateReport;
+  /**
+   * Optional from 2026-09-15, for the stale path that does not read a gate at all.
+   *
+   * It used to carry a `detail` naming the cohort setting that skipped it, which put a policy field name in front
+   * of a reader who has no way to act on it. Absent says the same thing in the vocabulary the rest of the contract
+   * already uses: unmeasured, rather than measured and empty.
+   */
+  mergeGate?: MergeGateReport;
   securityAlerts: SecurityAlertEvidence;
   /** Tri-state: absent means the production list could not be read, which is not the same as `false`. */
   deploysToProduction?: boolean;

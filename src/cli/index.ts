@@ -165,7 +165,6 @@ async function collectRepository(
     await recordRepositoryState(organization, repository, {
       defaultBranch,
       fetchedAt: reference,
-      mergeGate: { detail: "not collected: no push inside cohort.active_within_days, so there is no current practice to read" },
       // The one family this path has records for, counted rather than thrown away. The other two are absent,
       // which reads as unmeasured — a stale repository's code-scanning posture was not looked at, and saying so
       // is the honest answer rather than reporting nothing open.
