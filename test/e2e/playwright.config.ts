@@ -4,6 +4,9 @@ const baseURL = process.env.TEST_URL ?? "http://localhost:3000";
 
 export default defineConfig({
   testDir: "./tests",
+  // Waits for the deployment to be routable before the first spec, which is a different problem from a flaky test
+  // and cannot be solved by `retries` — see `./wait-for-service.ts`.
+  globalSetup: "./wait-for-service.ts",
   timeout: 30_000,
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
