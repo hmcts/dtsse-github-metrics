@@ -171,10 +171,24 @@ export interface DirectCommitFactRow {
  * Two fields are a literal in one place. If a third is ever dropped, it goes in the SQL below and in this comment.
  */
 
+/**
+ * One cached fact and the instant the window that selected it was compared against.
+ *
+ * THE COLUMN, NOT THE PAYLOAD'S OWN COPY OF IT. `merged_at` and `committed_at` are what the query filters and
+ * orders on, and carrying them out is what lets a caller narrow ONE read into several nested windows and get
+ * exactly what a query per window would have returned. The payload is written from the same fact and its
+ * `mergedAt` should agree — but "should agree" is precisely how a warmed span and a cold-built one could come to
+ * differ without anything failing, and eight bytes a row is a cheap way not to find out.
+ */
+export interface DatedFact {
+  at: Date;
+  payload: unknown;
+}
+
 /** One repository's cached facts, as the reader groups them. */
 interface RepositoryFacts {
-  pullRequests: unknown[];
-  directCommits: unknown[];
+  pullRequests: DatedFact[];
+  directCommits: DatedFact[];
 }
 
 /**
@@ -199,6 +213,10 @@ interface RepositoryFacts {
  *
  * Ordering is preserved per repository, because two reports of one window must not differ: rows arrive sorted by
  * `(mergedAt, identifier)` and are appended to their repository's list in that order.
+ *
+ * Each fact carries the instant it was SELECTED ON as well as its payload — see `DatedFact`. That is what makes
+ * one read of a wide window answerable for every narrower window ending at the same instant, which is how the
+ * report layer builds five spans from one read rather than reading the same rows five times over.
  */
 export async function loadCachedFactsForOrganisation(
   organization: string,
@@ -208,15 +226,15 @@ export async function loadCachedFactsForOrganisation(
 ): Promise<Map<string, RepositoryFacts>> {
   try {
     const [pullRequests, directCommits] = await Promise.all([
-      prisma.$queryRaw<{ repository: string; payload: unknown }[]>`
-        SELECT repository, payload - 'body' - 'title' AS payload
+      prisma.$queryRaw<{ repository: string; at: Date; payload: unknown }[]>`
+        SELECT repository, merged_at AS at, payload - 'body' - 'title' AS payload
         FROM pull_request_facts
         WHERE organization = ${organization} AND query_hash = ${queryHashes.pullRequests}
           AND merged_at >= ${startsAt} AND merged_at < ${endsAt}
         ORDER BY merged_at ASC, identifier ASC
       `,
-      prisma.$queryRaw<{ repository: string; payload: unknown }[]>`
-        SELECT repository, payload
+      prisma.$queryRaw<{ repository: string; at: Date; payload: unknown }[]>`
+        SELECT repository, committed_at AS at, payload
         FROM direct_commit_facts
         WHERE organization = ${organization} AND query_hash = ${queryHashes.directCommits}
           AND committed_at >= ${startsAt} AND committed_at < ${endsAt}
@@ -230,15 +248,15 @@ export async function loadCachedFactsForOrganisation(
       if (existing !== undefined) {
         return existing;
       }
-      const created = { pullRequests: [] as unknown[], directCommits: [] as unknown[] };
+      const created = { pullRequests: [] as DatedFact[], directCommits: [] as DatedFact[] };
       byRepository.set(repository, created);
       return created;
     };
     for (const row of pullRequests) {
-      forRepository(row.repository).pullRequests.push(row.payload);
+      forRepository(row.repository).pullRequests.push({ at: row.at, payload: row.payload });
     }
     for (const row of directCommits) {
-      forRepository(row.repository).directCommits.push(row.payload);
+      forRepository(row.repository).directCommits.push({ at: row.at, payload: row.payload });
     }
 
     await touchOrganisationCoverage(organization, queryHashes);

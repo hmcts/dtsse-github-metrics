@@ -1,12 +1,19 @@
 import "server-only";
 import { type ReadinessPolicy, readinessPolicy } from "../assessment/assessment.ts";
 import { changeSize, contributorLogins, eligibleChecks, eligibleReviews, isPassingCheck } from "../behaviour/analysis.ts";
-import { deserialiseMerges, loadCachedMerges } from "../behaviour/fill.ts";
+import { deserialise, loadCachedMerges } from "../behaviour/fill.ts";
 import { behaviourMetrics, mergeCycleTime, timeToFirstReview } from "../behaviour/metrics.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
 import { type AssuranceEvidence, assuranceGrade, judgeAssurance } from "../domain/assurance.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
-import { type DistributionObservation, type Merges, ObservationStatus, type RateObservation } from "../domain/facts.ts";
+import {
+  type DirectCommitFact,
+  type DistributionObservation,
+  type Merges,
+  ObservationStatus,
+  type PullRequestFact,
+  type RateObservation
+} from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import { type CohortEntry, cohortTeams, servedCohort } from "../org/cohort.ts";
@@ -315,9 +322,12 @@ export function forgetBuiltRows(): void {
  * The build is held per span until a collection lands, which is what makes the SECOND reader of a span free
  * rather than only the second call of one render. `./cache.ts` states why that is keyed on the revision and
  * never on a clock.
+ *
+ * `read` is the estate this span is derived from, for a caller building SEVERAL spans — see `estateForEverySpan`.
+ * Omitted, this span reads the estate for itself, which is what a reader arriving on a cold span does.
  */
-export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
-  return (await estateReports(configuration, weeks, reference)).rows;
+export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date(), read?: Estate): Promise<unknown[]> {
+  return (await estateReports(configuration, weeks, reference, read)).rows;
 }
 
 /** The four reports one window's facts produce, built together because they read the same facts. */
@@ -330,6 +340,142 @@ interface EstateReports {
 
 /** A repository the window holds no facts for: measured, and measured as nothing. */
 const NO_MERGES: Merges = { pullRequests: [], directCommits: [] };
+
+/** The widest span on offer, and so the one window a read has to cover to answer for all of them. */
+const WIDEST_SPAN = Math.max(...WEEK_OPTIONS);
+
+/** One fact and the instant the window that selected it was compared against, as a number to compare cheaply. */
+interface Dated<FactT> {
+  at: number;
+  fact: FactT;
+}
+
+/** One repository's facts over a read's whole window, each still carrying the instant it was selected on. */
+interface DatedFacts {
+  pullRequests: Dated<PullRequestFact>[];
+  directCommits: Dated<DirectCommitFact>[];
+}
+
+/**
+ * The estate as one read of the database left it, which every span ending at `endsAt` is derived from.
+ *
+ * THE COHORT AND THE STATES DO NOT DEPEND ON THE SPAN AT ALL — they are facts about a repository rather than about
+ * a window — and the facts that do are NESTED: every offered span is `[endsAt - weeks, endsAt)` against one
+ * anchor, so the widest span's rows contain every narrower span's. That is what `estateForEverySpan` exploits and
+ * what `covers` refuses to exploit wrongly.
+ */
+export interface Estate {
+  /** How far back this read reaches. A span starting earlier than this cannot be answered from it. */
+  startsAt: Date;
+  /** Where every span derived from this read ends — the collected anchor `resolveReportWindow` snapped to. */
+  endsAt: Date;
+  cohort: CohortEntry[];
+  states: Map<string, { fetchedAt: Date; payload: unknown }>;
+  facts: Map<string, DatedFacts>;
+}
+
+/**
+ * The estate over one window: the cohort, the collected states, and the window's facts deserialised ONCE.
+ *
+ * The three reads go together because none of them needs another's answer, and because the two that are not the
+ * fact cache are the ones a per-span build was paying for five times over: `servedCohort` is two queries against
+ * the change-versioned graph and `storedRepositoryStates` is 1,891 rows of `jsonb`.
+ */
+async function readEstate(configuration: Configuration, window: ReportingWindow, reference: Date): Promise<Estate> {
+  const organization = configuration.organization;
+  const [cohort, states, stored] = await Promise.all([
+    servedCohort(configuration, reference),
+    storedRepositoryStates(organization),
+    loadCachedFactsForOrganisation(
+      organization,
+      { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) },
+      window.startsAt,
+      window.endsAt
+    )
+  ]);
+
+  return {
+    startsAt: window.startsAt,
+    endsAt: window.endsAt,
+    cohort,
+    states,
+    facts: new Map(
+      [...stored].map(([repository, cached]) => [
+        repository,
+        {
+          // `deserialise` rather than `deserialiseMerges`, because the payloads arrive dated: the same primitive
+          // the per-repository path reads a payload with, so there is still one definition of what reviving one is.
+          pullRequests: cached.pullRequests.map((row) => ({ at: row.at.getTime(), fact: deserialise<PullRequestFact>(row.payload) })),
+          directCommits: cached.directCommits.map((row) => ({ at: row.at.getTime(), fact: deserialise<DirectCommitFact>(row.payload) }))
+        }
+      ])
+    )
+  };
+}
+
+/**
+ * Where one span starts, given where the read it is derived from ends.
+ *
+ * The SAME arithmetic `resolveReportWindow` does, and not an approximation of it: both are
+ * `anchor - weeks * 7 days` against the anchor `collectedAnchor` snapped to, and `reportingWindow` returns the
+ * instants it was handed. So a span derived from a shared read and the same span read for itself resolve to the
+ * identical window rather than to two windows that happen to agree.
+ */
+function spanStartsAt(endsAt: Date, weeks: number): Date {
+  return new Date(endsAt.getTime() - days(weeks * 7));
+}
+
+/** Whether one read reaches far enough back, and ends at the right instant, to answer for a span. */
+function covers(read: Estate, weeks: number, window: ReportingWindow): boolean {
+  return read.endsAt.getTime() === window.endsAt.getTime() && spanStartsAt(read.endsAt, weeks).getTime() >= read.startsAt.getTime();
+}
+
+/**
+ * One span's merges, taken out of a read that may cover a wider window.
+ *
+ * Filtered on the instant the QUERY selected each fact on rather than on the payload's own copy of it — see
+ * `DatedFact` — so this returns exactly what a query for this span would have returned. `>=` and no upper bound,
+ * because every span shares the read's `endsAt` and the window is half-open at that end already.
+ *
+ * A repository left with nothing is OMITTED rather than carried as empty lists, which is what a query for this
+ * span produces: `repositoryRow` reads an absent entry as `NO_MERGES` and the three fact-walking reports would
+ * otherwise iterate a map the size of the estate to find nothing in most of it.
+ */
+function mergesSince(read: Estate, startsAt: Date): Map<string, Merges> {
+  const from = startsAt.getTime();
+  const merges = new Map<string, Merges>();
+  for (const [repository, dated] of read.facts) {
+    const pullRequests = dated.pullRequests.filter((row) => row.at >= from).map((row) => row.fact);
+    const directCommits = dated.directCommits.filter((row) => row.at >= from).map((row) => row.fact);
+    if (pullRequests.length === 0 && directCommits.length === 0) {
+      continue;
+    }
+    merges.set(repository, { pullRequests, directCommits });
+  }
+  return merges;
+}
+
+/**
+ * The estate read once, over the widest span on offer, so every span can be built from it.
+ *
+ * ONE READ FOR FIVE SPANS. Each span was reading the cohort, the collected states and the fact cache for itself,
+ * and because the spans are nested that read the same rows over and over: measured on AAT, warming the five
+ * offered spans transferred 92 MiB of `jsonb` to derive reports from 32 MiB of it, made five passes over the
+ * repository states, resolved the cohort five times and stamped the coverage table five times. The widest span's
+ * rows contain every narrower span's, so the other four are a filter rather than a query.
+ *
+ * The window is resolved for `WIDEST_SPAN` only, which also settles the anchor once: `resolveReportWindow`
+ * aggregates `source_coverage` to find it, and each span was asking again for an answer that cannot differ
+ * inside one warm.
+ *
+ * WHAT THIS DOES NOT DO is hold the read. It is handed to the builds, and it goes out of scope when the caller
+ * that took it does — the facts are far larger than everything derived from them, which is why `./cache.ts`
+ * holds the reports and never these.
+ */
+export async function estateForEverySpan(configuration: Configuration, reference = new Date()): Promise<Estate> {
+  const { window } = await resolveReportWindow(configuration, WIDEST_SPAN, reference);
+  return await readEstate(configuration, window, reference);
+}
 
 /**
  * Every report one span produces, built from ONE read of the fact cache and held as one entry.
@@ -346,30 +492,22 @@ const NO_MERGES: Merges = { pullRequests: [], directCommits: [] };
  *
  * Warming the repositories report now warms all four, because there is only one build to warm.
  */
-async function estateReports(configuration: Configuration, weeks: number, reference: Date): Promise<EstateReports> {
+async function estateReports(configuration: Configuration, weeks: number, reference: Date, read?: Estate): Promise<EstateReports> {
   // Wrapped in a one-element array because `builtReport` holds `unknown[]`. The alternative is widening the cache
   // to `unknown`, which buys nothing: every reader of it goes through the four accessors below.
-  const held = await builtReport(configuration.organization, weeks, async () => [await buildEstateReports(configuration, weeks, reference)]);
+  const held = await builtReport(configuration.organization, weeks, async () => [await buildEstateReports(configuration, weeks, reference, read)]);
   return held[0] as EstateReports;
 }
 
-async function buildEstateReports(configuration: Configuration, weeks: number, reference: Date): Promise<EstateReports> {
+async function buildEstateReports(configuration: Configuration, weeks: number, reference: Date, shared?: Estate): Promise<EstateReports> {
   const { window } = await resolveReportWindow(configuration, weeks, reference);
-  const organization = configuration.organization;
-  const [cohort, states, stored] = await Promise.all([
-    servedCohort(configuration, reference),
-    storedRepositoryStates(organization),
-    loadCachedFactsForOrganisation(
-      organization,
-      { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) },
-      window.startsAt,
-      window.endsAt
-    )
-  ]);
-
-  const facts = new Map([...stored].map(([repository, payload]) => [repository, deserialiseMerges(payload)] as const));
+  // A shared read that does not reach this span is IGNORED rather than trusted, and the guard is not decoration:
+  // a span added to the selector beyond `WIDEST_SPAN`, or an anchor that moved between the read and this build,
+  // would otherwise be answered from facts that stop short of the window and reported as a quiet drop in merges.
+  const read = shared !== undefined && covers(shared, weeks, window) ? shared : await readEstate(configuration, window, reference);
+  const facts = mergesSince(read, spanStartsAt(read.endsAt, weeks));
   const rows = stripAbsent(
-    cohort.map((entry) => repositoryRow(configuration, entry, states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, undefined))
+    read.cohort.map((entry) => repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, undefined))
   );
 
   return {
@@ -747,6 +885,14 @@ function metricSummaries(configuration: Configuration, merges: Merges): Record<s
  *
  * Ordered newest first, which is the order both tables open in and the order a reader asks for — "what has this
  * team merged lately" rather than "what did it merge first".
+ *
+ * TIES ARE BROKEN ON THE DATA and not left to the order the facts happen to be held in. Two merges at the same
+ * second are ordinary rather than exotic — measured on AAT, the four-week window's 7,375 merges include 62 sharing
+ * 31 instants — and `Array.prototype.sort` is stable, so a tied pair came out in whatever order the fact map was
+ * iterated. That order is a function of which repository the QUERY returned first, so one window built from a
+ * 26-week read and the same window read for itself produced the same rows in a different sequence: identical as a
+ * set, different as a report, and this is a table a reader diffs against last week's. `(repository, number)` and
+ * `(repository, sha)` are unique, so the order below is now a function of the facts alone.
  */
 export async function mergeRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
   return (await estateReports(configuration, weeks, reference)).merges;
@@ -776,7 +922,9 @@ function builtMergeRows(facts: ReadonlyMap<string, Merges>): unknown[] {
       });
     }
   }
-  return stripAbsent(rows.sort((left, right) => right.merged_at.localeCompare(left.merged_at)));
+  return stripAbsent(
+    rows.sort((left, right) => right.merged_at.localeCompare(left.merged_at) || left.repository.localeCompare(right.repository) || left.number - right.number)
+  );
 }
 
 export async function directPushRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
@@ -800,7 +948,15 @@ function builtDirectPushRows(facts: ReadonlyMap<string, Merges>): unknown[] {
       });
     }
   }
-  return stripAbsent(rows.sort((left, right) => right.committed_at.localeCompare(left.committed_at)));
+  // Ties broken for `builtMergeRows`' reason, and on the repository FIRST: a sha is not unique across the estate
+  // — `GAPS2` and `GAPS2-archive` hold the same commit — so ordering on the sha alone would still leave the pair
+  // to the map's iteration order.
+  return stripAbsent(
+    rows.sort(
+      (left, right) =>
+        right.committed_at.localeCompare(left.committed_at) || left.repository.localeCompare(right.repository) || left.sha.localeCompare(right.sha)
+    )
+  );
 }
 
 /** What the team aggregation reads off a repository row. */

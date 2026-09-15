@@ -3,10 +3,11 @@ import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
 import { builtReport, builtSpanCount, CACHEABLE_SPANS } from "../../src/evidence/report/cache.ts";
-import { forgetBuiltRows, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
+import { forgetBuiltRows, mergeRows, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
 import { startReportWarmer, warmEverySpan } from "../../src/evidence/report/warmer.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
+import { midnight } from "../../src/evidence/window/instant.ts";
 
 /**
  * That making the report fast did not change what the report says.
@@ -90,6 +91,14 @@ async function personOwnedRepository(repository: string, login: string): Promise
   await graphOwnership(repository, "person", login, "direct-collaborator-admin");
 }
 
+/**
+ * One merged pull request as a collection stores it.
+ *
+ * CAMELCASE IN THE PAYLOAD, because that is what `serialise` writes: the stored document is the domain fact's own
+ * field names, and the snake_case this fixture used until 2026-09-15 was a payload no collection has ever
+ * produced. It read back as a fact with no `mergedAt` and no size at all, so `builtMergeRows` threw on
+ * `mergedAt.toISOString()` and every case reaching the merge rows failed on the fixture rather than on the code.
+ */
 async function mergedPullRequest(repository: string, identifier: bigint, mergedAt: Date): Promise<void> {
   await prisma.pullRequestFact.create({
     data: {
@@ -98,7 +107,7 @@ async function mergedPullRequest(repository: string, identifier: bigint, mergedA
       queryHash: PULL_REQUESTS,
       identifier,
       mergedAt,
-      payload: { identifier: Number(identifier), merged_at: mergedAt.toISOString(), additions: 10, deletions: 1, changed_files: 1 }
+      payload: { identifier: Number(identifier), number: Number(identifier), mergedAt: mergedAt.toISOString(), additions: 10, deletions: 1, changedFiles: 1 }
     }
   });
 }
@@ -158,7 +167,7 @@ describe("the batched readers", () => {
       WINDOW.endsAt
     );
 
-    const identifiers = (facts.get("alpha")?.pullRequests ?? []).map((payload) => (payload as { identifier: number }).identifier);
+    const identifiers = (facts.get("alpha")?.pullRequests ?? []).map((row) => (row.payload as { identifier: number }).identifier);
     expect(identifiers).toEqual([1, 2, 3]);
   });
 
@@ -176,7 +185,7 @@ describe("the batched readers", () => {
     );
 
     // Only the merge at startsAt: the one a day before and the one at endsAt both belong to other windows.
-    const identifiers = (facts.get("alpha")?.pullRequests ?? []).map((payload) => (payload as { identifier: number }).identifier);
+    const identifiers = (facts.get("alpha")?.pullRequests ?? []).map((row) => (row.payload as { identifier: number }).identifier);
     expect(identifiers).toEqual([2]);
   });
 
@@ -203,7 +212,7 @@ describe("the batched readers", () => {
       WINDOW.endsAt
     );
 
-    const payload = (facts.get("alpha")?.pullRequests ?? [])[0] as Record<string, unknown>;
+    const payload = (facts.get("alpha")?.pullRequests ?? [])[0]?.payload as Record<string, unknown>;
     expect(payload).not.toHaveProperty("body");
     expect(payload).not.toHaveProperty("title");
   });
@@ -245,7 +254,7 @@ describe("the batched readers", () => {
       WINDOW.endsAt
     );
 
-    const payload = (facts.get("alpha")?.pullRequests ?? [])[0] as Record<string, unknown>;
+    const payload = (facts.get("alpha")?.pullRequests ?? [])[0]?.payload as Record<string, unknown>;
     expect(Object.keys(payload).sort()).toEqual([
       "additions",
       "authorLogin",
@@ -261,6 +270,34 @@ describe("the batched readers", () => {
       "readyForReviewAt",
       "reviews"
     ]);
+  });
+
+  it("should carry the instant each fact was selected on, which is the column and not the payload", async () => {
+    // What lets ONE read answer for several nested windows. The narrowing in the report layer compares this,
+    // deliberately rather than the payload's own `mergedAt`: the two are written from the same fact and should
+    // agree, and a stored payload where they do not must not make a warmed span differ from a cold-built one.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    const mergedAt = new Date(Date.UTC(2026, 7, 10));
+    await prisma.pullRequestFact.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "alpha",
+        queryHash: PULL_REQUESTS,
+        identifier: 1n,
+        mergedAt,
+        // A payload disagreeing with its column, which is the only fixture that can tell the two apart.
+        payload: { identifier: 1, mergedAt: new Date(Date.UTC(2020, 0, 1)).toISOString() }
+      }
+    });
+
+    const facts = await loadCachedFactsForOrganisation(
+      ORGANIZATION,
+      { pullRequests: PULL_REQUESTS, directCommits: DIRECT_COMMITS },
+      WINDOW.startsAt,
+      WINDOW.endsAt
+    );
+
+    expect((facts.get("alpha")?.pullRequests ?? [])[0]?.at.getTime()).toBe(mergedAt.getTime());
   });
 
   it("should return a map keyed by repository for stored state", async () => {
@@ -598,6 +635,68 @@ describe("the warmer", () => {
     expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
   });
 
+  it("should build each span from the shared read exactly as that span would have read for itself", async () => {
+    // THE CASE THE SHARED READ COULD BE WRONG IN. One read of the widest span is narrowed in memory for the
+    // other four, so a narrowing on the wrong boundary would report one span's merges as another's — every figure
+    // on the page still plausible. Three merges, placed so that the 1-, 4- and 26-week spans each have a
+    // DIFFERENT answer: an off-by-one window then shows up as the wrong count rather than as nothing at all.
+    //
+    // Dated off TODAY'S midnight because the warm anchors itself at `new Date()`, and with nothing collected the
+    // anchor is that midnight. A fixed reference would compare two different windows and fail for that alone.
+    const anchor = midnight(new Date());
+    const daysBack = (days: number) => new Date(anchor.getTime() - days * 86_400_000);
+    await graphRepository("alpha", daysBack(1));
+    await prisma.repositoryState.create({
+      data: { organization: ORGANIZATION, repository: "alpha", fetchedAt: new Date(), payload: readableGate() }
+    });
+    await mergedPullRequest("alpha", 1n, daysBack(1));
+    await mergedPullRequest("alpha", 2n, daysBack(20));
+    await mergedPullRequest("alpha", 3n, daysBack(120));
+
+    // Read for itself, span by span, which is what a reader arriving on a cold span still does.
+    const alone = new Map<number, number | undefined>();
+    for (const weeks of CACHEABLE_SPANS) {
+      const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as { merged_pull_requests?: number }[];
+      alone.set(weeks, rows[0]?.merged_pull_requests);
+    }
+    // Not an assertion about the shared read — it is what makes the comparison below able to fail.
+    expect([...alone.values()]).toEqual([1, 2, 2, 2, 3]);
+
+    forgetBuiltRows();
+    await warmEverySpan(CONFIGURATION);
+
+    for (const weeks of CACHEABLE_SPANS) {
+      const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as { merged_pull_requests?: number }[];
+      expect(rows[0]?.merged_pull_requests).toBe(alone.get(weeks));
+    }
+  });
+
+  it("should order two merges at the same instant the same way however the span was built", async () => {
+    // THE DIFFERENCE THE SHARED READ ACTUALLY INTRODUCED, found by comparing all four reports for all five spans
+    // against AAT: the sets matched and the SEQUENCES did not. `sort` is stable, so an equal-instant pair came out
+    // in whatever order the fact map was iterated — which is the order the query returned the repositories in, and
+    // that differs between a 26-week read and a 4-week one. Same rows, different report.
+    //
+    // The instants here are equal ACROSS REPOSITORIES, which is the only shape that can show it: within one
+    // repository the facts arrive in one list whichever window read them.
+    const anchor = midnight(new Date());
+    const mergedAt = new Date(anchor.getTime() - 2 * 86_400_000);
+    await graphRepository("zulu", anchor);
+    await graphRepository("alpha", anchor);
+    await mergedPullRequest("zulu", 1n, mergedAt);
+    await mergedPullRequest("alpha", 2n, mergedAt);
+
+    const alone = ((await mergeRows(CONFIGURATION, 1, anchor)) as { repository: string }[]).map((row) => row.repository);
+
+    forgetBuiltRows();
+    await warmEverySpan(CONFIGURATION);
+
+    expect(((await mergeRows(CONFIGURATION, 1, anchor)) as { repository: string }[]).map((row) => row.repository)).toEqual(alone);
+    // Stated rather than left implicit: the tie is broken on the repository, so the order is the data's and not
+    // the query's. A test that only compared the two builds would pass if both were arbitrary in the same way.
+    expect(alone).toEqual(["alpha", "zulu"]);
+  });
+
   it("should warm the remaining spans even when one of them fails", async () => {
     // The spans are independent builds. A failure on the widest is no reason to leave the other four cold, and
     // the warmer is an optimisation that must never take the pod down with it.
@@ -746,7 +845,9 @@ describe("the team rows", () => {
       // ONE, not two: the uncollected repository is not in the denominator at all.
       gates_measured: 1,
       enforces_review: 1,
-      requires_multiple_reviews: 1,
+      // `requires_multiple_reviews` was asserted here until 2026-09-15. `teamPractice` stopped emitting it in
+      // #21 — the >=2 count had no reader once the page printed the >=1 one — and this assertion outlived it
+      // because these cases are not run by the pipeline.
       checks_measured: 1,
       enforces_checks: 1
     });
