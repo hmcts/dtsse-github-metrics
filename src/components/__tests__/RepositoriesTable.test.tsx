@@ -676,15 +676,17 @@ describe("RepositoriesTable production toggle", () => {
     mount();
 
     expect(screen.queryByRole("button", { name: /Remove Production/ })).toBeNull();
-    // The chips' × is an `svg` inside the chip. The toggle holds a dot and two words and no icon,
-    // so there is nothing on it a reader could read as a dismissal.
-    expect(toggle().innerHTML).not.toContain("<svg");
+    // NAMES THE × RATHER THAN ANY ICON, which is what this asserted until 2026-09-15. It read
+    // `not.toContain("<svg")` — a proxy for "no icon at all" that held only while the toggles carried none, and
+    // it broke the moment a tick was added to say a toggle is on. The claim being made is about a DISMISSAL
+    // affordance, so it is now made about the dismissal glyph: lucide renders each icon with its own
+    // `lucide-<name>` class, so a × arriving on any of the four fails here while the tick does not.
     // The toggle FIRST, then the three visibility toggles and no chip. Every one of the four is a control the
     // reader turns on and off rather than something they added to the bar, so none carries a ×.
     expect(within(bar()).getAllByRole("button")[0]).toBe(toggle());
     expect(within(bar()).getAllByRole("button")).toHaveLength(4);
     for (const button of within(bar()).getAllByRole("button")) {
-      expect(button.innerHTML).not.toContain("<svg");
+      expect(button.innerHTML).not.toContain("lucide-x");
     }
   });
 
@@ -755,6 +757,41 @@ describe("RepositoriesTable visibility toggles", () => {
 
     expect(visibilityToggle("public").getAttribute("aria-pressed")).toBe("true");
     expect(visibilityToggle("internal").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  /**
+   * A TICK AS WELL AS `aria-pressed`, so the on state is not carried by fill colour alone.
+   *
+   * Both toggle families said "on" by changing their background and nothing else, which is the rule this codebase
+   * keeps everywhere it grades something: colour is never the sole carrier of meaning. A reader who cannot
+   * separate two dark fills could not tell which of the four controls was filtering the table.
+   *
+   * The two channels are asserted together and separately: the attribute is what assistive technology reads, the
+   * tick is what a sighted reader sees, and the tick is `aria-hidden` precisely so the state is not announced
+   * twice. Dropping either one is a regression for somebody.
+   */
+  it("ticks the visibilities that are on, so the state is not colour alone", () => {
+    mount(MIXED);
+
+    expect(visibilityToggle("public").querySelector("svg")).not.toBeNull();
+    expect(visibilityToggle("internal").querySelector("svg")).toBeNull();
+    expect(visibilityToggle("private").querySelector("svg")).toBeNull();
+
+    // Hidden from the accessibility tree, because `aria-pressed` already says it.
+    expect(visibilityToggle("public").querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("ticks the Production toggle on the same rule", () => {
+    url("weeks=12&production=true");
+    mount(MIXED);
+
+    expect(toggle().querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+
+    cleanup();
+    url("weeks=12");
+    mount(MIXED);
+
+    expect(toggle().querySelector("svg")).toBeNull();
   });
 
   it("adds one visibility without dropping another, which is what independent means", () => {

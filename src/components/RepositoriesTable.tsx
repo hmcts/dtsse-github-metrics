@@ -1,6 +1,7 @@
 "use client";
 
 import clsx from "clsx";
+import { Check } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
@@ -217,6 +218,7 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
         >
           <span className={clsx("shrink-0 w-2 h-2 rounded-full", PRODUCTION_DOT)} aria-hidden="true" />
           {PRODUCTION_LABEL}
+          <ToggleTick on={production} />
           <span className="tabular-nums text-slate-500">{produced}</span>
         </button>
 
@@ -237,6 +239,7 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
             )}
           >
             {visibility}
+            <ToggleTick on={visibilities.has(visibility)} />
             <span className="tabular-nums text-slate-500">{rows.filter((row) => row.visibility === visibility).length}</span>
           </button>
         ))}
@@ -320,6 +323,25 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
       )}
     </div>
   );
+}
+
+/**
+ * The tick a pressed filter toggle wears, so its state is not carried by fill colour alone.
+ *
+ * COLOUR WAS THE ONLY SIGHTED SIGNAL until 2026-09-15. Both toggle families said "on" by changing
+ * their background — royal for Production, `slate-700` for a visibility — which is exactly the rule
+ * this codebase holds everywhere else it grades something: colour is never the sole carrier. A reader
+ * who cannot separate two dark fills could not tell which of four controls was filtering the table.
+ *
+ * `aria-hidden`, because the state is already on the button as `aria-pressed` and a screen reader
+ * would otherwise be told twice. The two channels are deliberately separate — the attribute is the
+ * accessible answer, the tick is the visible one, and neither substitutes for the other.
+ *
+ * Renders nothing when off rather than a dimmed tick: a half-visible tick is the colour-only signal
+ * again, one step quieter.
+ */
+function ToggleTick({ on }: { on: boolean }) {
+  return on ? <Check className="shrink-0 w-3 h-3" aria-hidden="true" /> : null;
 }
 
 /**

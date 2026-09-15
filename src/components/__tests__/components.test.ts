@@ -695,7 +695,7 @@ describe("WeekSpanButtons", () => {
 
 describe("the loading skeletons", () => {
   /**
-   * The landing page's skeleton, which is the widest of the six: header, cards, chart and a table.
+   * The landing page's skeleton, which is the widest of the six: header, cards and a table.
    *
    * A `loading.tsx` is handed no props by Next.js, so rendering it with none is the whole contract —
    * a skeleton that needed a figure to draw itself could not be drawn before the figures arrive.
@@ -720,23 +720,33 @@ describe("the loading skeletons", () => {
   });
 
   /**
-   * A bone per donut, and the row that wraps them — six on the landing page, one on a team's.
+   * NO CHART BONE ON ANY ROUTE, which is the inverse of what this case asserted until 2026-09-15.
    *
-   * The count is the whole point of the shape: a single bone where six charts are about to land
-   * leaves the table below it jumping down the page as they arrive, which is exactly what the
-   * loading boundary exists to prevent. The wider grid is asserted with it, because a row of six
-   * drawn one-up at every width is not the page it is standing in for either.
+   * It required six donut bones on `/repositories` and one on `/teams/[team]`, and went on passing
+   * after the donuts themselves were removed from both pages — so the assertion was what kept the
+   * defect in place rather than what would have caught it. A skeleton drawing content the page will
+   * never render is the same layout jump the boundary exists to prevent, running in reverse: three
+   * rows of bones appear and then collapse.
+   *
+   * Stated as an absence on every route, so re-adding a bone for a chart that is not there fails
+   * here rather than on somebody's screen. `h-48` is `SkeletonChart`'s own bone height and that
+   * component is deleted; the two grid class strings it wrote go with it.
    */
-  it("draws a bone per donut the page is about to hold, in the grid that page uses", () => {
-    const markup = renderToStaticMarkup(createElement(LoadingRepositories));
+  it("draws no chart bone on any route, because no route renders a chart above its tables", () => {
+    const skeletons = {
+      repositories: renderToStaticMarkup(createElement(LoadingRepositories)),
+      team: renderToStaticMarkup(createElement(LoadingTeam)),
+      teams: renderToStaticMarkup(createElement(LoadingTeams)),
+      contributors: renderToStaticMarkup(createElement(LoadingContributors)),
+      repository: renderToStaticMarkup(createElement(LoadingRepository)),
+      contributor: renderToStaticMarkup(createElement(LoadingContributor))
+    };
 
-    expect(markup.match(/h-48 w-full/g)).toHaveLength(6);
-    expect(markup).toContain("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4");
-
-    // A team's page opens on one donut, and one keeps the narrower row it always had.
-    const team = renderToStaticMarkup(createElement(LoadingTeam));
-    expect(team.match(/h-48 w-full/g)).toHaveLength(1);
-    expect(team).toContain("grid grid-cols-1 lg:grid-cols-3 gap-4");
+    for (const [route, markup] of Object.entries(skeletons)) {
+      expect(markup, route).not.toContain("h-48");
+      expect(markup, route).not.toContain("md:grid-cols-2 lg:grid-cols-3");
+      expect(markup, route).not.toContain("grid-cols-1 lg:grid-cols-3");
+    }
   });
 
   /**
@@ -761,9 +771,9 @@ describe("the loading skeletons", () => {
    * The three detail routes' skeletons, which are three shapes rather than one.
    *
    * Each stands in for a different page — a repository's cohort row and evidence blocks, a team's
-   * donut above two tables, a contributor's repositories above one behaviour section — so a
-   * skeleton copied from the wrong route would draw bones the page then does not fill, and the
-   * layout would jump as the figures land. That is exactly what no type check can see.
+   * four tables, a contributor's repositories above one behaviour section — so a skeleton copied from
+   * the wrong route would draw bones the page then does not fill, and the layout would jump as the
+   * figures land. That is exactly what no type check can see.
    */
   it("draws each detail route’s own shape, announced as loading like the lists are", () => {
     const repository = renderToStaticMarkup(createElement(LoadingRepository));
@@ -781,14 +791,11 @@ describe("the loading skeletons", () => {
     expect(team).not.toContain("lg:grid-cols-4");
     expect(contributor).not.toContain("lg:grid-cols-4");
 
-    // The team page is the only one of the three that opens on a chart.
-    expect(team).toContain("h-48 w-full");
-    expect(repository).not.toContain("h-48 w-full");
-    expect(contributor).not.toContain("h-48 w-full");
-
-    // And each asks for the rows its own page holds: three sections, two, and two.
+    // And each asks for the sections its own page holds: three, four, and two. The team's was two
+    // until 2026-09-15 — a count inherited from before Merges and Direct pushes were added to that
+    // page, which left its skeleton drawing half the tables the reader was about to get.
     expect(repository.match(/border-b border-slate-800/g)).toHaveLength(3);
-    expect(team.match(/border-b border-slate-800/g)).toHaveLength(2);
+    expect(team.match(/border-b border-slate-800/g)).toHaveLength(4);
     expect(contributor.match(/border-b border-slate-800/g)).toHaveLength(2);
   });
 });

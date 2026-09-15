@@ -283,6 +283,22 @@ describe("the three list routes", () => {
   });
 
   /**
+   * The cohort excludes archived repositories, and the page has to say so.
+   *
+   * `cohort.include_archived` defaults to `false` in `src/evidence/policy/schema.ts` and `metrics.yaml` does not
+   * override it, so `selectCohort` drops every archived repository and this table has never held one. Nothing on
+   * the page stated it, which left the estate's count reading as the whole organisation. On the section's `detail`
+   * rather than its heading, because that is where what a section was measured over belongs.
+   */
+  it("says the estate is unarchived only, beside the list that excludes them", async () => {
+    stubService();
+
+    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+
+    expect(markup).toContain("unarchived only");
+  });
+
+  /**
    * THE SIX DONUTS ARE GONE, and this asserts the absence rather than describing it.
    *
    * Five drew ways-of-working dimensions — the readiness distribution, the declared gate's two halves, unreviewed
