@@ -93,7 +93,15 @@ export interface PullRequestRule {
   require_code_owner_review: boolean;
   require_last_push_approval: boolean;
   required_approving_review_count: number;
-  required_review_thread_resolution: boolean;
+  /**
+   * Whether the branch requires every review thread resolved before a merge.
+   *
+   * OPTIONAL BECAUSE NOTHING MEASURES IT. The collector does not model the rule, so `contractGate` omits the field
+   * rather than sending `false` — which would claim a repository does not require thread resolution when nobody
+   * asked GitHub. Declared required here until 2026-09-15, which made the contract state that every gate carries an
+   * answer it has never carried; no reader was affected only because nothing renders it.
+   */
+  required_review_thread_resolution?: boolean;
 }
 
 export interface StatusCheck {
@@ -777,11 +785,16 @@ export interface TeamRow {
   repositories: number;
   unavailable: number;
   /**
-   * How many people authored a reported merge in this team's repositories.
+   * How many people landed a reported change in this team's repositories, by either route.
    *
    * A NUMBER here and a LIST on `TeamDetail`, which is not an inconsistency to tidy: a card prints a count and
-   * the team page lists the people. Contributor attribution is not assembled yet, so this is 0 and that is 0
-   * everywhere rather than a figure nobody measured.
+   * the team page lists the people. Both are folded off the same two activity reports, so the figure on a card and
+   * the length of the table it links to are one derivation rather than two that could disagree.
+   *
+   * TWO INTERFACES OF ONE NAME IS WHAT MADE THIS A BUG. The report layer emitted the list shape onto the card's
+   * row until 2026-09-15, and every card read " contributors" with no figure — `count(...)` is a template literal,
+   * so `[]` stringified to nothing. Nothing caught it because `src/lib/api.ts` reaches the contract through a
+   * double cast. See `authorsByRepository` in the report layer.
    */
   actors: number;
   practice?: TeamPractice;
