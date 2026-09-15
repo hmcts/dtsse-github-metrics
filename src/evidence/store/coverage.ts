@@ -1,4 +1,5 @@
 import type { CoverageKey, EvidenceSource, Interval, SourceCoverage } from "../domain/coverage.ts";
+import type { Prisma } from "./generated/client.js";
 import { coalesceIntervals, findMissingIntervals, modalEdge } from "./intervals.ts";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
@@ -44,38 +45,58 @@ export async function findMissingCoverage(requested: SourceCoverage): Promise<So
  *
  * A `SERIALIZABLE` transaction with a retry would also do, but this states the intent at the row level
  * and cannot fail on an unrelated conflict.
+ *
+ * COVERAGE ON ITS OWN, which is what the transaction here means. A caller that has just written FACTS must not
+ * use this: the two writes have to commit together, so it joins the coverage write to its own transaction
+ * through `recordSourceCoverageWithin` below.
  */
 export async function recordSourceCoverage(coverage: SourceCoverage, accessedAt: Date = new Date()): Promise<void> {
-  const { organization, repository, source, queryHash } = coverage;
   try {
     await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`
-        SELECT 1 FROM source_coverage
-        WHERE organization = ${organization} AND repository = ${repository} AND source = ${source} AND query_hash = ${queryHash}
-        FOR UPDATE
-      `;
-      const existing = await tx.sourceCoverage.findMany({
-        where: { organization, repository, source, queryHash },
-        orderBy: { startsAt: "asc" },
-        select: { startsAt: true, endsAt: true }
-      });
-      const merged = coalesceIntervals(existing, { startsAt: coverage.startsAt, endsAt: coverage.endsAt });
-      await tx.sourceCoverage.deleteMany({ where: { organization, repository, source, queryHash } });
-      await tx.sourceCoverage.createMany({
-        data: merged.map((interval) => ({
-          organization,
-          repository,
-          source,
-          queryHash,
-          startsAt: interval.startsAt,
-          endsAt: interval.endsAt,
-          accessedAt
-        }))
-      });
+      await recordSourceCoverageWithin(tx, coverage, accessedAt);
     });
   } catch (error) {
     throw new StorageError("could not update collection cache", error);
   }
+}
+
+/**
+ * The same write, joined to a transaction a caller has already opened.
+ *
+ * Exists so facts and the coverage row claiming them can commit TOGETHER — see the note at the top of
+ * `facts.ts`. Two transactions leave a window in which the facts are visible and the coverage is not, which
+ * under READ COMMITTED is enough for a `prune` running alongside to delete the facts and then have the
+ * coverage insert commit a row saying the interval is covered. A covered interval with no facts reports as
+ * zero merges rather than as a failure.
+ *
+ * It does NOT wrap its own errors: the caller's transaction owns the failure, and `cachePullRequestFacts`
+ * already reports the whole write as "could not update collection cache".
+ */
+export async function recordSourceCoverageWithin(tx: Prisma.TransactionClient, coverage: SourceCoverage, accessedAt: Date = new Date()): Promise<void> {
+  const { organization, repository, source, queryHash } = coverage;
+  await tx.$queryRaw`
+    SELECT 1 FROM source_coverage
+    WHERE organization = ${organization} AND repository = ${repository} AND source = ${source} AND query_hash = ${queryHash}
+    FOR UPDATE
+  `;
+  const existing = await tx.sourceCoverage.findMany({
+    where: { organization, repository, source, queryHash },
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true, endsAt: true }
+  });
+  const merged = coalesceIntervals(existing, { startsAt: coverage.startsAt, endsAt: coverage.endsAt });
+  await tx.sourceCoverage.deleteMany({ where: { organization, repository, source, queryHash } });
+  await tx.sourceCoverage.createMany({
+    data: merged.map((interval) => ({
+      organization,
+      repository,
+      source,
+      queryHash,
+      startsAt: interval.startsAt,
+      endsAt: interval.endsAt,
+      accessedAt
+    }))
+  });
 }
 
 /** Stamps a series as used, so `prune` can tell a live cache row from an abandoned one. */

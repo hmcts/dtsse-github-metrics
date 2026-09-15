@@ -269,6 +269,46 @@ describe("pruneCache", () => {
     expect(await prisma.directCommitFact.count()).toBe(0);
   });
 
+  it("should keep facts a partial collection cached, which have no coverage row by design", async () => {
+    // THE CASE THAT COST DATA. `fillCachedSource` caches the mutable edge with `complete: false`: the facts are
+    // stored for reuse and the interval is deliberately not claimed, so the next run collects it again. Deleting
+    // facts by mere absence of coverage deleted exactly those — invisible while the stable half of the series
+    // still had a row, and total when the whole requested window IS the edge, which is what a short `--days` or
+    // a newly added repository asks for.
+    await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], false);
+    await cacheDirectCommitFacts(
+      { ...COVERAGE, source: EvidenceSource.DirectCommits },
+      [{ sha: "abc123", committedAt: new Date(Date.UTC(2026, 6, 4)), payload: {} }],
+      false
+    );
+
+    // Everything in the database is older than this cut-off, so a prune with nothing to keep still keeps these.
+    expect(await pruneCache(FUTURE)).toBe(0);
+
+    expect(await prisma.pullRequestFact.count()).toBe(1);
+    expect(await prisma.directCommitFact.count()).toBe(1);
+    // And they are still readable, which is the point of caching them: the reader selects facts by window, so a
+    // fact with no coverage row is reused rather than refetched.
+    expect(await loadCachedPullRequestFacts(COVERAGE, COVERAGE.startsAt, COVERAGE.endsAt)).toEqual([{ number: 11 }]);
+  });
+
+  it("should keep a partial collection's facts while deleting the stale coverage beside them", async () => {
+    // The mixed state a real run leaves: one signature's stable half recorded and long unread, the mutable edge
+    // of another cached without coverage. The stale series goes with its facts; the uncovered facts stay.
+    await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
+    await cachePullRequestFacts(
+      { ...COVERAGE, queryHash: "edge" },
+      [{ identifier: BigInt(202), mergedAt: new Date(Date.UTC(2026, 6, 5)), payload: { number: 22 } }],
+      false
+    );
+    await prisma.sourceCoverage.updateMany({ where: { queryHash: "testhash" }, data: { accessedAt: new Date(Date.UTC(2026, 0, 1)) } });
+
+    expect(await pruneCache(new Date(Date.UTC(2026, 6, 1)))).toBe(1);
+
+    const remaining = await prisma.pullRequestFact.findMany({ select: { identifier: true } });
+    expect(remaining).toEqual([{ identifier: BigInt(202) }]);
+  });
+
   it("should keep facts whose coverage survives under a different signature", async () => {
     await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], true);
     await cachePullRequestFacts(
@@ -293,6 +333,26 @@ describe("cachePullRequestFacts", () => {
     await cachePullRequestFacts(COVERAGE, [{ identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), payload: { number: 11 } }], false);
 
     expect(await prisma.pullRequestFact.count()).toBe(1);
+    expect(await prisma.sourceCoverage.count()).toBe(0);
+  });
+
+  it("should leave no facts behind when the coverage row claiming them cannot be written", async () => {
+    // ATOMICITY FROM THE INSIDE. The facts and the coverage row are one transaction, which is what closes the
+    // window a concurrent `prune` used to delete facts in: under READ COMMITTED it could see committed facts
+    // that nothing yet claimed, delete them, and watch the coverage insert commit behind it. An interval
+    // covering no time is refused by `source_coverage_interval_ordered`, so if the facts survived the refusal
+    // they were written in a transaction of their own.
+    const instant = new Date(Date.UTC(2026, 6, 1));
+
+    await expect(
+      cachePullRequestFacts(
+        { ...COVERAGE, startsAt: instant, endsAt: instant },
+        [{ identifier: BigInt(101), mergedAt: instant, payload: { number: 11 } }],
+        true
+      )
+    ).rejects.toThrow(/could not update collection cache/);
+
+    expect(await prisma.pullRequestFact.count()).toBe(0);
     expect(await prisma.sourceCoverage.count()).toBe(0);
   });
 
