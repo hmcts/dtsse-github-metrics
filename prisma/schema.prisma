@@ -6,7 +6,8 @@
 //
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
-// `alert_observations`, `sonar_project_map`, or the six organisation-graph tables. That is enforced by
+// `alert_observations`, `sonar_project_map`, the six organisation-graph tables, or
+// `repository_production_override`. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
 //
 // Facts are stored as `jsonb` payloads beside the few queryable columns, exactly as upstream stored
@@ -136,6 +137,48 @@ model CollectionState {
   collectedAt DateTime @map("collected_at") @db.Timestamptz(6)
 
   @@map("collection_state")
+}
+
+/// A repository somebody has marked as a production service BY HAND, because the organisation's
+/// approvals list does not name it.
+///
+/// A row here is the mark. There is no boolean column, and that is the whole design: `production` is
+/// reported true when the approvals list names a repository OR a row here does, so an absent row means
+/// nothing at all and a present one means production. A `production BOOLEAN` column would invite a
+/// negative override, which cannot be honoured without breaking the tri-state the approvals list is read
+/// through — an unread list must not be turned into a confident `false` by anything.
+///
+/// IT IS A TABLE OF ITS OWN AND NOT A FIELD IN `repository_state.payload`, for one reason: a collection
+/// REPLACES that row wholesale on every run (`recordRepositoryState` upserts the whole payload), so a
+/// mark stored there would live until the next collection walked the repository and no longer. Nothing
+/// the collector writes reaches this table, so the import cannot overwrite what a person stated.
+///
+/// DURABLE for a different reason from the tables above. Theirs is that GitHub serves only the present;
+/// this one's is that GitHub was never asked — the fact came from a person, and nothing can recover it
+/// but that person's memory. `prune` may not touch it, which
+/// test/integration/prune-never-touches-durable.test.ts asserts rather than leaving to convention.
+///
+/// `marked_by` and `reason` are NOT NULL and non-blank, enforced by CHECK constraints in the migration.
+/// An override with no provenance becomes folklore inside a quarter: somebody finds a repository badged
+/// Production that the approvals list does not name, and there is nothing to read but the flag itself.
+/// Neither column is read by any report — they exist to be read by a human in `psql`, which is also how
+/// a row is written today.
+///
+/// Both key columns are CASEFOLDED, again by CHECK constraint, so `(hmcts, PCS-API)` and `(hmcts,
+/// pcs-api)` cannot both exist and mark one repository twice with two different explanations. Reads fold
+/// the name they are looking up, as `inventory/production.ts` folds the approvals list for the same
+/// reason: GitHub owner and repository names are case-insensitive.
+model ProductionOverride {
+  organization String
+  repository   String
+  /// Who marked it — an email, or whatever identifies the person to their colleagues.
+  markedBy     String   @map("marked_by")
+  markedAt     DateTime @default(now()) @map("marked_at") @db.Timestamptz(6)
+  /// Why this repository is a production service despite the approvals list not naming it.
+  reason       String
+
+  @@id([organization, repository])
+  @@map("repository_production_override")
 }
 
 // ─── Durable: the organisation graph, never pruned ───────────────────────────────────────────────
