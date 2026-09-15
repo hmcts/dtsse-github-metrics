@@ -478,12 +478,12 @@ describe("the assurance grade's presentation", () => {
     ]);
   });
 
-  it("explains Code owner as accountability rather than as team membership", () => {
-    // The rule the hint describes changed on 2026-09-15: an individual who is still in the organisation MEETS the
-    // criterion, and what fails it is nobody accountable at all. A hint still saying "No if it is owned by an
-    // individual" would contradict 215 of this estate's rows.
-    expect(ASSURANCE_HINT["named-owner"]).toContain("still a member");
-    expect(ASSURANCE_HINT["named-owner"]).toContain("left the organisation");
+  it("explains Code owner as having an owner rather than as having a team", () => {
+    // The rule the hint describes changed on 2026-09-15: an individual owner MEETS the criterion and only an
+    // orphan fails it. A hint promising a team would contradict 217 of this estate's rows, which is what the
+    // previous wording — "No if it is owned by an individual" — did.
+    expect(ASSURANCE_HINT["named-owner"]).toContain("an owner at all");
+    expect(ASSURANCE_HINT["named-owner"]).toContain("nothing owns it");
     expect(ASSURANCE_HINT["named-owner"]).not.toMatch(/No if it is owned by an individual/);
   });
 

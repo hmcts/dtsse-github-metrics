@@ -53,25 +53,24 @@ export type AssuranceOutcome = (typeof AssuranceOutcome)[keyof typeof AssuranceO
  */
 export const AssuranceCriterion = {
   /**
-   * A named owner and a maintenance plan: SOMEBODY WHO STILL WORKS HERE is accountable for the code.
+   * A named owner and a maintenance plan: SOMEBODY is accountable for the code.
    *
    * Read from `owner_kind`, which the ownership ladder already resolves — NOT from CODEOWNERS. The distinction
    * matters because a CODEOWNERS column shipped on this table for months and rendered a dash for the entire
    * estate: nothing ever populated `codeowners_files`. `owner_kind` is on every row, on both branches, from
    * PR #17.
    *
-   * A CURRENT INDIVIDUAL IS MET AND A DEPARTED ONE IS NOT, from 2026-09-15, where any individual at all used to
-   * be `Unmet` on the grounds that the criterion asks for a team. It does not: it asks for a named owner, and a
-   * named person who is still in the organisation is one — somebody a reader can go and ask. What the criterion
-   * exists to find is code with NOBODY accountable, and the two shapes of that are a repository nothing owns and
-   * a repository owned by a login that has left. Measured on AAT: 1,523 team-owned, 217 person-owned of which
-   * 215 name at least one current member, and 150 unowned. So the old rule reported 367 findings where there are
-   * 152, and the 215 it marked down had an owner all along.
+   * AN INDIVIDUAL OWNER IS MET, from 2026-09-15, where any individual at all used to be `Unmet` on the grounds
+   * that the criterion asks for a team. It does not: it asks for a named owner, and a named person is one —
+   * somebody a reader can go and ask. What the criterion exists to find is an ORPHAN, and `OwnerKind.None` is
+   * exactly that. Measured on AAT: 1,523 team-owned, 217 person-owned and 150 unowned, so the old rule reported
+   * 367 findings where there are 150 and the 217 it marked down had an owner all along.
    *
-   * MEMBERSHIP IS A THIRD ANSWER, not a default. An individual owner whose organisation membership could not be
-   * read is `Unknown`: read as met it would claim an owner nobody checked for, and read as unmet it would blame
-   * an unread member list on the team that owns the code. That is the same rule `secretsRead` and
-   * `severeAlertsRead` exist for one level down.
+   * NO MEMBERSHIP CHECK, and the ladder is why rather than a judgement about departed owners being acceptable.
+   * A login that has left the organisation is not resolved as an owner in the first place — `org/ownership.ts`
+   * reads its rungs from the graph's live people, teams and memberships — so a surviving individual owner is a
+   * current one by construction. Asking again here would be a second, weaker copy of a decision already made
+   * upstream, and one that could disagree with it.
    */
   NamedOwner: "named-owner",
   /**
@@ -387,19 +386,19 @@ function hygieneJudgement(signals: HygieneSignals): AssuranceJudgement {
 }
 
 /**
- * The named-owner criterion, read off the kind the ownership ladder resolved and — for an individual — whether
- * that individual is still here.
+ * The named-owner criterion: has this repository got an owner at all.
  *
- * THE INDIVIDUAL CASE IS THE ONE WITH THREE ANSWERS, and the branch order says which. A team owner needs no
- * membership read at all: a team is the criterion met whoever is currently in it, and asking about its members
- * would make an emptied team fail a criterion it satisfies. An individual owner needs the read, and its absence
- * is `Unknown` rather than either verdict — see `AssuranceCriterion.NamedOwner`.
+ * A FUNCTION OF `ownerKind` ALONE, and there is deliberately no second signal. `OwnerKind.None` — which
+ * `org/cohort.ts` pairs with `owners` being exactly `[UnownedIdentifier]` — is the orphan the criterion exists to
+ * find, and both of the other kinds are somebody to ask. An individual is not a weaker answer than a team here:
+ * the ladder resolves owners from the graph's live people and memberships, so a login that has left is not an
+ * owner by the time this reads one.
  *
  * `none` AND AN UNRECOGNISED KIND ANSWER TOGETHER, and both are `Unmet`: the ladder ran and attributed nothing,
  * which is the finding rather than a gap. That is different from `ownerKind` being absent, which is the ladder
  * not having run.
  */
-function ownerJudgement(ownerKind: string | undefined, ownerIsCurrentMember: boolean | undefined): AssuranceJudgement {
+function ownerJudgement(ownerKind: string | undefined): AssuranceJudgement {
   const criterion = AssuranceCriterion.NamedOwner;
   if (ownerKind === undefined) {
     return { criterion, outcome: AssuranceOutcome.Unknown, detail: "no ownership has been attributed" };
@@ -408,14 +407,9 @@ function ownerJudgement(ownerKind: string | undefined, ownerIsCurrentMember: boo
     return { criterion, outcome: AssuranceOutcome.Met, detail: "assigned to a team" };
   }
   if (ownerKind === "person") {
-    if (ownerIsCurrentMember === undefined) {
-      return { criterion, outcome: AssuranceOutcome.Unknown, detail: "assigned to an individual whose organisation membership could not be read" };
-    }
-    return ownerIsCurrentMember
-      ? { criterion, outcome: AssuranceOutcome.Met, detail: "assigned to an individual who is still a member of the organisation" }
-      : { criterion, outcome: AssuranceOutcome.Unmet, detail: "assigned to an individual who has left the organisation, so nobody is accountable for it" };
+    return { criterion, outcome: AssuranceOutcome.Met, detail: "assigned to a named individual" };
   }
-  return { criterion, outcome: AssuranceOutcome.Unmet, detail: "no owner could be attributed" };
+  return { criterion, outcome: AssuranceOutcome.Unmet, detail: "nothing owns it, so nobody is accountable for it" };
 }
 
 /**
@@ -496,17 +490,6 @@ function maintainedJudgement(archived: boolean, unmaintained: boolean): Assuranc
 export interface AssuranceSubject {
   /** `OwnerKind` as the row carries it, or absent where no ownership was attributed. */
   ownerKind?: string;
-  /**
-   * Whether ANY of the individuals the repository is owned by is still a member of the organisation.
-   *
-   * ANY RATHER THAN ALL, because the criterion asks for a named owner and one person who still works here is
-   * one. A repository with two individual owners, one departed, has somebody to ask.
-   *
-   * ABSENT MEANS THE MEMBER LIST WAS NOT READ, which grades `Unknown` — never met and never unmet. Meaningless
-   * for a team owner, which needs no membership read at all, so a caller resolving `ownerKind` to `team` should
-   * leave it absent rather than answering it.
-   */
-  ownerIsCurrentMember?: boolean;
   archived: boolean;
   /** Whether the repository is past `cohort.unmaintained_after_days`, which the cohort decided. */
   unmaintained: boolean;
@@ -532,7 +515,7 @@ export function judgeAssurance(subject: AssuranceSubject): AssuranceJudgement[] 
   // criterion missing here renders as a dash for the whole estate, which is the failure the CODEOWNERS column
   // shipped with.
   return [
-    ownerJudgement(subject.ownerKind, subject.ownerIsCurrentMember),
+    ownerJudgement(subject.ownerKind),
     collected(AssuranceCriterion.AutomatedHygiene, (read) => hygieneJudgement(read.hygiene)),
     collected(AssuranceCriterion.NoCommittedSecrets, secretsJudgement),
     collected(AssuranceCriterion.SecurityContact, securityContactJudgement),

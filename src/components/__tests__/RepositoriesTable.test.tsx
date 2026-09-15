@@ -105,7 +105,7 @@ const ROWS: RepositoryRow[] = [
     assurance: {
       grade: "partial",
       criteria: [
-        { criterion: "named-owner", outcome: "unmet", detail: "assigned to an individual who has left the organisation, so nobody is accountable for it" },
+        { criterion: "named-owner", outcome: "unmet", detail: "nothing owns it, so nobody is accountable for it" },
         { criterion: "automated-hygiene", outcome: "met", detail: "every hygiene signal is on" },
         { criterion: "no-committed-secrets", outcome: "met", detail: "no secret-scanning alert is open" },
         { criterion: "security-contact", outcome: "met", detail: "a security policy applies, usually the organisation's own rather than this repository's" },

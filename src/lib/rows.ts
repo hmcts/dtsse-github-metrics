@@ -287,7 +287,7 @@ export const SECRETS_CRITERION: AssuranceCriterion = "no-committed-secrets";
  */
 export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
   "named-owner":
-    "Yes when the repository is attributed to a GitHub team, including by a CODEOWNERS file naming one, or to an individual who is still a member of the hmcts organisation. No when its only owner has left the organisation, or when nothing owns it at all.",
+    "Yes when the repository has an owner at all — a GitHub team, including one named by a CODEOWNERS file, or a named individual. No when nothing owns it, so there is nobody to ask about it.",
   "automated-hygiene":
     "Yes when every readable signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — which either Renovate or Dependabot satisfies. Hover a cell to see which are missing.",
   // Reads as the FINDING and not the verdict — see `findingOrder` and the `Finding` cell for the one column whose
