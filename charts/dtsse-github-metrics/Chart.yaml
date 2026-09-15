@@ -3,13 +3,13 @@ appVersion: "1.0"
 description: Collects and grades evidence of software delivery practice from GitHub
 name: dtsse-github-metrics
 home: https://github.com/hmcts/dtsse-github-metrics
-version: 0.0.7
+version: 0.0.8
 dependencies:
   - name: nodejs
     version: 3.2.1
     repository: "oci://hmctsprod.azurecr.io/helm"
   - name: job
-    version: 2.2.1
+    version: 2.2.2
     repository: "oci://hmctsprod.azurecr.io/helm"
     condition: job.enabled
   # The organisation graph runs as a SECOND CronJob rather than a step inside the first. Two reasons, and
@@ -24,7 +24,7 @@ dependencies:
   # CronJob with no template to maintain.
   - name: job
     alias: orgJob
-    version: 2.2.1
+    version: 2.2.2
     repository: "oci://hmctsprod.azurecr.io/helm"
     condition: orgJob.enabled
   - name: postgresql
