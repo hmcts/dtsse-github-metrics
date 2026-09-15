@@ -3,20 +3,20 @@ import { request } from "@playwright/test";
 /**
  * Waits for the deployment under test to be routable before any spec runs.
  *
- * THE TESTS WERE RACING THE INGRESS. `helm upgrade --wait` returns when the pod is Ready, which is not the same as
- * Traefik having a healthy backend for the hostname: the pipeline updates DNS and starts the suite about twelve
- * seconds later, and for a few seconds after that the edge still answers 502, 503 or `no available server`. Four
- * master builds failed that way — 33 and 34 in `@regression` on whichever page happened to load inside the window,
- * 35 in `@smoke` on all three health checks — every one of them against a pod whose own log was clean.
- *
- * A retry on the individual test cannot fix it. Playwright's `retries` re-runs a spec within seconds, so all three
- * attempts land inside the same outage; that is exactly what builds 33 to 35 show, three failures a few seconds
- * apart. The wait has to happen once, before the suite, which is what `globalSetup` is for.
+ * `helm upgrade --wait` returns when the pod is Ready, which is not the same as Traefik having a healthy backend
+ * for the hostname; the pipeline updates DNS and starts the suite seconds later, and until the edge has an
+ * endpoint it answers 502 or 503. Waiting once here rather than through Playwright's `retries` is deliberate:
+ * retries re-run a spec within seconds, so every attempt lands inside the same outage.
  *
  * POLLS LIVENESS, not readiness and not a page. `/health/liveness` runs no check at all — see `src/health/probe.ts`
  * — so a 200 from it means precisely "a request reached this process and it answered", which is the one thing being
- * waited for. Readiness would work too but conflates the question, and a page would make the gate wait for the
- * report warm as well and time out on a cold estate.
+ * waited for. A page would make the gate wait for the report warm as well and time out on a cold estate.
+ *
+ * WHAT THIS GATE CANNOT DO is notice a pod that dies later, because it runs once and then the suite owns the
+ * deployment. A 502 partway through a run is therefore NOT this gate failing to wait long enough, and reaching for
+ * a longer deadline will not help: look for a restarting container first. `kubectl get pod` showing a non-zero
+ * restart count, or `lastState.terminated`, names the cause in one line — see the `dev*` resource keys in
+ * `charts/dtsse-github-metrics/values.yaml` for the instance of this that cost several builds.
  *
  * BOUNDED AND LOUD. A deployment that never becomes routable is a real failure and must not be waited on for the
  * length of the job, so the gate gives up after `DEADLINE_MS` and throws with the last thing it saw. It does not
