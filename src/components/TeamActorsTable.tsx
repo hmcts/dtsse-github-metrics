@@ -1,6 +1,5 @@
-import Link from "next/link";
+import { ContributorName } from "@/components/ContributorName";
 import type { TeamActorRow } from "@/lib/types";
-import { withWeeks } from "@/lib/weeks";
 
 /**
  * Everyone who authored a reported merge in one team's repositories, alphabetically.
@@ -25,8 +24,10 @@ export function TeamActorsTable({ rows, weeks }: { rows: readonly TeamActorRow[]
       <table className="w-full text-xs">
         <thead className="text-slate-400 border-b border-slate-800">
           <tr>
+            {/* Named for the person and not the handle, because the cell under it leads on a name where the
+                organisation graph holds one. See `ContributorName`. */}
             <th scope="col" className="py-2 pl-3 pr-3 text-left font-medium">
-              Login
+              Contributor
             </th>
             <th scope="col" className="py-2 pr-3 text-right font-medium">
               Repositories in team
@@ -40,12 +41,7 @@ export function TeamActorsTable({ rows, weeks }: { rows: readonly TeamActorRow[]
           {rows.map((row) => (
             <tr key={row.login} className="hover:bg-slate-800/30">
               <td className="py-2 pl-3 pr-3">
-                <Link
-                  href={withWeeks(`/contributors/${encodeURIComponent(row.login)}`, weeks)}
-                  className="font-mono text-indigo-400 hover:text-indigo-300 break-all"
-                >
-                  {row.login}
-                </Link>
+                <ContributorName person={row} weeks={weeks} />
               </td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.repositories}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.contributions}</td>

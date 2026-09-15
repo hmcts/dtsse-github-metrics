@@ -9,6 +9,7 @@ import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { Section } from "@/components/Section";
 import { activity, measured } from "@/lib/actor";
 import { getActor, getWindows, isNotFound } from "@/lib/api";
+import { contributorLabel } from "@/lib/person";
 import type { ActorDetail } from "@/lib/types";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
@@ -36,11 +37,21 @@ export default async function ActorPage({ params, searchParams }: { params: Prom
     <div className="space-y-8">
       <CollectionNotice windows={windows} />
 
+      {/* HEADED BY THE PERSON AND NOT THE HANDLE, where the organisation graph holds a name for them. The login
+          moves onto the context line rather than being dropped: it is what identifies them on GitHub and in every
+          other report, and the list that linked here shows both for the same reason. Where there is no name the
+          login heads the page as it always did, and the context line does not repeat it. */}
       <EntityHeader
         kind="contributor"
-        name={actor.actor_login}
+        name={contributorLabel({ login: actor.actor_login, name: detail.name })}
+        identifier={detail.name === undefined}
         action={<NavWeekSelector options={windows.options} active={weeks} />}
-        context={<span>{activity(actor)}</span>}
+        context={
+          <>
+            {detail.name === undefined ? null : <span className="font-mono">{actor.actor_login}</span>}
+            <span>{activity(actor)}</span>
+          </>
+        }
       />
 
       <Section heading="Repositories" detail="the contributions the window holds, weightiest first">

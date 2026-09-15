@@ -23,7 +23,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import ContributorsPage from "@/app/contributors/page";
 import RepositoriesPage from "@/app/repositories/page";
 import TeamsPage from "@/app/teams/page";
-import type { ActorRow, OverviewSummary, RepositoryRow, TeamRow, WindowOptions } from "@/lib/types";
+import type { ActorRow, Contributor, OverviewSummary, RepositoryRow, TeamRow, WindowOptions } from "@/lib/types";
 
 const WINDOWS: WindowOptions = {
   options: [4, 12, 26],
@@ -94,6 +94,11 @@ const ACTORS: ActorRow[] = [{ login: "ada", repositories: 2, labels: ["green"] }
 
 const TEAMS: TeamRow[] = [{ team: "platform", repositories: 2, unavailable: 0, actors: 1, labels: { green: 1 } }];
 
+/** Who the estate table's export unpacks under `platform`: one person with a profile name and one without. */
+const TEAM_CONTRIBUTORS: Record<string, Contributor[]> = {
+  platform: [{ login: "ef32", name: "Tam Arah" }, { login: "nameless" }]
+};
+
 /** Every path the stubbed service was asked for, in the order the pages asked for them. */
 let requested: string[] = [];
 
@@ -101,6 +106,7 @@ const api = vi.hoisted(() => ({
   getWindows: vi.fn(),
   getOverview: vi.fn(),
   getRepositories: vi.fn(),
+  getTeamContributors: vi.fn(),
   getActors: vi.fn(),
   getTeams: vi.fn()
 }));
@@ -136,6 +142,12 @@ function stubService(): void {
     requested.push(`repositories?weeks=${weeks}`);
     return Promise.resolve(REPOSITORIES);
   });
+  // The export's own read, which only `/repositories` makes: the table needs no contributors and the other two
+  // pages do not export. Recorded like the rest, so the span assertions below cover it.
+  api.getTeamContributors.mockImplementation((weeks: number) => {
+    requested.push(`team-contributors?weeks=${weeks}`);
+    return Promise.resolve(TEAM_CONTRIBUTORS);
+  });
   api.getActors.mockImplementation((weeks: number) => {
     requested.push(`actors?weeks=${weeks}`);
     return Promise.resolve(ACTORS);
@@ -161,7 +173,10 @@ describe("the three list routes", () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({ weeks: "26" }) }));
 
-    expect(spans()).toEqual(["26", "26"]);
+    // THREE READS AND NOT TWO from this change: the overview, the rows, and the owning teams' contributors that
+    // the export unpacks. All three at the span the reader asked for — an export scoped to a different window from
+    // the table above it would hand somebody a file that disagreed with the page they took it from.
+    expect(spans()).toEqual(["26", "26", "26"]);
     expect(markup).toContain('href="/repositories/api?weeks=26"');
     expect(markup).toContain('href="/teams/platform?weeks=26"');
   });
@@ -210,7 +225,7 @@ describe("the three list routes", () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
 
-    expect(spans()).toEqual(["4", "4"]);
+    expect(spans()).toEqual(["4", "4", "4"]);
     expect(markup).toContain('href="/repositories/api?weeks=4"');
   });
 

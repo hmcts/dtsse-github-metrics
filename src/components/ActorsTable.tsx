@@ -1,13 +1,13 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
+import { ContributorName } from "@/components/ContributorName";
 import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
+import { contributorLabel } from "@/lib/person";
 import { combinationKey } from "@/lib/rag";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { ActorRow, ReadinessLabel } from "@/lib/types";
-import { withWeeks } from "@/lib/weeks";
 
 interface Column {
   key: string;
@@ -24,11 +24,17 @@ const READINESS: Column = {
   read: (row) => combinationKey(row.labels)
 };
 
-const COLUMNS: readonly Column[] = [
-  { key: "login", label: "Login", read: (row) => row.login },
-  { key: "repositories", label: "Repositories", align: "right", read: (row) => row.repositories },
-  READINESS
-];
+/**
+ * The first column is HEADED AND SORTED BY WHAT IT SHOWS, which is a person's name where GitHub holds one.
+ *
+ * "Login" would be wrong on the 41.8% of rows that now lead on a name, and sorting on `row.login` under a heading
+ * showing names would order the column by a value the reader cannot see — the two have to be the same value or
+ * the header is a claim about an order that is not the one on screen. `contributorLabel` is that value, so the
+ * unnamed rows sort by their login among the named rows' names, which is the only order a mixed column can have.
+ */
+const CONTRIBUTOR: Column = { key: "contributor", label: "Contributor", read: (row) => contributorLabel(row) };
+
+const COLUMNS: readonly Column[] = [CONTRIBUTOR, { key: "repositories", label: "Repositories", align: "right", read: (row) => row.repositories }, READINESS];
 
 /**
  * Everyone who contributed to a reported repository in this window, by their repositories' labels.
@@ -41,9 +47,13 @@ const COLUMNS: readonly Column[] = [
  *
  * Ties keep the login order the service sent, because `sorted` is stable, so everybody who is all
  * green stays in the order `/actors` served them in. That order is the service's own — Python's
- * default sort over the logins — and the `Login` header re-sorts locale-aware through `compare`, so
- * a header click can move mixed-case logins relative to each other. Both are alphabetical orders and
+ * default sort over the logins — and the `Contributor` header re-sorts locale-aware through `compare`,
+ * so a header click can move mixed-case logins relative to each other. Both are alphabetical orders and
  * neither ranks anybody; the header states which one the reader is looking at.
+ *
+ * WHAT THE FIRST COLUMN SHOWS IS A PERSON AND NOT A HANDLE, from this change: `ContributorName` leads on the
+ * profile name the organisation graph holds and falls back to the login, which is 58% of this estate. Nothing
+ * about the ordering rules above changed — see `CONTRIBUTOR` for why the column sorts on the displayed value.
  *
  * `labelled` says whether the readiness policy graded anything at all in this window, which one
  * person's row cannot say on its own — see `Readiness`.
@@ -82,12 +92,7 @@ export function ActorsTable({ rows, weeks, labelled }: { rows: readonly ActorRow
           {ordered.map((row) => (
             <tr key={row.login} className="hover:bg-slate-800/30">
               <td className="py-2 pl-3 pr-3">
-                <Link
-                  href={withWeeks(`/contributors/${encodeURIComponent(row.login)}`, weeks)}
-                  className="font-mono text-indigo-400 hover:text-indigo-300 break-all"
-                >
-                  {row.login}
-                </Link>
+                <ContributorName person={row} weeks={weeks} />
               </td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.repositories}</td>
               <td className="py-2 pr-3 text-right">

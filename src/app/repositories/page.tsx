@@ -5,9 +5,10 @@ import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { MetricCard } from "@/components/MetricCard";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
+import { RepositoriesExport } from "@/components/RepositoriesExport";
 import { RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTable";
 import { Panel, Section } from "@/components/Section";
-import { getOverview, getRepositories, getWindows } from "@/lib/api";
+import { getOverview, getRepositories, getTeamContributors, getWindows } from "@/lib/api";
 import { count, span } from "@/lib/format";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
@@ -28,9 +29,11 @@ export const dynamic = "force-dynamic";
 export default async function RepositoriesPage({ searchParams }: { searchParams?: Promise<{ weeks?: SearchValue }> }) {
   const windows = await getWindows();
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
-  // Two requests against one bundle, fetched together rather than in sequence: they come from the
-  // same built report in the service, so serialising them would only add a round trip to it.
-  const [overview, repositories] = await Promise.all([getOverview(weeks), getRepositories(weeks)]);
+  // Three requests against one bundle, fetched together rather than in sequence: they come from the
+  // same built report in the service, so serialising them would only add a round trip to it. The third
+  // is the export's alone — the table needs no contributors — and it is a fold over the same cached
+  // span build rather than a query, so it costs the page no read.
+  const [overview, repositories, teamContributors] = await Promise.all([getOverview(weeks), getRepositories(weeks), getTeamContributors(weeks)]);
   const window = span(overview.starts_at, overview.ends_at);
 
   return (
@@ -78,7 +81,17 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
       <Section
         heading="Repositories"
         detail={`${window}, unarchived only, most recently pushed first`}
-        action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}
+        // THE EXPORT SITS BESIDE THE FILTER BOX because it is scoped BY it: what the button hands the
+        // reader is what the term and the toggles have left, so the two controls belong in one place.
+        // It is on this page and not on a team's, whose repositories table is the same component: the
+        // owning teams' contributors are the export's second column and a team page already lists its
+        // own people in a section of their own.
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            <FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />
+            <RepositoriesExport rows={repositories} teamContributors={teamContributors} window={window} />
+          </div>
+        }
       >
         {repositories.length === 0 ? (
           <EmptyState

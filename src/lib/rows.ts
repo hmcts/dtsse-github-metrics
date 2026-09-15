@@ -13,6 +13,7 @@
  */
 
 import { matches } from "@/lib/filter";
+import { ABSENT } from "@/lib/format";
 import type { RAGState } from "@/lib/rag";
 import { compare, type SortValue } from "@/lib/sort";
 import type { AssuranceCriterion, AssuranceCriterionResult, AssuranceGrade, AssuranceOutcome, RepositoryRow, Visibility } from "@/lib/types";
@@ -98,6 +99,16 @@ export function orderRepositories(rows: readonly RepositoryRow[]): RepositoryRow
 export function matchesRepository(row: RepositoryRow, term: string): boolean {
   return matches(row.repository, term) || owners(row).some((owner) => matches(owner, term));
 }
+
+/**
+ * The parameter the estate table's filter box reads and writes.
+ *
+ * Beside the other three filter parameters rather than in the component, which is where it was until the export
+ * control became a second reader of it. The parameters, their values and their parsers are one decision — a
+ * control reading `?repository=` while another wrote `?term=` would filter two different tables on one page — and
+ * `RepositoriesTable` re-exports it so the pages that name it in a `FilterSearchBox` are unchanged.
+ */
+export const TERM_PARAMETER = "repository";
 
 /**
  * The production toggle's parameter.
@@ -418,4 +429,40 @@ export function foundOutcome(outcome: AssuranceOutcome | undefined): boolean | u
 export function findingOrder(outcome: AssuranceOutcome | undefined): SortValue {
   const found = foundOutcome(outcome);
   return found === undefined ? undefined : found ? 0 : 1;
+}
+
+/**
+ * Whether one criterion was MET, as the three-valued answer its cell prints.
+ *
+ * `foundOutcome`'s counterpart for the five columns that answer whether the criterion passed rather than what was
+ * found. Same shape and the same treatment of `unknown`: nobody could read it, so it is neither met nor unmet, and
+ * folding it into `false` would report a missing permission as a repository that fails.
+ */
+export function metOutcome(outcome: AssuranceOutcome | undefined): boolean | undefined {
+  return outcome === undefined || outcome === "unknown" ? undefined : outcome === "met";
+}
+
+/**
+ * Yes, No, or a dash: the words every three-valued answer on the estate table prints.
+ *
+ * ONE DEFINITION FOR FOUR COLUMNS AND THE EXPORT. The criteria, the finding and the production attribute each
+ * spelled these words for themselves, which was harmless while they were only rendered — and stopped being
+ * harmless the moment a CSV had to say the same thing about the same row, because a fifth copy is how a file comes
+ * to disagree with the page it was exported from.
+ *
+ * The dash rather than a blank, here as everywhere: `false` is an answer and an unreadable field is not, and only
+ * a visible mark keeps the two apart in a column of otherwise short words.
+ */
+export function answerWord(answer: boolean | undefined): string {
+  return answer === undefined ? ABSENT : answer ? "Yes" : "No";
+}
+
+/**
+ * The patching criterion's age, in the days-suffixed form its column prints.
+ *
+ * A dash rather than `0d` where nothing severe is open, which would claim an alert was raised today. Whether
+ * nothing is open or nothing could be read is the `patching` criterion's own outcome to say, not this cell's.
+ */
+export function alertAge(days: number | undefined): string {
+  return days === undefined ? ABSENT : `${days}d`;
 }

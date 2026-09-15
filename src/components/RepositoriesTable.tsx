@@ -18,12 +18,15 @@ import {
   ASSURANCE_GRADE_STATE,
   ASSURANCE_HINT,
   ASSURANCE_LABEL,
+  alertAge,
   answerOrder,
+  answerWord,
   assuranceOrder,
   criterionResult,
   filterRepositories,
   findingOrder,
   foundOutcome,
+  metOutcome,
   orderRepositories,
   outcomeOrder,
   PRODUCTION_PARAMETER,
@@ -32,6 +35,7 @@ import {
   parseVisibilities,
   productionCount,
   SECRETS_CRITERION,
+  TERM_PARAMETER,
   VISIBILITIES,
   VISIBILITY_OFF,
   VISIBILITY_ON,
@@ -58,7 +62,10 @@ import { withWeeks } from "@/lib/weeks";
  * dismiss but has no way to apply is worse than no filter. What is left is Production and the three visibility
  * toggles, each with its own affordance and none with an × on it, which is the shape Production always had.
  */
-export const TERM_PARAMETER = "repository";
+
+// Re-exported rather than declared here, so this component and the export control beside it read one definition.
+// The pages that hand it to a `FilterSearchBox` name it on this module, which is where it was defined.
+export { TERM_PARAMETER };
 
 interface Column {
   key: string;
@@ -299,7 +306,7 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
                       // The AGE, with no colouring and no threshold. "Measurement first": the number is the
                       // finding and the reader is the judge, so a tone here would publish an SLA nobody chose.
                       <td key={criterion} className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                        {row.assurance?.oldest_severe_alert_days === undefined ? ABSENT : `${row.assurance.oldest_severe_alert_days}d`}
+                        {alertAge(row.assurance?.oldest_severe_alert_days)}
                       </td>
                     ) : criterion === SECRETS_CRITERION ? (
                       <Finding key={criterion} result={criterionResult(row, criterion)} />
@@ -365,7 +372,7 @@ function ToggleTick({ on }: { on: boolean }) {
  * whose list could not be read answers neither. A blank cell could not tell those apart.
  */
 function Answer({ value }: { value?: boolean }) {
-  return <td className="py-2 pr-3 text-center text-slate-300">{value === undefined ? ABSENT : value ? "Yes" : "No"}</td>;
+  return <td className="py-2 pr-3 text-center text-slate-300">{answerWord(value)}</td>;
 }
 
 /**
@@ -386,7 +393,7 @@ function Finding({ result }: { result?: { outcome: AssuranceOutcome; detail: str
       <span
         className={clsx(found === true ? "text-rag-amber" : null, found === false ? "text-rag-green" : null, found === undefined ? "text-slate-500" : null)}
       >
-        {found === undefined ? ABSENT : found ? "Yes" : "No"}
+        {answerWord(found)}
       </span>
     </td>
   );
@@ -403,7 +410,7 @@ function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: str
           outcome === undefined || outcome === "unknown" ? "text-slate-500" : null
         )}
       >
-        {outcome === undefined || outcome === "unknown" ? ABSENT : outcome === "met" ? "Yes" : "No"}
+        {answerWord(metOutcome(outcome))}
       </span>
     </td>
   );
