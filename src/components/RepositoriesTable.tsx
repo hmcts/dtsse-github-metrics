@@ -138,7 +138,10 @@ const COLUMNS: readonly Column[] = [
     key: "assurance",
     label: "Assurance",
     read: (row) => assuranceOrder(row.assurance?.grade),
-    hint: "The grade across the four graded criteria — Code owner, Hygiene, Secrets and Maintained. Security contact and Patching cycle are shown but not graded."
+    // "Meets what was read" is spelled out here because it is the grade a reader will otherwise take for a
+    // weaker "Meets criteria": the difference is in the evidence, not in the repository. See
+    // `ASSURANCE_GRADE_LABEL`.
+    hint: 'The grade across the four graded criteria — Code owner, Hygiene, Secrets and Maintained. Security contact and Patching cycle are shown but not graded. "Meets criteria" needs all four read and met; "Meets what was read" means nothing fell short and at least one of the four could not be read at all.'
   }
 ];
 

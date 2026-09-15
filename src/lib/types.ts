@@ -380,8 +380,14 @@ export type AssuranceOutcome = "met" | "unmet" | "unknown";
  * assurance criteria, and the reverse, so reusing the other's vocabulary would state something false. The two
  * share `lib/rag.ts`'s colours and nothing else, and they live on different pages: assurance on `/repositories`,
  * readiness on `/teams` and on a repository's own page.
+ *
+ * FOUR VALUES FROM 2026-09-15, and `partly-read` is the one a reader has to be told apart from `partial`. `met`
+ * means every graded criterion was read and met; `partly-read` means every criterion that COULD be read was met
+ * and some could not be, which one failed org-wide secret-scanning call produces for the entire estate at once;
+ * `partial` means one of them was read and failed. Only the third is a finding about the repository. Before this,
+ * an unread criterion counted as neutral and all three arrived as `met`.
  */
-export type AssuranceGrade = "met" | "partial" | "unknown";
+export type AssuranceGrade = "met" | "partly-read" | "partial" | "unknown";
 
 export interface AssuranceCriterionResult {
   criterion: AssuranceCriterion;
