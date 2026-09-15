@@ -2,7 +2,7 @@ import "server-only";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
 import { CACHEABLE_SPANS } from "./cache.ts";
-import { repositoryRows } from "./repositories.ts";
+import { type Estate, estateForEverySpan, repositoryRows } from "./repositories.ts";
 
 /**
  * Building every span before a reader asks for one, and again once a collection lands.
@@ -16,6 +16,10 @@ import { repositoryRows } from "./repositories.ts";
  * each other and with whatever live request arrived during them — measured in the AAT pod, a single cold build
  * is already throttled for 0.6 s of its 1.2 s of CPU. Sequential warming costs the same total work spread over
  * a longer wall clock, which is exactly the trade to make against a live reader.
+ *
+ * ONE READ, FIVE BUILDS. The spans are nested, so the widest one's facts answer for all of them and the estate
+ * is read once per warm rather than once per span — see `estateForEverySpan`. The builds stay sequential: what
+ * that paragraph is about is CPU, and this is about the same rows being fetched five times.
  *
  * POLLED RATHER THAN PUSHED. The collector is a CronJob in a different pod and has no way to call this, so the
  * revision in the database is the only signal that crosses the gap — which is the same reason `collection_state`
@@ -38,20 +42,45 @@ export interface Warmer {
 }
 
 /**
- * Builds every span once, in order, ignoring any single span's failure.
+ * Builds every span once, in order, from ONE read of the estate, ignoring any single span's failure.
  *
  * Every span is attempted even after one fails: the spans are independent builds, and a failure on 26 weeks is
  * no reason to leave 1, 4, 8 and 12 cold.
+ *
+ * ONE `reference` FOR THE WHOLE WARM, which is what makes the shared read shareable. The spans are nested only
+ * because they end at a common anchor, and a fresh `new Date()` per span could — across midnight, or across a
+ * collection landing mid-warm — snap two of them to different anchors. `estateForEverySpan` states the rest.
  */
 export async function warmEverySpan(configuration: Configuration): Promise<void> {
+  const reference = new Date();
+  const read = await estateOrNothing(configuration, reference);
   for (const weeks of CACHEABLE_SPANS) {
     const started = Date.now();
     try {
-      const rows = await repositoryRows(configuration, weeks);
+      const rows = await repositoryRows(configuration, weeks, reference, read);
       console.info(`warmed the ${weeks}-week report: ${rows.length} repositories in ${Date.now() - started}ms`);
     } catch (error) {
       console.warn(`could not warm the ${weeks}-week report: ${error instanceof Error ? error.message : String(error)}`);
     }
+  }
+}
+
+/**
+ * The one read every span is built from, or nothing where it failed.
+ *
+ * FORGIVEN RATHER THAN FATAL, and it degrades to what the warmer did before it: each span then reads the estate
+ * for itself, fails on its own and is logged by the loop above. A shared read that throws must not leave five
+ * spans unbuilt for a reason no line of the log would name.
+ */
+async function estateOrNothing(configuration: Configuration, reference: Date): Promise<Estate | undefined> {
+  const started = Date.now();
+  try {
+    const read = await estateForEverySpan(configuration, reference);
+    console.info(`read the estate for every span in ${Date.now() - started}ms`);
+    return read;
+  } catch (error) {
+    console.warn(`could not read the estate for every span: ${error instanceof Error ? error.message : String(error)}; each span will read for itself`);
+    return undefined;
   }
 }
 

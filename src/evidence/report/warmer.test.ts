@@ -14,15 +14,22 @@ import { startReportWarmer, warmEverySpan } from "./warmer.ts";
  * and a span failing is one `mockRejectedValueOnce` rather than a broken configuration.
  */
 
-const { collectionState, repositoryRows } = vi.hoisted(() => ({ collectionState: vi.fn(), repositoryRows: vi.fn() }));
+const { collectionState, estateForEverySpan, repositoryRows } = vi.hoisted(() => ({
+  collectionState: vi.fn(),
+  estateForEverySpan: vi.fn(),
+  repositoryRows: vi.fn()
+}));
 
 // See `./cache.test.ts` for why `server-only` is stubbed here rather than aliased in the config.
 vi.mock("server-only", () => ({}));
 vi.mock("../store/collection-state.ts", () => ({ collectionState }));
-vi.mock("./repositories.ts", () => ({ repositoryRows }));
+vi.mock("./repositories.ts", () => ({ estateForEverySpan, repositoryRows }));
 
 /** Nothing here reads the configuration — it is passed through to the mocked builder. */
 const CONFIGURATION = { organization: "hmcts" } as unknown as Configuration;
+
+/** Stands in for the one read of the estate every span is built from. Its contents are the builder's business. */
+const ESTATE = { startsAt: new Date(0), endsAt: new Date(1), cohort: [], states: new Map(), facts: new Map() };
 
 /** The stamp `collectionState` answers with, or `undefined` for a database nothing has collected into. */
 function atRevision(revision: bigint | undefined): void {
@@ -42,6 +49,8 @@ async function tick(milliseconds: number): Promise<void> {
 beforeEach(() => {
   vi.useFakeTimers();
   collectionState.mockReset();
+  estateForEverySpan.mockReset();
+  estateForEverySpan.mockResolvedValue(ESTATE);
   repositoryRows.mockReset();
   repositoryRows.mockResolvedValue([{ repository: "alpha" }]);
   atRevision(1n);
@@ -118,6 +127,59 @@ describe("warmEverySpan", () => {
     await warmEverySpan(CONFIGURATION);
 
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("could not warm the 1-week report: the pool is draining"));
+  });
+
+  it("should read the estate ONCE and hand that read to every span", async () => {
+    // The whole point of the shared read: the spans are nested, so five builds off one read fetch the widest
+    // span's rows instead of the same rows five times over. A build that did not receive the read would go and
+    // fetch its own, which is what this asserts against — the argument, not the timing.
+    await warmEverySpan(CONFIGURATION);
+
+    expect(estateForEverySpan).toHaveBeenCalledTimes(1);
+    expect(repositoryRows.mock.calls).toHaveLength(CACHEABLE_SPANS.length);
+    for (const call of repositoryRows.mock.calls) {
+      expect(call[3]).toBe(ESTATE);
+    }
+  });
+
+  it("should date every span off ONE reference, since a shared read only serves spans that share an anchor", async () => {
+    // The spans are nested only because they end at a common instant. A fresh `new Date()` per span could snap
+    // two of them to different anchors across a midnight or a collection landing mid-warm, and the read would
+    // then be answering for a window one of them does not have.
+    await warmEverySpan(CONFIGURATION);
+
+    const references = repositoryRows.mock.calls.map(([, , reference]) => reference);
+    expect(new Set(references).size).toBe(1);
+    expect(references[0]).toBe(estateForEverySpan.mock.calls[0]?.[1]);
+  });
+
+  it("should build every span anyway when the shared read fails, each reading for itself", async () => {
+    // Degrading to a read per span is what the warmer did before the shared one existed. Leaving five spans
+    // unbuilt because one read failed would be a worse outcome than the slowness the read removes.
+    estateForEverySpan.mockRejectedValueOnce(new Error("connection reset"));
+
+    await warmEverySpan(CONFIGURATION);
+
+    expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+    for (const call of repositoryRows.mock.calls) {
+      expect(call[3]).toBeUndefined();
+    }
+  });
+
+  it("should say why the shared read failed, rather than a warm that is quietly slow again", async () => {
+    estateForEverySpan.mockRejectedValueOnce(new Error("connection reset"));
+
+    await warmEverySpan(CONFIGURATION);
+
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("could not read the estate for every span: connection reset"));
+  });
+
+  it("should report a thrown non-Error from the shared read, for the reason a failed span does", async () => {
+    estateForEverySpan.mockRejectedValueOnce("the pool is draining");
+
+    await warmEverySpan(CONFIGURATION);
+
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("could not read the estate for every span: the pool is draining"));
   });
 });
 
