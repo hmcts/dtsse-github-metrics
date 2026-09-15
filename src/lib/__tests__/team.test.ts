@@ -87,7 +87,6 @@ describe("practiceFigures", () => {
     return {
       gates_measured: 10,
       enforces_review: 8,
-      requires_multiple_reviews: 3,
       checks_measured: 10,
       enforces_checks: 6,
       unreviewed_measured: 7,
@@ -115,7 +114,7 @@ describe("practiceFigures", () => {
   it("states every count out of what was MEASURED, never out of the holding", () => {
     // Eight of the ten readable gates, not eight of however many the team owns: two repositories whose gate
     // nobody could read are not two repositories that fail to enforce review.
-    expect(figureOf("Enforces review").value).toBe("8 of 10");
+    expect(figureOf("Peer review enforced").value).toBe("8 of 10");
     expect(figureOf("Enforces CI").value).toBe("6 of 10");
     expect(figureOf("Repositories reviewing substantial changes").value).toBe("4 of 7");
   });
@@ -131,10 +130,10 @@ describe("practiceFigures", () => {
   it("says a figure was not measured rather than printing 0 of 0", () => {
     // "0 of 0" reads as a finding about the team. A gate nobody could read is not a gate requiring nothing —
     // the same distinction the row's own absent-means-unmeasured rule keeps.
-    const unread = practice({ gates_measured: 0, enforces_review: 0, requires_multiple_reviews: 0, checks_measured: 0, enforces_checks: 0 });
+    const unread = practice({ gates_measured: 0, enforces_review: 0, checks_measured: 0, enforces_checks: 0 });
 
-    expect(figureOf("Enforces review", unread).value).toBe("not measured");
-    expect(figureOf("Enforces review", unread).detail).toBe("no merge gate could be read");
+    expect(figureOf("Peer review enforced", unread).value).toBe("not measured");
+    expect(figureOf("Peer review enforced", unread).detail).toBe("no merge gate could be read");
     expect(figureOf("Enforces CI", unread).value).toBe("not measured");
   });
 
@@ -153,8 +152,8 @@ describe("practiceFigures", () => {
     expect(figureOf("Repositories reviewing substantial changes").detail).toBe("2 within the allowance, 1 above it");
   });
 
-  it("carries the stronger review requirement as detail rather than as a second verdict", () => {
-    expect(figureOf("Enforces review").detail).toBe("3 require two or more approvals");
+  it("states the bar the count is against when a gate was read", () => {
+    expect(figureOf("Peer review enforced").detail).toBe("the gate requires at least one approving review");
   });
 
   it("counts the CHANGES reviewed as well as the repositories, which is the figure with teeth", () => {

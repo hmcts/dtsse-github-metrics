@@ -126,6 +126,17 @@ function order(): string[] {
 }
 
 /**
+ * The column names, left to right, read off each header's `aria-label`.
+ *
+ * NOT `textContent`, which is no longer the heading: every column carries an `InfoTooltip` whose text sits in the
+ * cell twice — once as the trigger's `aria-label` and once in a bubble kept hidden with CSS rather than removed
+ * from the DOM. `SortHeader` names the cell explicitly for that reason, and this reads the name it set.
+ */
+function headerNames(): (string | null)[] {
+  return screen.getAllByRole("columnheader").map((cell) => cell.getAttribute("aria-label"));
+}
+
+/**
  * One row's cell under a named column, found by the HEADER'S POSITION rather than a hardcoded index.
  *
  * By name because these tests are mostly about which column is wired to which field: a column inserted to the
@@ -133,7 +144,7 @@ function order(): string[] {
  * hypothetical here — the table gained six columns and lost eight in one change.
  */
 function cellOf(repository: string, label: string): HTMLElement | undefined {
-  const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
+  const headers = headerNames();
   const entry = screen
     .getAllByRole("row")
     .slice(1)
@@ -162,8 +173,15 @@ function headerCell(label: string): HTMLElement {
   return screen.getByRole("columnheader", { name: new RegExp(`^${label}$`) });
 }
 
+/**
+ * A column's SORT control, which is no longer the only button in its header.
+ *
+ * Each heading now carries an `InfoTooltip` beside it, whose trigger is also a button — named with the hint rather
+ * than the column, so the two are told apart by name. An unnamed `getByRole("button")` here would throw on every
+ * column that has a hint, which is all of them.
+ */
 function header(label: string): HTMLElement {
-  return within(headerCell(label)).getByRole("button");
+  return within(headerCell(label)).getByRole("button", { name: new RegExp(`^${label}$`) });
 }
 
 /** Sort on a column and report the order it left, so a click reads as one line in a test. */
@@ -184,13 +202,18 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("RepositoriesTable sorting", () => {
-  it("opens on the most recently pushed, which is no column sorted", () => {
+  it("opens on the most recently pushed, and says so on that column", () => {
     // THE DEFAULT THIS REPLACED put these rows docs, web, api — by team, `content` before `delivery` before
     // `platform`. The fixture's instants cross that order, so this case cannot pass under the old rule.
+    //
+    // `Last pushed` ANNOUNCES ITSELF, from 2026-09-15. The opening order is still `orderRepositories` rather than
+    // a click's `sorted` — it tie-breaks equal instants on the name — but leaving every header `none` made the
+    // order the table was in unstateable, so a reader had no way to tell it from an arbitrary one.
     mount();
 
     expect(order()).toEqual(["web", "docs", "api"]);
-    for (const label of ["Team", "Repository", "Last pushed", "Assurance"]) {
+    expect(announced("Last pushed")).toBe("descending");
+    for (const label of ["Team", "Repository", "Assurance"]) {
       expect(announced(label)).toBe("none");
     }
   });
@@ -216,9 +239,10 @@ describe("RepositoriesTable sorting", () => {
     // crossed over between them, so a header reading the wrong criterion sorts the pair the other way round.
     expect(sortBy("Code owner")).toEqual(["web", "docs", "api"]);
     expect(sortBy("Hygiene")).toEqual(["docs", "web", "api"]);
-    // `web` has an open secret-scanning alert and `docs` has none, so met sorts first and `api` — whose org-wide
-    // read never happened — sorts last.
-    expect(sortBy("Secrets")).toEqual(["docs", "web", "api"]);
+    // THE ONE COLUMN THAT SORTS THE OTHER WAY UP, from 2026-09-15: it states what was FOUND, so `web` — which has
+    // two open alerts — leads, where every other criterion leads with the repositories that pass. `api`, whose
+    // org-wide read never happened, still sorts last: nobody looked is not the same as nothing found.
+    expect(sortBy("Secrets")).toEqual(["web", "docs", "api"]);
     // Met for both, which is the point of the column: it reads Yes almost everywhere. What it must still do is
     // hold `api` back, since an unanswered criterion is not a met one.
     expect(sortBy("Security contact").at(-1)).toBe("api");
@@ -278,26 +302,30 @@ describe("RepositoriesTable sorting", () => {
 });
 
 describe("RepositoriesTable columns", () => {
-  it("heads the identity columns, then the grade, then one per criterion", () => {
+  it("heads the identity columns, then one per criterion, then the grade they build to", () => {
     // EIGHT COLUMNS WENT and five of them rendered a dash for the whole estate before they did — Open, Stale,
     // Sonar, Findings and CODEOWNERS all read fields the report layer never emitted. Readiness went for a
     // different reason: it grades readiness for AI enablement, which is a different question from these
     // criteria, and it moved to `/teams` rather than being deleted.
+    //
+    // ASSURANCE READS LAST, from 2026-09-15, where it used to sit between the identity columns and its own
+    // evidence. It is the conclusion the criterion columns reach, so a reader meets the evidence and then the
+    // verdict rather than being given the verdict and asked to scan rightwards for why.
     mount();
 
-    expect(screen.getAllByRole("columnheader").map((cell) => cell.textContent)).toEqual([
+    expect(headerNames()).toEqual([
       "Team",
       "Repository",
       "Last pushed",
       "Visibility",
-      "Assurance",
       "Code owner",
       "Hygiene",
       "Secrets",
       "Security contact",
       "Patching cycle",
       "Maintained",
-      "Production"
+      "Production",
+      "Assurance"
     ]);
   });
 
@@ -308,6 +336,31 @@ describe("RepositoriesTable columns", () => {
     expect(cellOf("docs", "Code owner")?.textContent).toBe("No");
     // `api` carries no assurance block at all, which is a repository nothing has been collected for.
     expect(cellOf("api", "Code owner")?.textContent).toBe("-");
+  });
+
+  /**
+   * The one column that answers the opposite way round, and the case that stops it being "simplified" back.
+   *
+   * Every other criterion prints Yes when the repository PASSES. `Secrets` prints Yes when secrets were FOUND,
+   * because a column headed with the name of the bad thing answering Yes for a clean repository read backwards.
+   * The colours invert with the word — a green Yes here would sit over an open credential leak — and the criterion
+   * underneath is untouched, which the grade assertion at the end is here to hold.
+   */
+  it("answers Secrets as what was FOUND, in the colours of a finding rather than a pass", () => {
+    mount();
+
+    // `web` has two open alerts; `docs` has none. Yes is the one with the problem.
+    expect(cellOf("web", "Secrets")?.textContent).toBe("Yes");
+    expect(cellOf("docs", "Secrets")?.textContent).toBe("No");
+    // Nobody read the org-wide alerts for `api`, which is not the same as finding none.
+    expect(cellOf("api", "Secrets")?.textContent).toBe("-");
+
+    expect(cellOf("web", "Secrets")?.outerHTML).toContain("text-rag-amber");
+    expect(cellOf("docs", "Secrets")?.outerHTML).toContain("text-rag-green");
+
+    // The inversion is the CELL's and not the criterion's: `web` still fails the criterion, so its grade is not
+    // improved by the column now reading Yes.
+    expect(cellOf("web", "Assurance")?.textContent).toBe("Partly meets");
   });
 
   it("prints the alert AGE with no threshold and no colour", () => {
@@ -429,12 +482,7 @@ describe("RepositoriesTable owner cell", () => {
 
   /** One row's Team cell, found under its header for `productionCell`'s reason. */
   function ownerCell(repository: string): HTMLElement | undefined {
-    const headers = screen.getAllByRole("columnheader").map((cell) => cell.textContent);
-    const entry = screen
-      .getAllByRole("row")
-      .slice(1)
-      .find((row) => within(row).getAllByRole("cell")[1]?.textContent?.startsWith(repository));
-    return within(entry as HTMLElement).getAllByRole("cell")[headers.indexOf("Team")];
+    return cellOf(repository, "Team");
   }
 
   it("links a team's name and marks it as nothing", () => {

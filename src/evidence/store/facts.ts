@@ -1,6 +1,5 @@
 import type { CoverageKey, SourceCoverage } from "../domain/coverage.ts";
 import { recordSourceCoverage, touchOrganisationCoverage, touchSourceCoverage } from "./coverage.ts";
-import { Prisma } from "./generated/client.js";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
@@ -160,13 +159,17 @@ export interface DirectCommitFactRow {
  * Dropped in POSTGRES rather than after the rows arrive, which is the whole point: a projection applied in
  * JavaScript would already have paid the transfer and the JSON parse this exists to avoid. `deserialiseMerges`
  * revives whatever does arrive, so a narrowed projection is a smaller `jsonb` document and not a different shape.
+ *
+ * WRITTEN INTO THE QUERY LITERALLY, from 2026-09-15, and not built up as a `Prisma.Sql` fragment interpolated
+ * into the template below. It was the second, and the interpolation did not survive being bundled twice: Next
+ * gives `instrumentation.ts` its own copy of this module graph and the pages an `ssr/` copy, and in the `ssr/` one
+ * the nested `Prisma.Sql` was bound as a PARAMETER rather than spliced in as SQL — so every row came back with
+ * `{"strings":["payload - "," - ",""],"values":["body","title"]}` as its payload, a valid JSON object that no
+ * `jsonb_typeof` check would flag. The warmer's copy read real facts, so the estate looked healthy while every
+ * request-side read of the fact cache got a constant.
+ *
+ * Two fields are a literal in one place. If a third is ever dropped, it goes in the SQL below and in this comment.
  */
-const UNREAD_PULL_REQUEST_FIELDS = ["body", "title"] as const;
-
-/** One `jsonb` payload column with the unread fields subtracted, as a SQL fragment. */
-function narrowedPayload(): Prisma.Sql {
-  return UNREAD_PULL_REQUEST_FIELDS.reduce<Prisma.Sql>((expression, field) => Prisma.sql`${expression} - ${field}`, Prisma.sql`payload`);
-}
 
 /** One repository's cached facts, as the reader groups them. */
 interface RepositoryFacts {
@@ -206,7 +209,7 @@ export async function loadCachedFactsForOrganisation(
   try {
     const [pullRequests, directCommits] = await Promise.all([
       prisma.$queryRaw<{ repository: string; payload: unknown }[]>`
-        SELECT repository, ${narrowedPayload()} AS payload
+        SELECT repository, payload - 'body' - 'title' AS payload
         FROM pull_request_facts
         WHERE organization = ${organization} AND query_hash = ${queryHashes.pullRequests}
           AND merged_at >= ${startsAt} AND merged_at < ${endsAt}

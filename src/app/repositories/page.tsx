@@ -84,23 +84,6 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
           <RepositoriesTable rows={repositories} weeks={weeks} />
         )}
       </Section>
-
-      {/* WHAT THESE COLUMNS DO NOT COVER, stated on the page and not only in the code.
-          A reader holding them against the published criteria will count six where there are seven, and one of
-          the six is only half evidenced. Both facts are stated, because a tick under Secrets otherwise reads as
-          a broader assurance than it is — and because an unexplained gap gets read as an oversight or, worse,
-          filled with a proxy. */}
-      <p className="text-xs text-slate-500">
-        <strong className="text-slate-400">Secrets is a partial answer.</strong> The column reads open secret-scanning alerts, so it evidences committed{" "}
-        <em>credentials</em> only. The rest of that criterion — sensitive operational detail such as hostnames, IP ranges, admin endpoints and capacity
-        thresholds — needs a human reading the content and is not evidenced here. A tick means no credential was found and left unresolved, not that the
-        repository is free of sensitive detail. <strong className="text-slate-400">Secure by design is not reported at all</strong>, because it needs a threat
-        model and a review of what a service exposes, and no GitHub signal stands in for that.{" "}
-        <strong className="text-slate-400">Security contact is shown but not graded</strong>: GitHub reports a policy for nearly every repository, inherited
-        from the organisation’s <code className="text-slate-400">.github</code> repository, so it evidences one organisation-level intake route rather than
-        anything per repository — counted towards the grade it would be a free pass on every row. Readiness for AI enablement is a different question and is
-        reported per team.
-      </p>
     </div>
   );
 }

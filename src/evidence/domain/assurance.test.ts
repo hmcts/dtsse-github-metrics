@@ -230,7 +230,36 @@ describe("the automated-hygiene criterion", () => {
     const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ dependabotSecurityUpdates: false, updateConfiguration: false }) }) });
 
     expect(outcomeOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe(AssuranceOutcome.Unmet);
-    expect(detailOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe("not configured: Dependabot security updates, a dependency update configuration");
+    expect(detailOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe("not configured: automated dependency updates");
+  });
+
+  /**
+   * THE RENOVATE CASE, which this criterion failed on 244 repositories of the live estate.
+   *
+   * Renovate keeps dependencies current and does not turn GitHub's Dependabot security updates on, so requiring
+   * both signals marked down every repository that uses it. They are one requirement and either tool meets it.
+   */
+  it("should be met where Renovate updates the dependencies and Dependabot security updates is off", () => {
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ dependabotSecurityUpdates: false, updateConfiguration: true }) }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe(AssuranceOutcome.Met);
+    expect(detailOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe("every hygiene signal is on");
+  });
+
+  it("should be met where Dependabot updates them and no configuration file is committed", () => {
+    // The mirror of the case above: Dependabot security updates is a repository setting rather than a file, so a
+    // repository can be updating perfectly well with nothing in its tree to find.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ dependabotSecurityUpdates: true, updateConfiguration: false }) }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe(AssuranceOutcome.Met);
+  });
+
+  it("should hold the update answer back where one tool is off and the other could not be read", () => {
+    // Not `false`: a repository whose Dependabot setting is off and whose default branch could not be listed has
+    // not been shown to lack dependency updates. Secret scanning being off is what fails it here.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: { secretScanning: false, dependabotSecurityUpdates: false } }) });
+
+    expect(detailOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe("not configured: secret scanning");
   });
 
   it("should judge on the signals it could read rather than holding the answer back for one it could not", () => {

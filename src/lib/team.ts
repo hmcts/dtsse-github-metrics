@@ -69,9 +69,9 @@ export function practiceFigures(practice: TeamPractice): PracticeFigure[] {
   const outOf = (counted: number, measured: number): string => (measured === 0 ? "not measured" : `${counted} of ${measured}`);
   return [
     {
-      label: "Enforces review",
+      label: "Peer review enforced",
       value: outOf(practice.enforces_review, practice.gates_measured),
-      detail: practice.gates_measured === 0 ? "no merge gate could be read" : `${practice.requires_multiple_reviews} require two or more approvals`
+      detail: practice.gates_measured === 0 ? "no merge gate could be read" : "the gate requires at least one approving review"
     },
     {
       label: "Enforces CI",

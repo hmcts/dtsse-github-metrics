@@ -261,7 +261,7 @@ describe("TeamPractice", () => {
 
   it("names every figure it draws, so no count is printed without its question", () => {
     for (const label of [
-      "Enforces review",
+      "Peer review enforced",
       "Enforces CI",
       "Repositories reviewing substantial changes",
       "Substantial changes reviewed",

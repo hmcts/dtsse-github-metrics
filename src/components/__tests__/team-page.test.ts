@@ -118,33 +118,6 @@ async function render(weeks?: string): Promise<string> {
   return renderToStaticMarkup(page);
 }
 
-/**
- * The readiness donut's legend, which is where its figures are.
- *
- * Scoped to the legend rather than read off the page, because the week selector draws pressed buttons and
- * coloured labels of its own — an unscoped read reports those as slices.
- *
- * ANCHORED ON THE DONUT'S HEADING now that the legend is not a control. It used to be found by
- * `aria-label="Readiness filter"`, which `SummaryPieChart` writes only when it is given a `parameter` to filter
- * on; this donut no longer has one, so there is no group to find.
- */
-function legendOf(markup: string): string {
-  const opened = markup.indexOf(">Readiness</h3>");
-  expect(opened).toBeGreaterThan(-1);
-  const next = markup.indexOf("<h2", opened);
-  return markup.slice(opened, next === -1 ? undefined : next);
-}
-
-/** The label words and the count drawn under each of them. */
-function legend(markup: string): Record<string, number> {
-  const counts: Record<string, number> = {};
-  const entries = legendOf(markup).matchAll(/text-slate-400[^"]*">([^<]+)<\/span><span class="text-xs text-slate-600 tabular-nums">(\d+)</g);
-  for (const match of entries) {
-    counts[match[1] ?? ""] = Number(match[2]);
-  }
-  return counts;
-}
-
 beforeEach(() => {
   cookie = undefined;
   search = new URLSearchParams();
@@ -200,17 +173,29 @@ describe("the team page", () => {
     expect(await render()).not.toContain("not reported at this span");
   });
 
-  it("states the readiness labels as a count each, and grades the team with none of them", async () => {
+  /**
+   * The scope boundary, which outlived the donut that used to carry it in a tooltip.
+   *
+   * Per-team COUNTS are permitted and a team GRADE is not, so the one thing this page must never grow is a
+   * readiness word beside the team's name. The donut's tooltip used to say so in prose; the rule is now only
+   * enforceable by asserting the absence, which is what this does.
+   */
+  it("grades the team with no label of its own, however its repositories are labelled", async () => {
     stubService();
     const markup = await render();
 
-    expect(markup).toContain(">Readiness</h3>");
-    expect(markup).toContain("not combined into a label for the team");
-    // The header states the team and its counts, and carries no label of its own: a readiness word
-    // beside the team's name would be exactly the combined grade the donut's tooltip disclaims.
     const [header] = markup.split("</header>");
     expect(header).toContain("platform");
     expect(header).not.toMatch(/Ready|Caution|Blocked|Not assessed|score|average/i);
+  });
+
+  it("draws no chart at all, the readiness donut having gone the way of the estate's", async () => {
+    stubService();
+    const markup = await render();
+
+    expect(markup).not.toContain(">Readiness</h3>");
+    // `recharts` renders into this wrapper, so its absence is the absence of every chart on the page.
+    expect(markup).not.toContain("recharts");
   });
 
   /**
@@ -225,7 +210,9 @@ describe("the team page", () => {
    * It no longer SELECTS those rows: the donut stopped being a control when the estate's filters went, so what is
    * asserted here is the arithmetic rather than a click.
    */
-  it("counts the repositories the span could not report into its ungraded slice", async () => {
+  it("lists every repository the team holds, the ones the span could not report included", async () => {
+    // What the donut's ungraded slice used to account for, asserted where it still matters: the TABLE holds every
+    // configured repository, so a row the span reported nothing for is listed rather than dropped.
     stubService((detail) => ({
       ...detail,
       repositories: [...REPOSITORIES, { repository: "legacy", team: "platform" }],
@@ -233,33 +220,20 @@ describe("the team page", () => {
     }));
     const markup = await render();
 
-    expect(legend(markup)).toEqual({
-      Ready: 1,
-      Caution: 1,
-      Blocked: 0,
-      "Cannot assess": 0,
-      "Not assessed": 1
-    });
-    // THE LEGEND TOTALS THE TABLE, which is what adding the unreported figure buys: two graded repositories plus
-    // the one the span could not report, against the three rows below it. Without the addition it would total 2
-    // and read as a team holding one fewer repository than the table lists.
-    expect(Object.values(legend(markup)).reduce((total, value) => total + value, 0)).toBe(3);
     expect(markup).toContain('href="/repositories/legacy?weeks=4"');
     expect(markup).toContain('href="/repositories/api?weeks=4"');
+    expect(markup).toContain("1 repository not reported at this span");
   });
 
   /**
-   * The donut filters this team's table, exactly as the estate's donuts filter the estate's.
+   * A stale `?label=` in somebody's bookmark must not narrow anything.
    *
-   * The page renders the shared `RepositoriesTable` under the donut and both read `label` off the
-   * URL, so a slice clicked here narrows the list here. A team page that drew a static donut would
-   * be the same control behaving differently depending on which page a reader found it on.
+   * The page used to draw a donut that filtered on `?label=`, which the shared table read back through
+   * `ESTATE_FILTERS`. The filters went with the estate's donuts and the donut itself went on 2026-09-15, so the
+   * parameter is now read by nothing — and a link somebody saved while it still worked has to show the whole
+   * table rather than an empty one.
    */
-  it("draws the readiness distribution as a picture rather than a control", async () => {
-    // IT USED TO FILTER, on `?label=`, which the shared table read back through `ESTATE_FILTERS`. Those filters
-    // went with the donuts on `/repositories`, so a wedge here would write a parameter nothing reads — and a
-    // control that silently does nothing is worse than a picture. A stale `?label=` link must therefore show the
-    // whole table rather than an empty one.
+  it("ignores a label parameter nothing reads any more", async () => {
     stubService();
     search = new URLSearchParams("label=green&weeks=26");
     const markup = await render("26");
