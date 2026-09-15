@@ -20,7 +20,10 @@
  *   • PARTIAL — "no secrets or SENSITIVE OPERATIONAL DETAIL" is evidenced for secrets only. `NoCommittedSecrets`
  *     reads secret-scanning alerts, which find committed credentials; hostnames, IP ranges, admin endpoints and
  *     capacity thresholds need a human reading the content and stay uncollectable. The criterion is named for the
- *     half it evidences rather than the full wording, which is what keeps the column from claiming the other.
+ *     half it evidences rather than the full wording, which is what keeps the column from claiming the other. It
+ *     evidences that half only WHERE SCANNING IS ON, and 890 of 1,890 repositories on this estate have it off:
+ *     those are unknown rather than met, because an alert list nothing contributed to is not a clean bill of
+ *     health.
  *
  * ONE CRITERION IS REPORTED WITHOUT BEING GRADED. `SecurityContact` is collectable and reads met for essentially
  * the whole estate, so it is shown and kept out of `GradedAssuranceCriteria` — see its own note for why including
@@ -98,15 +101,26 @@ export const AssuranceCriterion = {
    * and `secret_scanning_push_protection` say scanning is ON, and they sit in `AutomatedHygiene` where they
    * belong; this says something was FOUND and is outstanding. A repository with scanning enabled and an open
    * alert is worse than one with scanning enabled and none, and folding the two together would hide exactly that.
+   * This criterion reads `secret_scanning` as a PRECONDITION and never as a finding — see below — so the two
+   * columns still answer different questions.
    *
    * MEASURED ON AAT, and the reason this is worth a column: 18 alerts open across 12 repositories, the oldest
    * raised 2022-05-26 — 1,572 days. That single finding is the kind of thing this dashboard exists to surface,
    * and it was invisible while the criterion was written off as needing human judgement.
    *
-   * ONE CALL FOR THE WHOLE ESTATE. `GET /orgs/{org}/secret-scanning/alerts?state=open` covers every repository,
-   * so a repository NOT NAMED in the response is genuinely clean rather than merely unasked-about — which is a
-   * real distinction from the per-repository endpoint, where absence is ambiguous. That is why the org-wide form
-   * is used and the per-repository one is not.
+   * ONE CALL FOR THE WHOLE ESTATE, AND IT ONLY REACHES THE REPOSITORIES THAT SCAN.
+   * `GET /orgs/{org}/secret-scanning/alerts?state=open` answers for every repository in one request, which is why
+   * the org-wide form is used and the per-repository one is not: a refusal is ONE failure the collector can record
+   * rather than 1,890 absences it could not tell from clean bills of health. What the one call cannot do is make
+   * an absence mean clean. Scanning off produces no alerts to return, so an unscanned repository is unnamed in the
+   * response in exactly the same way as a scanned one with nothing to find.
+   *
+   * SO THE COUNT IS READ AGAINST `hygiene.secretScanning`, and no open alert on a repository that is not scanning
+   * is `Unknown`. Measured on AAT: of 1,890 graded repositories 1,881 have no open alert, and 890 of those have
+   * scanning switched off — 47.1% of the estate answering "no secret-scanning alert is open" with nothing having
+   * looked at it. NOT `Unmet`, because a repository nobody scanned has not been shown to contain a credential
+   * either; that is `AssuranceOutcome.Unknown`'s own rule. The finding is not lost — scanning being off is one of
+   * `AutomatedHygiene`'s signals, which is the column that is actually about tooling.
    */
   NoCommittedSecrets: "no-committed-secrets",
   /**
@@ -204,7 +218,12 @@ export const GradedAssuranceCriteria: readonly AssuranceCriterion[] = [
  * doing the updating.
  */
 export interface HygieneSignals {
-  /** `security_and_analysis.secret_scanning`, from the metadata read the collector already makes. */
+  /**
+   * `security_and_analysis.secret_scanning`, from the metadata read the collector already makes.
+   *
+   * READ BY TWO CRITERIA: a hygiene signal here, and the precondition `secretsJudgement` needs before an empty
+   * alert list can be called clean. Anything changing what populates it moves both.
+   */
   secretScanning?: boolean;
   /** `security_and_analysis.secret_scanning_push_protection`. */
   pushProtection?: boolean;
@@ -229,7 +248,13 @@ export interface HygieneSignals {
  * count is what the criterion needs.
  */
 export interface SecretAlertSummary {
-  /** How many alerts are open. Zero is a real answer and means clean — see `secretsRead`. */
+  /**
+   * How many alerts are open.
+   *
+   * ZERO IS A REAL ANSWER AND IS NOT CLEAN ON ITS OWN: the org-wide read returns nothing for a repository that is
+   * not scanning either, so `secretsJudgement` reads it against `hygiene.secretScanning`. `secretsRead` is what
+   * separates a zero from a read that never happened.
+   */
   open: number;
   /**
    * How old the oldest open alert is, in days, or absent where none is open.
@@ -270,9 +295,11 @@ export interface AssuranceEvidence {
   /**
    * Open secret-scanning alerts for this repository, or absent where the org-wide read failed.
    *
-   * ABSENT MEANS UNREAD AND `{ open: 0 }` MEANS CLEAN, which the org-wide endpoint is what makes sound: it covers
-   * every repository in one call, so a repository the response does not name genuinely has none. Were this read
-   * per repository, an absence could not be told from a refusal.
+   * ABSENT MEANS UNREAD AND `{ open: 0 }` MEANS NO ALERT CAME BACK, which is not the same as clean. The org-wide
+   * endpoint is what makes the absence unambiguous as a READ — one call covers every repository, so a refusal
+   * cannot be mistaken for a quiet repository, which is what a per-repository read could not promise. It says
+   * nothing about whether anything scanned: `hygiene.secretScanning` is what turns this zero into an answer, and
+   * `secretsJudgement` is where the two meet.
    */
   secrets?: SecretAlertSummary;
   /**
@@ -315,6 +342,11 @@ export const AssuranceGrade = {
    * WHOLE ESTATE at once, and a repository the batched GraphQL read missed loses `AutomatedHygiene` the same way.
    * Either way `met` silently became a three-criterion claim with nothing on the page changing, which is exactly
    * the distinction `severeAlertsRead` and `secretsRead` exist one level down to preserve.
+   *
+   * A THIRD ROUTE IN NEEDS NO FAILED CALL AT ALL. `NoCommittedSecrets` cannot read an empty alert list as clean
+   * unless something scanned, so a repository whose scanning flag GitHub did not disclose loses that criterion
+   * however well the collection went. Where the flag reads plainly OFF, `AutomatedHygiene` fails on that same
+   * signal and `Partial` outranks this — the precedence working rather than a gap in it.
    *
    * SEPARATE FROM `Partial` RATHER THAN FOLDED INTO IT, on this module's own argument for excluding
    * `SecurityContact` from the grade: "three of four met reads better than two of three met, on identical
@@ -415,22 +447,37 @@ function ownerJudgement(ownerKind: string | undefined): AssuranceJudgement {
 /**
  * The committed-secrets criterion: nothing secret scanning found is still open.
  *
+ * TAKES THE WHOLE EVIDENCE rather than the alert summary, because the count is not self-sufficient:
+ * `hygiene.secretScanning` is what decides whether an empty alert list means clean or means unscanned. The
+ * criterion's own comment carries the argument and the measurement.
+ *
  * The age of the oldest open alert is carried in the DETAIL rather than in a column of its own: the criterion's
  * answer is binary — there is an outstanding leaked credential or there is not — and how long it has been
  * outstanding is what a reader needs next, not a second verdict.
  */
 function secretsJudgement(evidence: AssuranceEvidence): AssuranceJudgement {
+  const criterion = AssuranceCriterion.NoCommittedSecrets;
   if (!evidence.secretsRead || evidence.secrets === undefined) {
-    return { criterion: AssuranceCriterion.NoCommittedSecrets, outcome: AssuranceOutcome.Unknown, detail: "the secret-scanning alerts could not be read" };
+    return { criterion, outcome: AssuranceOutcome.Unknown, detail: "the secret-scanning alerts could not be read" };
   }
   const { open, oldestOpenDays } = evidence.secrets;
   if (open === 0) {
-    // CLEAN, and soundly so: the org-wide read covers every repository, so not being named in it is an answer.
-    return { criterion: AssuranceCriterion.NoCommittedSecrets, outcome: AssuranceOutcome.Met, detail: "no secret-scanning alert is open" };
+    // AN EMPTY ALERT LIST IS ONLY CLEAN WHERE SOMETHING SCANNED. The org-wide read covers every repository that
+    // has secret scanning ON, and one with it off has no alerts to be named by — so the count alone cannot tell
+    // scanned-and-clean from never-looked-at. `Unknown` rather than `Unmet` on either unscanned branch: nothing
+    // has been shown to be committed either, and the missing tooling is `AutomatedHygiene`'s finding to report.
+    if (evidence.hygiene.secretScanning === false) {
+      return { criterion, outcome: AssuranceOutcome.Unknown, detail: "secret scanning is not enabled, so nothing has been scanned" };
+    }
+    if (evidence.hygiene.secretScanning === undefined) {
+      return { criterion, outcome: AssuranceOutcome.Unknown, detail: "whether secret scanning is enabled could not be read, so nothing evidences that it ran" };
+    }
+    return { criterion, outcome: AssuranceOutcome.Met, detail: "no secret-scanning alert is open" };
   }
   const alerts = `${open} secret-scanning alert${open === 1 ? "" : "s"} open`;
+  // AN OPEN ALERT NEEDS NO PRECONDITION, whatever the hygiene flag says: something found it, so something scanned.
   return {
-    criterion: AssuranceCriterion.NoCommittedSecrets,
+    criterion,
     outcome: AssuranceOutcome.Unmet,
     detail: oldestOpenDays === undefined ? alerts : `${alerts}, the oldest for ${oldestOpenDays} days`
   };

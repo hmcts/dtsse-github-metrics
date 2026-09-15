@@ -109,13 +109,47 @@ describe("the criteria this build reports", () => {
  * as needing human judgement until the org-wide endpoint was checked.
  */
 describe("the committed-secrets criterion", () => {
-  it("should be met where nothing is open, which the org-wide read makes a real answer", () => {
-    // Clean rather than merely unasked-about: one call covers every repository, so a repository absent from the
-    // response genuinely has no open alert. That is the distinction from the per-repository endpoint.
-    const subject = subjectOf({ evidence: evidenceOf({ secrets: { open: 0 } }) });
+  it("should still be met when no alert is open and secret scanning is enabled", () => {
+    // THE ONE SHAPE IN WHICH AN EMPTY ALERT LIST IS AN ANSWER: something scanned and found nothing. The org-wide
+    // read makes the absence unambiguous as a READ — a refusal cannot be mistaken for a quiet repository — and the
+    // hygiene flag is what says anything looked.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ secretScanning: true }), secrets: { open: 0 } }) });
 
     expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Met);
     expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe("no secret-scanning alert is open");
+  });
+
+  it("should grade unknown when no alert is open and secret scanning is disabled", () => {
+    // 890 OF THIS ESTATE'S 1,890 GRADED REPOSITORIES, every one of them reading "no secret-scanning alert is open"
+    // off a list it could not have contributed to: scanning off raises no alerts, so the repository goes unnamed in
+    // the org-wide response for the same reason a scanned and clean one does.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ secretScanning: false }), secrets: { open: 0 } }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unknown);
+    expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe("secret scanning is not enabled, so nothing has been scanned");
+  });
+
+  it("should grade unknown rather than unmet when nothing scanned, no credential having been shown", () => {
+    // THE DIRECTION MATTERS AS MUCH AS THE MOVE OFF `Met`. A repository nobody scanned has not been shown to hold a
+    // secret, and marking it down would assert something unmeasured the other way — `AssuranceOutcome.Unknown`'s
+    // own rule. Nothing is lost by it: scanning being off is already one of `AutomatedHygiene`'s signals.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ secretScanning: false }), secrets: { open: 0 } }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).not.toBe(AssuranceOutcome.Unmet);
+    expect(outcomeOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe(AssuranceOutcome.Unmet);
+    expect(detailOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe("not configured: secret scanning");
+  });
+
+  it("should grade unknown when no alert is open and the scanning flag is absent", () => {
+    // NOT DEFAULTED TO OFF, on the rule `hygieneFromMetadata` already states: a metadata body this build cannot
+    // read is not evidence that scanning is disabled. It is not evidence that anything scanned either, so the zero
+    // still has nothing to be measured against.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ secretScanning: undefined }), secrets: { open: 0 } }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unknown);
+    expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(
+      "whether secret scanning is enabled could not be read, so nothing evidences that it ran"
+    );
   });
 
   it("should be unmet with an open alert, and carry how long it has been open", () => {
@@ -141,6 +175,18 @@ describe("the committed-secrets criterion", () => {
 
     expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unmet);
     expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe("2 secret-scanning alerts open");
+  });
+
+  it("should still grade unmet when an alert is open, whatever the scanning flag says", () => {
+    // The flag is only needed to interpret a ZERO. An alert exists, so something plainly scanned — and a flag
+    // reading off beside an open alert is a repository that has since turned scanning off, not a reason to
+    // withdraw the finding.
+    for (const secretScanning of [true, false, undefined]) {
+      const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ secretScanning }), secrets: { open: 1, oldestOpenDays: 9 } }) });
+
+      expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unmet);
+      expect(detailOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe("1 secret-scanning alert open, the oldest for 9 days");
+    }
   });
 
   it("should be unknown where the org-wide read failed, never clean", () => {
@@ -399,8 +445,44 @@ describe("assuranceGrade", () => {
 
   it("should read partly-read for a repository the batched hygiene read missed, the other single point of failure", () => {
     // A repository simply absent from the batched GraphQL map loses `AutomatedHygiene` the same way one failed
-    // org-wide call loses the secrets criterion. Three met of four, and no shortfall to report.
+    // org-wide call loses the secrets criterion. Two met of four here rather than three, because an empty hygiene
+    // map also withholds the scanning flag the secrets criterion needs — and still no shortfall to report.
     expect(assuranceGrade(judgeAssurance(subjectOf({ evidence: evidenceOf({ hygiene: {} }) })))).toBe(AssuranceGrade.PartlyRead);
+  });
+
+  it("should read partly-read where the secrets criterion is the only one that could not be answered", () => {
+    // THE GRADE THE UNSCANNED REPOSITORY BELONGS IN. Ownership, hygiene and maintenance all read met, and the
+    // secrets answer is missing rather than failed — so there is nothing to report against the repository and no
+    // basis for claiming it clean either. Not `met`, which would be the old bug one level up.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ secretScanning: undefined }) }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unknown);
+    expect(outcomeOf(subject, AssuranceCriterion.AutomatedHygiene)).toBe(AssuranceOutcome.Met);
+    expect(assuranceGrade(judgeAssurance(subject))).toBe(AssuranceGrade.PartlyRead);
+    expect(assuranceGrade(judgeAssurance(subject))).not.toBe(AssuranceGrade.Met);
+    expect(assuranceGrade(judgeAssurance(subject))).not.toBe(AssuranceGrade.Partial);
+  });
+
+  it("should still read partial where another criterion is unmet beside an unanswerable secrets one", () => {
+    // THE PRECEDENCE, ON THE SHAPE THIS CHANGE CREATES: an unread criterion must not pull a repository off a
+    // finding it plainly has. A stale unarchived repository stays `partial` however little could be read about its
+    // secrets.
+    const subject = subjectOf({ unmaintained: true, evidence: evidenceOf({ hygiene: hygiene({ secretScanning: undefined }) }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unknown);
+    expect(outcomeOf(subject, AssuranceCriterion.Maintained)).toBe(AssuranceOutcome.Unmet);
+    expect(assuranceGrade(judgeAssurance(subject))).toBe(AssuranceGrade.Partial);
+  });
+
+  it("should read partial rather than partly-read where scanning is off, hygiene failing on the same flag", () => {
+    // WHAT THE 890 UNSCANNED REPOSITORIES ACTUALLY GRADE, and it is not this change's headline. `secret_scanning`
+    // is one of `AutomatedHygiene`'s four signals as well as this criterion's precondition, so a repository with it
+    // off carries a real shortfall and `partial` outranks the unread secrets answer. The grade beside these rows
+    // does not move; the SECRETS COLUMN does, from a met it had not earned to an honest unknown.
+    const subject = subjectOf({ evidence: evidenceOf({ hygiene: hygiene({ secretScanning: false }) }) });
+
+    expect(outcomeOf(subject, AssuranceCriterion.NoCommittedSecrets)).toBe(AssuranceOutcome.Unknown);
+    expect(assuranceGrade(judgeAssurance(subject))).toBe(AssuranceGrade.Partial);
   });
 
   it("should read partly-read where nothing has been collected at all but the graph still answers two criteria", () => {
