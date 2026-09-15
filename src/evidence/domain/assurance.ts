@@ -178,17 +178,23 @@ export const GradedAssuranceCriteria: readonly AssuranceCriterion[] = [
   AssuranceCriterion.Maintained
 ];
 
-/** What one repository's automated hygiene looked like, as the four signals behind the one answer. */
+/**
+ * What one repository's automated hygiene looked like: FIVE SIGNALS behind FOUR checks.
+ *
+ * The last two are one requirement between them — see `hygieneJudgement`. They are collected and stored separately
+ * because they are separate facts about a repository, and folding them together here would lose which tool is
+ * doing the updating.
+ */
 export interface HygieneSignals {
   /** `security_and_analysis.secret_scanning`, from the metadata read the collector already makes. */
   secretScanning?: boolean;
   /** `security_and_analysis.secret_scanning_push_protection`. */
   pushProtection?: boolean;
-  /** `security_and_analysis.dependabot_security_updates`. The signal that actually varies. */
-  dependabotSecurityUpdates?: boolean;
   /** GraphQL `hasVulnerabilityAlertsEnabled`. */
   vulnerabilityAlerts?: boolean;
-  /** Whether `.github/dependabot.yml` or `renovate.json` is present on the default branch. */
+  /** `security_and_analysis.dependabot_security_updates`. Satisfies the update requirement on its own. */
+  dependabotSecurityUpdates?: boolean;
+  /** Whether `.github/dependabot.yml` or `renovate.json` is present on the default branch. Satisfies it too. */
   updateConfiguration?: boolean;
 }
 
@@ -288,14 +294,38 @@ export const AssuranceGrade = {
 
 export type AssuranceGrade = (typeof AssuranceGrade)[keyof typeof AssuranceGrade];
 
-/** Whether every signal a criterion needs was read, in the order they are reported. */
+/**
+ * Whether one of two signals answers yes, for a requirement two different tools can satisfy.
+ *
+ * `true` beats everything: one tool doing the job is the requirement met, whatever the other says. Both known and
+ * neither doing it is `false`. Anything else is unread — a repository whose Dependabot state is plainly off and
+ * whose default branch could not be listed has not been shown to lack dependency updates.
+ */
+function either(left: boolean | undefined, right: boolean | undefined): boolean | undefined {
+  if (left === true || right === true) {
+    return true;
+  }
+  return left === false && right === false ? false : undefined;
+}
+
+/**
+ * Whether every signal a criterion needs was read, in the order they are reported.
+ *
+ * FOUR CHECKS OVER FIVE SIGNALS, from 2026-09-15. Dependabot security updates and the presence of a
+ * `dependabot.yml` or `renovate.json` used to be two independent requirements, and a repository had to satisfy
+ * BOTH — which failed every repository that keeps its dependencies current with Renovate, because Renovate does
+ * not turn GitHub's Dependabot setting on. Measured on the live estate: 244 repositories carried an update
+ * configuration with Dependabot security updates off, and every one of them was marked down for it.
+ *
+ * They are one requirement — SOMETHING UPDATES THE DEPENDENCIES — and either tool meets it. The criterion still
+ * fails a repository with neither, which is the gap it exists to find.
+ */
 function hygieneJudgement(signals: HygieneSignals): AssuranceJudgement {
   const checks: [string, boolean | undefined][] = [
     ["secret scanning", signals.secretScanning],
     ["push protection", signals.pushProtection],
-    ["Dependabot security updates", signals.dependabotSecurityUpdates],
     ["vulnerability alerts", signals.vulnerabilityAlerts],
-    ["a dependency update configuration", signals.updateConfiguration]
+    ["automated dependency updates", either(signals.dependabotSecurityUpdates, signals.updateConfiguration)]
   ];
   const unread = checks.filter(([, value]) => value === undefined);
   // EVERY SIGNAL UNREAD IS UNKNOWN; some unread and the rest present is still judged on what was read. A
