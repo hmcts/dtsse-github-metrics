@@ -850,6 +850,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // see `collector-lock.ts` for what two concurrent collectors do to each other. `--propose-teams` is not
       // excluded from the lock even though it writes nothing: it makes the same GitHub calls, so it would still
       // be competing for the rate-limit budget a real run needs.
+      //
+      // `prune` TAKES IT TOO, for a different reason: it is the only command that DELETES, and a hand-run prune
+      // interleaved with a collection is what turns a cache eviction into data loss. Under the lock it stands
+      // down instead of deleting rows a collection is midway through writing, and the operator is told so.
       case "collect":
         return await onlyCollector(parsed.command, () => runCollect(configuration, parsed));
       case "collect-org":
@@ -857,7 +861,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       case "doctor":
         return await runDoctor(configuration);
       case "prune":
-        return await runPrune(parsed);
+        return await onlyCollector(parsed.command, () => runPrune(parsed));
       case "evidence":
         return await runEvidence(configuration, parsed);
       case "map-sonar":

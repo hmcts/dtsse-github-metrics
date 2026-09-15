@@ -20,6 +20,9 @@ const stampRevision = vi.hoisted(() => vi.fn());
 // Granted by default so the collect cases test orchestration, and overridable so the stand-down branch — the
 // one that fires on whichever cluster loses the lock, every day — is reachable without a database.
 const asSoleCollector = vi.hoisted(() => vi.fn(async (run: () => Promise<unknown>) => run()));
+// The delete itself, stubbed so the cases below are about WHETHER it is reached. It is the only destructive
+// thing this CLI does, and the whole question about it is whether a collector holding the lock stops it.
+const pruneCache = vi.hoisted(() => vi.fn(async () => 0));
 
 const collectOrgTeams = vi.hoisted(() => vi.fn());
 const collectOrgRepositories = vi.hoisted(() => vi.fn());
@@ -61,6 +64,7 @@ vi.mock("../evidence/org/cohort.ts", async () => ({
   readCohort
 }));
 vi.mock("../evidence/store/facts.ts", () => ({ authorshipForOrganisation }));
+vi.mock("../evidence/store/prune.ts", () => ({ pruneCache }));
 // The per-repository writers `collect` ends each repository with. Stubbed because they reach Postgres and
 // `prisma` here is a bare `$disconnect` — left real, the FIRST repository throws a TypeError out of the walk and
 // the run ends, which silently makes any assertion about which repositories were walked true of a loop that
@@ -361,6 +365,39 @@ describe("the collector lock", () => {
     expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("stood down"));
     // Nothing was collected by THIS run: no credential resolved, so no GitHub call was made either.
     expect(resolveCredentials).not.toHaveBeenCalled();
+  });
+
+  it("should DELETE NOTHING when prune runs while a collector holds the lock", async () => {
+    // THE ONE THAT COST DATA. `prune` is the only command that deletes, and it used to be the only one dispatched
+    // outside the lock — so a hand-run prune could land in the middle of a collection and delete rows the run was
+    // partway through writing. Under the lock it stands down instead, and stands down as SUCCESS for the same
+    // reason the collectors do: losing the lock is the system working.
+    loadConfiguration.mockResolvedValue({ organization: "hmcts", lookback: { operational_days: 90 }, teams: [], org_graph: { enabled: true } });
+    asSoleCollector.mockResolvedValueOnce(undefined);
+
+    expect(await main(["prune", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+
+    // Not "returned 0 rows deleted" — never asked. A stand-down that still opened a delete transaction would
+    // satisfy an exit-status assertion and none of the point of this.
+    expect(pruneCache).not.toHaveBeenCalled();
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("stood down"));
+  });
+
+  it("should prune under the lock when it holds it, from the cut-off the operator asked for", async () => {
+    // The other half: taking the lock must not turn `prune` into a no-op. `asSoleCollector` grants by default, so
+    // this asserts the command reached the delete THROUGH the lock rather than around it, with `--days` honoured.
+    loadConfiguration.mockResolvedValue({ organization: "hmcts", lookback: { operational_days: 90 }, teams: [], org_graph: { enabled: true } });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 8, 15, 12)));
+
+    try {
+      expect(await main(["prune", "--config", "m.yaml", "--days", "7"])).toBe(EXIT_COMPLETE);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(asSoleCollector).toHaveBeenCalledOnce();
+    expect(pruneCache).toHaveBeenCalledWith(new Date(Date.UTC(2026, 8, 8, 12)));
   });
 });
 

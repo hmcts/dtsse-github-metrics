@@ -1,5 +1,5 @@
 import type { CoverageKey, SourceCoverage } from "../domain/coverage.ts";
-import { recordSourceCoverage, touchOrganisationCoverage, touchSourceCoverage } from "./coverage.ts";
+import { recordSourceCoverageWithin, touchOrganisationCoverage, touchSourceCoverage } from "./coverage.ts";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
@@ -14,6 +14,19 @@ import { StorageError } from "./storage-error.ts";
  * `complete` is the whole reason writing facts and recording coverage are one operation: a partial
  * collection must leave its facts cached for reuse but must NOT claim the interval as covered, or the
  * next run would skip the gap it left.
+ *
+ * ONE OPERATION MEANS ONE TRANSACTION, from 2026-09-15, and it was two. The facts committed and the coverage
+ * row committed after them, which under READ COMMITTED leaves a window where the facts are visible and the
+ * claim over them is not. A `prune` landing in that window deletes the facts — nothing yet says the interval
+ * is in use — and the coverage insert then commits a row asserting the interval IS covered. The report serves
+ * that window as covered with zero merges, which is a plausible number rather than a failure, and a plausible
+ * zero is the one outcome this module exists to prevent (see the note on the dropped payload fields below).
+ * Either both land or neither does; a rolled-back fact write cannot leave a claim behind it.
+ *
+ * It costs four more statements inside a transaction that already runs one upsert per fact, against Prisma's
+ * DEFAULT five-second interactive-transaction timeout, which nothing here raises — see `org-graph.ts` for what
+ * that timeout did in a real cluster. Four statements is not what will exhaust it; the per-fact loop is, and
+ * batching it is tracked separately. Anything added here should be one statement rather than another loop.
  */
 
 /** Stores merged pull requests, recording coverage only when the interval was collected in full. */
@@ -33,12 +46,12 @@ export async function cachePullRequestFacts(coverage: SourceCoverage, facts: rea
           update: { mergedAt: fact.mergedAt, payload: fact.payload }
         });
       }
+      if (complete) {
+        await recordSourceCoverageWithin(tx, coverage);
+      }
     });
   } catch (error) {
     throw new StorageError("could not update collection cache", error);
-  }
-  if (complete) {
-    await recordSourceCoverage(coverage);
   }
 }
 
@@ -59,12 +72,12 @@ export async function cacheDirectCommitFacts(coverage: SourceCoverage, facts: re
           update: { committedAt: fact.committedAt, payload: fact.payload }
         });
       }
+      if (complete) {
+        await recordSourceCoverageWithin(tx, coverage);
+      }
     });
   } catch (error) {
     throw new StorageError("could not update collection cache", error);
-  }
-  if (complete) {
-    await recordSourceCoverage(coverage);
   }
 }
 
