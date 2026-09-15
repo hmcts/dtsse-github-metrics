@@ -105,30 +105,6 @@ export function SkeletonSection({ rows }: { rows: number }) {
 }
 
 /**
- * `count` donut panels: a square bone where each chart goes, at the width the charts are given.
- *
- * The two grids are written out rather than interpolated, because Tailwind reads class names out of
- * the source and a built class would reach the browser undefined. A lone donut stays full width
- * until the row can hold three, which is how a detail page draws one; a row of them wraps two-up in
- * between, which is how the landing page draws five.
- */
-export function SkeletonChart({ count = 1 }: { count?: number }) {
-  const columns = count > 1 ? "grid-cols-1 md:grid-cols-2 lg:grid-cols-3" : "grid-cols-1 lg:grid-cols-3";
-  return (
-    <div className={`grid ${columns} gap-4`}>
-      {Array.from({ length: count }, (_, index) => (
-        <Panel key={index}>
-          <div className="space-y-3 p-4">
-            <SkeletonBar className="h-4 w-36" />
-            <SkeletonBar className="h-48 w-full" />
-          </div>
-        </Panel>
-      ))}
-    </div>
-  );
-}
-
-/**
  * The whole of a list route's skeleton: the organisation header above one table.
  *
  * The three list routes differ in the table they hold and in nothing above it, so they share this

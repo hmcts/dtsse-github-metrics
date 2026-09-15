@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Absent } from "@/components/Absent";
 import { type Align, SortHeader } from "@/components/SortHeader";
-import { ABSENT, day } from "@/lib/format";
+import { day } from "@/lib/format";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { TeamDirectPushRow } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
@@ -82,14 +83,14 @@ export function TeamDirectPushesTable({ rows, weeks }: { rows: readonly TeamDire
               <td className="py-2 pr-3 font-mono text-slate-400">{row.sha.slice(0, 7)}</td>
               {/* The git author NAME where GitHub linked no account, which is why this is not a link: a name is
                   not a login and has no contributor page. See `directPushRows` for the fallback. */}
-              <td className="py-2 pr-3 font-mono text-slate-400 break-all">{row.author ?? ABSENT}</td>
+              <td className="py-2 pr-3 font-mono text-slate-400 break-all">{row.author ?? <Absent />}</td>
               <td className="py-2 pr-3 text-center">
                 <span className={row.ci === undefined ? "text-slate-500" : row.ci ? "text-rag-green" : "text-rag-amber"}>
-                  {row.ci === undefined ? ABSENT : row.ci ? "Yes" : "No"}
+                  {row.ci === undefined ? <Absent /> : row.ci ? "Yes" : "No"}
                 </span>
               </td>
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.lines === undefined ? ABSENT : row.lines.toLocaleString("en-GB")}</td>
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.files ?? ABSENT}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.lines === undefined ? <Absent /> : row.lines.toLocaleString("en-GB")}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.files ?? <Absent />}</td>
             </tr>
           ))}
         </tbody>

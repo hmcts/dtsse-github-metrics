@@ -27,6 +27,32 @@ const ROWS: TeamDirectPushRow[] = [
   { repository: "docs", sha: "deadbeefcafe", committed_at: "2026-08-29T09:00:00Z", author: "Some Person" }
 ];
 
+/**
+ * What a SIGHTED reader sees in a cell: its text with every `sr-only` node removed.
+ *
+ * An unmeasured cell renders `Absent` since 2026-09-15 — the dash `aria-hidden` beside the words "not measured" —
+ * so raw `textContent` is the spoken rendering rather than the printed one.
+ */
+function printed(cell: Element | undefined): string {
+  const copy = cell?.cloneNode(true) as HTMLElement | undefined;
+  for (const hidden of copy?.querySelectorAll(".sr-only") ?? []) {
+    hidden.remove();
+  }
+  return copy?.textContent ?? "";
+}
+
+/**
+ * Assert a cell reads as unmeasured, in the dash on screen AND the words a screen reader is given.
+ *
+ * These cases asserted `textContent === "-"`, and that hyphen was the whole of what carried "absent means
+ * unmeasured" — announced as "hyphen", or skipped between two empty cells. Strictly more is required now: the dash
+ * must still be exactly a dash, and it must also be named.
+ */
+function expectUnmeasured(cell: Element | undefined): void {
+  expect(printed(cell)).toBe("-");
+  expect(cell?.querySelector(".sr-only")?.textContent).toBe("not measured");
+}
+
 function mount(rows: readonly TeamDirectPushRow[] = ROWS) {
   render(<TeamDirectPushesTable rows={rows} weeks={12} />);
 }
@@ -71,9 +97,11 @@ describe("TeamDirectPushesTable", () => {
     // A dash and a No are different answers: the first was never measured, the second was and failed.
     mount();
 
-    const cells = screen.getAllByRole("row").map((row) => within(row).queryAllByRole("cell")[4]?.textContent);
-    expect(cells).toContain("No");
-    expect(cells).toContain("-");
+    const cells = screen.getAllByRole("row").map((row) => within(row).queryAllByRole("cell")[4]);
+    expect(cells.map(printed)).toContain("No");
+    // The unmeasured one is found by its accessible name rather than by its glyph, which is the distinction
+    // the dash could not make on its own.
+    expect(cells.map((cell) => cell?.querySelector(".sr-only")?.textContent)).toContain("not measured");
   });
 
   it("shows the git author name where GitHub linked no account, and does not link it", () => {
@@ -121,8 +149,8 @@ describe("TeamDirectPushesTable", () => {
     mount([ROWS[2] as TeamDirectPushRow]);
 
     const cells = within(screen.getAllByRole("row")[1] as HTMLElement).getAllByRole("cell");
-    expect(cells[5]?.textContent).toBe("-");
-    expect(cells[6]?.textContent).toBe("-");
+    expectUnmeasured(cells[5]);
+    expectUnmeasured(cells[6]);
   });
 
   it("thousand-separates a large push", () => {

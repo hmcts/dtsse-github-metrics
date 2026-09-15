@@ -27,7 +27,6 @@ export default defineConfig({
         "src/lib/types.ts",
         "src/instrumentation.ts",
         "src/app/**/layout.tsx",
-        "src/app/**/loading.tsx",
         "src/evidence/store/**",
         "src/evidence/report/repositories.ts",
         "src/evidence/behaviour/fill.ts",

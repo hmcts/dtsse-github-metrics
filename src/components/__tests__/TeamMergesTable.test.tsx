@@ -28,6 +28,32 @@ const ROWS: TeamMergeRow[] = [
   { repository: "api", number: 3, merged_at: "2026-08-29T09:00:00Z", author: "carol", reviewed: true, ci: true, lines: 0, files: 1 }
 ];
 
+/**
+ * What a SIGHTED reader sees in a cell: its text with every `sr-only` node removed.
+ *
+ * An unmeasured cell renders `Absent` since 2026-09-15 — the dash `aria-hidden` beside the words "not measured" —
+ * so raw `textContent` is the spoken rendering rather than the printed one.
+ */
+function printed(cell: Element | undefined): string {
+  const copy = cell?.cloneNode(true) as HTMLElement | undefined;
+  for (const hidden of copy?.querySelectorAll(".sr-only") ?? []) {
+    hidden.remove();
+  }
+  return copy?.textContent ?? "";
+}
+
+/**
+ * Assert a cell reads as unmeasured, in the dash on screen AND the words a screen reader is given.
+ *
+ * These cases asserted `textContent === "-"`, and that hyphen was the whole of what carried "absent means
+ * unmeasured" — the rule that keeps a merge nobody measured apart from one that went unreviewed, which is exactly
+ * what this table exists to distinguish. Strictly more is required now: still a dash, and now also named.
+ */
+function expectUnmeasured(cell: Element | undefined): void {
+  expect(printed(cell)).toBe("-");
+  expect(cell?.querySelector(".sr-only")?.textContent).toBe("not measured");
+}
+
 function mount(rows: readonly TeamMergeRow[] = ROWS) {
   render(<TeamMergesTable rows={rows} weeks={4} />);
 }
@@ -127,9 +153,9 @@ describe("TeamMergesTable", () => {
     mount([ROWS[2] as TeamMergeRow]);
 
     const cells = within(screen.getAllByRole("row")[1] as HTMLElement).getAllByRole("cell");
-    expect(cells[3]?.textContent).toBe("-");
-    expect(cells[6]?.textContent).toBe("-");
-    expect(cells[7]?.textContent).toBe("-");
+    expectUnmeasured(cells[3]);
+    expectUnmeasured(cells[6]);
+    expectUnmeasured(cells[7]);
   });
 
   it("keeps a merge nobody measured apart from one that went unreviewed, and sorts it last either way", () => {
@@ -140,8 +166,8 @@ describe("TeamMergesTable", () => {
 
     const dashed = screen.getAllByRole("row").find((row) => within(row).queryByText("old"));
     const cells = within(dashed as HTMLElement).getAllByRole("cell");
-    expect(cells[4]?.textContent).toBe("-");
-    expect(cells[5]?.textContent).toBe("-");
+    expectUnmeasured(cells[4]);
+    expectUnmeasured(cells[5]);
 
     fireEvent.click(header("Reviewed"));
     expect(order().at(-1)).toBe("old#1");

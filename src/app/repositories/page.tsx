@@ -70,9 +70,14 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
           remain are the ones with their own affordance: the term box, the Production toggle and the
           three visibility toggles. */}
 
+      {/* "UNARCHIVED ONLY" IS A FACT ABOUT THE COHORT and belongs beside the list it qualifies. The estate is
+          selected by `cohort.include_archived`, which `src/evidence/policy/schema.ts` defaults to `false` and
+          `metrics.yaml` does not override — so `selectCohort` drops every archived repository and this table has
+          never held one. Nothing on the page said so, which left "1,880 repositories" reading as the whole
+          organisation. `detail` rather than the heading, because this is what the section was measured over. */}
       <Section
         heading="Repositories"
-        detail={`${window}, most recently pushed first`}
+        detail={`${window}, unarchived only, most recently pushed first`}
         action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}
       >
         {repositories.length === 0 ? (

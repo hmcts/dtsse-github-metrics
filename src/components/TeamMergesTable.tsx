@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { Absent } from "@/components/Absent";
 import { type Align, SortHeader } from "@/components/SortHeader";
-import { ABSENT, day } from "@/lib/format";
+import { day } from "@/lib/format";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { TeamMergeRow } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
@@ -95,13 +96,13 @@ export function TeamMergesTable({ rows, weeks }: { rows: readonly TeamMergeRow[]
                 </Link>
               </td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-400">#{row.number}</td>
-              <td className="py-2 pr-3 font-mono text-slate-400 break-all">{row.author ?? ABSENT}</td>
+              <td className="py-2 pr-3 font-mono text-slate-400 break-all">{row.author ?? <Absent />}</td>
               <Judgement value={row.reviewed} />
               <Judgement value={row.ci} />
               {/* Absent and never zero: GitHub does not size every merge, and `0 lines` would read as an
                   empty change rather than as one nobody measured. */}
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.lines === undefined ? ABSENT : row.lines.toLocaleString("en-GB")}</td>
-              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.files ?? ABSENT}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.lines === undefined ? <Absent /> : row.lines.toLocaleString("en-GB")}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.files ?? <Absent />}</td>
             </tr>
           ))}
         </tbody>
@@ -125,7 +126,7 @@ function Judgement({ value }: { value?: boolean }) {
   return (
     <td className="py-2 pr-3 text-center">
       <span className={value === undefined ? "text-slate-500" : value ? "text-rag-green" : "text-rag-amber"}>
-        {value === undefined ? ABSENT : value ? "Yes" : "No"}
+        {value === undefined ? <Absent /> : value ? "Yes" : "No"}
       </span>
     </td>
   );

@@ -1,14 +1,16 @@
 "use client";
 
 import clsx from "clsx";
+import { Check } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { Absent } from "@/components/Absent";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
 import { type Align, SortHeader } from "@/components/SortHeader";
 import { filterTarget } from "@/lib/filter";
-import { ABSENT, day } from "@/lib/format";
+import { day } from "@/lib/format";
 import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
 import { RAG_BADGE, RAG_BORDER } from "@/lib/rag";
 import {
@@ -214,6 +216,7 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
         >
           <span className={clsx("shrink-0 w-2 h-2 rounded-full", PRODUCTION_DOT)} aria-hidden="true" />
           {PRODUCTION_LABEL}
+          <ToggleTick on={production} />
           <span className="tabular-nums text-slate-500">{produced}</span>
         </button>
 
@@ -234,6 +237,7 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
             )}
           >
             {visibility}
+            <ToggleTick on={visibilities.has(visibility)} />
             <span className="tabular-nums text-slate-500">{rows.filter((row) => row.visibility === visibility).length}</span>
           </button>
         ))}
@@ -287,13 +291,13 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
                   {/* The UTC day rather than the instant: a table of 1,880 rows is scanned for how long ago,
                       and `day` is the same formatter every other date on the site reads through. */}
                   <td className="py-2 pr-3 tabular-nums text-slate-300">{day(row.pushed_at)}</td>
-                  <td className="py-2 pr-3 capitalize text-slate-400">{row.visibility ?? ABSENT}</td>
+                  <td className="py-2 pr-3 capitalize text-slate-400">{row.visibility ?? <Absent />}</td>
                   {ASSURANCE_CRITERIA.map((criterion) =>
                     criterion === "patching" ? (
                       // The AGE, with no colouring and no threshold. "Measurement first": the number is the
                       // finding and the reader is the judge, so a tone here would publish an SLA nobody chose.
                       <td key={criterion} className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                        {row.assurance?.oldest_severe_alert_days === undefined ? ABSENT : `${row.assurance.oldest_severe_alert_days}d`}
+                        {row.assurance?.oldest_severe_alert_days === undefined ? <Absent /> : `${row.assurance.oldest_severe_alert_days}d`}
                       </td>
                     ) : criterion === SECRETS_CRITERION ? (
                       <Finding key={criterion} result={criterionResult(row, criterion)} />
@@ -320,14 +324,34 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
 }
 
 /**
+ * The tick a pressed filter toggle wears, so its state is not carried by fill colour alone.
+ *
+ * COLOUR WAS THE ONLY SIGHTED SIGNAL until 2026-09-15. Both toggle families said "on" by changing
+ * their background — royal for Production, `slate-700` for a visibility — which is exactly the rule
+ * this codebase holds everywhere else it grades something: colour is never the sole carrier. A reader
+ * who cannot separate two dark fills could not tell which of four controls was filtering the table.
+ *
+ * `aria-hidden`, because the state is already on the button as `aria-pressed` and a screen reader
+ * would otherwise be told twice. The two channels are deliberately separate — the attribute is the
+ * accessible answer, the tick is the visible one, and neither substitutes for the other.
+ *
+ * Renders nothing when off rather than a dimmed tick: a half-visible tick is the colour-only signal
+ * again, one step quieter.
+ */
+function ToggleTick({ on }: { on: boolean }) {
+  return on ? <Check className="shrink-0 w-3 h-3" aria-hidden="true" /> : null;
+}
+
+/**
  * One criterion's outcome, as a word with the detail behind it.
  *
  * TONED, unlike every cell in the old table, and that is the difference this page makes: these ARE the grade
  * rather than figures beside one. The colours are `rag.ts`'s so a criterion cell and the grade column agree, and
  * the word carries the information — `RAGLabel`'s rule, so it survives a monochrome print and a screen reader.
  *
- * The `title` is the judgement's own detail, which is what names the missing control on a composite: a reader
- * seeing "No" under Hygiene can hover for "not configured: Dependabot security updates".
+ * The detail is the judgement's own, which is what names the missing control on a composite: a reader meeting
+ * "No" under Hygiene gets "not configured: Dependabot security updates" with it. Carried by `CriterionDetail`
+ * as well as by `title`, so reaching it does not require a pointer — see that component.
  */
 /**
  * A three-valued answer: Yes, No, or a dash where nothing could be read.
@@ -340,7 +364,7 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
  * whose list could not be read answers neither. A blank cell could not tell those apart.
  */
 function Answer({ value }: { value?: boolean }) {
-  return <td className="py-2 pr-3 text-center text-slate-300">{value === undefined ? ABSENT : value ? "Yes" : "No"}</td>;
+  return <td className="py-2 pr-3 text-center text-slate-300">{value === undefined ? <Absent /> : value ? "Yes" : "No"}</td>;
 }
 
 /**
@@ -361,8 +385,9 @@ function Finding({ result }: { result?: { outcome: AssuranceOutcome; detail: str
       <span
         className={clsx(found === true ? "text-rag-amber" : null, found === false ? "text-rag-green" : null, found === undefined ? "text-slate-500" : null)}
       >
-        {found === undefined ? ABSENT : found ? "Yes" : "No"}
+        {found === undefined ? <Absent /> : found ? "Yes" : "No"}
       </span>
+      <CriterionDetail detail={result?.detail} />
     </td>
   );
 }
@@ -378,10 +403,35 @@ function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: str
           outcome === undefined || outcome === "unknown" ? "text-slate-500" : null
         )}
       >
-        {outcome === undefined || outcome === "unknown" ? ABSENT : outcome === "met" ? "Yes" : "No"}
+        {outcome === undefined || outcome === "unknown" ? <Absent /> : outcome === "met" ? "Yes" : "No"}
       </span>
+      <CriterionDetail detail={result?.detail} />
     </td>
   );
+}
+
+/**
+ * The judgement behind a criterion cell, said rather than only hovered.
+ *
+ * THIS IS THE MOST ACTIONABLE DATUM ON THE PAGE — which control is missing under Hygiene, why a
+ * repository is unmaintained — and until 2026-09-15 the only way to it was `title=`, on a page whose
+ * own `InfoTooltip` documents why that is not good enough: a native tooltip "takes a second to
+ * appear, cannot be reached by keyboard, and never appears at all on a touch screen".
+ *
+ * `sr-only` BESIDE THE WORD, NOT A CONTROL. The alternative that would serve a sighted keyboard user
+ * is the `InfoTooltip` pattern — a focusable trigger per cell — and at roughly a thousand rendered
+ * rows across five criteria that is five thousand new tab stops, which would make the table
+ * unnavigable by keyboard in order to make one cell readable by keyboard. So the detail is put where
+ * it costs no interaction at all, and `title=` is KEPT beside it: the two together mean assistive
+ * technology and touch get the text outright, and a mouse keeps the hover it always had. What is
+ * still not served is a sighted keyboard-only reader, which needs a visible affordance — a detail
+ * column or an expandable row — and is a design change rather than an attribute.
+ *
+ * Leading comma so a screen reader reads "No, not configured: Dependabot security updates" as one
+ * clause instead of running the word into the sentence.
+ */
+function CriterionDetail({ detail }: { detail?: string }) {
+  return detail ? <span className="sr-only">, {detail}</span> : null;
 }
 
 /**
