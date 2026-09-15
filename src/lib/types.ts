@@ -615,6 +615,13 @@ export interface ContributorRow {
 export interface RepositoryDetail {
   repository: string;
   team: string;
+  /**
+   * Where this repository lives on GitHub, for the header's one outbound link.
+   *
+   * Built from the configured organisation rather than read from GitHub: the collector never stores an `html_url`
+   * and it would be the same string every time. Optional so a detail assembled without it still renders.
+   */
+  url?: string;
   /** What `team` names, under `RepositoryRow.owner_kind`'s rule: the header links a team and not a person. */
   owner_kind?: OwnerKind;
   evidence?: RepositoryPracticeEvidence;
@@ -671,6 +678,50 @@ export interface TeamActorRow {
 }
 
 /**
+ * One merged pull request, as the team page lists it.
+ *
+ * THE CHANGES THEMSELVES, under the counts that summarise them. The ways-of-working figures say "37 of 40
+ * substantial changes were reviewed"; this is the 40, so a reader can see which three were not rather than taking
+ * the ratio on trust.
+ *
+ * EVERY ANSWER HERE IS OPTIONAL, including the two governance ones. A pull request with no eligible review was
+ * not reviewed and reports `false` — but a payload stored before the collector recorded reviews at all carries no
+ * `reviews` array, and that is unmeasured rather than unreviewed. The projection in
+ * `loadCachedFactsForOrganisation` has already been narrowed once, so "every payload carries every field" is a
+ * claim about history rather than a guarantee — the same reason `timingMedians` guards its two medians.
+ */
+export interface TeamMergeRow {
+  repository: string;
+  number: number;
+  merged_at: string;
+  author?: string;
+  /** Whether anybody other than the author submitted a review before the merge. */
+  reviewed?: boolean;
+  /** Whether a check completed before the merge and none that completed had failed. */
+  ci?: boolean;
+  /** Additions plus deletions, absent where GitHub did not size the change. */
+  lines?: number;
+  files?: number;
+}
+
+/**
+ * One commit that reached the default branch without a pull request.
+ *
+ * No `reviewed` field, and its absence is the finding rather than an omission: a direct push had no pull request,
+ * so there was never anything for anybody to review. `ci` reads GitHub's rolled-up `checkState`, which is absent
+ * on a commit no check ever reported for.
+ */
+export interface TeamDirectPushRow {
+  repository: string;
+  sha: string;
+  committed_at: string;
+  author?: string;
+  ci?: boolean;
+  lines?: number;
+  files?: number;
+}
+
+/**
  * How one team works, counted over the repositories it owns.
  *
  * COUNTS OVER A STATED DENOMINATOR, never a score. Each `*_measured` field is the denominator its neighbours are
@@ -688,8 +739,8 @@ export interface TeamActorRow {
 export interface TeamPractice {
   /** How many of the team's repositories had a readable merge gate. The denominator for the two below. */
   gates_measured: number;
+  /** How many of those gates require at least one approving review. */
   enforces_review: number;
-  requires_multiple_reviews: number;
   checks_measured: number;
   enforces_checks: number;
   /** How many the readiness policy graded for unreviewed substantial merging. */
@@ -745,4 +796,8 @@ export interface TeamDetail {
   /** How this team works, which is what the team page carries and `/repositories` does not. */
   practice?: TeamPractice;
   labels: Record<string, number>;
+  /** The window's merged pull requests across this team's repositories, newest first. */
+  merges?: TeamMergeRow[];
+  /** The window's commits that reached a default branch with no pull request, newest first. */
+  direct_pushes?: TeamDirectPushRow[];
 }

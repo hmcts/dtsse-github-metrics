@@ -57,9 +57,17 @@ globalForReports.builtReports ??= new Map<string, Entry>();
 
 const entries: Map<string, Entry> = globalForReports.builtReports;
 
-/** The key one span's build is held under, which names the estate it describes as well as the span. */
-function keyOf(organization: string, weeks: number): string {
-  return `${organization}|${weeks}`;
+/**
+ * What a held build IS, so two reports over one span cannot be served as each other.
+ *
+ * The key carried the estate and the span only until 2026-09-15, which was correct while `repositoryRows` was the
+ * one thing built. A second report over the same span would have collided with it and been returned in its place.
+ */
+export type ReportKind = "repositories" | "actors" | "merges" | "direct-pushes";
+
+/** The key one build is held under, which names what it is as well as the estate and the span. */
+function keyOf(organization: string, kind: ReportKind, weeks: number): string {
+  return `${organization}|${kind}|${weeks}`;
 }
 
 /** The revision every entry is compared against, as a string so a cold database has a value too. */
@@ -89,9 +97,9 @@ export function builtSpanCount(): number {
  * value one could carry is an unbounded map keyed by whatever a reader types; refusing to hold it costs a
  * rebuild on a span no page links to and keeps the map the size of the selector.
  */
-export async function builtReport(organization: string, weeks: number, build: () => Promise<unknown[]>): Promise<unknown[]> {
+export async function builtReport(organization: string, weeks: number, build: () => Promise<unknown[]>, kind: ReportKind = "repositories"): Promise<unknown[]> {
   const revision = await currentRevision();
-  const key = keyOf(organization, weeks);
+  const key = keyOf(organization, kind, weeks);
   const held = entries.get(key);
   if (held !== undefined && held.revision === revision) {
     return await held.built;

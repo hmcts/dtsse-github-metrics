@@ -1,7 +1,8 @@
 import "server-only";
 import { type ReadinessPolicy, readinessPolicy } from "../assessment/assessment.ts";
-import { deserialiseMerges } from "../behaviour/fill.ts";
-import { mergeCycleTime, timeToFirstReview } from "../behaviour/metrics.ts";
+import { changeSize, contributorLogins, eligibleChecks, eligibleReviews, isPassingCheck } from "../behaviour/analysis.ts";
+import { deserialiseMerges, loadCachedMerges } from "../behaviour/fill.ts";
+import { behaviourMetrics, mergeCycleTime, timeToFirstReview } from "../behaviour/metrics.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
 import { type AssuranceEvidence, assuranceGrade, judgeAssurance } from "../domain/assurance.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
@@ -15,6 +16,7 @@ import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
 import { prevailingCachedCoverage } from "../store/coverage.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
+import { storedRepositoryState } from "../store/repository-state.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
 import { builtReport, CACHEABLE_SPANS, forgetBuiltReports } from "./cache.ts";
@@ -370,9 +372,10 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
     // excludes the individuals for the same reason: it is a count OF THE CARDS, so whatever `cohortTeams`
     // stops listing this figure has to stop counting.
     teams: cohortTeams(await servedCohort(configuration, reference)).length,
-    // Contributor attribution is read from the cached facts, which the contributor rows walk; the estate summary
-    // reports the count the rows agree on rather than a second walk that could disagree with them.
-    actors: 0,
+    // The length of the contributor rows rather than a second walk of the facts, so the header and `/contributors`
+    // cannot disagree about how many people the span holds. Both builds are held per revision, so this is a map
+    // lookup on every render but the first.
+    actors: (await actorRows(configuration, weeks, reference)).length,
     merged_pull_requests: rows.reduce((total, row) => total + (row.merged_pull_requests ?? 0), 0),
     direct_commits: rows.reduce((total, row) => total + (row.direct_commits ?? 0), 0),
     labels
@@ -432,6 +435,325 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
   );
 }
 
+/**
+ * Everyone who authored a merge into a reported repository, with the repositories they appeared in.
+ *
+ * GITHUB LOGINS AND NOTHING ELSE. No display name, no email, no directory lookup: the login is what the facts
+ * carry, and it is the only identifier this report can stand behind. A person's name would have to come from
+ * somewhere else and would go stale the moment they changed it.
+ *
+ * A COUNT AND A SET OF LABELS, never a metric. The scope boundary `lib/sort.ts` states is that people may not be
+ * ranked, so this deliberately emits nothing two contributors could be ordered by — the repository count is
+ * navigation ("where would I find them"), and the labels belong to their repositories rather than to them.
+ *
+ * `contributorLogins` rather than a rule of its own, so "who is a person" is answered once. It folds case because
+ * a GitHub login is unique case-insensitively; the ORIGINAL spelling is kept alongside for display, because
+ * lower-casing somebody's login on screen is a small wrongness with no upside.
+ */
+export async function actorRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+  return await builtReport(configuration.organization, weeks, () => buildActorRows(configuration, weeks, reference), "actors");
+}
+
+async function buildActorRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
+  const [rows, facts] = await Promise.all([
+    // Read for the readiness labels only. It is the same built-and-held report `/repositories` renders, so this
+    // costs a map lookup rather than a second walk that could disagree with it.
+    repositoryRows(configuration, weeks, reference) as Promise<{ repository: string; readiness?: string }[]>,
+    windowFacts(configuration, weeks, reference)
+  ]);
+
+  const readinessOf = new Map(rows.map((row) => [row.repository, row.readiness]));
+  const spelling = new Map<string, string>();
+  const appearances = new Map<string, Set<string>>();
+
+  for (const [repository, merges] of facts) {
+    const changes = [...merges.pullRequests, ...merges.directCommits];
+    for (const change of changes) {
+      // First spelling seen wins. Any is as good as any other — GitHub is case-insensitive on logins — and
+      // picking one deterministically keeps the rows stable between builds.
+      const login = change.authorLogin;
+      if (login !== undefined && !spelling.has(login.toLowerCase())) {
+        spelling.set(login.toLowerCase(), login);
+      }
+    }
+    for (const login of contributorLogins(changes)) {
+      const seen = appearances.get(login) ?? new Set<string>();
+      seen.add(repository);
+      appearances.set(login, seen);
+    }
+  }
+
+  const actors = [...appearances.entries()].map(([login, repositories]) => {
+    // Their repositories' labels, deduplicated, in the estate's own order rather than discovery order — the
+    // readiness column keys on the COMBINATION, so two people with the same set have to produce the same key.
+    const labels = [...new Set([...repositories].map((repository) => readinessOf.get(repository)).filter((label) => label !== undefined))].sort();
+    return {
+      login: spelling.get(login) ?? login,
+      repositories: repositories.size,
+      ...(labels.length === 0 ? {} : { labels })
+    };
+  });
+
+  // Alphabetical, case-insensitively, which is the order `ActorsTable` documents it receives and keeps for ties.
+  return stripAbsent(actors.sort((left, right) => left.login.toLowerCase().localeCompare(right.login.toLowerCase())));
+}
+
+/**
+ * One repository's evidence block: what the window holds for it, section by section.
+ *
+ * The page for a repository has been rendering "this span holds no evidence" since the port landed, not because
+ * nothing was collected but because nothing assembled this. Every section below it was already written.
+ *
+ * FOUR SECTIONS CAN ONLY STATE AN ABSENCE, and they say so in their own `detail` rather than being omitted:
+ * open pull requests, CODEOWNERS, maintenance and Sonar are not collected by `collect` at all — no call is made
+ * for any of them. Reporting them as empty would be indistinguishable from a repository that has no CODEOWNERS
+ * file and no open pull requests, which is the one confusion this contract exists to prevent. What IS collected —
+ * the merge gate, the three alert families, the merge facts — feeds the sections that carry real answers.
+ *
+ * NOT CACHED, unlike the four estate-wide reports. This is keyed by repository as well as by span, and the spans
+ * come off a query string: holding one entry per repository per span is a map the size of the estate times the
+ * selector, evicted by nothing. It costs two fact queries and one state read for a page a reader asked for by
+ * name, which is the shape `loadCachedMerges` exists for.
+ */
+export async function repositoryEvidence(
+  configuration: Configuration,
+  repository: string,
+  weeks: number,
+  reference = new Date()
+): Promise<unknown | undefined> {
+  const organization = configuration.organization;
+  const { window } = await resolveReportWindow(configuration, weeks, reference);
+  const [cohort, state, merges] = await Promise.all([
+    servedCohort(configuration, reference),
+    storedRepositoryState(organization, repository),
+    loadCachedMerges(organization, repository, window)
+  ]);
+
+  const entry = cohort.find((candidate: CohortEntry) => candidate.repository === repository);
+  if (entry === undefined || state === undefined) {
+    // The page's own empty state handles this, and says which of the two it was through `RepositoryRow.detail`.
+    return undefined;
+  }
+
+  const policy = readinessPolicy(configuration);
+  const gate = storedGate(state.payload);
+  const payload = state.payload as { securityAlerts?: SecurityAlertEvidence };
+  const fetched = state.fetchedAt.toISOString();
+
+  return stripAbsent({
+    repository,
+    team: entry.owners[0] ?? "",
+    starts_at: window.startsAt.toISOString(),
+    ends_at: window.endsAt.toISOString(),
+    // `offline` because this reads the cache and never GitHub — a report is served from what a collection left,
+    // which is the whole point of the fact tables. No interval is fetched to render a page.
+    provenance: { offline: true, intervals_fetched: 0 },
+    cohort: cohortSummary(merges),
+    assessment: policy.enabled ? policy.assess(merges, gate) : undefined,
+    unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
+    merge_gate: contractGate(gate, fetched),
+    security: securityReport(payload.securityAlerts, fetched),
+    metrics: metricSummaries(configuration, merges),
+    // NOT COLLECTED, each said in the words of the thing that would have collected it. See this function's header:
+    // an empty section here would read as a repository with nothing to report.
+    open_pull_requests: { detail: "open pull-request state is not collected" },
+    codeowners: { detail: "the CODEOWNERS file is not read for this report; ownership is attributed from the organisation graph" },
+    maintenance: { windows: [], detail: "maintenance windows are not collected" },
+    sonar: { detail: "no SonarCloud project is mapped for this repository" },
+    // Per-actor rule breaches, which nothing computes: `configuration.practice` declares the rules and no
+    // producer evaluates them, so the honest answer is that there are no findings to show rather than none found.
+    behaviour: []
+  });
+}
+
+/**
+ * The window's merge cohort as the page's three cards read it.
+ *
+ * `reported` EQUALS `merged` and `excluded_authors` IS EMPTY, and that is a statement about this service rather
+ * than about any repository: `cohort.excluded_authors` defaults to `renovate, dependabot` and NOTHING APPLIES IT —
+ * `inCohort` and `excludedAuthors` are defined in `behaviour/analysis.ts` and called from no production path. So
+ * dependency-automation merges are counted in every figure on this page and in every metric behind it.
+ *
+ * Reporting the exclusion here anyway would be worse than not reporting it: it would show a reader a `reported`
+ * count lower than `merged` and imply the metrics beside it were computed over the smaller cohort, which they were
+ * not. Saying "no author was excluded" is true of what this service does today.
+ */
+function cohortSummary(merges: Merges): Record<string, unknown> {
+  return {
+    merged: merges.pullRequests.length,
+    reported: merges.pullRequests.length,
+    excluded_authors: {},
+    direct_commits: merges.directCommits.length
+  };
+}
+
+/**
+ * The stored merge gate in the shape the UI declares, which is NOT the shape it is stored in.
+ *
+ * Two translations, not one. The obvious one is case: the domain holds `pullRequests` and the contract declares
+ * `pull_requests`, and every field differs the same way. The one that would survive a careless rename is
+ * STRUCTURAL — the domain holds a status-checks rule's contexts as `string[]`, and the contract declares
+ * `required_status_checks` as a list of objects with a `context` each, because it carries an optional
+ * `integration_id` the collector does not read.
+ *
+ * This never surfaced before because `repositoryRow` reads the stored gate only through `requiredApprovals` and
+ * `requiredContexts`, which are domain functions over the domain shape. The moment the gate itself went on the
+ * contract, `mergeGateRows` called `.map` on an undefined `pull_requests` and took the page down.
+ *
+ * `required_review_thread_resolution` is OMITTED rather than sent as `false`. The collector does not model it, so
+ * `false` would be a claim that a repository does not require thread resolution when nobody asked GitHub. Nothing
+ * renders it — `mergeGateRows` prints ten rows and that is not one of them.
+ */
+function contractGate(report: MergeGateReport, fetched: string): Record<string, unknown> {
+  if (report.gate === undefined) {
+    return { detail: report.detail ?? "the merge gate has not been collected" };
+  }
+  const gate = report.gate;
+  return {
+    fetched_at: fetched,
+    gate: {
+      branch: gate.branch,
+      protected: gate.protected,
+      pull_requests: gate.pullRequests.map((rule) => ({
+        required_approving_review_count: rule.requiredApprovingReviewCount,
+        dismiss_stale_reviews_on_push: rule.dismissStaleReviewsOnPush,
+        require_code_owner_review: rule.requireCodeOwnerReview,
+        require_last_push_approval: rule.requireLastPushApproval
+      })),
+      status_checks: gate.statusChecks.map((rule) => ({
+        strict_required_status_checks_policy: rule.strictRequiredStatusChecksPolicy,
+        required_status_checks: rule.contexts.map((context) => ({ context }))
+      })),
+      restricts_deletions: gate.restrictsDeletions,
+      blocks_force_pushes: gate.blocksForcePushes,
+      applies_to_administrators: gate.appliesToAdministrators,
+      rules_observed: gate.rulesObserved,
+      requires_linear_history: gate.requiresLinearHistory,
+      restricts_branch_names: gate.restrictsBranchNames,
+      unmodelled_rules: gate.unmodelledRules
+    }
+  };
+}
+
+/**
+ * The alert block, or the reason there is none.
+ *
+ * THROUGH `reportedAlerts`, which is the same translation the estate row makes: the stored evidence is the domain's
+ * `codeScanning`/`bySeverity` and the contract declares `code_scanning`/`by_severity`. Handing the stored object
+ * straight over type-checks — both are `SecurityAlertEvidence`, one per module — and then `severityDetail` reads
+ * `by_severity.critical` off an object that has no such key and throws. Two shapes, one name, in two files.
+ */
+function securityReport(alerts: SecurityAlertEvidence | undefined, fetched: string): Record<string, unknown> {
+  if (alerts === undefined) {
+    return { detail: "no security alert family was collected for this repository" };
+  }
+  return { fetched_at: fetched, alerts: reportedAlerts(alerts) };
+}
+
+/**
+ * Every behaviour metric's aggregate and the classification counts behind it.
+ *
+ * Computed HERE rather than stored, for the reason the assessment is: a metric's definition can change with a
+ * deployment and a stored summary could not. `commitClassification` returning `undefined` is a metric declining to
+ * count commits — the flow metrics do, since a direct push has no cycle to time — and those samples are left out
+ * rather than counted as a zero.
+ */
+function metricSummaries(configuration: Configuration, merges: Merges): Record<string, unknown>[] {
+  return behaviourMetrics(configuration.traceability).map((metric) => {
+    const classifications: Record<string, number> = {};
+    for (const pullRequest of merges.pullRequests) {
+      const answer = metric.classification(pullRequest);
+      classifications[answer] = (classifications[answer] ?? 0) + 1;
+    }
+    for (const commit of merges.directCommits) {
+      const answer = metric.commitClassification(commit);
+      if (answer !== undefined) {
+        classifications[answer] = (classifications[answer] ?? 0) + 1;
+      }
+    }
+    return { metric: metric.identifier, summary: metric.summary(merges), classifications };
+  });
+}
+
+/**
+ * Every merged pull request in the window, and every commit that reached a default branch without one.
+ *
+ * BUILT FOR THE ESTATE AND FILTERED PER TEAM, not built per team. A repository with two owning teams would
+ * otherwise hold its merges twice, and `/teams/<team>` would pay a fresh walk of the fact cache on every render.
+ * Held per revision like every other report, so the second reader of a span is free.
+ *
+ * Ordered newest first, which is the order both tables open in and the order a reader asks for — "what has this
+ * team merged lately" rather than "what did it merge first".
+ */
+export async function mergeRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+  return await builtReport(configuration.organization, weeks, () => buildMergeRows(configuration, weeks, reference), "merges");
+}
+
+async function buildMergeRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
+  const facts = await windowFacts(configuration, weeks, reference);
+  const rows = [];
+  for (const [repository, merges] of facts) {
+    for (const pullRequest of merges.pullRequests) {
+      const size = changeSize(pullRequest);
+      // GUARDED ON THE ARRAY'S PRESENCE, not on its contents, which is the same guard `timingMedians` keeps and for
+      // its reason: `eligibleReviews` and `eligibleChecks` both call `.filter` on the stored array without checking
+      // it is one, and the projection this reads through has been narrowed once already — so "every payload carries
+      // every field" is a claim about history rather than a guarantee. An absent array is UNMEASURED; an empty one
+      // is measured and found nothing, and the two must not render alike.
+      const checks = Array.isArray(pullRequest.checks) ? eligibleChecks(pullRequest) : undefined;
+      rows.push({
+        repository,
+        number: pullRequest.number,
+        merged_at: pullRequest.mergedAt.toISOString(),
+        author: pullRequest.authorLogin,
+        ...(Array.isArray(pullRequest.reviews) ? { reviewed: eligibleReviews(pullRequest).length > 0 } : {}),
+        // A check that finished before the merge, with nothing that finished having failed. An empty list is
+        // `false` rather than absent: the merge was looked at and no check had reported on it.
+        ...(checks === undefined ? {} : { ci: checks.length > 0 && checks.every((check) => isPassingCheck(check)) }),
+        ...(size === undefined ? {} : { lines: size.lines, files: size.files })
+      });
+    }
+  }
+  return stripAbsent(rows.sort((left, right) => right.merged_at.localeCompare(left.merged_at)));
+}
+
+export async function directPushRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+  return await builtReport(configuration.organization, weeks, () => buildDirectPushRows(configuration, weeks, reference), "direct-pushes");
+}
+
+async function buildDirectPushRows(configuration: Configuration, weeks: number, reference: Date): Promise<unknown[]> {
+  const facts = await windowFacts(configuration, weeks, reference);
+  const rows = [];
+  for (const [repository, merges] of facts) {
+    for (const commit of merges.directCommits) {
+      const size = changeSize(commit);
+      rows.push({
+        repository,
+        sha: commit.sha,
+        committed_at: commit.committedAt.toISOString(),
+        // The linked login where GitHub matched one, otherwise the git author name — the same fallback
+        // `isHumanCommitAuthor` reads, and the reason a direct push can be attributed to a name and no account.
+        author: commit.authorLogin ?? commit.authorName,
+        ...(commit.checkState === undefined ? {} : { ci: commit.checkState.toLowerCase() === "success" }),
+        ...(size === undefined ? {} : { lines: size.lines, files: size.files })
+      });
+    }
+  }
+  return stripAbsent(rows.sort((left, right) => right.committed_at.localeCompare(left.committed_at)));
+}
+
+/** The window's cached facts per repository, which four reports read and none of them should re-query. */
+async function windowFacts(configuration: Configuration, weeks: number, reference: Date): Promise<Map<string, Merges>> {
+  const { window } = await resolveReportWindow(configuration, weeks, reference);
+  const facts = await loadCachedFactsForOrganisation(
+    configuration.organization,
+    { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) },
+    window.startsAt,
+    window.endsAt
+  );
+  return new Map([...facts].map(([repository, payload]) => [repository, deserialiseMerges(payload)]));
+}
+
 /** What the team aggregation reads off a repository row. */
 interface TeamAggregableRow {
   team?: string;
@@ -489,7 +811,6 @@ function teamPractice(owned: readonly TeamAggregableRow[]): Record<string, unkno
     // How many of the team's gates were readable at all, so every figure below has its denominator stated.
     gates_measured: reviewed.length,
     enforces_review: reviewed.filter((row) => (row.required_approving_reviews ?? 0) >= 1).length,
-    requires_multiple_reviews: reviewed.filter((row) => (row.required_approving_reviews ?? 0) >= 2).length,
     checks_measured: checked.length,
     enforces_checks: checked.filter((row) => (row.required_status_checks ?? 0) >= 1).length,
     // The policy's own verdict on unreviewed substantial merging, counted in its own three words rather than
