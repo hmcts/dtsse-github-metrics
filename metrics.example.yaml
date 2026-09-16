@@ -196,6 +196,30 @@ sonar_projects:
 # `--warm-interval` rather than on a collection. Set it to `null` to disable the fetch entirely; no
 # repository then carries a badge. The default below is HMCTS's and is only a default.
 production_list_url: https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml
+# REPOSITORIES THIS DEPLOYMENT STATES ARE PRODUCTION SERVICES, which is the MIDDLE of the three layers a row's
+# Production answer is resolved through: the approvals list above, then this, then the
+# `repository_production.production` column somebody edits.
+#
+# WHY A SECOND LIST EXISTS. The document above belongs to the deployment pipeline, so a production service the
+# pipeline never approved cannot appear in it — and those are exactly the repositories an assurance report most
+# needs to know are live. Measured on the HMCTS estate: the approvals list names 211 of 1,892 repositories, and
+# the 290 names the deployment's own `metrics.yaml` carries add 179 more, 114 of them Crime Platform (`cp-*`,
+# `cpp-*`) repositories that were never onboarded to CNP. It is in a reviewed file for the reason every other
+# list here is: policy has to be arguable without waiting for a release.
+#
+# IT CAN ONLY EVER ADD. A union, not an override: either list naming a repository is enough, because each says
+# that somebody deploys it and neither is a claim about what the other holds. Saying NO is the column's job, and
+# that is also how an entry here is retired —
+#
+#   UPDATE repository_production SET production = false WHERE organization = 'hmcts' AND repository = 'a-name';
+#
+# — rather than by deleting the name, which loses the record that the repository was ever considered.
+#
+# Matched case-insensitively against the repository's own spelling, because a name here is typed by hand. A name
+# matching no repository does nothing, as an `enablement` key that matches nothing does. Empty is the default:
+# a deployment that trusts the approvals list alone states nothing here.
+production_repositories:
+  - example-service
 # How `collect-org` decides who owns a repository. Off unless `enabled: true`, so an existing
 # configuration file does not change meaning by being upgraded.
 #

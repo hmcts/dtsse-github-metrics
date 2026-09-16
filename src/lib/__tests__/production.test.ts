@@ -8,7 +8,17 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { PRODUCTION_BADGE, PRODUCTION_DOT, PRODUCTION_HEX, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
+import {
+  PRODUCTION_BADGE,
+  PRODUCTION_DOT,
+  PRODUCTION_HEX,
+  PRODUCTION_LABEL,
+  PRODUCTION_SOURCE_HINT,
+  PRODUCTION_TOGGLE_ACTIVE,
+  PRODUCTION_TOGGLE_INACTIVE,
+  productionHint
+} from "@/lib/production";
+import type { ProductionSource } from "@/lib/types";
 import config from "../../../tailwind.config";
 
 /** Every class string the module publishes, which is every one the app is allowed to use. */
@@ -27,6 +37,32 @@ describe("production vocabulary", () => {
 
   it("names no emoji anywhere", () => {
     expect(JSON.stringify([PRODUCTION_LABEL, ...CLASSES, PRODUCTION_HEX])).not.toMatch(/\p{Extended_Pictographic}/u);
+  });
+});
+
+describe("where the answer came from", () => {
+  const SOURCES: ProductionSource[] = ["approvals-list", "configured-list", "marked"];
+
+  it("names a sentence for each of the three sources, and only those three", () => {
+    // Keyed by the union rather than by `string`, so a fourth source added to the contract fails to compile here
+    // rather than rendering a cell with no explanation.
+    expect(Object.keys(PRODUCTION_SOURCE_HINT).sort()).toEqual([...SOURCES].sort());
+  });
+
+  it.each(SOURCES)("says where a %s answer came from in words a reader could act on", (source) => {
+    expect(productionHint(source)).toBe(PRODUCTION_SOURCE_HINT[source]);
+    expect(productionHint(source)).toMatch(/\.$/);
+  });
+
+  it("names the place each source is edited, so a reader knows where to go", () => {
+    expect(PRODUCTION_SOURCE_HINT["approvals-list"]).toContain("production-approvals list");
+    expect(PRODUCTION_SOURCE_HINT["configured-list"]).toContain("metrics.yaml");
+    expect(PRODUCTION_SOURCE_HINT.marked).toContain("database");
+  });
+
+  it("says nothing for a row whose answer no source gave", () => {
+    // The dash cell. A tooltip here would explain an answer nobody gave.
+    expect(productionHint(undefined)).toBeUndefined();
   });
 });
 

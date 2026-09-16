@@ -266,6 +266,28 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration(`${VALID}\nproduction_list_url: null\n`).production_list_url).toBeNull();
   });
 
+  it("should hold no configured production list unless the document states one", () => {
+    // Empty rather than absent, so the report layer folds a list it always has. A deployment that trusts the
+    // approvals list alone states nothing and behaves exactly as it did before the key existed.
+    expect(parseConfiguration(VALID).production_repositories).toEqual([]);
+  });
+
+  it("should load the configured production list verbatim", () => {
+    // Verbatim, spelling included: the fold to lowercase is the rule's, not the schema's, so a name typed here
+    // in the case somebody found it in still matches and the document still reads as what a person wrote.
+    const document = `${VALID}\nproduction_repositories:\n  - PCS-API\n  - cp-maven-parent-pom\n`;
+
+    expect(parseConfiguration(document).production_repositories).toEqual(["PCS-API", "cp-maven-parent-pom"]);
+  });
+
+  it("should accept a configured production repository the file does not override the owner of", () => {
+    // The ordinary case, for `enablement`'s reason: the cohort comes from the graph, so nothing here can check a
+    // name against it without a database. A name matching no repository is reported by the report, not refused.
+    const document = `${VALID}\nproduction_repositories:\n  - never-collected\n`;
+
+    expect(parseConfiguration(document).production_repositories).toEqual(["never-collected"]);
+  });
+
   it("should load a sonar project override", () => {
     const document = `${VALID}\nsonar_projects:\n  civil-service: civil_service_key\n`;
 
@@ -318,8 +340,43 @@ describe("the shipped metrics.example.yaml", () => {
     expect(configuration.organization).toBe("hmcts");
     expect(configuration.teams).not.toHaveLength(0);
     expect(configuration.production_list_url).toBe(PRODUCTION_LIST_URL);
+    // The second production layer is documented there too, and with an entry rather than as `[]`: the example is
+    // what an operator copies, and a key demonstrated empty teaches nothing about its shape.
+    expect(configuration.production_repositories).not.toHaveLength(0);
     // Upstream's `database:` key is gone; Postgres replaces the two SQLite files.
     expect(example).not.toMatch(/^database:/m);
+  });
+});
+
+/**
+ * The deployment's own `metrics.yaml`, on the one key where the FILE is the data.
+ *
+ * Every other list in it is a handful of names a reader checks by eye. `production_repositories` is 290, so the
+ * mistakes worth catching are the ones nobody would see: a name repeated, a stray capital, a trailing space. None
+ * of them fails anything at load time — the rule folds case and a set swallows a duplicate — so each would sit
+ * there looking deliberate.
+ *
+ * NEITHER THE COUNT NOR THE ORDER IS ASSERTED. The list is meant to grow, and a test that had to be edited to add
+ * a production service would be a test arguing with the policy it guards. The file is kept in `sort(1)` order for
+ * whoever has to look a name up, and that is a convention rather than a rule: `sort` collates past the hyphen and
+ * the underscore where JavaScript does not, so pinning it here would encode one shell's locale in a test to check
+ * tidiness. Nothing downstream reads the order — the rule reads a set.
+ */
+describe("the deployment's metrics.yaml", () => {
+  const configuration = parseConfiguration(readFileSync(path.join(process.cwd(), "metrics.yaml"), "utf8"), "metrics.yaml");
+
+  it("should state a production list", () => {
+    expect(configuration.production_repositories.length).toBeGreaterThan(0);
+  });
+
+  it("should name each production repository once, in the case and shape a repository name takes", () => {
+    const listed = configuration.production_repositories;
+
+    expect(new Set(listed).size).toBe(listed.length);
+    for (const repository of listed) {
+      expect(repository).toBe(repository.trim().toLowerCase());
+      expect(repository).not.toMatch(/\//);
+    }
   });
 });
 

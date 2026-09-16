@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../src/evidence/store/prisma.ts";
-import { markProduction, productionOverrides, reportedProduction, seedProduction } from "../../src/evidence/store/production-override.ts";
+import { declaredProduction, markProduction, productionOverrides, reportedProduction, seedProduction } from "../../src/evidence/store/production-override.ts";
 
 // The rule is pure and unit-tested in src/evidence/store/production-override.test.ts. These cases prove the
 // Postgres half, which is where the whole design of this table lives: that the seed gives every live repository
@@ -30,6 +30,15 @@ async function graphRepository(repository: string, observedAt: Date = OBSERVED, 
       digest: `${repository}-${observedAt.toISOString()}-digest`
     }
   });
+}
+
+/**
+ * The two layers the rule reads beside the approvals list: whatever the table now holds, and a configured list
+ * these cases state per case. The marked half comes from Postgres, which is what makes these integration cases
+ * rather than a second copy of the unit truth table.
+ */
+async function layersFor(...declared: string[]) {
+  return { declared: declaredProduction(declared), marked: await productionOverrides(ORGANIZATION) };
 }
 
 /** The row's whole state, so a case can assert what the seed left alone as well as what it added. */
@@ -161,9 +170,9 @@ describe("marking a repository", () => {
     `;
 
     expect(await productionOverrides(ORGANIZATION)).toEqual(new Map([["pcs-api", true]]));
-    // And the combination the report layer makes: the approvals list was read and is silent, the column says
-    // otherwise, so the repository reports as production.
-    expect(reportedProduction(false, await productionOverrides(ORGANIZATION), "pcs-api")).toBe(true);
+    // And the combination the report layer makes: the approvals list was read and is silent, neither list names
+    // the repository, the column says otherwise, so it reports as production and says which layer decided.
+    expect(reportedProduction(false, await layersFor(), "pcs-api")).toEqual({ production: true, source: "marked" });
   });
 
   it("should force production off even where the approvals list names the repository", async () => {
@@ -171,7 +180,8 @@ describe("marking a repository", () => {
     // an approvals list that is wrong about a repository.
     await markProduction({ organization: ORGANIZATION, repository: "PCS-API", production: false });
 
-    expect(reportedProduction(true, await productionOverrides(ORGANIZATION), "pcs-api")).toBe(false);
+    // Over BOTH lists, which is the only way to say no now that either of them saying yes is enough.
+    expect(reportedProduction(true, await layersFor("pcs-api"), "pcs-api")).toEqual({ production: false, source: "marked" });
   });
 
   it("should hand the answer back to the approvals list when the flag is set to NULL again", async () => {
@@ -179,8 +189,10 @@ describe("marking a repository", () => {
     await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: undefined });
 
     expect(await productionOverrides(ORGANIZATION)).toEqual(new Map());
-    expect(reportedProduction(false, await productionOverrides(ORGANIZATION), "pcs-api")).toBe(false);
-    expect(reportedProduction(undefined, await productionOverrides(ORGANIZATION), "pcs-api")).toBeUndefined();
+    expect(reportedProduction(false, await layersFor(), "pcs-api")).toEqual({ production: false, source: "approvals-list" });
+    expect(reportedProduction(undefined, await layersFor(), "pcs-api")).toEqual({});
+    // Back to the lists means back to BOTH of them: the configured list answers where the approvals list cannot.
+    expect(reportedProduction(undefined, await layersFor("pcs-api"), "pcs-api")).toEqual({ production: true, source: "configured-list" });
   });
 
   it("should report a repository the seed has not reached rather than inserting a row for it", async () => {

@@ -36,7 +36,7 @@ import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
 import { cachedCoverageEdges, prevailingCachedCoverage } from "../store/coverage.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
-import { productionOverrides, reportedProduction } from "../store/production-override.ts";
+import { declaredProduction, type ProductionLayers, productionOverrides, reportedProduction } from "../store/production-override.ts";
 import { storedRepositoryState } from "../store/repository-state.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
@@ -168,7 +168,7 @@ function repositoryRow(
   entry: CohortEntry,
   state: { fetchedAt: Date; payload: unknown } | undefined,
   merges: Merges,
-  overrides: ReadonlyMap<string, boolean>,
+  production: ProductionLayers,
   measured: MeasuredRow
 ): Record<string, unknown> {
   const policy = readinessPolicy(configuration);
@@ -199,7 +199,20 @@ function repositoryRow(
 
   if (state === undefined) {
     // Nothing collected: the row exists so the estate is complete, and says why it carries no figures.
-    return { repository, team, teams: shared, ...facts, detail: "nothing has been collected for this repository" };
+    //
+    // THE PRODUCTION ANSWER IS ON THIS BRANCH TOO, on `owner_kind`'s precedent and for a stronger reason: two of
+    // its three layers are STATEMENTS rather than observations, so a repository nobody has collected can still be
+    // named in `production_repositories` or marked in the column, and answering nothing there would make policy
+    // conditional on a walk having happened. The approvals list is passed as unread — that answer really does
+    // live in the collected payload — so nothing here can invent a `false`.
+    return {
+      repository,
+      team,
+      teams: shared,
+      ...facts,
+      ...reportedRowProduction(undefined, production, repository),
+      detail: "nothing has been collected for this repository"
+    };
   }
 
   const gate = storedGate(state.payload);
@@ -222,13 +235,30 @@ function repositoryRow(
     required_status_checks: gate.gate === undefined ? undefined : requiredContexts(gate.gate).length,
     ...behaviourFigures(policy, merges, measured),
     security: reportedAlerts(payload.securityAlerts),
-    // THE COLUMN OVER THE APPROVALS LIST, in both directions, and `undefined` where neither has an answer —
-    // `reportedProduction` holds the whole rule, including the fold that lets a repository the graph spells
-    // `PCS-API` be marked as `pcs-api`. Absent stays absent: an unread approvals list nobody has an opinion
-    // about reports no key at all rather than a confident `false`.
-    production: reportedProduction(payload.deploysToProduction, overrides, repository),
+    // THE COLUMN OVER THE UNION OF THE TWO LISTS, in both directions, and `undefined` where none of the three has
+    // an answer — `reportedProduction` holds the whole rule, including the fold that lets a repository the graph
+    // spells `PCS-API` be listed as `pcs-api`. Absent stays absent: an unread approvals list, a configured list
+    // that does not name it and nobody with an opinion reports no key at all rather than a confident `false`.
+    //
+    // `production_source` rides beside it because the answer now has three possible authors — see
+    // `ProductionSource`. Absent exactly where `production` is, so a reader cannot meet a provenance for an
+    // answer nobody gave.
+    ...reportedRowProduction(payload.deploysToProduction, production, repository),
     detail: unreportedDetail(gate, measured)
   };
+}
+
+/**
+ * The production answer in the row's own spelling: `production` and, where something answered, `production_source`.
+ *
+ * SNAKE_CASE HERE AND NOWHERE ELSE, which is the same seam `reportedAlerts` crosses: the rule returns a domain
+ * answer and this names it as the UI contract does. Both keys pass through `undefined` for `stripAbsent` to drop
+ * rather than being conditionally spread, because the pair is absent or present together and one test of that is
+ * enough.
+ */
+function reportedRowProduction(deploysToProduction: boolean | undefined, layers: ProductionLayers, repository: string): Record<string, unknown> {
+  const answer = reportedProduction(deploysToProduction, layers, repository);
+  return { production: answer.production, production_source: answer.source };
 }
 
 /** Whether each of one repository's two behaviour sources was read. See `measuredSources`. */
@@ -685,11 +715,16 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
   // would otherwise be answered from facts that stop short of the window and reported as a quiet drop in merges.
   const read = shared !== undefined && covers(shared, weeks, window) ? shared : await readEstate(configuration, window, reference);
   const facts = mergesSince(read, spanStartsAt(read.endsAt, weeks));
+  // THE TWO LISTS A ROW'S PRODUCTION ANSWER IS RESOLVED THROUGH, folded once for the whole estate. The marked
+  // column comes off the shared read; the configured list is policy and is folded here for `measuredSources`'
+  // reason — a hand-typed name and a repository name are spelled by different hands, and the comparison has to
+  // fold on both sides.
+  const production: ProductionLayers = { declared: declaredProduction(configuration.production_repositories), marked: read.production };
   // The measured-ness comes off the shared read like everything else the row is handed: it is a fact about which
   // sources a collection reached, so it is settled once for the estate rather than asked per row or per span.
   const rows = stripAbsent(
     read.cohort.map((entry) =>
-      repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, read.production, {
+      repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, production, {
         pullRequests: read.measured.pullRequests.has(entry.repository),
         directCommits: read.measured.directCommits.has(entry.repository)
       })

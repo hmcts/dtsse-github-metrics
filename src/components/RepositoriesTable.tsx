@@ -10,7 +10,7 @@ import { OwnerName } from "@/components/OwnerName";
 import { type Align, SortHeader } from "@/components/SortHeader";
 import { filterTarget } from "@/lib/filter";
 import { ABSENT, day } from "@/lib/format";
-import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
+import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE, productionHint } from "@/lib/production";
 import { RAG_BADGE, RAG_BORDER } from "@/lib/rag";
 import {
   ASSURANCE_CRITERIA,
@@ -42,7 +42,7 @@ import {
   visibilityParameter
 } from "@/lib/rows";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
-import type { AssuranceGrade, AssuranceOutcome, RepositoryRow, Visibility } from "@/lib/types";
+import type { AssuranceGrade, AssuranceOutcome, ProductionSource, RepositoryRow, Visibility } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
 
 /**
@@ -133,12 +133,16 @@ const COLUMNS: readonly Column[] = [
   })),
   // Kept from the old table, and the only one of the eight that was both populated and not ways-of-working:
   // whether a repository deploys to production qualifies every assurance answer beside it.
+  //
+  // THE HINT NAMES THREE SOURCES because the answer now has three. It used to name the approvals list alone and
+  // end "Only applicable to CNP repositories", which the second list makes false: most of what it adds is Crime
+  // Platform, which was never onboarded to CNP and which that sentence told a reader to disregard.
   {
     key: "production",
     label: "Production",
     align: "center",
     read: (row) => answerOrder(row.production),
-    hint: "Whether the organisation's production-approvals list names this repository. An attribute rather than a verdict, so it carries no colour. Only applicable to CNP repositories."
+    hint: "Whether this repository is treated as deploying to production — named in the organisation's production-approvals list, named in this service's own production list, or marked by hand. Each cell says which. An attribute rather than a verdict, so it carries no colour."
   },
   // Last, from 2026-09-15: the grade is the conclusion the criterion columns build to, so it reads after its
   // own evidence rather than before it. Its own vocabulary rather than readiness's — see `ASSURANCE_GRADE_LABEL`.
@@ -340,7 +344,7 @@ export function RepositoriesTable({
                       entity headers carry: in a column of columns, a lone badge reads as decoration and its
                       absence reads as an empty cell rather than as "no". The dash keeps "not in the list" apart
                       from "the list could not be read", which a blank could not say. */}
-                  <Answer value={row.production} />
+                  <Answer value={row.production} source={row.production_source} />
                   <td className="py-2 pr-3">
                     <AssuranceLabel grade={row.assurance?.grade} />
                   </td>
@@ -392,9 +396,18 @@ function ToggleTick({ on }: { on: boolean }) {
  *
  * The dash is load-bearing: a repository the production list was read for and does not name answers No, and one
  * whose list could not be read answers neither. A blank cell could not tell those apart.
+ *
+ * THE `title` IS THE PROVENANCE, on `Outcome`'s precedent: three sources can put a Yes here — the organisation's
+ * approvals list, this service's own list, and the column somebody edits — and the word alone cannot say which.
+ * `productionHint` returns nothing for a row whose answer no source gave, which leaves the attribute off rather
+ * than hovering an empty bubble.
  */
-function Answer({ value }: { value?: boolean }) {
-  return <td className="py-2 pr-3 text-center text-slate-300">{answerWord(value)}</td>;
+function Answer({ value, source }: { value?: boolean; source?: ProductionSource }) {
+  return (
+    <td className="py-2 pr-3 text-center text-slate-300" title={productionHint(source)}>
+      {answerWord(value)}
+    </td>
+  );
 }
 
 /**
