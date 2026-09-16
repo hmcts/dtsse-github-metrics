@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { OwnerKind, OwnershipRung, type PersonFact, type RepositoryFact, type ResolvedOwnership, type TeamFact } from "../../src/evidence/org/graph.ts";
+import { contributorNames } from "../../src/evidence/org/people.ts";
 import { collectionState, stampCollection, stampRevision } from "../../src/evidence/store/collection-state.ts";
 import {
   liveOrgPeople,
@@ -588,6 +589,43 @@ describe("recordOrgPeople", () => {
     await recordOrgPeople(ORGANIZATION, FIRST, [person("somebody")], true);
 
     expect((await liveOrgPeople(ORGANIZATION))[0]?.payload).toEqual({});
+  });
+
+  it("should store the SSO-resolved name where a reader looks for it", async () => {
+    // The whole delivery path for VIBE-582: `collect-org` resolves the name, this stores it in the payload, and
+    // `contributorNames` reads it back out of the same key.
+    await recordOrgPeople(ORGANIZATION, FIRST, [person("joedutton", { displayName: "Joe Dutton" })], true);
+
+    expect(await contributorNames(ORGANIZATION)).toEqual(new Map([["joedutton", "Joe Dutton"]]));
+  });
+
+  it("should store no address beside the name it resolved from one", async () => {
+    // The UPN and the SCIM email are the join keys and neither is persisted. This is the assertion that catches
+    // somebody helpfully adding one later.
+    await recordOrgPeople(ORGANIZATION, FIRST, [person("joedutton", { displayName: "Joe Dutton" })], true);
+
+    expect((await liveOrgPeople(ORGANIZATION))[0]?.payload).toEqual({ displayName: "Joe Dutton" });
+  });
+
+  it("should version a corrected name rather than overwriting it", async () => {
+    await recordOrgPeople(ORGANIZATION, FIRST, [person("somebody", { displayName: "Some Body" })], true);
+
+    const second = await recordOrgPeople(ORGANIZATION, SECOND, [person("somebody", { displayName: "Somebody Else" })], true);
+
+    expect(second).toMatchObject({ changed: 1 });
+    expect(await contributorNames(ORGANIZATION)).toEqual(new Map([["somebody", "Somebody Else"]]));
+    expect(await prisma.orgPerson.count()).toBe(2);
+  });
+
+  it("should write no row for a run that resolved the same name again", async () => {
+    // What an unmeasured run has to look like once it carries the stored names forward: `lastObservedAt` moves and
+    // nothing is superseded.
+    await recordOrgPeople(ORGANIZATION, FIRST, [person("somebody", { displayName: "Some Body" })], true);
+
+    const second = await recordOrgPeople(ORGANIZATION, SECOND, [person("somebody", { displayName: "Some Body" })], true);
+
+    expect(second).toMatchObject({ unchanged: 1, changed: 0, superseded: 0 });
+    expect(await prisma.orgPerson.count()).toBe(1);
   });
 
   it("should close the interval of a person who left the organisation", async () => {

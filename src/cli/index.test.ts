@@ -29,6 +29,8 @@ const collectOrgRepositories = vi.hoisted(() => vi.fn());
 const collectOrgPeople = vi.hoisted(() => vi.fn());
 const collectCodeowners = vi.hoisted(() => vi.fn());
 const collectDirectAdmins = vi.hoisted(() => vi.fn());
+const collectSsoIdentities = vi.hoisted(() => vi.fn());
+const storedDisplayNames = vi.hoisted(() => vi.fn());
 
 const recordOrgTeams = vi.hoisted(() => vi.fn());
 const recordOrgTeamMemberships = vi.hoisted(() => vi.fn());
@@ -91,6 +93,13 @@ vi.mock("../evidence/github/client.ts", () => ({ createGitHubClient }));
 // The resolution ladder in between is deliberately REAL, so these tests exercise the attribution the writers are
 // handed rather than a restatement of it.
 vi.mock("../evidence/org/collect.ts", () => ({ collectOrgTeams, collectOrgRepositories, collectOrgPeople, collectCodeowners, collectDirectAdmins }));
+// `namedPeople` is re-exported real for the reason the ladder is: it is the join whose result the writer acts on, so
+// a faked one would leave "the resolved name reached the store" asserted against a restatement of itself.
+vi.mock("../evidence/org/identities.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/org/identities.ts")>("../evidence/org/identities.ts")),
+  collectSsoIdentities
+}));
+vi.mock("../evidence/org/people.ts", () => ({ storedDisplayNames }));
 vi.mock("../evidence/store/org-graph.ts", () => ({
   recordOrgTeams,
   recordOrgTeamMemberships,
@@ -508,6 +517,10 @@ describe("collect-org", () => {
       codeowners?: Map<string, unknown>;
       /** An entry means the collaborator listing was read, possibly to an empty result; no entry means refused. */
       directAdmins?: Map<string, string[]>;
+      /** The SSO names this run resolved. Absent means the mapping was unmeasured — a PAT, or a refusal. */
+      ssoNames?: Map<string, string>;
+      /** The names an earlier collection had already stored, which an unmeasured run carries forward. */
+      storedNames?: Map<string, string>;
     } = {}
   ): void {
     loadConfiguration.mockResolvedValue(CONFIG);
@@ -520,6 +533,8 @@ describe("collect-org", () => {
       complete: walks.repositoriesComplete ?? true
     });
     collectOrgPeople.mockResolvedValue({ facts: [{ login: "alice", role: "MEMBER" }], complete: walks.peopleComplete ?? true });
+    collectSsoIdentities.mockResolvedValue(walks.ssoNames === undefined ? { names: new Map(), measured: false } : { names: walks.ssoNames, measured: true });
+    storedDisplayNames.mockResolvedValue(walks.storedNames ?? new Map());
     collectCodeowners.mockResolvedValue(walks.codeowners ?? new Map());
     // Defaults to "every repository asked was read and named nobody", which is the ordinary case and the one that
     // must not read as a refusal.
@@ -578,6 +593,44 @@ describe("collect-org", () => {
     await main(["collect-org", "--config", "m.yaml"]);
 
     expect(recordOrgPeople).toHaveBeenCalledWith("hmcts", expect.any(Date), expect.anything(), false);
+  });
+
+  it("should store the name the SSO mapping resolved for each member", async () => {
+    // The web pod holds no GitHub credential, so this run is the only place the mapping can be read and the store
+    // is the only way the answer reaches a page.
+    withWalks({ ssoNames: new Map([["alice", "Alice Smith"]]) });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(recordOrgPeople).toHaveBeenCalledWith("hmcts", expect.any(Date), [{ login: "alice", role: "MEMBER", displayName: "Alice Smith" }], true);
+  });
+
+  it("should carry the stored names forward when the SSO mapping could not be read", async () => {
+    // A PAT gets `samlIdentityProvider: null` beside an HTTP 200. Handing the writer facts with no name would end
+    // the interval of every named person in the graph, and re-running opens new intervals rather than restoring
+    // the ones wrongly closed.
+    withWalks({ storedNames: new Map([["alice", "Alice Smith"]]) });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(storedDisplayNames).toHaveBeenCalledWith("hmcts");
+    expect(recordOrgPeople).toHaveBeenCalledWith("hmcts", expect.any(Date), [{ login: "alice", role: "MEMBER", displayName: "Alice Smith" }], true);
+  });
+
+  it("should not ask the graph for names it has just resolved", async () => {
+    withWalks({ ssoNames: new Map([["alice", "Alice Smith"]]) });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(storedDisplayNames).not.toHaveBeenCalled();
+  });
+
+  it("should leave a member nothing named without a name rather than with an empty one", async () => {
+    withWalks({ ssoNames: new Map([["nobody-here", "Nobody Here"]]) });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(recordOrgPeople).toHaveBeenCalledWith("hmcts", expect.any(Date), [{ login: "alice", role: "MEMBER" }], true);
   });
 
   it("should leave ownership alone when the team list came back short", async () => {
