@@ -145,6 +145,23 @@ async function collectChecks(
   return checks;
 }
 
+/** The two answers a description is reduced to, which is all any report reads of it. */
+export interface DescriptionAnswers {
+  bodyLength: number;
+  hasTicketReference: boolean;
+}
+
+/**
+ * The configured patterns, compiled once.
+ *
+ * Beside `describedBy` because `reference_patterns` is read in exactly the places the patterns are applied, and
+ * there are two of those now — a collection and the backfill over rows a collection will never rewrite. The
+ * schema has already rejected a pattern that does not compile, at load time.
+ */
+export function referencePatterns(traceability: TraceabilityConfiguration): RegExp[] {
+  return traceability.reference_patterns.map((pattern) => new RegExp(pattern));
+}
+
 /**
  * The two things a pull request's title and description are ever asked, decided HERE and stored as answers.
  *
@@ -160,10 +177,15 @@ async function collectChecks(
  * The reference is searched in the TITLE AND THE BODY TOGETHER, joined the way the metric joined them, because
  * a ticket key in the title is traceability too and insisting on the body would fail a team whose convention
  * is the title.
+ *
+ * EXPORTED, and taking a title and a body rather than a GitHub node, for the one other caller that has to reach
+ * the same answers: `store/descriptions.ts` reduces the descriptions of rows cached before these fields existed.
+ * That is a backfill of this function's output over stored text, so it calls this — the alternative was a second
+ * implementation, in SQL, which is precisely what the paragraph above says the design avoids.
  */
-function describedBy(node: PullRequestNode, patterns: readonly RegExp[]): { bodyLength: number; hasTicketReference: boolean } {
-  const title = node.title ?? "";
-  const body = node.body ?? "";
+export function describedBy(source: { title?: string | null; body?: string | null }, patterns: readonly RegExp[]): DescriptionAnswers {
+  const title = source.title ?? "";
+  const body = source.body ?? "";
   return {
     // Trimmed here, so the stored length is the one the threshold is compared against: whitespace is not a
     // description, and `description-quality` measured it as one for as long as it trimmed at read time.
@@ -222,7 +244,7 @@ export async function collectMergedPullRequests(
   const facts = new Map<number, PullRequestFact>();
   // Compiled once per repository rather than per pull request, matching what `traceabilityReference` did with
   // them when it held them.
-  const patterns = traceability.reference_patterns.map((pattern) => new RegExp(pattern));
+  const patterns = referencePatterns(traceability);
   let cursor: string | null = null;
   for (;;) {
     // Annotated `unknown` deliberately: without it the inferred type of `data` flows through

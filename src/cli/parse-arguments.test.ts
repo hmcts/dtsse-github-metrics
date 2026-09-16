@@ -191,6 +191,34 @@ describe("--tolerate-partial", () => {
   });
 });
 
+describe("--write", () => {
+  it("should be off unless asked for, so the default of the command that rewrites payloads is to write nothing", () => {
+    expect(parseArguments(["reduce-descriptions", "--config", "m.yaml"]).write).toBe(false);
+  });
+
+  it("should be read as a flag", () => {
+    expect(parseArguments(["reduce-descriptions", "--config", "m.yaml", "--write"]).write).toBe(true);
+  });
+});
+
+describe("--batch-size", () => {
+  it("should be absent unless given, leaving the default to the command", () => {
+    expect(parseArguments(["reduce-descriptions", "--config", "m.yaml"]).batchSize).toBeUndefined();
+  });
+
+  it("should be read as a whole number of rows", () => {
+    expect(parseArguments(["reduce-descriptions", "--config", "m.yaml", "--batch-size", "250"]).batchSize).toBe(250);
+  });
+
+  it("should refuse a batch of no rows, which would walk the table forever", () => {
+    expect(() => parseArguments(["reduce-descriptions", "--config", "m.yaml", "--batch-size", "0"])).toThrow(UsageError);
+  });
+
+  it("should refuse a batch size that is not a number", () => {
+    expect(() => parseArguments(["reduce-descriptions", "--config", "m.yaml", "--batch-size", "lots"])).toThrow(/whole number/);
+  });
+});
+
 describe("collectionStatus", () => {
   it("should report a partial run as incomplete when nobody asked to tolerate it", () => {
     expect(collectionStatus(CollectionStatus.Partial, false)).toBe(EXIT_INCOMPLETE);

@@ -1,6 +1,6 @@
 import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { botAccounts, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
-import { collectDirectCommits, collectMergedPullRequests, mutableEdge } from "../evidence/behaviour/collect.ts";
+import { collectDirectCommits, collectMergedPullRequests, mutableEdge, referencePatterns } from "../evidence/behaviour/collect.ts";
 import { deserialiseMerges, directCommitCacheWriter, fillCachedSource, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestCountQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
@@ -52,6 +52,7 @@ import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
+import { censusOfDescriptions, DEFAULT_BATCH_SIZE, type DescriptionCensus, reduceStoredDescriptions } from "../evidence/store/descriptions.ts";
 import { authorshipForOrganisation, loadCachedFactsForOrganisation, storedRepositoryStates } from "../evidence/store/facts.ts";
 import { migrate } from "../evidence/store/migrate.ts";
 import {
@@ -67,6 +68,7 @@ import { seedProduction } from "../evidence/store/production-override.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
 import { recordRepositoryState } from "../evidence/store/repository-state.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
+import { describeDatabase } from "../platform/database-target.ts";
 import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { type Arguments, COHORT_COMMANDS, parseArguments, UsageError } from "./parse-arguments.ts";
 
@@ -933,6 +935,67 @@ async function runPrune(argv: Arguments): Promise<number> {
   return EXIT_COMPLETE;
 }
 
+/**
+ * Replaces the stored descriptions of rows cached before they were reduced, or counts what it would replace.
+ *
+ * A ONE-OFF, and the reason it is a command rather than a script: it needs `traceability.reference_patterns` out
+ * of the reviewed configuration and the same `describedBy` a collection derives with, both of which this
+ * process already resolves. `store/descriptions.ts` states why waiting for a collection to rewrite the rows
+ * never works.
+ *
+ * DRY BY DEFAULT. Everything except the write happens without `--write` — the connection, the census, the walk
+ * and the derivation of every row — so the count an operator sees is produced by the code that would do the
+ * work, not by a description of it. The instructions for the rest of the operation are printed here rather than
+ * written down somewhere that can go stale.
+ *
+ * The database is named on the way in. This is the one command that rewrites stored payloads across the whole
+ * estate, and `az login` against the wrong subscription is not otherwise visible until afterwards.
+ */
+async function runReduceDescriptions(configuration: Configuration, argv: Arguments): Promise<number> {
+  const batchSize = argv.batchSize ?? DEFAULT_BATCH_SIZE;
+  progress(`reduce-descriptions ${argv.write ? "WRITING TO" : "reading"} ${describeDatabase()}, ${batchSize} rows a batch`);
+
+  const before = await censusOfDescriptions();
+  progress(describeCensus("before", before));
+  if (before.carryingDescription === 0) {
+    progress("nothing to do: no cached pull request still carries a description");
+    return EXIT_COMPLETE;
+  }
+
+  const reduction = await reduceStoredDescriptions(referencePatterns(configuration.traceability), {
+    dryRun: !argv.write,
+    batchSize,
+    onBatch: ({ scanned, changed }) => progress(`  derived ${scanned} of ${before.carryingDescription}${argv.write ? `, ${changed} written` : ""}`)
+  });
+
+  if (!argv.write) {
+    progress(`DRY RUN: nothing was written. ${reduction.scanned} rows would be reduced.`);
+    progress("to apply it, and then to make the space the descriptions held reusable:");
+    progress(`  yarn cli reduce-descriptions ${argv.config.map((path) => `--config ${path}`).join(" ")} --write`);
+    // Plain VACUUM, and the reason is in the flag that is absent: VACUUM FULL rewrites the table under an ACCESS
+    // EXCLUSIVE lock, which every read the web pod makes would block on.
+    progress("  psql \"$DATABASE_URL\" -c 'VACUUM (VERBOSE, ANALYZE) pull_request_facts'");
+    return EXIT_COMPLETE;
+  }
+
+  const after = await censusOfDescriptions();
+  progress(`reduced ${reduction.changed} of ${reduction.scanned} rows read`);
+  progress(describeCensus("after", after));
+  if (reduction.changed !== reduction.scanned) {
+    // Fewer written than read means a row was deleted between the read and the update, which `prune` does. The
+    // row is gone rather than damaged, so this reports the discrepancy instead of failing a run that did its job.
+    progress(`${reduction.scanned - reduction.changed} rows were read but not written, which is what a concurrent prune looks like`);
+  }
+  if (after.unmeasurable > before.unmeasurable) {
+    throw new Error(`${after.unmeasurable - before.unmeasurable} rows now hold neither a description nor a derivation, which must never happen`);
+  }
+  return EXIT_COMPLETE;
+}
+
+function describeCensus(when: string, census: DescriptionCensus): string {
+  return `${when}: ${census.rows} cached pull requests, ${census.carryingDescription} carrying a description, ${census.derived} measurable, ${census.unmeasurable} neither`;
+}
+
 async function runMigrate(): Promise<number> {
   const applied = await migrate();
   console.info(applied.length === 0 ? "the database schema is already up to date" : `applied ${applied.length} migrations: ${applied.join(", ")}`);
@@ -1062,6 +1125,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return await onlyCollector(parsed.command, () => runPrune(parsed));
       case "evidence":
         return await runEvidence(configuration, parsed);
+      // NOT under the collector lock, unlike `prune`, and `store/descriptions.ts` sets out why: each row's update
+      // derives from that row's current payload, so a collection writing the same row concurrently keeps
+      // everything it wrote. Standing down would also be the wrong answer for a hand-run one-off — it would exit
+      // 0 having done nothing, which reads as "already reduced".
+      case "reduce-descriptions":
+        return await runReduceDescriptions(configuration, parsed);
     }
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
