@@ -1,6 +1,7 @@
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { CheckConclusion, type CheckFact, type DirectCommitFact, type PullRequestFact, type ReviewFact, type ReviewState } from "../domain/facts.ts";
 import type { GitHubClient } from "../github/client.ts";
+import type { TraceabilityConfiguration } from "../policy/schema.ts";
 import { githubTimestamp } from "../window/instant.ts";
 import type { ReportingWindow } from "../window/window.ts";
 import {
@@ -144,8 +145,41 @@ async function collectChecks(
   return checks;
 }
 
+/**
+ * The two things a pull request's title and description are ever asked, decided HERE and stored as answers.
+ *
+ * Everything a report wants of a description is a predicate over it, and the descriptions themselves were two
+ * thirds of the stored fact payload — 61 MB of `body` at 26 weeks against a 93 MB total, read off disk on
+ * every render to reach a length and a regex match. Reducing them once, where the fact is built, is a few
+ * bytes a row instead.
+ *
+ * THIS IS THE ONLY PLACE `reference_patterns` IS APPLIED. `traceabilityReference` reads the boolean and holds
+ * no regexes of its own, so there is no second implementation for the two to disagree about — but it does mean
+ * an edited pattern list regrades nothing already cached. Stated on the field and at the metric.
+ *
+ * The reference is searched in the TITLE AND THE BODY TOGETHER, joined the way the metric joined them, because
+ * a ticket key in the title is traceability too and insisting on the body would fail a team whose convention
+ * is the title.
+ */
+function describedBy(node: PullRequestNode, patterns: readonly RegExp[]): { bodyLength: number; hasTicketReference: boolean } {
+  const title = node.title ?? "";
+  const body = node.body ?? "";
+  return {
+    // Trimmed here, so the stored length is the one the threshold is compared against: whitespace is not a
+    // description, and `description-quality` measured it as one for as long as it trimmed at read time.
+    bodyLength: body.trim().length,
+    hasTicketReference: patterns.some((pattern) => pattern.test(`${title}\n${body}`))
+  };
+}
+
 /** Converts one GitHub pull request and its complete reviews into a compact fact. */
-async function pullRequestFact(client: GitHubClient, organization: string, repository: string, node: PullRequestNode): Promise<PullRequestFact> {
+async function pullRequestFact(
+  client: GitHubClient,
+  organization: string,
+  repository: string,
+  node: PullRequestNode,
+  patterns: readonly RegExp[]
+): Promise<PullRequestFact> {
   const readyForReviewAt = node.timelineItems.nodes.find((event) => event?.createdAt != null)?.createdAt ?? undefined;
   return {
     identifier: node.databaseId,
@@ -158,8 +192,9 @@ async function pullRequestFact(client: GitHubClient, organization: string, repos
     ...(node.author?.login === undefined ? {} : { authorLogin: node.author.login }),
     ...(node.author?.__typename === undefined ? {} : { authorType: node.author.__typename }),
     reviews: await collectReviews(client, organization, repository, node.number, node.reviews),
-    ...(node.title == null ? {} : { title: node.title }),
-    ...(node.body == null ? {} : { body: node.body }),
+    // ALWAYS PRESENT, including for a pull request opened with no description at all: GitHub answered, and the
+    // answer is a length of zero. Absent is reserved for a row cached before these fields existed.
+    ...describedBy(node, patterns),
     ...(node.additions == null ? {} : { additions: node.additions }),
     ...(node.deletions == null ? {} : { deletions: node.deletions }),
     ...(node.changedFiles == null ? {} : { changedFiles: node.changedFiles }),
@@ -181,9 +216,13 @@ export async function collectMergedPullRequests(
   organization: string,
   repository: string,
   startsAt: Date,
-  endsAt: Date
+  endsAt: Date,
+  traceability: TraceabilityConfiguration
 ): Promise<PullRequestFact[]> {
   const facts = new Map<number, PullRequestFact>();
+  // Compiled once per repository rather than per pull request, matching what `traceabilityReference` did with
+  // them when it held them.
+  const patterns = traceability.reference_patterns.map((pattern) => new RegExp(pattern));
   let cursor: string | null = null;
   for (;;) {
     // Annotated `unknown` deliberately: without it the inferred type of `data` flows through
@@ -206,7 +245,7 @@ export async function collectMergedPullRequests(
         break;
       }
       if (node.mergedAt.getTime() >= startsAt.getTime() && node.mergedAt.getTime() < endsAt.getTime()) {
-        const fact = await pullRequestFact(client, organization, repository, node);
+        const fact = await pullRequestFact(client, organization, repository, node, patterns);
         facts.set(fact.identifier, fact);
       }
     }

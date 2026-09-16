@@ -43,6 +43,18 @@ assessment:
   review-depth-minimum-percentage: 50
 # Neither number enters the readiness label. `reference_patterns` is a list because HMCTS traces work
 # through both a GitHub issue and a Jira key; the defaults below match those two.
+#
+# THE TWO ARE APPLIED AT DIFFERENT TIMES, unlike every other pair of options in this file, and it is worth
+# knowing which. Pull-request descriptions are no longer STORED — they were two thirds of the fact cache,
+# read off disk on every render to reach a length and a regex match — so what a collection stores is the
+# length of each description and whether it referenced anything.
+#
+#   `minimum_description` is compared against that stored length when a report is BUILT, so raising or
+#   lowering it regrades every cached merge on the next render with nothing refetched.
+#
+#   `reference_patterns` are applied when facts are COLLECTED, because a pattern cannot be re-run against a
+#   description nobody kept. An edited list takes effect as the cache is rewritten, which is one collection;
+#   merges already cached keep the answer the previous patterns gave.
 traceability:
   minimum_description: 30
   reference_patterns:

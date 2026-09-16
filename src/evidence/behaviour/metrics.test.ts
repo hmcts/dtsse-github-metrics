@@ -229,11 +229,44 @@ describe("descriptionQuality", () => {
   const metric = descriptionQuality(TRACEABILITY);
 
   it("should count a description meeting the configured minimum length", () => {
-    expect(metric.classification(pullRequest({ body: "x".repeat(30) }))).toBe("described");
+    expect(metric.classification(pullRequest({ bodyLength: 30 }))).toBe("described");
+  });
+
+  it("should apply the configured minimum at render time rather than at collect time", () => {
+    // The reason the stored field is a LENGTH and not a verdict: raising the threshold regrades cached merges on
+    // the next render, with nothing refetched, which is how every other configured boundary here behaves.
+    const strict = descriptionQuality({ ...TRACEABILITY, minimum_description: 200 });
+
+    expect(strict.classification(pullRequest({ bodyLength: 30 }))).toBe("description-too-short");
   });
 
   it("should not count whitespace towards the minimum", () => {
-    expect(metric.classification(pullRequest({ body: `${"x".repeat(10)}${" ".repeat(40)}` }))).toBe("description-too-short");
+    // Trimmed by the collector, so a description of ten characters and forty spaces is stored as ten.
+    expect(metric.classification(pullRequest({ bodyLength: 10 }))).toBe("description-too-short");
+  });
+
+  it("should count a merge whose description was measured as empty", () => {
+    expect(metric.classification(pullRequest({ bodyLength: 0 }))).toBe("description-too-short");
+    expect((metric.summary(cohort([pullRequest({ bodyLength: 0 })])) as RateObservation).denominator).toBe(1);
+  });
+
+  it("should report a merge nobody measured as unmeasured rather than as too short", () => {
+    // A row cached before `bodyLength` existed. Counting it as too-short would report a description-quality
+    // rate over descriptions that were never read — the plausible-looking zero this codebase refuses.
+    expect(metric.classification(pullRequest())).toBe("description-unmeasured");
+  });
+
+  it("should read as unobserved when no merge in the window carries a measured length", () => {
+    const summary = metric.summary(cohort([pullRequest(), pullRequest()])) as RateObservation;
+
+    expect(summary.status).toBe(ObservationStatus.NotApplicable);
+    expect(summary.denominator).toBe(0);
+  });
+
+  it("should rate only the merges it could measure when a window straddles the change", () => {
+    const summary = metric.summary(cohort([pullRequest({ bodyLength: 40 }), pullRequest({ bodyLength: 2 }), pullRequest()])) as RateObservation;
+
+    expect([summary.numerator, summary.denominator]).toEqual([1, 2]);
   });
 
   it("should count no direct commit, since there was no pull request to describe", () => {
@@ -242,18 +275,38 @@ describe("descriptionQuality", () => {
 });
 
 describe("traceabilityReference", () => {
-  const metric = traceabilityReference(TRACEABILITY);
+  const metric = traceabilityReference;
 
   it.each([
-    [{ body: "fixes #123" }, "referenced"],
-    [{ title: "DTSSE-42 add the thing" }, "referenced"],
-    [{ body: "no reference at all" }, "reference-missing"]
+    [{ hasTicketReference: true }, "referenced"],
+    [{ hasTicketReference: false }, "reference-missing"]
   ])("should classify %o as %s", (fields, expected) => {
     expect(metric.classification(pullRequest(fields))).toBe(expected);
   });
 
-  it("should search the title as well as the body, for a team whose convention is the title", () => {
-    expect(metric.classification(pullRequest({ title: "fixes #7", body: "" }))).toBe("referenced");
+  it("should report a merge nobody measured as unmeasured rather than as unreferenced", () => {
+    // Absent means a row cached before the field existed. Reporting it as unreferenced would announce the one
+    // thing this metric exists to find; the title and body it would have searched are no longer stored.
+    expect(metric.classification(pullRequest())).toBe("reference-unmeasured");
+  });
+
+  it("should read as unobserved when no merge in the window carries a measured answer", () => {
+    const summary = metric.summary(cohort([pullRequest()])) as RateObservation;
+
+    expect(summary.status).toBe(ObservationStatus.NotApplicable);
+    expect(summary.denominator).toBe(0);
+  });
+
+  it("should rate only the merges it could measure when a window straddles the change", () => {
+    const summary = metric.summary(
+      cohort([pullRequest({ hasTicketReference: true }), pullRequest({ hasTicketReference: false }), pullRequest()])
+    ) as RateObservation;
+
+    expect([summary.numerator, summary.denominator]).toEqual([1, 2]);
+  });
+
+  it("should count no direct commit, since there was no pull request to carry a reference", () => {
+    expect(metric.commitClassification(commit())).toBeUndefined();
   });
 });
 

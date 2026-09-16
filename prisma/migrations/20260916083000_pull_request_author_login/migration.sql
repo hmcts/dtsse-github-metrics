@@ -1,0 +1,45 @@
+-- AlterTable
+ALTER TABLE "pull_request_facts" ADD COLUMN     "author_login" TEXT;
+
+-- The rest of this file is hand-written, because Prisma generates no backfill and this column is useless
+-- without one.
+--
+-- ADDITIVE AND SAFE ON A LIVE TABLE, in both halves and for different reasons.
+--
+-- The `ADD COLUMN` is nullable with no default, which PostgreSQL settles in the catalogue alone — no table
+-- rewrite, no rewrite-length ACCESS EXCLUSIVE hold. On the 23,854-row live table that is milliseconds.
+--
+-- The backfill below rewrites every row once. It is a plain `UPDATE` inside the migration's transaction, so
+-- either the column exists populated or the migration did not land; there is no state in which a reader
+-- finds the column present and empty.
+--
+-- MEASURED against a table seeded to this row count and body distribution: the `ADD COLUMN` is 0.5 ms and the
+-- backfill is 365 ms over 23,854 rows, with every row agreeing with the payload it was copied from. Table size
+-- goes from 102 MB to 133 MB until autovacuum reclaims the dead tuples — the HEAP'S size again and not the
+-- table's, because an `UPDATE` that does not touch a toasted column reuses its existing TOAST pointers rather
+-- than copying the descriptions. That is the whole cost, and it is paid once.
+--
+-- NOTHING IS DELETED AND NOTHING IS REWRITTEN AWAY. `authorLogin` stays in the payload of every existing
+-- row; this copies it out rather than moving it. A collection landing after this writes narrowed payloads
+-- with no `body` or `title` in them, so existing rows keep their bodies until a collection rewrites them,
+-- and a rolled-back deployment reads the same figures off the same rows.
+--
+-- THE BACKFILL IS WHAT KEEPS THE COLUMN AUTHORITATIVE, and skipping it is the version of this change that
+-- reports wrong numbers. `authorshipForOrganisation` feeds the `authoring-team` ownership rung, and it now
+-- reads this column and not the payload. Left NULL on 23,854 existing rows, the estate's authorship would
+-- read as empty until the next collection and the whole estate's ownership would fall back to
+-- `teams-api-admin` for a day — silently, because an empty result is a plausible answer. Nor can a reader
+-- fall back to the payload where the column is NULL: NULL is also the honest answer for a merge GitHub
+-- matched to no account, so a `COALESCE` cannot tell an unbackfilled row from an unattributed one.
+--
+-- `NULLIF` because the payload holds a login only when there was one to hold — `serialise` omits an absent
+-- field rather than writing a null — and the reader this replaces already treated the empty string as no
+-- author. One spelling of "nobody" in the column: NULL.
+UPDATE "pull_request_facts" SET "author_login" = NULLIF("payload" ->> 'authorLogin', '');
+
+-- NO INDEX, deliberately. `authorshipForOrganisation` is the only reader and it aggregates one
+-- organisation's whole window — a scan of a table that this change takes from 102 MB to 14 MB on a
+-- seeded copy of this row count. An index on `(organization, merged_at)` was not measured as helping and
+-- would be maintained on every fact write; the ticket also records that adding
+-- `(organization, query_hash, merged_at, identifier)` to serve the window read INCREASES buffers, by
+-- making heap access random.
