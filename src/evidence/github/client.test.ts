@@ -6,6 +6,7 @@ import {
   graphqlBodyFailure,
   graphqlErrorReason,
   graphqlErrorSummary,
+  graphqlErrorsByAlias,
   graphqlRateLimited,
   reportsFeatureDisabled
 } from "./classify.ts";
@@ -254,6 +255,131 @@ describe("graphql", () => {
     const { fetch } = replying({ body: {} });
 
     await expect(client(fetch).instance.graphql("query {}")).rejects.toThrow(/no data/);
+  });
+});
+
+/**
+ * The partial read, which is opt-in.
+ *
+ * Every case here is about the boundary between the two methods. `graphql` above is unchanged and its cases are
+ * the proof of that; these say what naming `graphqlPartial` instead buys, and — as importantly — what it does
+ * not change.
+ */
+describe("graphqlPartial", () => {
+  it("should hand back the data GitHub sent ALONGSIDE the error", async () => {
+    // The defect this exists for. GitHub answers an aliased document holding one unreadable repository with HTTP
+    // 200, the aliases it could resolve, a `null` for the one it could not, and an error saying why.
+    const { fetch } = replying({
+      body: {
+        data: { a0: { name: "alpha" }, a1: null },
+        errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository with the name 'hmcts/gone'.", path: ["a1"] }]
+      }
+    });
+
+    const answer = await client(fetch).instance.graphqlPartial<Record<string, unknown>>("query {}");
+
+    expect(answer.data).toEqual({ a0: { name: "alpha" }, a1: null });
+    expect(answer.failure?.summary).toContain("NOT_FOUND");
+  });
+
+  it("should say which alias each error named, so a null node can be reported as a refusal", async () => {
+    const { fetch } = replying({
+      body: {
+        data: { a0: null, a1: null },
+        errors: [
+          { type: "FORBIDDEN", message: "Resource not accessible by integration", path: ["a0"] },
+          { type: "NOT_FOUND", message: "Could not resolve to a Repository", path: ["a1"] }
+        ]
+      }
+    });
+
+    const answer = await client(fetch).instance.graphqlPartial("query {}");
+
+    expect(answer.failure?.byAlias.get("a0")).toBe("FORBIDDEN: Resource not accessible by integration");
+    expect(answer.failure?.byAlias.get("a1")).toBe("NOT_FOUND: Could not resolve to a Repository");
+  });
+
+  it("should carry the same message, reason and status `graphql` would have thrown", async () => {
+    // A refusal reported out of a partial read has to read as the same refusal, or the log and the summary
+    // describe two different faults.
+    const errors = { status: 200, body: { errors: [{ type: "FORBIDDEN", message: "Resource not accessible by personal access token" }] } };
+    const thrown: GitHubError = await client(replying(errors).fetch)
+      .instance.graphql<never>("query {}")
+      .catch((error: unknown) => error as GitHubError);
+    const { failure } = await client(replying({ ...errors, body: { ...errors.body, data: { a0: null } } }).fetch).instance.graphqlPartial("query {}");
+
+    expect(failure?.message).toBe(thrown.message);
+    expect(failure?.reason).toBe(thrown.reason);
+    expect(failure?.status).toBe(thrown.status);
+  });
+
+  it("should report a 200 carrying only errors and no data as a failure with nothing to consume", async () => {
+    // GitHub answered about nothing, so this is not partial. It is the same judgement `graphql` throws, handed
+    // back rather than raised.
+    const { fetch } = replying({ body: { errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] } });
+
+    const answer = await client(fetch).instance.graphqlPartial("query {}");
+
+    expect(answer.data).toBeUndefined();
+    expect(answer.failure?.reason).toBe(AvailabilityReason.PermissionDenied);
+  });
+
+  it("should report a response with neither data nor errors as a failure", async () => {
+    const { fetch } = replying({ body: {} });
+
+    const answer = await client(fetch).instance.graphqlPartial("query {}");
+
+    expect(answer.data).toBeUndefined();
+    expect(answer.failure?.reason).toBe(AvailabilityReason.CollectionFailed);
+    expect(answer.failure?.byAlias.size).toBe(0);
+  });
+
+  it("should still THROW a transport failure, so nothing partial is consumed from a response that never arrived", async () => {
+    const { fetch } = replying({ status: 403, body: { message: "Resource not accessible by personal access token" } });
+
+    const error = await client(fetch)
+      .instance.graphqlPartial("query {}")
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(GitHubError);
+    expect((error as GitHubError).reason).toBe(AvailabilityReason.PermissionDenied);
+  });
+
+  it("should still wait out a RATE_LIMITED carried in a 200 rather than offering it as partial data", async () => {
+    // A SPENT BUDGET IS NOT A PER-NODE FAILURE. The retry loop handles it before anything partial is reachable,
+    // so the wait-and-retry path is untouched and the caller is handed the answer of the second attempt.
+    const { fetch } = replying(
+      { status: 200, body: { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] } },
+      { body: { data: { ok: true } } }
+    );
+    const { instance, paused } = client(fetch);
+
+    const answer = await instance.graphqlPartial("query {}");
+
+    expect(answer.data).toEqual({ ok: true });
+    expect(answer.failure).toBeUndefined();
+    expect(paused).toEqual([60_000]);
+  });
+
+  it("should still count a refusal as an errors outcome, so the run summary reports it either way", async () => {
+    // A partial read must not quieten the summary. The outcome is counted where it always was — before the
+    // failure is either thrown or handed back — at the status the failure IS.
+    const { fetch } = replying({
+      body: { data: { a0: null }, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration", path: ["a0"] }] }
+    });
+    const { instance } = client(fetch);
+
+    await instance.graphqlPartial("query {}");
+
+    expect(instance.callOutcomes().map(({ outcome }) => `${outcome.status} ${outcome.outcome}`)).toEqual(["403 errors"]);
+  });
+
+  it("should leave `graphql` throwing for the same body, so no existing caller's semantics moved", async () => {
+    // The guarantee the whole design rests on: partial data is reachable only by naming the new method.
+    const body = { data: { a0: { name: "alpha" } }, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration", path: ["a1"] }] };
+
+    await expect(client(replying({ body }).fetch).instance.graphql("query {}")).rejects.toThrow(/refused part of a GraphQL query/);
+    expect((await client(replying({ body }).fetch).instance.graphqlPartial("query {}")).data).toEqual({ a0: { name: "alpha" } });
   });
 });
 
@@ -596,6 +722,51 @@ describe("classification helpers", () => {
 
   it("should default an unmapped status to a collection failure", () => {
     expect(classify(502, "{}")[1]).toBe(AvailabilityReason.CollectionFailed);
+  });
+
+  it("should key each error by the ALIAS it names, so a caller knows which node was refused", () => {
+    const byAlias = graphqlErrorsByAlias([
+      { type: "FORBIDDEN", message: "no", path: ["a3"] },
+      { type: "NOT_FOUND", message: "gone", path: ["a7"] }
+    ]);
+
+    expect([...byAlias]).toEqual([
+      ["a3", "FORBIDDEN: no"],
+      ["a7", "NOT_FOUND: gone"]
+    ]);
+  });
+
+  it("should key a failure INSIDE a node under that node's alias", () => {
+    // `["a17", "object"]` is a failure inside `a17` and is still that repository's answer; keying on the whole
+    // path would file it under a name no caller asked for.
+    expect(graphqlErrorsByAlias([{ type: "FORBIDDEN", message: "no", path: ["a17", "object"] }]).get("a17")).toBe("FORBIDDEN: no");
+  });
+
+  it("should keep the first reason where several errors name one alias", () => {
+    // The first reason is the one that describes the node; appending the rest grows a log line without adding an
+    // answer, which is `graphqlErrorSummary`'s rule too.
+    const byAlias = graphqlErrorsByAlias([
+      { type: "FORBIDDEN", message: "first", path: ["a0"] },
+      { type: "NOT_FOUND", message: "second", path: ["a0"] }
+    ]);
+
+    expect(byAlias.get("a0")).toBe("FORBIDDEN: first");
+  });
+
+  it.each([
+    [{ type: "FORBIDDEN", message: "no" }],
+    [{ path: [] }],
+    [{ path: [7] }],
+    [{ path: "a0" }],
+    [null],
+    ["a string"]
+  ])("should key nothing for %o, which names no alias", (error) => {
+    expect(graphqlErrorsByAlias([error]).size).toBe(0);
+  });
+
+  it("should name UNKNOWN where GitHub gave no type, and an empty message where it gave none", () => {
+    expect(graphqlErrorsByAlias([{ message: "no", path: ["a0"] }]).get("a0")).toBe("UNKNOWN: no");
+    expect(graphqlErrorsByAlias([{ type: "FORBIDDEN", path: ["a0"] }]).get("a0")).toBe("FORBIDDEN: ");
   });
 });
 

@@ -105,10 +105,14 @@ export interface CohortEntry {
   /**
    * Whether this run should walk the repository's merge history.
    *
-   * THE COST CONTROL, moved here from the membership filter it used to be. `runCollect` reads it and walks only
-   * the repositories it is true for, so admitting roughly 650 stale repositories to the estate adds no
-   * behaviour call at all — the pull-request and direct-commit walks are what a collection's 15,500 calls are
-   * mostly spent on.
+   * WHAT IS WORTH WALKING, moved here from the membership filter it used to be. `runCollect` reads it and walks
+   * only the repositories it is true for, so admitting roughly 650 stale repositories to the estate adds no
+   * behaviour call at all.
+   *
+   * It is not the cost control it was described as. A run measured on 2026-09-15 spent almost all of its
+   * roughly 11,000 calls on per-repository alert and gate reads rather than on the merge walks, and those are
+   * read for the whole estate at once now — so the walks are the largest remaining share of a much smaller
+   * total, and narrowing this window is a judgement about what a stale repository has to report.
    *
    * `true` where no window is configured, which is the honest reading of "no window": a deployment that has
    * not narrowed collection collects everything.

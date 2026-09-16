@@ -2,7 +2,7 @@ import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { botAccounts, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge } from "../evidence/behaviour/collect.ts";
 import { deserialiseMerges, directCommitCacheWriter, fillCachedSource, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
-import { mergedPullRequestQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
+import { mergedPullRequestCountQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
@@ -16,12 +16,22 @@ import {
   collectAssuranceSignals,
   collectOrganisationSecretAlerts,
   type GraphAssurance,
+  hygieneFromMetadata,
   readDependabotAlerts
 } from "../evidence/inventory/assurance.ts";
 import { type EstateRepository, readEstateMetadata } from "../evidence/inventory/estate-metadata.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
-import { collectSecurityAlerts, countBySeverity, dependabotSeverity, FEATURE_NOT_ENABLED } from "../evidence/inventory/security-alerts.ts";
+import {
+  type AlertSource,
+  collectOrganisationDependabotAlerts,
+  collectSecurityAlerts,
+  countedAlertsFromOrganisation,
+  countFromSource,
+  dependabotSeverity,
+  type OrganisationPlace,
+  organisationRecords
+} from "../evidence/inventory/security-alerts.ts";
 import { CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } from "../evidence/org/cohort.ts";
 import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
 import {
@@ -143,6 +153,17 @@ async function collectRepository(
     secrets: { read: boolean; summary?: SecretAlertSummary };
     /** This repository's row from the organisation listing, where the run read one. */
     metadata?: EstateRepository;
+    /**
+     * The estate-wide Dependabot alert read, present only where this run MADE one.
+     *
+     * THREE STATES, and the third is why this is not simply a map. Absent means no estate-wide read was made —
+     * a `--repository` run, which reads that one repository's alerts instead, because paging the organisation's
+     * alerts to find one repository costs far more than asking for it. Present with a map is the read that
+     * worked. Present with `dependabot: undefined` is the read that was REFUSED, and that must not fall back to
+     * 1,889 per-repository reads: the same permission answers both endpoints, so every one of them would be
+     * refused too. Every repository reads unmeasured instead.
+     */
+    estateAlerts?: { dependabot: Map<string, unknown[]> | undefined };
   }
 ): Promise<{ observed: boolean; failures: number }> {
   const organization = configuration.organization;
@@ -162,13 +183,36 @@ async function collectRepository(
     return { observed: false, failures: 1 };
   }
 
-  // READ ONCE AND USED TWICE, which is the one thing this had to get right on cost. The patching criterion needs
-  // each alert's `created_at` and the security block needs the same family counted by severity, so the naive
-  // shape pays for `dependabot/alerts` twice per repository — 1,240 needless calls, which took the run from 66%
-  // of the hourly core budget to 83%. `collectSecurityAlerts` therefore takes the records this already fetched
-  // rather than fetching its own.
-  const dependabot = await readDependabotAlerts(client, organization, repository);
+  // ONE ESTATE-WIDE READ, NOT ONE PER REPOSITORY, and read once and used twice within that. The patching
+  // criterion needs each alert's `created_at` and the security block needs the same family counted by severity,
+  // so both are served from the organisation's own alert response — which is a few dozen pages against 1,889
+  // per-repository calls. A `--repository` run has no such response and asks for that repository alone.
+  //
+  // WHAT AN ABSENCE FROM THAT RESPONSE MEANS is the part that had to be right: it names only repositories the
+  // feature is on for, so `hasVulnerabilityAlertsEnabled` is what turns an absence into "clean" rather than the
+  // absence turning itself into a zero. See `organisationAnswer`.
+  const estate = options.estateAlerts;
+  const dependabotSource: AlertSource =
+    estate === undefined
+      ? { from: "repository", records: await readDependabotAlerts(client, organization, repository) }
+      : {
+          from: "organisation",
+          place: {
+            read: estate.dependabot !== undefined,
+            named: estate.dependabot?.has(repository) === true,
+            enabled: options.assurance?.vulnerabilityAlerts
+          },
+          records: estate.dependabot?.get(repository) ?? []
+        };
+  const dependabot = dependabotSource.from === "repository" ? dependabotSource.records : organisationRecords(dependabotSource);
   const assurance = assuranceEvidence(metadata, options.assurance, dependabot, reference, options.secrets);
+
+  // The estate-wide secret-scanning read's place for this repository. `hygiene.secretScanning` is the signal
+  // that says whether anything was scanning, so an absence from that response reads as clean only where it is on.
+  const secretScanning = {
+    place: { read: options.secrets.read, named: options.secrets.summary !== undefined, enabled: hygieneFromMetadata(metadata).secretScanning },
+    open: options.secrets.summary?.open ?? 0
+  };
 
   if (!options.behaviour) {
     // The shallow path. No gate, no other alert family, and above all no merge walk — which is what keeps
@@ -177,10 +221,10 @@ async function collectRepository(
     await recordRepositoryState(organization, repository, {
       defaultBranch,
       fetchedAt: reference,
-      // The one family this path has records for, counted rather than thrown away. The other two are absent,
-      // which reads as unmeasured — a stale repository's code-scanning posture was not looked at, and saying so
-      // is the honest answer rather than reporting nothing open.
-      securityAlerts: dependabotOnly(dependabot),
+      // The two families this path has answers for, counted rather than thrown away — both come off estate-wide
+      // reads, so a stale repository costs nothing to report them for. Code scanning stays absent, which reads
+      // as unmeasured: this path never looked at it, and saying so is the honest answer rather than nothing open.
+      securityAlerts: withoutCodeScanning(dependabotSource, secretScanning),
       deploysToProduction: deploysToProduction(production, organization, repository),
       assurance
     });
@@ -215,8 +259,8 @@ async function collectRepository(
   });
 
   const gate = await collectMergeGate(client, organization, repository, defaultBranch);
-  // Handed the Dependabot records read above, so this pays for the other two families only.
-  const alerts = await collectSecurityAlerts(client, organization, repository, { dependabot });
+  // Handed both estate-wide families, so this pays for code scanning alone.
+  const alerts = await collectSecurityAlerts(client, organization, repository, { dependabot: dependabotSource, secretScanning });
   failures += alerts.failures.length;
   for (const failure of alerts.failures) {
     console.warn(`${repository}: ${failure.detail}`);
@@ -235,22 +279,22 @@ async function collectRepository(
 }
 
 /**
- * The alert block for the shallow path: the one family it has records for, and two stated absences.
+ * The alert block for the shallow path: the two families read for the whole estate, and one stated absence.
  *
- * The shallow path never calls `collectSecurityAlerts`, so this is what keeps its Dependabot records from being
- * thrown away — they are in hand, and counting them costs nothing. The other two families are EMPTY OBJECTS,
- * which is the block's own way of saying nobody looked: `open` absent rather than zero, on the rule
- * `OpenAlertCount` states. A stale repository's code-scanning posture was not read, and reporting it as clean
- * would be the one thing this codebase refuses to do with an absence.
+ * The shallow path never calls `collectSecurityAlerts`, so this is what keeps its answers from being thrown
+ * away — both families are in hand from estate-wide reads, and counting them costs nothing. It reports secret
+ * scanning for a stale repository where it used to report nothing, which is a gain the org-wide read paid for
+ * already.
+ *
+ * CODE SCANNING IS AN EMPTY OBJECT, which is the block's own way of saying nobody looked: `open` absent rather
+ * than zero, on the rule `OpenAlertCount` states. This path never reads it, and reporting it as clean would be
+ * the one thing this codebase refuses to do with an absence.
  */
-function dependabotOnly(records: readonly unknown[] | undefined): SecurityAlertEvidence {
-  if (records === undefined) {
-    return { dependabot: { detail: `dependabot/alerts ${FEATURE_NOT_ENABLED}` }, codeScanning: {}, secretScanning: {} };
-  }
+function withoutCodeScanning(dependabot: AlertSource, secretScanning: { place: OrganisationPlace; open: number }): SecurityAlertEvidence {
   return {
-    dependabot: { open: records.length, bySeverity: countBySeverity(records.map((record) => dependabotSeverity(record))) },
+    dependabot: countFromSource(dependabot, "dependabot/alerts", dependabotSeverity).count,
     codeScanning: {},
-    secretScanning: {}
+    secretScanning: countedAlertsFromOrganisation(secretScanning.place, secretScanning.open, "secret-scanning/alerts").count
   };
 }
 
@@ -322,6 +366,20 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
     console.info(`${open} open secret-scanning alerts across ${secretAlerts.size} repositories`);
   }
 
+  // THE SAME SHAPE FOR DEPENDABOT, and the largest single saving in the run: a few dozen pages against one call
+  // per repository for all 1,889 of them. Counted as ONE failure when it fails, for the reason above — it is a
+  // single call, and inflating it to 1,889 would swamp the exit status with one refusal.
+  //
+  // Skipped for `--repository`, which reads that one repository's alerts instead: paging the organisation to
+  // find one repository costs more than asking for it, exactly as the estate metadata listing is skipped.
+  const dependabotAlerts = argv.repository === undefined ? await collectOrganisationDependabotAlerts(client, configuration.organization) : undefined;
+  if (argv.repository === undefined && dependabotAlerts === undefined) {
+    failures += 1;
+  } else if (dependabotAlerts !== undefined) {
+    const open = [...dependabotAlerts.values()].reduce((total, records) => total + records.length, 0);
+    console.info(`${open} open Dependabot alerts across ${dependabotAlerts.size} repositories`);
+  }
+
   for (const entry of walk) {
     const result = await collectRepository(configuration, client, entry.repository, window, reference, production, {
       behaviour: entry.behaviour,
@@ -332,7 +390,10 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
         read: secretAlerts !== undefined,
         ...(secretAlerts?.get(entry.repository) === undefined ? {} : { summary: secretAlerts.get(entry.repository) })
       },
-      ...(estate?.get(entry.repository) === undefined ? {} : { metadata: estate.get(entry.repository) })
+      ...(estate?.get(entry.repository) === undefined ? {} : { metadata: estate.get(entry.repository) }),
+      // Present whenever this run made the estate-wide read at all, whether or not it succeeded — see
+      // `estateAlerts`, where the refused case is what must NOT fall back to a read per repository.
+      ...(argv.repository === undefined ? { estateAlerts: { dependabot: dependabotAlerts } } : {})
     });
     observed += result.observed ? 1 : 0;
     failures += result.failures;
@@ -379,7 +440,60 @@ async function describeTeamAccess(client: ReturnType<typeof createGitHubClient>,
   }
 }
 
-async function runDoctor(configuration: Configuration): Promise<number> {
+/**
+ * How many repositories `doctor` reads by default.
+ *
+ * A SAMPLE, because `doctor` answers questions about the CREDENTIAL rather than about the estate: whether it
+ * can read repositories and whether it can see their merged pull requests. Neither answer needs 1,889
+ * repositories, and asking for all of them made the cheap check somebody runs first cost ~3,800 calls — more
+ * than a collection. Thirty is enough for a credential-wide fault to appear in it, and `--all` is there for the
+ * exhaustive sweep when somebody wants to name every unreadable repository.
+ */
+export const DOCTOR_SAMPLE_SIZE = 30;
+
+/**
+ * A sample of the cohort SPREAD ACROSS OWNERS, largest owner first, rather than the first N alphabetically.
+ *
+ * Ownership is what the interesting permission faults follow: an App installation that lost a permission, or a
+ * team whose repositories are internal where the rest are public, shows up in one owner's repositories and not
+ * in another's. Thirty names off the top of a sorted list are mostly one or two owners' — so the sample takes
+ * one repository from each owner in turn, and only comes back round for a second once every owner has had one.
+ *
+ * DETERMINISTIC, not random: two runs against the same cohort read the same repositories, so a fault that
+ * appears and disappears is a fault rather than a different sample. Repositories are ordered within an owner,
+ * and owners by how many they hold, so the largest estates are represented first.
+ *
+ * A repository nobody owns is still in the cohort and still sampled — `unowned` is a normal outcome here, and
+ * a permission fault does not care who is on the hook for it.
+ */
+export function doctorSample(repositories: readonly string[], owners: ReadonlyMap<string, readonly string[]>, size: number): string[] {
+  const byOwner = new Map<string, string[]>();
+  for (const repository of [...repositories].sort(byCodePoint)) {
+    for (const owner of owners.get(repository)?.length === 0 || owners.get(repository) === undefined ? ["unowned"] : (owners.get(repository) as string[])) {
+      byOwner.set(owner, [...(byOwner.get(owner) ?? []), repository]);
+    }
+  }
+  // Largest holding first, then by name so two owners holding the same number keep a stable order.
+  const queues = [...byOwner.entries()]
+    .sort(([left, leftHeld], [right, rightHeld]) => rightHeld.length - leftHeld.length || byCodePoint(left, right))
+    .map(([, held]) => held);
+
+  const sampled: string[] = [];
+  const seen = new Set<string>();
+  for (let round = 0; sampled.length < size && queues.some((queue) => round < queue.length); round += 1) {
+    for (const queue of queues) {
+      const repository = queue[round];
+      if (sampled.length >= size || repository === undefined || seen.has(repository)) {
+        continue;
+      }
+      seen.add(repository);
+      sampled.push(repository);
+    }
+  }
+  return sampled;
+}
+
+async function runDoctor(configuration: Configuration, argv: Arguments): Promise<number> {
   const credentials = await resolveCredentials();
   console.info(`authenticating as ${credentials.describe()}`);
   const client = createGitHubClient({ credentials });
@@ -389,14 +503,19 @@ async function runDoctor(configuration: Configuration): Promise<number> {
   // cohort has not been collected, checks everything that does not need it, and leaves the exit status to the
   // findings. This is why it is not a cohort command: those refuse up front, and this one is the tool for
   // finding out why they would.
-  const cohort = await cohortRepositories(configuration).catch((error: unknown) => {
+  const cohort = await readCohort(configuration).catch((error: unknown) => {
     if (error instanceof CohortUncollectedError) {
       console.warn(error.message);
       return undefined;
     }
     throw error;
   });
-  const repositories = cohort ?? [];
+  const owners = new Map((cohort ?? []).map((entry) => [entry.repository, entry.owners]));
+  const collected = (cohort ?? []).map((entry) => entry.repository);
+  // A SAMPLE BY DEFAULT AND THE WHOLE COHORT ON `--all`. The two checks below answer questions about the
+  // credential, and thirty repositories spread across owners answer them for about 61 calls where the whole
+  // cohort cost roughly 3,800 — most of it on the heaviest document in the codebase, asked for a boolean.
+  const repositories = argv.all ? collected : doctorSample(collected, owners, DOCTOR_SAMPLE_SIZE);
   let unreadable = 0;
   for (const repository of repositories) {
     try {
@@ -407,14 +526,22 @@ async function runDoctor(configuration: Configuration): Promise<number> {
     }
   }
 
-  const visible = await countVisibleMerges(client, configuration, repositories);
+  const visible = await countRepositoriesWithMerges(client, configuration, repositories);
 
   const state = await collectionState();
   console.info(
     state === undefined ? "no collection has run yet" : `the last collection landed at ${state.collectedAt.toISOString()} (revision ${state.revision})`
   );
-  console.info(`${repositories.length - unreadable} of ${repositories.length} cohort repositories are readable`);
-  console.info(`GitHub shows ${visible} merged pull requests across them in the operational window`);
+  // SAYS WHAT WAS ACTUALLY READ. A sampled run reporting "1889 of 1889 are readable" would claim a sweep it did
+  // not make, so the figures name the sample and the line says how to widen it.
+  const scope = argv.all
+    ? `all ${collected.length} cohort repositories`
+    : `${repositories.length} of ${collected.length} cohort repositories, sampled across owners`;
+  console.info(`${repositories.length - unreadable} of ${repositories.length} readable, from ${scope}`);
+  console.info(`GitHub shows merged pull requests in ${visible} of the ${repositories.length} read`);
+  if (!argv.all) {
+    console.info("this is a sample; --all reads every cohort repository and names each unreadable one");
+  }
   console.info(await describeTeamAccess(client, configuration.organization));
 
   if (unreadable > 0) {
@@ -435,44 +562,42 @@ async function runDoctor(configuration: Configuration): Promise<number> {
 }
 
 /**
- * How many merged pull requests the credential can actually see, asked the way the collection asks.
+ * How many of these repositories the credential can see ANY merged pull request in.
  *
  * Deliberately NOT through search. Search is what an App installation token cannot do — it is answered with an
  * empty result over repositories it reads perfectly well — and checking a capability the collector no longer
  * depends on would report a fault that does not matter while missing one that does.
+ *
+ * COUNTS REPOSITORIES RATHER THAN PULL REQUESTS, which is what the check was always about: it fails when the
+ * answer is zero everywhere, and a total was only ever a proxy for that. Asking `totalCount` instead of walking
+ * 25 pull requests with their reviews and rollups is the difference between one node and the heaviest document
+ * here, per repository.
  */
-async function countVisibleMerges(
+async function countRepositoriesWithMerges(
   client: ReturnType<typeof createGitHubClient>,
   configuration: Configuration,
   repositories: readonly string[]
 ): Promise<number> {
-  const window = resolveWindow({ defaultDays: configuration.lookback.operational_days, reference: new Date() });
-  let total = 0;
+  let withMerges = 0;
 
   for (const repository of repositories) {
     try {
-      const data = await client.graphql<{ repository?: { pullRequests?: { nodes?: ({ mergedAt?: string } | null)[] } } | null }>(mergedPullRequestQuery(), {
+      const data = await client.graphql<{ repository?: { pullRequests?: { totalCount?: number } | null } | null }>(mergedPullRequestCountQuery(), {
         organization: configuration.organization,
-        repository,
-        cursor: null
+        repository
       });
-      const nodes = data.repository?.pullRequests?.nodes ?? [];
-      if (nodes.length === 0) {
+      const total = data.repository?.pullRequests?.totalCount ?? 0;
+      if (total === 0) {
         console.warn(`${repository}: GitHub returned no merged pull requests at all`);
+        continue;
       }
-      total += nodes.filter((node) => {
-        if (node?.mergedAt === undefined) {
-          return false;
-        }
-        const mergedAt = new Date(node.mergedAt);
-        return mergedAt >= window.startsAt && mergedAt < window.endsAt;
-      }).length;
+      withMerges += 1;
     } catch (error) {
       console.warn(`${repository}: reading merged pull requests failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  return total;
+  return withMerges;
 }
 
 /**
@@ -935,7 +1060,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       case "collect-org":
         return await onlyCollector(parsed.command, () => runCollectOrg(configuration, parsed));
       case "doctor":
-        return await runDoctor(configuration);
+        return await runDoctor(configuration, parsed);
       case "prune":
         return await onlyCollector(parsed.command, () => runPrune(parsed));
       case "evidence":

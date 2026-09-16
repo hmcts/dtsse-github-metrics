@@ -78,12 +78,18 @@ cohort:
     - public
     - internal
     - private
-  # 90 days, and from 2026-09-14 this decides what `collect` WALKS rather than who is in the estate. The
-  # merge walks are most of a run's 15,500 calls, so it is still the cheapest lever on cost — it walks
-  # roughly 1,230 of the estate's 1,880 — but the 650 it skips are now REPORTED, carrying the assurance
+  # 90 days, and from 2026-09-14 this decides what `collect` WALKS rather than who is in the estate. It walks
+  # roughly 1,230 of the estate's 1,880, and the 650 it skips are now REPORTED, carrying the assurance
   # answers that need no merge history and no behaviour figures at all. Dropping them outright hid exactly
   # the repositories the assurance criteria are about: 334 unarchived repositories here are a year or more
   # stale, and not one of them had ever been collected.
+  #
+  # THIS IS NO LONGER THE CHEAPEST LEVER ON COST, and the claim that it was aimed a reader at the wrong half
+  # of the run. The merge walks were most of a run's calls before the alert families were added; the
+  # architecture review of 2026-09-15 measured a steady-state run at roughly 11,000 calls and found the spend
+  # almost entirely in per-repository REST alert and gate reads. Those are read for the whole estate at once
+  # now, so narrowing this window buys a fraction of what it used to. Narrow it because a stale repository has
+  # no ways of working worth reporting, not to save calls.
   active_within_days: 90
   # How long since the last push before a repository reads "should be archived" on /repositories. A wider,
   # separate window from the one above: at six months a repository has no behaviour collected AND is not

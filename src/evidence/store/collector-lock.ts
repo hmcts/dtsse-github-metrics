@@ -11,9 +11,10 @@ import { resolveDatabaseUrl } from "./database-url.ts";
  *
  * What two concurrent collectors actually do, which is worse than duplicated work:
  *
- *   - The GitHub budget is per INSTALLATION. A full `collect` is about 15,500 calls against 15,000 core and
- *     12,500 GraphQL an hour, so one run fits and two do not. Both degrade to partial and the estate ends up
- *     less well collected than if one had run alone.
+ *   - The GitHub budget is per INSTALLATION, against 15,000 core and 12,500 GraphQL an hour. This used to be
+ *     the decisive reason: a full `collect` was about 15,500 calls, so one run fitted and two did not. It is
+ *     the WEAKEST reason now — the estate-wide reads brought a run well inside one hour's budget, so two would
+ *     no longer exhaust it. The two below are unaffected by that and are on their own sufficient.
  *   - Each run stamps `observedAt` at its own start instant. If the later-starting run commits first, the other
  *     tries to close a row at an instant BEFORE it was observed, which `<table>_interval_ordered` rejects.
  *   - The live-row partial unique indexes catch two writers inserting one key — as a unique violation, which

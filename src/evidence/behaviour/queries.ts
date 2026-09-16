@@ -80,6 +80,33 @@ export function mergedPullRequestQuery(): string {
     `;
 }
 
+/**
+ * Whether the credential can see this repository's merged pull requests AT ALL, and nothing else.
+ *
+ * `doctor`'s question, and it is a different question from the collection's. The check exists because GitHub
+ * answers a request it will not serve with an EMPTY RESULT rather than a refusal, so a credential that reads
+ * every repository and sees none of their pull requests produces a report full of zeroes and a run that claims
+ * to have succeeded. Answering that needs one number, not a walk.
+ *
+ * THE CHEAPEST SHAPE THAT ANSWERS IT. `mergedPullRequestQuery` is the heaviest document in this codebase — 25
+ * pull requests, each with up to 50 reviews and 50 rollup contexts — and `doctor` was issuing one per cohort
+ * repository for a boolean, which is why the command that calls itself "the cheap check somebody runs first"
+ * cost more than a collection. `totalCount` beside `first: 1` is one node and one integer.
+ *
+ * ALL-TIME rather than windowed, deliberately, and it is the better answer here: nothing can be seen inside a
+ * window that cannot be seen at all, and a repository whose last merge predates the window is not a credential
+ * fault. The count is a capability check and is never reported as a figure.
+ */
+export function mergedPullRequestCountQuery(): string {
+  return `
+        query MergedPullRequestCount($organization: String!, $repository: String!) {
+          repository(owner: $organization, name: $repository) {
+            pullRequests(states: MERGED, first: 1) { totalCount }
+          }
+        }
+    `;
+}
+
 /** The focused query used only for an overflowing status-check rollup. */
 export function checkQuery(): string {
   return `

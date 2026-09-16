@@ -144,9 +144,9 @@ describe("selectCohort", () => {
     expect(selectCohort(repositories, [], policyOf({ activeWithinDays: 90 }), REFERENCE).map((entry) => entry.repository)).toEqual(["busy", "dormant"]);
   });
 
-  it("should mark behaviour collectable inside the window and not outside it, which is the cost control", () => {
-    // What the window decides now. The merge walks are most of a run's 15,500 calls, so admitting the stale
-    // repositories to the report had to leave the walk exactly as wide as it was.
+  it("should mark behaviour collectable inside the window and not outside it, which is what it decides", () => {
+    // What the window decides now: admitting the stale repositories to the report had to leave the walk exactly
+    // as wide as it was.
     const repositories = [repository("busy", { pushedAt: daysBefore(10) }), repository("dormant", { pushedAt: daysBefore(400) })];
 
     const collectable = new Map(

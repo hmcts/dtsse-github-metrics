@@ -59,6 +59,13 @@ export const FEATURE_DISABLED_PHRASES: readonly string[] = [
 export interface BodyFailure {
   summary: string;
   status: number;
+  /**
+   * Each alias GitHub named an error at, as `TYPE: message`, for a caller consuming the rest of the answer.
+   *
+   * Built HERE rather than by the caller because the errors are already parsed at this point: reading the body a
+   * second time to key them by alias would be two parses that could disagree about what GitHub said.
+   */
+  byAlias: Map<string, string>;
 }
 
 /** Whether GitHub's own message says a feature is off rather than that access was refused. */
@@ -174,7 +181,39 @@ export function graphqlBodyFailure(status: number, body: string): BodyFailure | 
     return undefined;
   }
   const refused = graphqlErrorReason(errors) === AvailabilityReason.PermissionDenied;
-  return { summary: graphqlErrorSummary(errors), status: refused ? 403 : status };
+  return { summary: graphqlErrorSummary(errors), status: refused ? 403 : status, byAlias: graphqlErrorsByAlias(errors) };
+}
+
+/**
+ * Which ALIAS each GraphQL error names, as `TYPE: message`.
+ *
+ * GitHub reports one error per node it would not answer for, and each carries the `path` it failed at — so an
+ * aliased document naming 50 repositories says WHICH of them it refused rather than only that it refused one.
+ * A caller consuming the 49 populated aliases needs exactly this to report the fiftieth as a refusal rather
+ * than as an absence: `FORBIDDEN` and a repository that was archived and transferred are different answers,
+ * and a reader who is told only that the node was null cannot tell which they got.
+ *
+ * ONLY THE FIRST PATH SEGMENT, because that is the alias. `["a17", "object"]` is a failure inside `a17` and is
+ * still that repository's answer; keying on the whole path would file it under a name no caller asked for.
+ *
+ * FIRST APPEARANCE WINS where several errors name one alias, matching `graphqlErrorSummary`'s rule: the first
+ * reason is the one that describes the node, and appending later ones would grow a log line without adding an
+ * answer.
+ */
+export function graphqlErrorsByAlias(errors: readonly unknown[]): Map<string, string> {
+  const byAlias = new Map<string, string>();
+  for (const error of errors) {
+    if (typeof error !== "object" || error === null) {
+      continue;
+    }
+    const path = (error as { path?: unknown }).path;
+    const alias = Array.isArray(path) ? path[0] : undefined;
+    if (typeof alias !== "string" || byAlias.has(alias)) {
+      continue;
+    }
+    byAlias.set(alias, `${String((error as { type?: unknown }).type ?? "UNKNOWN")}: ${String((error as { message?: unknown }).message ?? "")}`);
+  }
+  return byAlias;
 }
 
 /** The `errors` array of a GraphQL body, or `undefined` when there is not one to read. */

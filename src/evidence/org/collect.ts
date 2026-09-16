@@ -1,5 +1,6 @@
 import { isHumanAccount } from "../behaviour/analysis.ts";
 import { parseResponse } from "../behaviour/responses.ts";
+import { AliasAnswer, readAliasedBatch, reaskable } from "../github/aliased-batch.ts";
 import type { GitHubClient } from "../github/client.ts";
 import { type CodeownersOwners, mergeCodeowners, parseCodeowners } from "./codeowners.ts";
 import {
@@ -444,13 +445,16 @@ export async function collectCodeowners(
 }
 
 /**
- * Reads one batch, and on failure re-reads its repositories ONE AT A TIME.
+ * Reads one batch, CONSUMING THE ALIASES GITHUB ANSWERED and asking again only for the ones it did not.
  *
  * A batch is 25 repositories in one document, and GitHub answers a query naming one repository nobody may see
- * with errors beside partial data — which the client raises. Without the retry, one unreadable repository would
- * refuse the twenty-four beside it, and a whole batch would be recorded as "nobody could look" on the evidence
- * of a single archived-and-transferred name. The retry costs one extra pass over a failing batch and only ever
- * runs once per batch, because a batch of one does not split further.
+ * with HTTP 200, the aliases it could resolve, a `null` for the one it could not and an error saying why. This
+ * used to treat the whole response as a failure and re-read all 25 — so one archived-and-transferred name cost
+ * the twenty-four beside it a call each. The 24 are read from the response now, and the re-ask names only the
+ * repository that went unanswered.
+ *
+ * The re-ask still runs at most once per batch: `reaskable` returns nothing for a batch whose every alias went
+ * unanswered, so a batch of one never splits further.
  */
 async function readOwnershipBatch(client: GitHubClient, organization: string, batch: string[], facts: Map<string, CodeownersFact>): Promise<void> {
   if (batch.length === 0) {
@@ -462,28 +466,69 @@ async function readOwnershipBatch(client: GitHubClient, organization: string, ba
   }
 
   let body: Record<string, unknown>;
+  let byAlias: ReadonlyMap<string, string>;
   try {
-    const data: unknown = await client.graphql(ownershipFilesQuery(batch.length), variables);
-    body = parseResponse(ownershipFilesSchema, data, "CODEOWNERS data");
-  } catch (error) {
-    if (batch.length > 1) {
-      console.warn(`Could not read CODEOWNERS for a batch of ${batch.length} repositories, re-reading them one at a time: ${reason(error)}`);
-      for (const name of batch) {
-        await readOwnershipBatch(client, organization, [name], facts);
-      }
+    // Typed as a record rather than `unknown`, so `data === undefined` narrows to the branch that carries a
+    // failure: `unknown` includes `undefined`, which would make the union undiscriminatable.
+    const answer = await client.graphqlPartial<Record<string, unknown>>(ownershipFilesQuery(batch.length), variables);
+    if (answer.data === undefined) {
+      // Errors and NO data: GitHub answered about nothing. Split exactly as it always was —
+      // `MAX_NODE_LIMIT_EXCEEDED` takes this shape and is answerable one repository at a time, and this is not
+      // the case the cost bug was about.
+      await reReadOneAtATime(client, organization, batch, facts, answer.failure.summary);
       return;
     }
-    const only = batch[0] as string;
-    console.warn(`Could not read CODEOWNERS for ${organization}/${only}: ${reason(error)}`);
-    facts.set(only, refused(only, reason(error)));
+    body = parseResponse(ownershipFilesSchema, answer.data, "CODEOWNERS data");
+    byAlias = answer.failure?.byAlias ?? new Map();
+  } catch (error) {
+    // NOTHING ARRIVED, so nothing is consumed and the batch is split, unchanged. A document too complex for
+    // GitHub to serve can succeed one repository at a time.
+    await reReadOneAtATime(client, organization, batch, facts, reason(error));
     return;
   }
 
   // Positional: `f<n>` is the answer for `$r<n>`, which `readOwnershipRepository` then proves against the name
   // GitHub echoed back.
-  for (const [index, name] of batch.entries()) {
-    readOwnershipRepository(organization, name, body[`f${index}`], facts);
+  const entries = readAliasedBatch("f", batch, body, byAlias);
+  for (const entry of entries) {
+    if (entry.answer === AliasAnswer.Answered) {
+      readOwnershipRepository(organization, entry.repository, entry.value, facts);
+      continue;
+    }
+    // REFUSED, NOT ABSENT, and now with GitHub's own reason attached. An absence in this map means no
+    // CODEOWNERS file was found, so a repository GitHub would not answer for must never fall into it.
+    facts.set(entry.repository, refused(entry.repository, entry.refusal as string));
   }
+
+  for (const name of reaskable(entries)) {
+    await readOwnershipBatch(client, organization, [name], facts);
+  }
+}
+
+/**
+ * Re-reads a batch NOTHING was answered for, one repository at a time.
+ *
+ * The behaviour a whole-batch failure has always had, kept for the failures that are still whole-batch ones. A
+ * batch of one takes the second branch and records the refusal rather than splitting further, so this runs at
+ * most one extra pass over a failing batch.
+ */
+async function reReadOneAtATime(
+  client: GitHubClient,
+  organization: string,
+  batch: readonly string[],
+  facts: Map<string, CodeownersFact>,
+  detail: string
+): Promise<void> {
+  if (batch.length > 1) {
+    console.warn(`Could not read CODEOWNERS for a batch of ${batch.length} repositories, re-reading them one at a time: ${detail}`);
+    for (const name of batch) {
+      await readOwnershipBatch(client, organization, [name], facts);
+    }
+    return;
+  }
+  const only = batch[0] as string;
+  console.warn(`Could not read CODEOWNERS for ${organization}/${only}: ${detail}`);
+  facts.set(only, refused(only, detail));
 }
 
 /**
@@ -493,15 +538,12 @@ async function readOwnershipBatch(client: GitHubClient, organization: string, ba
  * paths are dropped with it. Half a CODEOWNERS file parses perfectly and resolves to the owners named in its
  * first half, so a truncated read does not fail — it answers, confidently and wrongly, and a subset naming one
  * team would fire the `codeowners-sole` rung for a repository whose file names four.
+ *
+ * ONLY EVER GIVEN A NODE GITHUB NAMED. An alias that came back `null`, and one the response did not carry at
+ * all, are both recorded as refusals by the caller in GitHub's own words — they are answers about the response
+ * rather than about the repository's file.
  */
 function readOwnershipRepository(organization: string, repository: string, value: unknown, facts: Map<string, CodeownersFact>): void {
-  if (value == null) {
-    // The alias carried no repository: with the batch itself readable, this is GitHub saying it will not name
-    // this one. Refused, not absent.
-    facts.set(repository, refused(repository, "GitHub named no repository for the alias it was asked under"));
-    return;
-  }
-
   let entry: ReturnType<typeof ownershipEntry>;
   try {
     entry = ownershipEntry(value);
