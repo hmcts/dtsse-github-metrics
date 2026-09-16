@@ -1,7 +1,14 @@
+# NO `container_name`, deliberately. Compose names a container after its project, which is the DIRECTORY it was
+# brought up from, so one fixed name collided across checkouts: a git worktree running `yarn deps:up` was told
+# the name was already in use by the main checkout's container and got no database at all. Nothing reads the
+# name — `test/integration/setup.ts` and every caller of `resolveDatabaseUrl` reach it over 5432 — so the
+# generated name costs nothing, and each checkout brings up its own.
+#
+# The PORT is still one binding. Two checkouts cannot both serve 5432, which is correct: they would be the same
+# `DATABASE_URL` and the second one up would silently be the database the first one's migrations ran into.
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: dtsse-github-metrics-postgres
     environment:
       POSTGRES_DB: github_metrics
       POSTGRES_USER: hmcts

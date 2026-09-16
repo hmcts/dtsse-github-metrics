@@ -30,6 +30,36 @@ yarn db:migrate:dev
 yarn dev                     # http://localhost:3000
 ```
 
+### The deployed secrets are opt-in
+
+**`yarn dev` and `yarn cli` are the two commands here that can reach production.** Both load the properties
+volume, which resolves the `dtsse-aat` Key Vault — the credentials for the production database and for the
+collector's GitHub App. There is one estate and no non-production copy of it, so a laptop that reads that vault
+is attached to the same 1,890 repositories the dashboard serves.
+
+Neither reads it unless it is allowed to: `NODE_ENV=production`, which the runtime image sets and a laptop does
+not, or `USE_KEY_VAULT=true` set on purpose. Local runs get the compose defaults instead, so the failure mode is
+an empty dashboard rather than a silent attachment to production.
+
+Every start-up prints the database it resolved, host and database name and no credential:
+
+```
+database: localhost:5432/github_metrics
+```
+
+Read that line before believing a local run is local. Reaching AAT is still one variable away, and is then a
+decision somebody made:
+
+```bash
+USE_KEY_VAULT=true yarn dev
+```
+
+Two things made the old behaviour wider than it looked, and are the reason the guard covers both commands.
+`getPropertiesVolumeSecrets` finds `keyVaults:` at any depth of the chart, so locally it merged the web pod's
+secret list **with the collector's** — handing a dev server the GitHub App credentials the web pod deliberately
+does not hold in production. And `yarn cli` is not a reader: `collect` writes to whatever database it resolved,
+and `prune` deletes from it.
+
 Nothing renders until something has been collected. `metrics.yaml` is the POLICY this deployment reports under —
 which repositories count, and the thresholds they are graded against — and `metrics.example.yaml` documents every
 option beside it. The estate itself comes from the graph, so `collect-org` runs first:
