@@ -4,7 +4,7 @@ import clsx from "clsx";
 import { Check } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
 import { type Align, SortHeader } from "@/components/SortHeader";
@@ -163,7 +163,23 @@ const COLUMNS: readonly Column[] = [
  */
 const DEFAULT_COLUMN = COLUMNS.find((entry) => entry.key === "pushed") as Column;
 
-export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRow[]; weeks: number }) {
+export function RepositoriesTable({
+  rows,
+  weeks,
+  action
+}: {
+  rows: readonly RepositoryRow[];
+  weeks: number;
+  /**
+   * A control that belongs with the filters rather than with the page, drawn at the far end of their row.
+   *
+   * A SLOT AND NOT A COMPONENT, because a team's page renders this same table and must not get an estate
+   * export: the caller decides there is one by passing something, and the team page passes nothing. The
+   * export needs the owning teams' contributors and the span's own words, both of which the page already
+   * holds and neither of which this table has any other use for.
+   */
+  action?: ReactNode;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParameters = useSearchParams();
@@ -208,48 +224,54 @@ export function RepositoriesTable({ rows, weeks }: { rows: readonly RepositoryRo
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Repository filters">
-        {/* The readiness bar's shape before the donuts replaced it: a dot, the word, and a count in
+      {/* The toggles keep their own group; `action` sits outside it and hard right, so what the reader hears
+          announced as "Repository filters" is still four toggles and nothing else. `justify-between` rather than
+          `ml-auto` on the action, so on a narrow viewport the row wraps instead of the button being pushed off. */}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Repository filters">
+          {/* The readiness bar's shape before the donuts replaced it: a dot, the word, and a count in
             `tabular-nums` so the figure does not shift as it changes. `aria-pressed` rather than a
             chip with an ×, because this is a state a reader turns on and off and not one they
             arrived at by clicking a slice. */}
-        <button
-          type="button"
-          onClick={toggleProduction}
-          aria-pressed={production}
-          className={clsx(
-            "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
-            "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
-            production ? PRODUCTION_TOGGLE_ACTIVE : PRODUCTION_TOGGLE_INACTIVE
-          )}
-        >
-          <span className={clsx("shrink-0 w-2 h-2 rounded-full", PRODUCTION_DOT)} aria-hidden="true" />
-          {PRODUCTION_LABEL}
-          <ToggleTick on={production} />
-          <span className="tabular-nums text-slate-500">{produced}</span>
-        </button>
+          <button
+            type="button"
+            onClick={toggleProduction}
+            aria-pressed={production}
+            className={clsx(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+              "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
+              production ? PRODUCTION_TOGGLE_ACTIVE : PRODUCTION_TOGGLE_INACTIVE
+            )}
+          >
+            <span className={clsx("shrink-0 w-2 h-2 rounded-full", PRODUCTION_DOT)} aria-hidden="true" />
+            {PRODUCTION_LABEL}
+            <ToggleTick on={production} />
+            <span className="tabular-nums text-slate-500">{produced}</span>
+          </button>
 
-        {/* THREE INDEPENDENT TOGGLES rather than one tri-state, so "public and internal but not private" is
+          {/* THREE INDEPENDENT TOGGLES rather than one tri-state, so "public and internal but not private" is
             expressible — which is the obvious question for a page about coding in the open. They read as the
             Production toggle does, `aria-pressed` and no ×, because each is a state a reader turns on and off
             rather than a filter they arrived at by clicking a slice. */}
-        {VISIBILITIES.map((visibility) => (
-          <button
-            key={visibility}
-            type="button"
-            onClick={() => toggleVisibility(visibility)}
-            aria-pressed={visibilities.has(visibility)}
-            className={clsx(
-              "flex items-center gap-1.5 rounded px-2 py-1 text-xs capitalize transition-colors",
-              "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
-              visibilities.has(visibility) ? "bg-slate-700 text-slate-100" : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
-            )}
-          >
-            {visibility}
-            <ToggleTick on={visibilities.has(visibility)} />
-            <span className="tabular-nums text-slate-500">{rows.filter((row) => row.visibility === visibility).length}</span>
-          </button>
-        ))}
+          {VISIBILITIES.map((visibility) => (
+            <button
+              key={visibility}
+              type="button"
+              onClick={() => toggleVisibility(visibility)}
+              aria-pressed={visibilities.has(visibility)}
+              className={clsx(
+                "flex items-center gap-1.5 rounded px-2 py-1 text-xs capitalize transition-colors",
+                "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
+                visibilities.has(visibility) ? "bg-slate-700 text-slate-100" : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
+              )}
+            >
+              {visibility}
+              <ToggleTick on={visibilities.has(visibility)} />
+              <span className="tabular-nums text-slate-500">{rows.filter((row) => row.visibility === visibility).length}</span>
+            </button>
+          ))}
+        </div>
+        {action}
       </div>
 
       {ordered.length === 0 ? (

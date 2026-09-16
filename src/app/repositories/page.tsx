@@ -81,17 +81,7 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
       <Section
         heading="Repositories"
         detail={`${window}, unarchived only, most recently pushed first`}
-        // THE EXPORT SITS BESIDE THE FILTER BOX because it is scoped BY it: what the button hands the
-        // reader is what the term and the toggles have left, so the two controls belong in one place.
-        // It is on this page and not on a team's, whose repositories table is the same component: the
-        // owning teams' contributors are the export's second column and a team page already lists its
-        // own people in a section of their own.
-        action={
-          <div className="flex flex-wrap items-center gap-2">
-            <FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />
-            <RepositoriesExport rows={repositories} teamContributors={teamContributors} window={window} />
-          </div>
-        }
+        action={<FilterSearchBox parameter={TERM_PARAMETER} placeholder="Filter by repository or team…" />}
       >
         {repositories.length === 0 ? (
           <EmptyState
@@ -99,7 +89,16 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
             detail="Add repositories to the configuration the service was started with."
           />
         ) : (
-          <RepositoriesTable rows={repositories} weeks={weeks} />
+          // THE EXPORT SITS AT THE END OF THE FILTER ROW because it is scoped BY those controls: what the
+          // button hands the reader is what the term and the toggles have left, so it reads beside the state
+          // it reflects rather than up in the section heading. Passed as a slot, so a team's page — the same
+          // table — renders no export: the owning teams' contributors are its second column, and a team page
+          // already lists its own people in a section of their own.
+          <RepositoriesTable
+            rows={repositories}
+            weeks={weeks}
+            action={<RepositoriesExport rows={repositories} teamContributors={teamContributors} window={window} />}
+          />
         )}
       </Section>
     </div>

@@ -868,3 +868,43 @@ function toggle(): HTMLElement {
 function announced(label: string): string | null {
   return headerCell(label).getAttribute("aria-sort");
 }
+
+/**
+ * WHERE A CONTROL HANDED TO THE TABLE IS DRAWN, which nothing pinned before — and is how the export came to sit
+ * up in the section heading, a component away from the filters whose state it reflects, without a test noticing.
+ *
+ * The position is the assertion, not the presence: it belongs at the end of the filter row because that is the
+ * state it exports, and it belongs OUTSIDE the `Repository filters` group so what a screen reader hears announced
+ * as the filters is still four toggles and nothing else.
+ */
+describe("RepositoriesTable action slot", () => {
+  function mountWithAction() {
+    return render(<RepositoriesTable rows={ROWS} weeks={12} action={<button type="button">Export CSV</button>} />);
+  }
+
+  it("draws the action in the filter row, after the toggles", () => {
+    mountWithAction();
+    const filters = screen.getByRole("group", { name: "Repository filters" });
+    const action = screen.getByRole("button", { name: "Export CSV" });
+
+    expect(filters.parentElement).toBe(action.parentElement);
+    // `compareDocumentPosition` rather than an index, so this states "after the toggles" and not "in slot two".
+    expect(filters.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps the action out of the filters group, so the group is still the toggles alone", () => {
+    mountWithAction();
+    const filters = screen.getByRole("group", { name: "Repository filters" });
+
+    expect(within(filters).queryByRole("button", { name: "Export CSV" })).toBeNull();
+    // Production plus the three visibilities, and nothing else with a pressed state.
+    expect(within(filters).getAllByRole("button")).toHaveLength(4);
+  });
+
+  it("renders no action where none is given, which is how a team's page gets no estate export", () => {
+    mount();
+
+    expect(screen.queryByRole("button", { name: "Export CSV" })).toBeNull();
+    expect(within(screen.getByRole("group", { name: "Repository filters" })).getAllByRole("button")).toHaveLength(4);
+  });
+});
