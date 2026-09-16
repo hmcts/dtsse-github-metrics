@@ -114,9 +114,11 @@ export async function cacheDirectCommitFacts(coverage: SourceCoverage, facts: re
 /**
  * Cached merged pull requests for one window, in a stable order.
  *
- * Ordered by `(mergedAt, identifier)` rather than by `mergedAt` alone: shard boundaries can produce two
- * merges at the same instant, and an unstable order there would make two reports of the same window
- * differ. Reading stamps the coverage series as used, so a window a report still reads is not pruned.
+ * Ordered by `(mergedAt, identifier)` rather than by `mergedAt` alone: `mergedAt` is not unique — two pull
+ * requests merged in the same second are ordinary, and a merge queue makes them likely — so `mergedAt` alone
+ * leaves the database free to return ties in any order, which would make two reports of one window differ
+ * with nothing having changed. Reading stamps the coverage series as used, so a window a report still reads
+ * is not pruned.
  */
 export async function loadCachedPullRequestFacts(key: CoverageKey, startsAt: Date, endsAt: Date): Promise<unknown[]> {
   try {

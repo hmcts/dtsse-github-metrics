@@ -182,7 +182,7 @@ describe("collectMergedPullRequests", () => {
     expect(error.message).toMatch(/omitted the repository/);
   });
 
-  it("should exclude a merge outside the half-open window even though the shard range is inclusive", async () => {
+  it("should exclude a merge at the window's exclusive end when the walk itself returned it", async () => {
     const { fetch } = replying(merged([pullRequestNode({ mergedAt: "2026-08-31T00:00:00Z" })]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
@@ -190,9 +190,12 @@ describe("collectMergedPullRequests", () => {
     expect(facts).toEqual([]);
   });
 
-  it("should deduplicate a merge two overlapping shards both returned", async () => {
-    const onBoundary = pullRequestNode({ mergedAt: "2026-06-09T00:00:00Z" });
-    const { fetch } = replying(merged([onBoundary]), merged([onBoundary]), merged([]), merged([]));
+  it("should deduplicate a merge two pages of the walk both returned", async () => {
+    // A cursor walk can hand back a node it has already given: anything merged while the walk is in flight
+    // reorders the `updatedAt` ordering the pages are cut from. The first page must therefore claim another,
+    // or the walk stops before the duplicate is ever offered and this asserts nothing.
+    const returnedTwice = pullRequestNode({ mergedAt: "2026-06-09T00:00:00Z" });
+    const { fetch } = replying(merged([returnedTwice], { pageInfo: { hasNextPage: true, endCursor: "page-one" } }), merged([returnedTwice]));
 
     const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-05-10Z"), new Date("2026-08-08Z"), TRACEABILITY);
 

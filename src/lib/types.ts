@@ -564,15 +564,25 @@ export interface OverviewSummary {
  * block carries a reason instead of alerts. None is zero by default — an unprotected default branch is
  * the one thing that reads as a real `0`, because the gate was read and it requires nothing.
  *
- * SEVEN OF THESE ARE NEVER SENT BY THIS SERVICE and are kept on the contract rather than deleted:
+ * SEVEN OF THESE ARE NEITHER SENT NOR READ, and are kept on the contract rather than deleted:
  * `currently_open`, `stale_open`, `finding_occurrences`, `sonar_coverage`, `sonar_reported`,
  * `sonar_security_rating` and `sonar_security_issues`. The report layer emits none of them, and the
  * reason is the same in each case: the open pull-request summary and the practice findings have no
  * producer at all, and the Sonar layer under `src/evidence/sonar/` is written but reached by nothing —
  * see `sonar/resolve.ts`, which states what would reach it. So every column keyed on one rendered a dash
- * for the whole estate. The `/repositories` columns that read them have gone; the fields stay because
- * the components on a repository's own page read them through `lib/repository.ts`, which makes these a
- * contract waiting on an assembly rather than dead weight.
+ * for the whole estate, and those `/repositories` columns have gone.
+ *
+ * NOTHING READS THESE SEVEN OFF A `RepositoryRow`, and the near-miss is worth naming because it has been
+ * mistaken for a reader twice. `lib/repository.ts` does render `currently_open` and `stale_open` — but off
+ * `OpenPullRequestSummary`, a DIFFERENT interface where the two are required rather than optional, reached
+ * through `OpenPullRequestReport.summary` and never through a row. It renders coverage and the security
+ * measures too, off `SonarMeasures`, whose fields are spelled `coverage`, `security_rating` and
+ * `security_issues` — not the `sonar_`-prefixed ones here. Same words, different contracts. Deleting a
+ * field from this list will not break a render, so do not use a passing build as evidence that one is read.
+ *
+ * What keeps them is that each is the display half of a layer whose collection half is missing, so the work
+ * to finish is an assembly rather than a contract change. That is a decision to revisit, not a fact: if the
+ * Sonar layer is dropped rather than wired, these go with it.
  *
  * `codeowners_files` DID go, along with `codeownersPresent` in `lib/rows.ts`. It was in the same state and
  * differs in one way that matters: nothing anywhere else reads it, and `owner_kind` answers the question
