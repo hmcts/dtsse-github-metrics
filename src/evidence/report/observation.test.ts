@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { sample, summarise } from "../../lib/format.ts";
 import { percentile as p75Tail } from "../../lib/metrics.ts";
-import type { DistributionObservation as ContractDistribution, RateObservation as ContractRate } from "../../lib/types.ts";
+import type { DistributionObservation as ContractDistribution, Observation as ContractObservation, RateObservation as ContractRate } from "../../lib/types.ts";
 import { mergeCycleTime, pullRequestSize, reviewDepth } from "../behaviour/metrics.ts";
 import { type DistributionObservation, type Merges, ObservationStatus, type PullRequestFact } from "../domain/facts.ts";
 import { contractObservation } from "./observation.ts";
@@ -70,14 +70,20 @@ const CONTRACT_DISTRIBUTION_FIELDS: Record<keyof ContractDistribution, true> = {
 const CONTRACT_RATE_FIELDS: Record<keyof ContractRate, true> = { status: true, numerator: true, denominator: true };
 
 /**
- * The emitted object as the contract's own type.
+ * The emitted observation narrowed to the distribution arm, which is what the formatters below take.
  *
- * The one cast in this file, and it is the cast `src/lib/api.ts` makes on every read — made here, where the case
- * above it has just asserted the key set against `CONTRACT_DISTRIBUTION_FIELDS`. So the formatters below are handed
- * an object the contract's type describes rather than one that merely claims to be.
+ * NARROWED AND NOT CAST, from VIBE-568. `contractObservation` declares the contract's own `Observation` now, so the
+ * union arrives typed and `"unit" in` — the discriminator every reader of this contract uses — picks the arm. It was
+ * a double cast through `Record<string, unknown>`, which is the cast `src/lib/api.ts` used to make on every read: it
+ * would have accepted the DOMAIN's identically-named `DistributionObservation` without a word, which is the one
+ * mistake this file exists to catch. Throwing on a rate is the honest branch — no case here passes one, and a case
+ * that started to would be asserting formatters against a shape they do not take.
  */
-function asContract(emitted: Record<string, unknown>): ContractDistribution {
-  return emitted as unknown as ContractDistribution;
+function asContract(emitted: ContractObservation): ContractDistribution {
+  if (!("unit" in emitted)) {
+    throw new TypeError("a rate was handed to a distribution formatter, which is a fault in the case rather than in the translation");
+  }
+  return emitted;
 }
 
 describe("contractObservation", () => {

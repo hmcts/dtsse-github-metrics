@@ -97,12 +97,17 @@ export function builtSpanCount(): number {
  * value one could carry is an unbounded map keyed by whatever a reader types; refusing to hold it costs a
  * rebuild on a span no page links to and keeps the map the size of the selector.
  */
-export async function builtReport(organization: string, weeks: number, build: () => Promise<unknown[]>, kind: ReportKind = "repositories"): Promise<unknown[]> {
+export async function builtReport<RowT>(organization: string, weeks: number, build: () => Promise<RowT[]>, kind: ReportKind = "repositories"): Promise<RowT[]> {
   const revision = await currentRevision();
   const key = keyOf(organization, kind, weeks);
   const held = entries.get(key);
   if (held !== undefined && held.revision === revision) {
-    return await held.built;
+    // THE ONE CAST IN THIS FILE, and it is what a heterogeneous map costs. `entries` holds four different reports
+    // under four `ReportKind`s in one map, so the stored promise cannot be typed as the caller's row: what ties a
+    // key to a shape is `keyOf`, which every caller reaches through this function alone. A caller asking for a kind
+    // under the wrong type is the failure this cannot catch, and there are four call sites, all in
+    // `report/repositories.ts`, each passing its own literal.
+    return (await held.built) as RowT[];
   }
 
   const built = build().catch((error: unknown) => {

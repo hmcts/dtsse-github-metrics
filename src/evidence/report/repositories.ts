@@ -1,4 +1,5 @@
 import "server-only";
+import type * as contract from "../../lib/types.ts";
 import { type ReadinessPolicy, readinessPolicy } from "../assessment/assessment.ts";
 import {
   botAccounts,
@@ -39,6 +40,7 @@ import { declaredProduction, type ProductionLayers, productionOverrides, reporte
 import { storedRepositoryState } from "../store/repository-state.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
+import { contractAssessment } from "./assessment.ts";
 import { builtReport, CACHEABLE_SPANS, forgetBuiltReports } from "./cache.ts";
 import { contractObservation } from "./observation.ts";
 
@@ -46,9 +48,23 @@ import { contractObservation } from "./observation.ts";
  * Assembling what the dashboard reads. Ported from `metrics.evidence` and the report-building half of
  * `metrics.service`.
  *
- * Every shape here is `src/lib/types.ts` verbatim, in snake_case, because that file is the UI's contract and was
- * carried over unchanged. `stripAbsent` is applied on the way out so a `null` from Prisma or a jsonb round trip
- * can never reach a component that reads the field as optional.
+ * EVERY SHAPE HERE IS DECLARED AS THE CONTRACT'S OWN TYPE, imported as `contract` and never by bare name. The
+ * contract is `src/lib/types.ts` and it re-declares nine domain type names identically — `MergeGateEvidence`,
+ * `SecurityAlertEvidence`, `Observation`, `SonarRating`, `ReadinessLabel`, `MaintenanceEvidence`, `CodeownersFile`,
+ * `MaintenanceWindowStatus`, `SonarQualityGate` — plus the latent `TrendMetric`, `TrendDelta`, `TrendThroughput`
+ * and `DeltaBasis`. Handing a domain object to a parameter of the same name type-checked cleanly and then threw at
+ * `.map`, or rendered `"undefined samples"`; the namespace makes each crossing read `contract.MergeGateEvidence`, so
+ * the two shapes cannot be spelled the same way and cannot be confused for one another.
+ *
+ * THE IMPORT IS TYPE-ONLY AND THE DEPENDENCY GOES ONE WAY. The report layer imports the contract; the contract
+ * imports nothing, which is its own stated rule. `import type` is erased, so there is no runtime edge, no bundling
+ * consequence and nothing for `tsconfig.cli.json` to resolve — which is also why the specifier is relative: nothing
+ * under `src/evidence` may use the `@/*` alias, since the CLI output is run by Node with no rewriter.
+ *
+ * `stripAbsent` is applied on the way out so a `null` from Prisma or a jsonb round trip can never reach a component
+ * that reads the field as optional. It is the runtime half; the declarations above are the compile-time half, and
+ * `test/integration/report-rows.test.ts` asserts the emitted key sets against the contract for the places a
+ * declaration cannot reach.
  */
 
 /**
@@ -85,14 +101,22 @@ export async function resolveReportWindow(
 }
 
 /** The spans on offer, and what the collection behind them looks like. */
-export async function windowOptions(configuration: Configuration, reference = new Date()): Promise<unknown> {
+export async function windowOptions(configuration: Configuration, reference = new Date()): Promise<contract.WindowOptions> {
   const collectedThrough = await prevailingCachedCoverage(
     configuration.organization,
     EvidenceSource.PullRequests,
     sourceSignature(EvidenceSource.PullRequests)
   );
-  return stripAbsent({
-    options: WEEK_OPTIONS,
+  // `stripAbsent` IS GIVEN THE TYPE EXPLICITLY, here and at every other call in this file that wraps a literal.
+  // Its signature is `<T>(value: T): T`, so left to infer it takes the literal's own shape and hands it back — the
+  // declared return type is then satisfied by a WIDER object, and a key the contract does not name passes silently.
+  // Naming the type argument makes the literal fresh against the contract, which is what runs the excess property
+  // check. This is how `display_name` and the four row figures were found.
+  return stripAbsent<contract.WindowOptions>({
+    // COPIED RATHER THAN HANDED OVER. `WEEK_OPTIONS` is `./cache.ts`'s own list and every caller of this shares
+    // one module scope, so passing the array itself would let a reader sort or splice the cache's key set. The
+    // contract declares a plain `number[]` because that is what a JSON array is, and this is the copy.
+    options: [...WEEK_OPTIONS],
     default: DEFAULT_WEEKS,
     trend_periods: MAXIMUM_TREND_PERIODS,
     collected_through: collectedThrough?.toISOString(),
@@ -121,7 +145,7 @@ function storedGate(payload: unknown): MergeGateReport {
  * family's own `open` that is absent when nobody could read it. That is the same absent-means-unmeasured rule one
  * level down, and it is the level the UI was written to read it at.
  */
-function reportedAlerts(alerts: SecurityAlertEvidence | undefined): Record<string, unknown> {
+function reportedAlerts(alerts: SecurityAlertEvidence | undefined): contract.SecurityAlertEvidence {
   return {
     dependabot: reportedFamily(alerts?.dependabot),
     code_scanning: reportedFamily(alerts?.codeScanning),
@@ -136,7 +160,7 @@ function reportedAlerts(alerts: SecurityAlertEvidence | undefined): Record<strin
  * map throws. An empty object is the honest value for a family with nothing open and for one nobody could read —
  * what separates those two is `open`, which stays absent when it was never measured.
  */
-function reportedFamily(family: OpenAlertCount | undefined): Record<string, unknown> {
+function reportedFamily(family: OpenAlertCount | undefined): contract.OpenAlertCount {
   if (family === undefined) {
     return { by_severity: {}, detail: "the alert families have not been collected" };
   }
@@ -169,7 +193,7 @@ function repositoryRow(
   merges: Merges,
   production: ProductionLayers,
   measured: MeasuredRow
-): Record<string, unknown> {
+): contract.RepositoryRow {
   const policy = readinessPolicy(configuration);
   const teams = entry.owners;
   const ownerKind = entry.ownerKind;
@@ -190,7 +214,7 @@ function repositoryRow(
   const facts = {
     owner_kind: ownerKind,
     pushed_at: entry.pushedAt?.toISOString(),
-    visibility: entry.visibility.toLowerCase(),
+    visibility: reportedVisibility(entry.visibility),
     archived: entry.archived,
     unmaintained: entry.unmaintained,
     assurance: reportedAssurance(entry, state?.payload)
@@ -248,6 +272,21 @@ function repositoryRow(
 }
 
 /**
+ * One repository's visibility, folded to the case the contract compares by, or nothing for a word it does not name.
+ *
+ * NARROWED RATHER THAN CAST, for `medianOf`'s reason. `CohortEntry.visibility` is a `string` because
+ * `org_repositories` stores whatever GitHub answered, and the contract declares three words — so a lower-cased
+ * string is not a `Visibility` and the compiler is right to say so. A fourth visibility GitHub introduces reads as
+ * UNMEASURED here, which is the contract's own rule for a fact nothing could answer: `selectCohort` then leaves the
+ * row out of a visibility filter rather than admitting it under a word no filter offers, and no reader meets a
+ * value its own union does not hold. Casting instead would put that word on the wire and take the filter down.
+ */
+function reportedVisibility(visibility: string): contract.Visibility | undefined {
+  const folded = visibility.toLowerCase();
+  return folded === "public" || folded === "internal" || folded === "private" ? folded : undefined;
+}
+
+/**
  * The production answer in the row's own spelling: `production` and, where something answered, `production_source`.
  *
  * SNAKE_CASE HERE AND NOWHERE ELSE, which is the same seam `reportedAlerts` crosses: the rule returns a domain
@@ -255,7 +294,11 @@ function repositoryRow(
  * rather than being conditionally spread, because the pair is absent or present together and one test of that is
  * enough.
  */
-function reportedRowProduction(deploysToProduction: boolean | undefined, layers: ProductionLayers, repository: string): Record<string, unknown> {
+function reportedRowProduction(
+  deploysToProduction: boolean | undefined,
+  layers: ProductionLayers,
+  repository: string
+): Pick<contract.RepositoryRow, "production" | "production_source"> {
   const answer = reportedProduction(deploysToProduction, layers, repository);
   return { production: answer.production, production_source: answer.source };
 }
@@ -265,6 +308,24 @@ export interface MeasuredRow {
   pullRequests: boolean;
   directCommits: boolean;
 }
+
+/**
+ * The figures a row states about its window, named as the seven fields of the row they land on.
+ *
+ * A `Pick` OF THE CONTRACT and not a shape of its own, so a field renamed on the row is a compile error here rather
+ * than a key that stops appearing. All seven are optional on the row for one rule — absent means unmeasured — and
+ * this function's whole job is to decide which of them the window can honestly state.
+ */
+type BehaviourFigures = Pick<
+  contract.RepositoryRow,
+  | "merged_pull_requests"
+  | "direct_commits"
+  | "unreviewed_substantial"
+  | "unreviewed_substantial_merges"
+  | "substantial_merges"
+  | "time_to_first_review_hours"
+  | "merge_cycle_time_hours"
+>;
 
 /**
  * Everything the window's merge cohort supports, or nothing for a source that was not read.
@@ -279,7 +340,7 @@ export interface MeasuredRow {
  * figures need BOTH — `sufficient` counts merges and direct commits together, and a verdict over half a cohort
  * would be a finding about the half that answered.
  */
-function behaviourFigures(policy: ReadinessPolicy, merges: Merges, measured: MeasuredRow): Record<string, unknown> {
+function behaviourFigures(policy: ReadinessPolicy, merges: Merges, measured: MeasuredRow): BehaviourFigures {
   return {
     ...(measured.pullRequests ? { merged_pull_requests: merges.pullRequests.length } : {}),
     ...(measured.directCommits ? { direct_commits: merges.directCommits.length } : {}),
@@ -336,7 +397,7 @@ function unreadSources(measured: MeasuredRow): string | undefined {
  * declines to grade thin evidence, and reporting the raw counts anyway would let the team page state a rate the
  * policy refused to state. `minimum_merges` is untouched — this reads its answer rather than second-guessing it.
  */
-function substantialCounts(policy: ReadinessPolicy, merges: Merges): Record<string, number | undefined> {
+function substantialCounts(policy: ReadinessPolicy, merges: Merges): Pick<BehaviourFigures, "unreviewed_substantial_merges" | "substantial_merges"> {
   if (!policy.sufficient(merges)) {
     return {};
   }
@@ -358,7 +419,7 @@ function substantialCounts(policy: ReadinessPolicy, merges: Merges): Record<stri
  * reason is logged once per repository rather than swallowed — an unmeasurable metric is worth knowing about, and a
  * page that renders is worth more than a page that is right about one column.
  */
-function timingMedians(merges: Merges): Record<string, number | undefined> {
+function timingMedians(merges: Merges): Pick<BehaviourFigures, "time_to_first_review_hours" | "merge_cycle_time_hours"> {
   try {
     return {
       time_to_first_review_hours: medianOf(timeToFirstReview.summary(merges)),
@@ -399,7 +460,7 @@ function medianOf(observation: DistributionObservation | RateObservation): numbe
  * facts about the repository that the GRAPH holds, so they answer on a repository nothing has been collected for;
  * hygiene and patching come from the collection. A criterion whose source is missing reads unknown, never unmet.
  */
-function reportedAssurance(entry: CohortEntry, payload: unknown): Record<string, unknown> {
+function reportedAssurance(entry: CohortEntry, payload: unknown): contract.AssuranceReport {
   const stored = (payload as { assurance?: AssuranceEvidence } | null | undefined)?.assurance;
   const judgements = judgeAssurance({
     ownerKind: entry.ownerKind,
@@ -439,16 +500,22 @@ export function forgetBuiltRows(): void {
  * `read` is the estate this span is derived from, for a caller building SEVERAL spans — see `estateForEverySpan`.
  * Omitted, this span reads the estate for itself, which is what a reader arriving on a cold span does.
  */
-export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date(), read?: Estate): Promise<unknown[]> {
+export async function repositoryRows(configuration: Configuration, weeks: number, reference = new Date(), read?: Estate): Promise<contract.RepositoryRow[]> {
   return (await estateReports(configuration, weeks, reference, read)).rows;
 }
 
-/** The four reports one window's facts produce, built together because they read the same facts. */
+/**
+ * The four reports one window's facts produce, built together because they read the same facts.
+ *
+ * EACH IS THE CONTRACT'S OWN ROW TYPE, which is what makes `src/lib/api.ts` able to hand them to a page with no
+ * cast. It was four `unknown[]`, and that is how `teamRows` came to emit `TeamRow.actors` as a list where the
+ * contract declares a number: two interfaces of one name, and nothing between the two able to disagree.
+ */
 interface EstateReports {
-  rows: unknown[];
-  actors: unknown[];
-  merges: unknown[];
-  directPushes: unknown[];
+  rows: contract.RepositoryRow[];
+  actors: contract.ActorRow[];
+  merges: contract.TeamMergeRow[];
+  directPushes: contract.TeamDirectPushRow[];
 }
 
 /** A repository the window holds no facts for. Whether that is a measured nothing is `measuredSources`' answer. */
@@ -703,7 +770,12 @@ export async function estateForEverySpan(configuration: Configuration, reference
 async function estateReports(configuration: Configuration, weeks: number, reference: Date, read?: Estate): Promise<EstateReports> {
   // Wrapped in a one-element array because `builtReport` holds `unknown[]`. The alternative is widening the cache
   // to `unknown`, which buys nothing: every reader of it goes through the four accessors below.
-  const held = await builtReport(configuration.organization, weeks, async () => [await buildEstateReports(configuration, weeks, reference, read)]);
+  const held = await builtReport<EstateReports>(configuration.organization, weeks, async () => [
+    await buildEstateReports(configuration, weeks, reference, read)
+  ]);
+  // `builtReport` holds a list and this build produces one entry, so the element is present by construction —
+  // `noUncheckedIndexedAccess` cannot see that, and the alternative is widening the cache to a single value, which
+  // buys nothing: every reader of it goes through the four accessors below.
   return held[0] as EstateReports;
 }
 
@@ -736,21 +808,16 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
 
   return {
     rows,
-    actors: builtActorRows(rows as { repository: string; readiness?: string }[], facts, names, botAccounts(configuration.cohort.bot_accounts)),
+    actors: builtActorRows(rows, facts, names, botAccounts(configuration.cohort.bot_accounts)),
     merges: builtMergeRows(facts),
     directPushes: builtDirectPushRows(facts)
   };
 }
 
 /** The estate's summary for one window. */
-export async function overviewSummary(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown> {
+export async function overviewSummary(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.OverviewSummary> {
   const { window, collectedThrough } = await resolveReportWindow(configuration, weeks, reference);
-  const rows = (await repositoryRows(configuration, weeks, reference)) as {
-    readiness?: string;
-    merged_pull_requests?: number;
-    direct_commits?: number;
-    detail?: string;
-  }[];
+  const rows = await repositoryRows(configuration, weeks, reference);
 
   const labels: Record<string, number> = {};
   for (const row of rows) {
@@ -759,7 +826,7 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
     }
   }
 
-  return stripAbsent({
+  return stripAbsent<contract.OverviewSummary>({
     organization: configuration.organization,
     weeks,
     starts_at: window.startsAt.toISOString(),
@@ -792,14 +859,14 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
  * than `overview.repositories`. A shared repository is one repository in the estate and a holding of two
  * teams, and both numbers are right.
  */
-export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.TeamRow[]> {
   // The rows AND the two activity reports off one read, where this took `repositoryRows` alone: the contributor
   // count below is folded from the merge and direct-push rows, which are already built beside the rows in the same
   // cache entry. See `estateReports` — asking for them separately would be a second lookup of one held report, and
   // deriving the count from the facts instead would be the drift `authorsByRepository` records.
   const reports = await estateReports(configuration, weeks, reference);
-  const rows = reports.rows as TeamAggregableRow[];
-  const authors = authorsByRepository([...reports.merges, ...reports.directPushes] as AttributedChange[]);
+  const rows = reports.rows;
+  const authors = authorsByRepository([...reports.merges, ...reports.directPushes]);
   const names = teamDisplayNames(configuration);
   // The teams come from the cohort now, not from the file. The file names only the teams somebody has overridden
   // an owner for, so iterating it would have reported a handful of cards for an estate of 154 teams.
@@ -810,7 +877,10 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
   const attributable = rows.filter((row) => row.owner_kind !== OwnerKind.Person);
 
   return stripAbsent(
-    teams.map((identifier) => {
+    // ANNOTATED ON THE CALLBACK rather than on `stripAbsent` alone, which is what makes the contract's own excess
+    // property check run: a return type on the outer function is satisfied by a wider object, where an annotated
+    // literal is compared field for field. This is what catches a key the row emits and the contract does not name.
+    teams.map((identifier): contract.TeamRow => {
       // `teams` is absent on the ordinary single-owner row, so fall back to the primary rather than treating
       // its absence as "owned by nobody".
       const owned = attributable.filter((row) => (row.teams ?? (row.team === undefined ? [] : [row.team])).includes(identifier));
@@ -871,8 +941,14 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
  *
  * The same order `lib/rag.ts` gives the labels through `COMBINATION_DIGIT` — green 1, amber 2, red 3, and the
  * ungraded ones no digit at all. Restated here rather than imported, because the report layer does not read the
- * UI's modules; an unknown label sorts last rather than throwing, so a label added to the domain appears at the
- * end of a badge row instead of taking a page down.
+ * UI's RENDERING modules: `rag.ts`, `tone.ts` and `sort.ts` are colours, wording and table order, they are
+ * bundled with the pages, and a report reaching into them would make what the JSON says depend on how a
+ * component draws it. The CONTRACT is the exception and not a loophole — `src/lib/types.ts` is type-only, so
+ * importing it adds no runtime edge and nothing to bundle, and it is the one module whose whole purpose is to
+ * state what this layer emits.
+ *
+ * An unknown label sorts last rather than throwing, so a label added to the domain appears at the end of a badge
+ * row instead of taking a page down.
  */
 const READINESS_ORDER: readonly string[] = ["green", "amber", "red", "cannot_assess"];
 
@@ -881,7 +957,7 @@ function readinessRank(label: string): number {
   return rank === -1 ? READINESS_ORDER.length : rank;
 }
 
-export async function actorRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+export async function actorRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.ActorRow[]> {
   return (await estateReports(configuration, weeks, reference)).actors;
 }
 
@@ -893,11 +969,11 @@ export async function actorRows(configuration: Configuration, weeks: number, ref
  * another report, which was one build waiting on a second that shared its data.
  */
 function builtActorRows(
-  rows: readonly { repository: string; readiness?: string }[],
+  rows: readonly contract.RepositoryRow[],
   facts: ReadonlyMap<string, Merges>,
   names: ReadonlyMap<string, string>,
   bots: ReadonlySet<string>
-): unknown[] {
+): contract.ActorRow[] {
   const readinessOf = new Map(rows.map((row) => [row.repository, row.readiness]));
   const spelling = new Map<string, string>();
   const appearances = new Map<string, Set<string>>();
@@ -919,7 +995,7 @@ function builtActorRows(
     }
   }
 
-  const actors = [...appearances.entries()].map(([login, repositories]) => {
+  const actors = [...appearances.entries()].map(([login, repositories]): contract.ActorRow => {
     // Their repositories' labels, deduplicated, in the estate's own order rather than discovery order: the
     // contributor row RENDERS them in the order sent, so two people carrying the same set must be shown the
     // same badges in the same sequence.
@@ -974,7 +1050,7 @@ export async function repositoryEvidence(
   weeks: number,
   measured: MeasuredRow,
   reference = new Date()
-): Promise<unknown | undefined> {
+): Promise<contract.RepositoryPracticeEvidence | undefined> {
   const organization = configuration.organization;
   const { window } = await resolveReportWindow(configuration, weeks, reference);
   const [cohort, state, walked] = await Promise.all([
@@ -999,7 +1075,7 @@ export async function repositoryEvidence(
   const reported = reportedCohort(walked, excludedAuthors(configuration.cohort.excluded_authors), botAccounts(configuration.cohort.bot_accounts));
   const merges = reported.merges;
 
-  return stripAbsent({
+  return stripAbsent<contract.RepositoryPracticeEvidence>({
     repository,
     team: entry.owners[0] ?? "",
     starts_at: window.startsAt.toISOString(),
@@ -1008,7 +1084,10 @@ export async function repositoryEvidence(
     // which is the whole point of the fact tables. No interval is fetched to render a page.
     provenance: { offline: true, intervals_fetched: 0 },
     cohort: cohortSummary(walked, reported, measured),
-    assessment: policy.enabled ? policy.assess(merges, gate) : undefined,
+    // THROUGH `contractAssessment`, which is the fourth translation at this boundary and the only one that was
+    // already correct. The domain and the contract spell every field of an assessment the same way, so the policy's
+    // own object was handed straight over — see `./assessment.ts` for why that being right was luck.
+    assessment: policy.enabled ? contractAssessment(policy.assess(merges, gate)) : undefined,
     unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
     merge_gate: contractGate(gate, fetched),
     security: securityReport(payload.securityAlerts, fetched),
@@ -1053,7 +1132,7 @@ export async function repositoryEvidence(
  * reports its counts or not. Where nothing was read there is nothing to drop and it is empty, and
  * `lib/repository.cohortCards` reads the absent counts — not the empty map — as the signal that nobody looked.
  */
-function cohortSummary(walked: Merges, reported: ReportedCohort, measured: MeasuredRow): Record<string, unknown> {
+function cohortSummary(walked: Merges, reported: ReportedCohort, measured: MeasuredRow): contract.CohortSummary {
   return {
     ...(measured.pullRequests ? { merged: walked.pullRequests.length, reported: reported.merges.pullRequests.length } : {}),
     excluded_authors: reported.excluded,
@@ -1078,7 +1157,7 @@ function cohortSummary(walked: Merges, reported: ReportedCohort, measured: Measu
  * `false` would be a claim that a repository does not require thread resolution when nobody asked GitHub. Nothing
  * renders it — `mergeGateRows` prints ten rows and that is not one of them.
  */
-function contractGate(report: MergeGateReport, fetched: string): Record<string, unknown> {
+function contractGate(report: MergeGateReport, fetched: string): contract.MergeGateReport {
   if (report.gate === undefined) {
     return { detail: report.detail ?? "the merge gate has not been collected" };
   }
@@ -1117,7 +1196,7 @@ function contractGate(report: MergeGateReport, fetched: string): Record<string, 
  * straight over type-checks — both are `SecurityAlertEvidence`, one per module — and then `severityDetail` reads
  * `by_severity.critical` off an object that has no such key and throws. Two shapes, one name, in two files.
  */
-function securityReport(alerts: SecurityAlertEvidence | undefined, fetched: string): Record<string, unknown> {
+function securityReport(alerts: SecurityAlertEvidence | undefined, fetched: string): contract.SecurityAlertReport {
   if (alerts === undefined) {
     return { detail: "no security alert family was collected for this repository" };
   }
@@ -1136,8 +1215,8 @@ function securityReport(alerts: SecurityAlertEvidence | undefined, fetched: stri
  * existed: `metric.summary` answers in the domain's `sampleSize`/`percentile75` and the contract declares
  * `sample_size`/`percentile_75`. See `./observation.ts` for what a reader saw instead.
  */
-function metricSummaries(configuration: Configuration, merges: Merges): Record<string, unknown>[] {
-  return behaviourMetrics(configuration.traceability).map((metric) => {
+function metricSummaries(configuration: Configuration, merges: Merges): contract.BehaviourMetricSummary[] {
+  return behaviourMetrics(configuration.traceability).map((metric): contract.BehaviourMetricSummary => {
     const classifications: Record<string, number> = {};
     for (const pullRequest of merges.pullRequests) {
       const answer = metric.classification(pullRequest);
@@ -1171,12 +1250,12 @@ function metricSummaries(configuration: Configuration, merges: Merges): Record<s
  * set, different as a report, and this is a table a reader diffs against last week's. `(repository, number)` and
  * `(repository, sha)` are unique, so the order below is now a function of the facts alone.
  */
-export async function mergeRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+export async function mergeRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.TeamMergeRow[]> {
   return (await estateReports(configuration, weeks, reference)).merges;
 }
 
-function builtMergeRows(facts: ReadonlyMap<string, Merges>): unknown[] {
-  const rows = [];
+function builtMergeRows(facts: ReadonlyMap<string, Merges>): contract.TeamMergeRow[] {
+  const rows: contract.TeamMergeRow[] = [];
   for (const [repository, merges] of facts) {
     for (const pullRequest of merges.pullRequests) {
       const size = changeSize(pullRequest);
@@ -1204,12 +1283,12 @@ function builtMergeRows(facts: ReadonlyMap<string, Merges>): unknown[] {
   );
 }
 
-export async function directPushRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<unknown[]> {
+export async function directPushRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.TeamDirectPushRow[]> {
   return (await estateReports(configuration, weeks, reference)).directPushes;
 }
 
-function builtDirectPushRows(facts: ReadonlyMap<string, Merges>): unknown[] {
-  const rows = [];
+function builtDirectPushRows(facts: ReadonlyMap<string, Merges>): contract.TeamDirectPushRow[] {
+  const rows: contract.TeamDirectPushRow[] = [];
   for (const [repository, merges] of facts) {
     for (const commit of merges.directCommits) {
       const size = changeSize(commit);
@@ -1320,7 +1399,7 @@ interface TeamAggregableRow {
  * NOTHING HERE IS ORDERED BY, which `cohortTeams` guarantees rather than this function: the cards arrive
  * largest-holding-first and that is a count of what a team is on the hook for, not a grade.
  */
-function teamPractice(owned: readonly TeamAggregableRow[]): Record<string, unknown> {
+function teamPractice(owned: readonly TeamAggregableRow[]): contract.TeamPractice {
   const reviewed = owned.filter((row) => row.required_approving_reviews !== undefined);
   const checked = owned.filter((row) => row.required_status_checks !== undefined);
   const graded = owned.filter((row) => row.unreviewed_substantial !== undefined);
@@ -1366,7 +1445,7 @@ function teamPractice(owned: readonly TeamAggregableRow[]): Record<string, unkno
  * ABSENT WHERE NO REPOSITORY REPORTED ONE, rather than zero. A team whose repositories all had too few reviews to
  * measure has no wait to report, and `0 hours` would read as instant review.
  */
-function timings(owned: readonly TeamAggregableRow[]): Record<string, number | undefined> {
+function timings(owned: readonly TeamAggregableRow[]): Pick<contract.TeamPractice, "time_to_first_review_hours" | "merge_cycle_time_hours"> {
   const median = (values: number[]): number | undefined => {
     if (values.length === 0) {
       return undefined;

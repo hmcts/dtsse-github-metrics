@@ -45,6 +45,15 @@ import type {
  *
  * `server-only` at the top so a client component importing this fails at build time with a clear message rather
  * than at runtime with an opaque bundling error: everything below reaches Postgres.
+ *
+ * NOTHING HERE CASTS ANY MORE, and that is the point of the file rather than a tidy-up. The report layer used to
+ * return `unknown[]` and `Record<string, unknown>`, so every function below reached the contract through an
+ * `as unknown as` — which accepts ANY shape, including a domain object of the same interface name. Five defects came
+ * through that gap: `MergeGateEvidence` and `SecurityAlertEvidence` each took `/repositories/[repository]` down,
+ * `DistributionObservation` printed "undefined samples" on every repository page, `TeamRow.actors` was emitted as a
+ * list where the contract declares a number and blanked all 154 team cards, and `getRepository` omitted `evidence`
+ * and `contributors` for months. `src/evidence/report/**` declares the contract's types now, so a mismatch is a
+ * compile error here and a cast reintroduced anywhere below would hide the next one.
  */
 
 // Re-exported rather than declared here, so a page-level test can construct the real type without importing this
@@ -65,15 +74,15 @@ function configuration(): Promise<Configuration> {
 }
 
 export async function getWindows(): Promise<WindowOptions> {
-  return (await windowOptions(await configuration())) as WindowOptions;
+  return await windowOptions(await configuration());
 }
 
 export async function getOverview(weeks: number): Promise<OverviewSummary> {
-  return (await overviewSummary(await configuration(), weeks)) as OverviewSummary;
+  return await overviewSummary(await configuration(), weeks);
 }
 
 export async function getRepositories(weeks: number): Promise<RepositoryRow[]> {
-  return (await repositoryRows(await configuration(), weeks)) as RepositoryRow[];
+  return await repositoryRows(await configuration(), weeks);
 }
 
 export async function getRepository(repository: string, weeks: number): Promise<RepositoryDetail> {
@@ -100,7 +109,7 @@ export async function getRepository(repository: string, weeks: number): Promise<
     url: `https://github.com/${configured.organization}/${repository}`,
     ...(evidence === undefined ? {} : { evidence }),
     contributors: await repositoryContributors(configured, repository, weeks)
-  } as unknown as RepositoryDetail;
+  };
 }
 
 /**
@@ -112,11 +121,7 @@ export async function getRepository(repository: string, weeks: number): Promise<
  * `getActor`'s reason: nothing evaluates the metric set over one person's subset of a repository's merges.
  */
 async function repositoryContributors(configured: Configuration, repository: string, weeks: number): Promise<ContributorRow[]> {
-  const [merges, pushes, names] = await Promise.all([
-    mergeRows(configured, weeks) as Promise<TeamMergeRow[]>,
-    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>,
-    contributorNames(weeks)
-  ]);
+  const [merges, pushes, names] = await Promise.all([mergeRows(configured, weeks), directPushRows(configured, weeks), contributorNames(weeks)]);
   const landed = new Map<string, { login: string; contributions: number }>();
   for (const change of [...merges, ...pushes]) {
     if (change.repository !== repository || change.author === undefined) {
@@ -132,18 +137,28 @@ async function repositoryContributors(configured: Configuration, repository: str
     .sort((left, right) => right.contributions - left.contributions || left.login.toLowerCase().localeCompare(right.login.toLowerCase()));
 }
 
+/**
+ * One repository's series since enablement, which nothing assembles yet.
+ *
+ * `alert_observations` IS SENT AS AN EMPTY LIST, and it was omitted entirely until VIBE-568. The contract declares it
+ * REQUIRED — a series either carries the alert history behind it or carries none — and the double cast below is what
+ * let a refusal go out without the key at all. `lib/trend.ts` reads the field off the type without a guard, so the
+ * only reason nothing threw is that no reader has reached it yet: `report/trend.ts` is unwired, both branches here
+ * refuse, and `TrendSection` draws its own empty state from `detail`. An empty list is the honest answer on both —
+ * the same answer `periods: []` gives, for the same reason.
+ */
 export async function getTrend(repository: string, periods: number): Promise<RepositoryTrend> {
   const configured = await configuration();
   if (!(repository in configured.enablement)) {
     // No enablement date is not an error: a repository gets no series rather than a guessed anchor, and the page
     // renders the reason.
-    return { repository, periods: [], detail: "no enablement date is configured for this repository" } as unknown as RepositoryTrend;
+    return { repository, periods: [], alert_observations: [], detail: "no enablement date is configured for this repository" };
   }
-  return { repository, periods: [], detail: `a series of at most ${periods} periods has not been built yet` } as unknown as RepositoryTrend;
+  return { repository, periods: [], alert_observations: [], detail: `a series of at most ${periods} periods has not been built yet` };
 }
 
 export async function getActors(weeks: number): Promise<ActorRow[]> {
-  return (await actorRows(await configuration(), weeks)) as unknown as ActorRow[];
+  return await actorRows(await configuration(), weeks);
 }
 
 /**
@@ -196,8 +211,8 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
   const configured = await configuration();
   const [rows, merges, pushes, names] = await Promise.all([
     getRepositories(weeks),
-    mergeRows(configured, weeks) as Promise<TeamMergeRow[]>,
-    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>,
+    mergeRows(configured, weeks),
+    directPushRows(configured, weeks),
     contributorNames(weeks)
   ]);
 
@@ -238,16 +253,16 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
         })
         .sort((left, right) => right.contributions - left.contributions || left.repository.localeCompare(right.repository))
     },
-    teams: Object.fromEntries(theirs.filter((row) => row.team !== undefined).map((row) => [row.repository, row.team as string])),
+    teams: Object.fromEntries(theirs.map((row) => [row.repository, row.team])),
     // ABSENT WHERE NO LIST WAS READ, an empty array where it was read and names none of theirs — the tri-state
     // `RepositoryRow.production` keeps, lifted to a list. Every row absent means the production list itself could
     // not be read, which is a different answer from this person having nothing in production.
     ...(theirs.every((row) => row.production === undefined) ? {} : { production: theirs.filter((row) => row.production === true).map((row) => row.repository) })
-  } as unknown as ActorDetail;
+  };
 }
 
 export async function getTeams(weeks: number): Promise<TeamRow[]> {
-  return (await teamRows(await configuration(), weeks)) as unknown as TeamRow[];
+  return await teamRows(await configuration(), weeks);
 }
 
 /**
@@ -259,7 +274,7 @@ export async function getTeams(weeks: number): Promise<TeamRow[]> {
  * true. Nothing else was needed for it, and stating it here is what stops somebody "fixing" the miss.
  */
 export async function getTeam(team: string, weeks: number): Promise<TeamDetail> {
-  const rows = (await getTeams(weeks)) as unknown as { team: string }[];
+  const rows = await getTeams(weeks);
   const found = rows.find((candidate) => candidate.team === team);
   if (found === undefined) {
     throw new RepositoryUnknownError(`${team} is not a reported team`);
@@ -277,10 +292,7 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
   // work a team page does for them — see `mergeRows` for why they are not built per team.
   const held = new Set(repositories.map((row) => row.repository));
   const configured = await configuration();
-  const [merges, directPushes] = await Promise.all([
-    mergeRows(configured, weeks) as Promise<TeamMergeRow[]>,
-    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>
-  ]);
+  const [merges, directPushes] = await Promise.all([mergeRows(configured, weeks), directPushRows(configured, weeks)]);
   const ours = merges.filter((row) => held.has(row.repository));
   const pushes = directPushes.filter((row) => held.has(row.repository));
 
@@ -290,7 +302,7 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
     merges: ours,
     direct_pushes: pushes,
     actors: teamActors(ours, pushes, await contributorNames(weeks))
-  } as unknown as TeamDetail;
+  };
 }
 
 /**
@@ -310,8 +322,8 @@ export async function getTeamContributors(weeks: number): Promise<Record<string,
   const configured = await configuration();
   const [repositories, merges, directPushes, names] = await Promise.all([
     getRepositories(weeks),
-    mergeRows(configured, weeks) as Promise<TeamMergeRow[]>,
-    directPushRows(configured, weeks) as Promise<TeamDirectPushRow[]>,
+    mergeRows(configured, weeks),
+    directPushRows(configured, weeks),
     contributorNames(weeks)
   ]);
 

@@ -641,6 +641,23 @@ export interface RepositoryRow {
   required_approving_reviews?: number;
   required_status_checks?: number;
   unreviewed_substantial?: UnreviewedSubstantialOutcome;
+  /**
+   * The four window figures a row carries FOR THE TEAM AGGREGATION, and that no component reads off a row.
+   *
+   * DECLARED BECAUSE THEY ARE SENT. `behaviourFigures` has emitted all four on every reportable row since the
+   * port and the contract named none of them, which is the reverse of the seven fields above: those are
+   * declared and never sent, these were sent and never declared. `teamPractice` folds them into `TeamPractice`,
+   * where the same four names ARE declared and where `lib/team.ts` reads them — so a row is where they come
+   * from and a team card is where they are shown.
+   *
+   * Each follows the row's own rule. The two counts are absent together where the readiness policy declined to
+   * grade a thin cohort, so a page cannot state a rate the policy refused; the two medians are absent where the
+   * window observed no eligible sample, never zero, because `0 hours` reads as instant review.
+   */
+  unreviewed_substantial_merges?: number;
+  substantial_merges?: number;
+  time_to_first_review_hours?: number;
+  merge_cycle_time_hours?: number;
   sonar_coverage?: number;
   sonar_reported?: boolean;
   security?: SecurityAlertEvidence;
@@ -847,6 +864,17 @@ export interface TeamPractice {
 
 export interface TeamRow {
   team: string;
+  /**
+   * The name `metrics.yaml` gives this team, where somebody has overridden one, and the slug otherwise.
+   *
+   * SENT ON EVERY CARD AND RENDERED BY NOTHING. `TeamsList` prints `team` in monospace deliberately — a slug is
+   * what links to a page and what a reader recognises — so this is an answer waiting on a decision about which
+   * of the two a card should head itself with. Declared for `RepositoryRow`'s four figures' reason: the report
+   * has emitted it since the port, and a field on the wire that the contract does not name is exactly the state
+   * this file exists to prevent. Only an overridden team has a name of its own; the slug is the fallback rather
+   * than a prettified guess, because a generated title would read as a name somebody chose.
+   */
+  display_name?: string;
   repositories: number;
   unavailable: number;
   /**

@@ -1,3 +1,4 @@
+import type * as contract from "../../lib/types.ts";
 import type { DistributionObservation, Observation, RateObservation } from "../domain/facts.ts";
 
 /**
@@ -23,17 +24,17 @@ import type { DistributionObservation, Observation, RateObservation } from "../d
  * Spelling them out makes this function the single statement of what the contract's `Observation` is; a spread
  * would leave the rate branch silently right today and silently wrong the day either side renames a field.
  */
-export function contractObservation(observation: Observation): Record<string, unknown> {
+export function contractObservation(observation: Observation): contract.Observation {
   // `"unit" in` is the discriminator `medianOf` narrows on, and `lib/format.isRate` asks the same question from the
   // other side. A rate carries no unit; a distribution carries one even when it observed nothing.
   return "unit" in observation ? contractDistribution(observation) : contractRate(observation);
 }
 
-function contractRate(observation: RateObservation): Record<string, unknown> {
+function contractRate(observation: RateObservation): contract.RateObservation {
   return { status: observation.status, numerator: observation.numerator, denominator: observation.denominator };
 }
 
-function contractDistribution(observation: DistributionObservation): Record<string, unknown> {
+function contractDistribution(observation: DistributionObservation): contract.DistributionObservation {
   return {
     status: observation.status,
     sample_size: observation.sampleSize,
