@@ -6,6 +6,25 @@ import { type SonarClient, SonarError, searchableRevisions } from "./client.ts";
 /**
  * Attributing a SonarCloud project to a GitHub repository. Ported from `metrics.sonar`'s resolution half.
  *
+ * CURRENTLY UNWIRED, AND THE ENTRY POINT OF A LAYER THAT IS. This function is the head of the SonarCloud
+ * layer — `./client.ts`, `./measures.ts`, `./pacer.ts` and `../domain/sonar.ts` are reached only from here or
+ * from each other — and nothing calls it. No entry point in the application imports any of the five: not the
+ * App Router pages, not `proxy.ts`, not `instrumentation.ts`, not `cli/run.ts`, and not the three
+ * `await import` call sites.
+ *
+ * WHAT WOULD REACH IT: a `map-sonar` command in `cli/index.ts` walking the cohort through this ladder and
+ * storing each answer in `sonar_project_map`, a `collect` pass reading `parseMeasures` for the repositories
+ * that resolved, and `report/repositories.ts` emitting the result instead of the `"no SonarCloud project is
+ * mapped for this repository"` detail it emits today. `lib/types.ts` already declares the contract fields —
+ * `sonar_coverage`, `sonar_reported`, `sonar_security_rating`, `sonar_security_issues` — and
+ * `lib/repository.ts` already renders them, so the missing piece is the assembly rather than the display.
+ * The `sonar_organization:` and `sonar_projects:` policy keys were removed with this ticket for validating
+ * without deciding anything; wiring the layer means restoring them.
+ *
+ * WHETHER TO WIRE IT OR DROP IT IS AN OPEN PRODUCT DECISION, deliberately not taken here. The layer is
+ * complete, tested and expensive to rebuild, and `./pacer.ts` in particular is the only adaptive rate-limit
+ * pacer in this repository.
+ *
  * THE LADDER, in the order it is climbed:
  *   1. `configured`                     — an explicit override in the policy file settles it.
  *   2. `declared_confirmed_by_map`      — the repository declares a key, and the stored map agrees.

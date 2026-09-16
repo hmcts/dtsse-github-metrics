@@ -97,13 +97,3 @@ export function enablementInstants(configuration: Configuration, repositories: r
 export function teamDisplayNames(configuration: Configuration): Map<string, string> {
   return new Map(configuration.teams.map((team) => [team.identifier, team.display_name]));
 }
-
-/**
- * The SonarCloud organisation to read, falling back to the GitHub organisation.
- *
- * `sonar_organization` is left absent rather than defaulted to the same text, so the common case is
- * not restated in every configuration file.
- */
-export function sonarOrganizationName(configuration: Configuration): string {
-  return configuration.sonar_organization?.trim() || configuration.organization;
-}

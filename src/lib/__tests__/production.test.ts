@@ -11,7 +11,6 @@ import { describe, expect, it } from "vitest";
 import {
   PRODUCTION_BADGE,
   PRODUCTION_DOT,
-  PRODUCTION_HEX,
   PRODUCTION_LABEL,
   PRODUCTION_SOURCE_HINT,
   PRODUCTION_TOGGLE_ACTIVE,
@@ -36,7 +35,7 @@ describe("production vocabulary", () => {
   });
 
   it("names no emoji anywhere", () => {
-    expect(JSON.stringify([PRODUCTION_LABEL, ...CLASSES, PRODUCTION_HEX])).not.toMatch(/\p{Extended_Pictographic}/u);
+    expect(JSON.stringify([PRODUCTION_LABEL, ...CLASSES])).not.toMatch(/\p{Extended_Pictographic}/u);
   });
 });
 
@@ -98,17 +97,13 @@ describe("the toggle classes", () => {
 });
 
 describe("the configured colour", () => {
-  it("resolves the hex from the palette rather than restating it", () => {
-    expect(PRODUCTION_HEX).toBe(COLORS.royal.DEFAULT);
-  });
-
   it("gives the badge a surface, a border and a legible word", () => {
     expect(Object.keys(COLORS.royal).sort()).toEqual(["DEFAULT", "border", "surface", "text"]);
   });
 
   it("keeps the colour out of the rag group, which holds the report’s verdicts", () => {
     expect(Object.keys(COLORS.rag)).not.toContain("royal");
-    expect(JSON.stringify(COLORS.rag)).not.toContain(PRODUCTION_HEX);
+    expect(JSON.stringify(COLORS.rag)).not.toContain(COLORS.royal.DEFAULT);
   });
 
   it("writes every colour as a named utility, with no hex literal in any class string", () => {

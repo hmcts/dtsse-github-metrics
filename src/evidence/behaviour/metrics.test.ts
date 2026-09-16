@@ -15,7 +15,6 @@ import { ratePercentage } from "./analysis.ts";
 import {
   approvalCoverage,
   behaviourMetric,
-  behaviourMetricIdentifiers,
   behaviourMetrics,
   checksPassingAtMerge,
   descriptionQuality,
@@ -331,10 +330,6 @@ describe("behaviourMetrics", () => {
 
   it("should refuse an unknown identifier", () => {
     expect(() => behaviourMetric("not-a-metric", TRACEABILITY)).toThrow(/unknown behaviour metric/);
-  });
-
-  it("should list every accepted identifier for the CLI to choose from", () => {
-    expect(behaviourMetricIdentifiers()).toHaveLength(9);
   });
 });
 

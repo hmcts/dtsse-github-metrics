@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConfigurationError, loadConfiguration, parseConfiguration } from "./load.ts";
-import { configuredOwners, configuredTeamSlugs, enablementInstants, sonarOrganizationName, teamDisplayNames } from "./repositories.ts";
+import { configuredOwners, configuredTeamSlugs, enablementInstants, teamDisplayNames } from "./repositories.ts";
 import { PRODUCTION_LIST_URL } from "./schema.ts";
 
 // Ported from tests/test_config.py. Upstream wrote each case to a temp file; these parse the same text
@@ -15,8 +15,6 @@ version: 1
 organization: hmcts
 lookback:
   operational_days: 60
-  maximum_days: 180
-  stale_open_days: 21
 excluded_repositories:
   - retired-service
 teams:
@@ -51,8 +49,6 @@ describe("parseConfiguration", () => {
     expect(configuration.version).toBe(1);
     expect(configuration.organization).toBe("hmcts");
     expect(configuration.lookback.operational_days).toBe(60);
-    expect(configuration.lookback.maximum_days).toBe(180);
-    expect(configuration.lookback.stale_open_days).toBe(21);
     expect(configuration.excluded_repositories).toEqual(["retired-service"]);
     expect(configuration.teams[0]?.identifier).toBe("civil");
     expect(configuration.teams[0]?.github_team_slugs).toEqual(["civil-developers"]);
@@ -63,9 +59,7 @@ describe("parseConfiguration", () => {
 
     expect(configuration.lookback).toEqual({
       operational_days: 90,
-      maximum_days: 365,
       mutable_hours: 6,
-      stale_open_days: 14,
       stale_collection_days: 2
     });
   });
@@ -90,12 +84,6 @@ describe("parseConfiguration", () => {
 
     expect(traceability.minimum_description).toBe(30);
     expect(traceability.reference_patterns).toEqual(["#\\d+", "[A-Z][A-Z0-9]+-\\d+"]);
-  });
-
-  it("should apply the documented default practice rule when none is given", () => {
-    const { practices } = parseConfiguration("version: 1\norganization: hmcts\n");
-
-    expect(practices["unreviewed-merge"]).toEqual({ enabled: true, severity: "high", minimum_occurrences: 1, excluded_logins: [] });
   });
 
   it("should exclude renovate and dependabot from the cohort by default", () => {
@@ -131,9 +119,12 @@ describe("parseConfiguration", () => {
   it.each([
     ["version: 1", "version: 2", /version/],
     ["  operational_days: 60", "  operational_days: 0", /operational_days/],
-    ["  stale_open_days: 21", "  stale_collection_days: 0", /lookback\.stale_collection_days/],
+    ["  operational_days: 60", "  operational_days: 60\n  stale_collection_days: 0", /lookback\.stale_collection_days/],
     // A misspelled key must be refused, not silently ignored with the default reported as a choice.
-    ["  stale_open_days: 21", "  stale_collection_day: 8", /stale_collection_day/],
+    ["  operational_days: 60", "  stale_collection_day: 8", /stale_collection_day/],
+    // And so must a key the schema USED to accept and no longer decides anything with, for the same reason.
+    ["  operational_days: 60", "  maximum_days: 365", /maximum_days/],
+    ["  operational_days: 60", "  stale_open_days: 14", /stale_open_days/],
     ["organization: hmcts", "organisation: hmcts", /organisation|organization/]
   ])("should reject %s replaced by %s as unsupported, invalid or misspelled", (from, to, message) => {
     expect(() => parseConfiguration(VALID.replace(from, to))).toThrow(message);
@@ -153,8 +144,8 @@ describe("parseConfiguration", () => {
   });
 
   it("should name the rejected key and the file read when validation fails", () => {
-    expect(() => parseConfiguration(VALID.replace("  maximum_days: 180", "  maximum_days: 0"), "policy.yaml")).toThrow(
-      /lookback\.maximum_days:.*\(read from policy\.yaml\)/s
+    expect(() => parseConfiguration(VALID.replace("  operational_days: 60", "  operational_days: 0"), "policy.yaml")).toThrow(
+      /lookback\.operational_days:.*\(read from policy\.yaml\)/s
     );
   });
 
@@ -163,15 +154,9 @@ describe("parseConfiguration", () => {
   });
 
   it("should accept a policy file with no teams, for the commands whose subject is not the cohort", () => {
-    // `map-sonar` and `prune` are about an organisation and a cache, not about any repository a team
-    // owns, so neither should oblige a team file to be layered in.
+    // `prune` is about a cache rather than about any repository a team owns, so it should not oblige a
+    // team file to be layered in.
     expect(parseConfiguration("version: 1\norganization: hmcts\n").teams).toEqual([]);
-  });
-
-  it("should keep checking sonar project keys even when no teams are configured", () => {
-    const document = 'version: 1\norganization: hmcts\nsonar_projects:\n  some-repo: "  "\n';
-
-    expect(() => parseConfiguration(document)).toThrow(/sonar project keys may not be empty/);
   });
 
   it("should defer the cohort cross-checks when no teams are configured", () => {
@@ -288,26 +273,6 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration(document).production_repositories).toEqual(["never-collected"]);
   });
 
-  it("should load a sonar project override", () => {
-    const document = `${VALID}\nsonar_projects:\n  civil-service: civil_service_key\n`;
-
-    expect(parseConfiguration(document).sonar_projects).toEqual({ "civil-service": "civil_service_key" });
-  });
-
-  it("should accept a sonar project for a repository the file does not override the owner of", () => {
-    // Removed for the same reason as the enablement check above: `teams:` no longer lists the estate, so
-    // requiring every override key to appear in it rejected the ordinary case.
-    const document = `${VALID}\nsonar_projects:\n  civil-servce: key\n`;
-
-    expect(parseConfiguration(document).sonar_projects).toEqual({ "civil-servce": "key" });
-  });
-
-  it.each(['""', '"   "'])("should reject the empty sonar project key %s", (written) => {
-    const document = `${VALID}\nsonar_projects:\n  civil-service: ${written}\n`;
-
-    expect(() => parseConfiguration(document)).toThrow(/sonar project keys may not be empty/);
-  });
-
   it("should resolve a key given twice as YAML does, the last occurrence winning", () => {
     const document = `${VALID}\nlookback:\n  operational_days: 30\n`;
 
@@ -377,16 +342,6 @@ describe("the deployment's metrics.yaml", () => {
       expect(repository).toBe(repository.trim().toLowerCase());
       expect(repository).not.toMatch(/\//);
     }
-  });
-});
-
-describe("sonarOrganizationName", () => {
-  it("should read sonar under the github organisation by default", () => {
-    expect(sonarOrganizationName(parseConfiguration(VALID))).toBe("hmcts");
-  });
-
-  it("should prefer an explicit sonar organisation", () => {
-    expect(sonarOrganizationName(parseConfiguration(`${VALID}\nsonar_organization: hmcts-sonar\n`))).toBe("hmcts-sonar");
   });
 });
 

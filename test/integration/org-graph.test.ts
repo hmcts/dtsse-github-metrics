@@ -5,10 +5,7 @@ import { collectionState, stampCollection, stampRevision } from "../../src/evide
 import {
   liveOrgPeople,
   liveOrgRepositories,
-  liveOrgTeams,
   liveRepositoryOwnership,
-  liveTeamMemberships,
-  liveTeamRepositories,
   recordOrgPeople,
   recordOrgRepositories,
   recordOrgTeamMemberships,
@@ -20,8 +17,8 @@ import { prisma } from "../../src/evidence/store/prisma.ts";
 
 // The reconcile decision is pure and unit-tested through `planGraphWrite`. These cases prove the Postgres
 // half: that an unchanged run writes no row and moves only `lastObservedAt`, that a changed one closes an
-// interval instead of overwriting it, that an INCOMPLETE run supersedes nothing, and that the readers see
-// the live row and not the history behind it.
+// interval instead of overwriting it, that an INCOMPLETE run supersedes nothing, and that a read of the live
+// row sees it and not the history behind it.
 //
 // Every case uses two distinct instants. That is not decoration: closing a row at the instant it was
 // observed would violate `<table>_interval_ordered`, so a run whose facts changed must carry a later one —
@@ -30,6 +27,27 @@ import { prisma } from "../../src/evidence/store/prisma.ts";
 const ORGANIZATION = "hmcts";
 const FIRST = new Date(Date.UTC(2026, 5, 1));
 const SECOND = new Date(Date.UTC(2026, 6, 1));
+
+/**
+ * Reading the live row of the three team tables, which are written and never read back.
+ *
+ * `org-graph.ts` publishes a reader for the three tables something reads — the repositories and the
+ * ownership `cohort.ts` selects on, and the members `people.ts` names — and none for these. The predicate is
+ * declared here rather than there so that a table nothing serves from does not carry a production reader
+ * whose only caller is this file: `WHERE superseded_at IS NULL`, which the `_live` partial uniques make
+ * unambiguous, in the stable order two reads of one database have to agree on.
+ */
+function liveOrgTeams(organization: string) {
+  return prisma.orgTeam.findMany({ where: { organization, supersededAt: null }, orderBy: { teamSlug: "asc" } });
+}
+
+function liveTeamMemberships(organization: string) {
+  return prisma.orgTeamMembership.findMany({ where: { organization, supersededAt: null }, orderBy: [{ teamSlug: "asc" }, { login: "asc" }] });
+}
+
+function liveTeamRepositories(organization: string) {
+  return prisma.orgTeamRepository.findMany({ where: { organization, supersededAt: null }, orderBy: [{ teamSlug: "asc" }, { repository: "asc" }] });
+}
 
 function team(slug: string, overrides: Partial<TeamFact> = {}): TeamFact {
   return { slug, name: slug, ...overrides };
@@ -127,7 +145,8 @@ describe("recordOrgTeams", () => {
 
     expect(summary).toEqual({ inserted: 2, unchanged: 0, changed: 0, superseded: 0 });
     expect(await liveOrgTeams(ORGANIZATION)).toMatchObject([
-      { teamSlug: "civil", parentSlug: undefined, observedAt: FIRST, lastObservedAt: FIRST },
+      // `null` and not `undefined`: this reads the column, and a team with no parent stores SQL null.
+      { teamSlug: "civil", parentSlug: null, observedAt: FIRST, lastObservedAt: FIRST },
       { teamSlug: "civil-admins", parentSlug: "civil", observedAt: FIRST, lastObservedAt: FIRST }
     ]);
   });

@@ -360,8 +360,3 @@ export function distribution(values: readonly number[], unit: string): Distribut
     percentile90: percentile(values, 0.9)
   };
 }
-
-/** Every merge in one window, by either route, in a stable order. */
-export function allMerges(pullRequests: readonly PullRequestFact[], directCommits: readonly DirectCommitFact[]): Merge[] {
-  return [...pullRequests, ...directCommits];
-}

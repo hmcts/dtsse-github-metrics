@@ -5,6 +5,9 @@ import { parseMeasures, SONAR_METRIC_KEYS } from "./measures.ts";
 
 /**
  * Reading one SonarCloud organisation's projects, analyses and measures. Ported from `metrics.sonar`.
+ *
+ * CURRENTLY UNWIRED, with the rest of the SonarCloud layer. `./resolve.ts` states what would reach it and
+ * that whether to wire the layer up or drop it is an open decision.
  */
 
 const SONAR_URL = "https://sonarcloud.io";

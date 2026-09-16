@@ -27,7 +27,6 @@
     "test:a11y": "echo 'no build-time accessibility suite: the axe pass needs a deployed URL, and runs from test:fullfunctional'",
     "test:smoke": "yarn e2e:browser && playwright test --config test/e2e/playwright.config.ts --grep @smoke",
     "test:functional": "yarn e2e:browser && playwright test --config test/e2e/playwright.config.ts --grep ${E2E_TEST_SCOPE:-@regression}",
-    "test:nightly": "yarn e2e:browser && playwright test --config test/e2e/playwright.config.ts --grep @nightly",
     "test:fullfunctional": "yarn e2e:browser && playwright test --config test/e2e/playwright.config.ts --grep ${E2E_TEST_SCOPE:-@nightly}",
     "lint": "biome check --error-on-warnings .",
     "lint:fix": "biome check --write .",

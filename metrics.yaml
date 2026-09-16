@@ -2,8 +2,6 @@ version: 1
 organization: hmcts
 lookback:
   operational_days: 90
-  maximum_days: 365
-  stale_open_days: 14
   stale_collection_days: 2
 triviality:
   maximum_lines: 10
@@ -108,7 +106,6 @@ cohort:
 # reviewed file rather than in a chart value.
 org_graph:
   enabled: true
-sonar_organization: hmcts
 production_list_url: https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml
 # REPOSITORIES THIS ORGANISATION STATES ARE PRODUCTION SERVICES, which is the middle of the three layers a row's
 # Production answer is resolved through: `production_list_url` above, then this list, then the

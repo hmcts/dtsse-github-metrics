@@ -1,5 +1,28 @@
 /**
  * CODEOWNERS and maintenance evidence. Ported from `metrics.domain`.
+ *
+ * CURRENTLY UNWIRED, AND KEPT BECAUSE THE PAGE THAT WOULD SHOW IT IS ALREADY BUILT. No entry point imports
+ * this module — the collector makes no call for either subject, which `report/repositories.ts` says in the two
+ * details it emits instead: `"the CODEOWNERS file is not read for this report"` and `"maintenance windows are
+ * not collected"`. `inventory/inventory.test.ts` is its only caller.
+ *
+ * The repository page nevertheless renders a **Maintenance** section, and it is empty on every repository on
+ * the estate: `lib/types.ts` declares `MaintenanceReport`, `MaintenanceEvidence` and
+ * `MaintenanceWindowStatus`, `lib/repository.ts` turns them into rows through `maintenanceRows` and
+ * `maintenanceSummary`, and the report hands it `windows: []`. `maintenanceWindows` here is the function that
+ * would fill it.
+ *
+ * WHAT WOULD REACH IT: a `collect` pass reading each repository's default-branch history — bounded by
+ * `HUMAN_MAINTENANCE_SEARCH_DAYS`, which is why that bound is derived from the widest reported window rather
+ * than stated — building a `MaintenanceEvidence` through the constructor below, and `report/repositories.ts`
+ * calling `maintenanceWindows` at assembly. `CODEOWNERS_LOCATIONS` is the other half: the six paths the
+ * minimum-standards request names, three of which GitHub actually reads.
+ *
+ * NOT DUPLICATED BY `org/codeowners.ts`, which is wired: that module PARSES a CODEOWNERS file to answer "who
+ * is expected to review", feeding the ownership ladder. This one answers "does the repository have one, at a
+ * path that works", which is a different question and is nobody's answer today.
+ *
+ * WHETHER TO WIRE IT UP OR DROP IT IS AN OPEN PRODUCT DECISION, deliberately not taken here.
  */
 
 /**

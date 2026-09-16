@@ -33,7 +33,6 @@ import { OwnerKind } from "../org/graph.ts";
 import { contributorNames } from "../org/people.ts";
 import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
-import { collectionState } from "../store/collection-state.ts";
 import { cachedCoverageEdges, prevailingCachedCoverage } from "../store/coverage.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
 import { declaredProduction, type ProductionLayers, productionOverrides, reportedProduction } from "../store/production-override.ts";
@@ -1020,8 +1019,13 @@ export async function repositoryEvidence(
     codeowners: { detail: "the CODEOWNERS file is not read for this report; ownership is attributed from the organisation graph" },
     maintenance: { windows: [], detail: "maintenance windows are not collected" },
     sonar: { detail: "no SonarCloud project is mapped for this repository" },
-    // Per-actor rule breaches, which nothing computes: `configuration.practice` declares the rules and no
-    // producer evaluates them, so the honest answer is that there are no findings to show rather than none found.
+    // PER-ACTOR RULE BREACHES, WHICH NOTHING COMPUTES AND NOTHING NOW CONFIGURES. There is no producer: no
+    // module in `src/evidence/` evaluates a practice rule, and the `practices:` policy block that declared
+    // them was removed for validating without deciding anything. `FindingsTable` and `TeamPractice` are wired
+    // and read this, so they render an empty list on every repository and every team.
+    //
+    // Wiring it means all three: a rule set in the schema, a producer over the merge facts, and this array
+    // carrying its output. Whether to build that or to drop the two components is an open product decision.
     behaviour: []
   });
 }
@@ -1377,10 +1381,4 @@ function timings(owned: readonly TeamAggregableRow[]): Record<string, number | u
     time_to_first_review_hours: median(owned.map((row) => row.time_to_first_review_hours).filter((hours): hours is number => hours !== undefined)),
     merge_cycle_time_hours: median(owned.map((row) => row.merge_cycle_time_hours).filter((hours): hours is number => hours !== undefined))
   };
-}
-
-/** When the last collection landed, for the notice the dashboard shows above every page. */
-export async function collectionNotice(): Promise<unknown> {
-  const state = await collectionState();
-  return stripAbsent({ collected_at: state?.collectedAt.toISOString(), revision: state === undefined ? undefined : Number(state.revision) });
 }

@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { CodeownersPaths } from "./graph.ts";
 
 /**
@@ -300,31 +299,4 @@ export function ownershipFilesQuery(batchSize: number = DefaultOwnershipBatchSiz
     `;
   ownershipDocuments.set(batchSize, document);
   return document;
-}
-
-/**
- * Identifies the shape of the organisation graph these documents collect.
- *
- * Its own signature rather than a share of `querySignature()`, for the reason that function gives: the graph
- * is collected and superseded independently of the behaviour windows, so widening one must not discard the
- * other's settled rows.
- *
- * The ownership document is hashed at its DEFAULT batch size only. The remainder batch's text differs by
- * repository count alone, which says nothing about the shape of what was read, and folding it in would change
- * the signature with the size of the estate.
- */
-export function orgQuerySignature(): string {
-  const documents = [
-    orgTeamsQuery(),
-    teamMembersQuery(),
-    teamRepositoriesQuery(),
-    orgRepositoriesQuery(),
-    orgPeopleQuery(),
-    samlIdentitiesQuery(),
-    ownershipFilesQuery(DefaultOwnershipBatchSize)
-  ]
-    .join("")
-    .split(/\s+/)
-    .join(" ");
-  return createHash("sha256").update(documents).digest("hex").slice(0, 16);
 }
