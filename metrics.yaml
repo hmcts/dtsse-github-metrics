@@ -40,6 +40,25 @@ excluded_repositories: []
 # the cohort now comes from the graph `collect-org` walks, and this selects from it. Review the policy here,
 # not the membership — at 1,872 repositories a committed list of names was stale the day it landed.
 cohort:
+  # ACCOUNTS THAT ARE NOT PEOPLE, where nothing GitHub returns says so. Stated here rather than left to the
+  # default because the membership is a judgement about named accounts and belongs in a reviewed file.
+  #
+  # `isHumanAccount` reads the `Bot` account type and the `[bot]` login suffix before this list. On the direct
+  # commit path neither fires: of 9,663 stored direct commits NOT ONE carries `authorType: "Bot"` — GitHub
+  # answers `User` for every linked account — and these three author 44% of them. `fluxcdbot` is 3,179
+  # (32.9%, `name="Flux project bot"`), `hmcts-platform-operations` 1,109 (11.5%) and `claude` 36. Counting
+  # them made the direct-push figures largely a measure of deployment automation rather than of people
+  # bypassing review.
+  #
+  # `hmcts-platform-operations` IS THE ARGUABLE ONE: it is a shared account that people also drive by hand,
+  # so listing it treats 1,109 commits as automation. Removing this line reverses that, and nothing else has
+  # to change.
+  #
+  # Not a substring rule, ever: `gemmatalbot` is Gemma Talbot, who has 53 pull requests here.
+  bot_accounts:
+    - fluxcdbot
+    - hmcts-platform-operations
+    - claude
   # All three, because the App's `pull_requests: read` has now been approved. This was narrowed to `[public]`
   # while it was pending: 962 private and 547 internal repositories were refused outright, so admitting them
   # would have filled the dashboard with `unavailable` rows rather than figures. Verified after approval —

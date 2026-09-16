@@ -21,6 +21,7 @@ import {
   alertTone,
   type ConditionOutcome,
   codeownersTone,
+  directCommitTone,
   gateFieldTone,
   maintenanceTone,
   openPullRequestTone,
@@ -128,24 +129,78 @@ export function conditionGroups(assessment: ReadinessAssessment): ConditionGroup
   ];
 }
 
+/** Said wherever a cohort figure is absent, which is the one thing three zeros would not say. */
+const UNREAD_MERGES = "no merge history was read for this repository, so this is unmeasured rather than none";
+
+/** Whether either merge source was read at all, which is what separates an unmeasured cohort from a quiet one. */
+function anyMergesRead(cohort: CohortSummary): boolean {
+  return cohort.merged !== undefined || cohort.direct_commits !== undefined;
+}
+
 /**
- * How many merges the cohort left out, and who they were left out for.
+ * How many merges the cohort left out, or nothing where no merge history was read to leave any out of.
  *
- * Excluded authors are bots and any login the configuration names, and the count is stated beside
- * the reported one rather than folded into it: a repository where half the merges are Dependabot's
- * has a very different window from one where none are, and only the two figures together say which.
+ * Excluded authors are the dependency automation `cohort.excluded_authors` names and, on the direct-commit side,
+ * every account that is not a person. The count is stated beside the reported one rather than folded into it: a
+ * repository where half the merges are Dependabot's has a very different window from one where none are, and only
+ * the two figures together say which.
+ *
+ * Counted over BOTH ROUTES, so this is not always `merged - reported` — a bot that pushed straight to the default
+ * branch was excluded from the direct-commit figure instead.
  */
-export function excludedMerges(cohort: CohortSummary): number {
+export function excludedMerges(cohort: CohortSummary): number | undefined {
+  if (!anyMergesRead(cohort)) {
+    return undefined;
+  }
   return Object.values(cohort.excluded_authors).reduce((total, merges) => total + merges, 0);
 }
 
-/** Name the excluded authors and their merge counts, or say there were none to exclude. */
+/** Name the excluded authors and their merge counts, or say there were none — or that nobody looked. */
 export function excludedDetail(cohort: CohortSummary): string {
+  if (!anyMergesRead(cohort)) {
+    return UNREAD_MERGES;
+  }
   const authors = Object.entries(cohort.excluded_authors);
   if (authors.length === 0) {
     return "no author was excluded from this window";
   }
   return authors.map(([login, merges]) => `${login} ${merges}`).join(" · ");
+}
+
+/**
+ * The three cohort cards: what is counted, what was left out, and what arrived without a pull request.
+ *
+ * ASSEMBLED HERE RATHER THAN IN THE PAGE, on the precedent `openPullRequestCards` sets, because each of the three
+ * has an absent case and the page had none of them: it read the counts through `String(...)`, which prints
+ * `undefined` for a figure nobody measured, and before the counts could be absent at all it printed three zeros
+ * and "no author was excluded from this window" for a repository whose merge walk GitHub refused.
+ *
+ * Every value goes through `quantity`, so an unread source is the dash the whole contract states and never a zero,
+ * and each card's detail says which of the two it is. The tones are unchanged: throughput is uncoloured because a
+ * busy repository is not a good one, an exclusion is the cohort working rather than a shortfall, and
+ * `directCommitTone` already answers neutral for a count nobody made.
+ */
+export function cohortCards(cohort: CohortSummary): LabelledValue[] {
+  return [
+    {
+      label: "Merges reported",
+      value: quantity(cohort.reported),
+      detail: cohort.merged === undefined ? UNREAD_MERGES : `${cohort.merged} merged in the span`,
+      tone: "neutral"
+    },
+    {
+      label: "Merges excluded",
+      value: quantity(excludedMerges(cohort)),
+      detail: excludedDetail(cohort),
+      tone: "neutral"
+    },
+    {
+      label: "Direct commits",
+      value: quantity(cohort.direct_commits),
+      detail: cohort.direct_commits === undefined ? UNREAD_MERGES : "landed on the default branch without a pull request",
+      tone: directCommitTone(cohort.direct_commits)
+    }
+  ];
 }
 
 /**

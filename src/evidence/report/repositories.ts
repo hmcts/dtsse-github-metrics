@@ -1,6 +1,18 @@
 import "server-only";
 import { type ReadinessPolicy, readinessPolicy } from "../assessment/assessment.ts";
-import { changeSize, contributorLogins, eligibleChecks, eligibleReviews, isPassingCheck } from "../behaviour/analysis.ts";
+import {
+  botAccounts,
+  changeSize,
+  contributorLogins,
+  eligibleChecks,
+  eligibleReviews,
+  excludedAuthors,
+  inCohort,
+  isPassingCheck,
+  type ReportedCohort,
+  reportedCohort,
+  reportedDirectCommit
+} from "../behaviour/analysis.ts";
 import { deserialise, loadCachedMerges } from "../behaviour/fill.ts";
 import { behaviourMetrics, mergeCycleTime, timeToFirstReview } from "../behaviour/metrics.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
@@ -215,7 +227,7 @@ function repositoryRow(
 }
 
 /** Whether each of one repository's two behaviour sources was read. See `measuredSources`. */
-interface MeasuredRow {
+export interface MeasuredRow {
   pullRequests: boolean;
   directCommits: boolean;
 }
@@ -456,10 +468,24 @@ interface MeasuredSources {
  * The four reads go together because none of them needs another's answer, and because the three that are not the
  * fact cache are the ones a per-span build was paying for five times over: `servedCohort` is two queries against
  * the change-versioned graph and `storedRepositoryStates` is 1,891 rows of `jsonb`.
+ *
+ * THE COHORT IS NARROWED HERE, which is the estate's half of the one seam `reportedCohort` states —
+ * `cohort.excluded_authors` on the pull requests and the whole all-bots rule on the direct commits. It has to be
+ * this read rather than `mergesSince` or `repositoryRow`: whether a merge counts is a fact about the merge and not
+ * about a span, so narrowing once here settles it for all five spans and all four reports built from them, where
+ * narrowing per span would run it five times and per row once per repository per span. Everything derived below
+ * therefore counts the reported cohort and nothing else — the rows' figures, the readiness labels, the
+ * substantial-merge denominators, the two timing medians, the contributor rows and both activity tables.
+ *
+ * It cannot disturb `measured`, and that separation is deliberate: measured-ness comes off the COVERAGE table and
+ * this filters the FACTS. A repository whose walk succeeded and whose only merges were Renovate's is measured and
+ * reports `0`; one nobody walked reports nothing at all. Filtering can move a count to zero and never to absent.
  */
 async function readEstate(configuration: Configuration, window: ReportingWindow, reference: Date): Promise<Estate> {
   const organization = configuration.organization;
   const signatures = { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) };
+  const excluded = excludedAuthors(configuration.cohort.excluded_authors);
+  const bots = botAccounts(configuration.cohort.bot_accounts);
   const [cohort, states, stored, edges] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryStates(organization),
@@ -479,8 +505,12 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
         {
           // `deserialise` rather than `deserialiseMerges`, because the payloads arrive dated: the same primitive
           // the per-repository path reads a payload with, so there is still one definition of what reviving one is.
-          pullRequests: cached.pullRequests.map((row) => ({ at: row.at.getTime(), fact: deserialise<PullRequestFact>(row.payload) })),
-          directCommits: cached.directCommits.map((row) => ({ at: row.at.getTime(), fact: deserialise<DirectCommitFact>(row.payload) }))
+          pullRequests: cached.pullRequests
+            .map((row) => ({ at: row.at.getTime(), fact: deserialise<PullRequestFact>(row.payload) }))
+            .filter((row) => inCohort(row.fact, excluded)),
+          directCommits: cached.directCommits
+            .map((row) => ({ at: row.at.getTime(), fact: deserialise<DirectCommitFact>(row.payload) }))
+            .filter((row) => reportedDirectCommit(row.fact, excluded, bots))
         }
       ])
     )
@@ -637,7 +667,7 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
 
   return {
     rows,
-    actors: builtActorRows(rows as { repository: string; readiness?: string }[], facts, names),
+    actors: builtActorRows(rows as { repository: string; readiness?: string }[], facts, names, botAccounts(configuration.cohort.bot_accounts)),
     merges: builtMergeRows(facts),
     directPushes: builtDirectPushRows(facts)
   };
@@ -796,7 +826,8 @@ export async function actorRows(configuration: Configuration, weeks: number, ref
 function builtActorRows(
   rows: readonly { repository: string; readiness?: string }[],
   facts: ReadonlyMap<string, Merges>,
-  names: ReadonlyMap<string, string>
+  names: ReadonlyMap<string, string>,
+  bots: ReadonlySet<string>
 ): unknown[] {
   const readinessOf = new Map(rows.map((row) => [row.repository, row.readiness]));
   const spelling = new Map<string, string>();
@@ -812,7 +843,7 @@ function builtActorRows(
         spelling.set(login.toLowerCase(), login);
       }
     }
-    for (const login of contributorLogins(changes)) {
+    for (const login of contributorLogins(changes, bots)) {
       const seen = appearances.get(login) ?? new Set<string>();
       seen.add(repository);
       appearances.set(login, seen);
@@ -862,16 +893,22 @@ function builtActorRows(
  * come off a query string: holding one entry per repository per span is a map the size of the estate times the
  * selector, evicted by nothing. It costs two fact queries and one state read for a page a reader asked for by
  * name, which is the shape `loadCachedMerges` exists for.
+ *
+ * `measured` IS HANDED IN AND NOT READ HERE, exactly as `repositoryRow` is handed its own. `src/lib/api.ts` holds
+ * this repository's estate row by the time it calls this, and that row's two counts are absent precisely where a
+ * source went unread — so the answer is already in the caller's hand, and reading `source_coverage` again would
+ * add a query to a per-page path for a fact one read of the estate has already settled.
  */
 export async function repositoryEvidence(
   configuration: Configuration,
   repository: string,
   weeks: number,
+  measured: MeasuredRow,
   reference = new Date()
 ): Promise<unknown | undefined> {
   const organization = configuration.organization;
   const { window } = await resolveReportWindow(configuration, weeks, reference);
-  const [cohort, state, merges] = await Promise.all([
+  const [cohort, state, walked] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryState(organization, repository),
     loadCachedMerges(organization, repository, window)
@@ -887,6 +924,11 @@ export async function repositoryEvidence(
   const gate = storedGate(state.payload);
   const payload = state.payload as { securityAlerts?: SecurityAlertEvidence };
   const fetched = state.fetchedAt.toISOString();
+  // The per-repository half of the one seam. `walked` is everything the collection cached and `reported.merges`
+  // is what this page counts, so every figure below — the assessment, the metric summaries and the unreviewed
+  // verdict — is computed on the same cohort the estate row's figures are, and the two pages cannot disagree.
+  const reported = reportedCohort(walked, excludedAuthors(configuration.cohort.excluded_authors), botAccounts(configuration.cohort.bot_accounts));
+  const merges = reported.merges;
 
   return stripAbsent({
     repository,
@@ -896,7 +938,7 @@ export async function repositoryEvidence(
     // `offline` because this reads the cache and never GitHub — a report is served from what a collection left,
     // which is the whole point of the fact tables. No interval is fetched to render a page.
     provenance: { offline: true, intervals_fetched: 0 },
-    cohort: cohortSummary(merges),
+    cohort: cohortSummary(walked, reported, measured),
     assessment: policy.enabled ? policy.assess(merges, gate) : undefined,
     unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
     merge_gate: contractGate(gate, fetched),
@@ -915,23 +957,33 @@ export async function repositoryEvidence(
 }
 
 /**
- * The window's merge cohort as the page's three cards read it.
+ * The window's merge cohort as the page's three cards read it: what was walked, what is reported, and who was left
+ * out of the difference.
  *
- * `reported` EQUALS `merged` and `excluded_authors` IS EMPTY, and that is a statement about this service rather
- * than about any repository: `cohort.excluded_authors` defaults to `renovate, dependabot` and NOTHING APPLIES IT —
- * `inCohort` and `excludedAuthors` are defined in `behaviour/analysis.ts` and called from no production path. So
- * dependency-automation merges are counted in every figure on this page and in every metric behind it.
+ * A REAL SPLIT, from 2026-09-16. `reported` used to equal `merged` and `excluded_authors` used to be empty, which
+ * was an honest statement of a service that applied `cohort.excluded_authors` to nothing at all. It applies it now,
+ * at the one seam `reportedCohort` documents, so the figures beside these cards ARE computed over the smaller
+ * cohort — and stating the split is what makes that visible rather than a quiet drop in throughput.
  *
- * Reporting the exclusion here anyway would be worse than not reporting it: it would show a reader a `reported`
- * count lower than `merged` and imply the metrics beside it were computed over the smaller cohort, which they were
- * not. Saying "no author was excluded" is true of what this service does today.
+ * `walked` is what the cache held and `reported` is what everything else on the page counted, so `merged` and
+ * `reported` are two counts of one window rather than two windows. `excluded_authors` names every author the
+ * difference is owed to, counted over BOTH ROUTES and by both rules, so its total is not always `merged -
+ * reported`: a bot's direct commit was left out of the direct-commit figure instead.
+ *
+ * THE THREE COUNTS ARE GATED ON MEASURED-NESS, per source, exactly as `behaviourFigures` gates the estate row's
+ * copies of them. `/repositories/<name>` drew three zeros and "no author was excluded from this window" for a
+ * repository whose merge walk was refused — a measurement nobody made, stated as confidently as a real one.
+ *
+ * THE MAP IS NOT GATED, because it accounts for facts rather than for a measurement: it says what was dropped from
+ * the cohort the assessment below still grades, which is computed from every fact in the cache whether the window
+ * reports its counts or not. Where nothing was read there is nothing to drop and it is empty, and
+ * `lib/repository.cohortCards` reads the absent counts — not the empty map — as the signal that nobody looked.
  */
-function cohortSummary(merges: Merges): Record<string, unknown> {
+function cohortSummary(walked: Merges, reported: ReportedCohort, measured: MeasuredRow): Record<string, unknown> {
   return {
-    merged: merges.pullRequests.length,
-    reported: merges.pullRequests.length,
-    excluded_authors: {},
-    direct_commits: merges.directCommits.length
+    ...(measured.pullRequests ? { merged: walked.pullRequests.length, reported: reported.merges.pullRequests.length } : {}),
+    excluded_authors: reported.excluded,
+    ...(measured.directCommits ? { direct_commits: reported.merges.directCommits.length } : {})
   };
 }
 

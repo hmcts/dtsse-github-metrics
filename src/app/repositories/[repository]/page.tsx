@@ -17,8 +17,7 @@ import { getRepository, getTrend, getWindows, isNotFound } from "@/lib/api";
 import { instant, span } from "@/lib/format";
 import {
   codeownersCard,
-  excludedDetail,
-  excludedMerges,
+  cohortCards,
   type LabelledValue,
   maintenanceRows,
   maintenanceSummary,
@@ -28,7 +27,6 @@ import {
   sonarGateCard,
   sonarRows
 } from "@/lib/repository";
-import { directCommitTone } from "@/lib/tone";
 import { hasPeriods } from "@/lib/trend";
 import type { RepositoryDetail, SonarReport } from "@/lib/types";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
@@ -124,34 +122,14 @@ export default async function RepositoryPage({
       {header}
 
       {/* The cohort is the page's headline figure rather than a section of it, so it carries the
-          panel without a heading: the cards are flat, and four unbounded figures would float. */}
+          panel without a heading: the cards are flat, and four unbounded figures would float.
+
+          The three cohort cards come from `lib/repository` rather than being written here, so an
+          unread merge history reads as a dash and its reason on this page exactly as it does in the
+          estate table's Merged column. */}
       <Panel>
         <div className="p-4">
-          <ValueCards
-            values={[
-              {
-                label: "Merges reported",
-                value: String(evidence.cohort.reported),
-                detail: `${evidence.cohort.merged} merged in the span`,
-                // Throughput, and uncoloured on purpose: a busy repository is not a good one.
-                tone: "neutral"
-              },
-              {
-                label: "Merges excluded",
-                value: String(excludedMerges(evidence.cohort)),
-                detail: excludedDetail(evidence.cohort),
-                // Excluding Dependabot's merges is the cohort working, not a shortfall in it.
-                tone: "neutral"
-              },
-              {
-                label: "Direct commits",
-                value: String(evidence.cohort.direct_commits),
-                detail: "landed on the default branch without a pull request",
-                tone: directCommitTone(evidence.cohort.direct_commits)
-              },
-              codeownersCard(evidence.codeowners)
-            ]}
-          />
+          <ValueCards values={[...cohortCards(evidence.cohort), codeownersCard(evidence.codeowners)]} />
         </div>
       </Panel>
 

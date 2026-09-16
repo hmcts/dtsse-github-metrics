@@ -443,6 +443,44 @@ describe("a repository the span cannot be reported for", () => {
  * "not available" across them would lose which question went unanswered, and a zero in place of any
  * of them would report a missing permission as a passing check.
  */
+describe("the repository page’s cohort row", () => {
+  it("should state the reported count against the walked one, and name what was excluded", async () => {
+    const markup = await render();
+
+    expect(markup).toContain("12 merged in the span");
+    expect(markup).toContain("dependabot[bot] 3");
+  });
+
+  it("should draw a dash and its reason when nobody read this repository's merges", async () => {
+    // THE ROW THIS IS ABOUT: a repository whose merge walk GitHub refused keeps its state row, so the page
+    // renders — and until this it drew three zeros and "no author was excluded from this window", which is a
+    // measurement nobody made stated as confidently as a real one.
+    const markup = await render((block) => ({
+      ...block,
+      cohort: { excluded_authors: {} }
+    }));
+
+    expect(markup).toContain("no merge history was read for this repository, so this is unmeasured rather than none");
+    expect(markup).not.toContain("no author was excluded from this window");
+    // The cards are still drawn: the reader asked for this repository by name, and a missing row would say
+    // less than a dash does.
+    expect(markup).toContain("Merges reported");
+    expect(markup).toContain("Direct commits");
+  });
+
+  it("should keep a measured zero as a zero, nothing merged being a measurement", async () => {
+    const markup = await render((block) => ({
+      ...block,
+      cohort: { merged: 4, reported: 0, excluded_authors: { renovate: 4 }, direct_commits: 0 }
+    }));
+
+    // A window whose only merges were Renovate's: read, and holding nothing human.
+    expect(markup).toContain("4 merged in the span");
+    expect(markup).toContain("renovate 4");
+    expect(markup).not.toContain("no merge history was read");
+  });
+});
+
 describe("the repository page’s absences and lists", () => {
   it("says which signal was not collected, one sentence each", async () => {
     const markup = await render((block) => ({

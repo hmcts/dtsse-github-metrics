@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ALERT_FAMILIES,
   codeownersCard,
+  cohortCards,
   conditionGroups,
   excludedDetail,
   excludedMerges,
@@ -93,6 +94,60 @@ describe("the cohort", () => {
     const counted = cohort({ excluded_authors: { "dependabot[bot]": 3, "renovate[bot]": 1 } });
     expect(excludedMerges(counted)).toBe(4);
     expect(excludedDetail(counted)).toBe("dependabot[bot] 3 · renovate[bot] 1");
+  });
+
+  it("should count no exclusion at all when neither merge source was read", () => {
+    // Absent counts and not zeroes: a repository whose merge walk GitHub refused has nothing to have
+    // excluded anybody from, and `0 excluded` would read as a measurement nobody made.
+    const unread = cohort({ merged: undefined, reported: undefined, direct_commits: undefined });
+
+    expect(excludedMerges(unread)).toBeUndefined();
+    expect(excludedDetail(unread)).toBe("no merge history was read for this repository, so this is unmeasured rather than none");
+  });
+
+  it("should still count exclusions when only the direct commits were read", () => {
+    // The two sources are gated independently, so one read source is enough to make the tally a real answer.
+    const partial = cohort({ merged: undefined, reported: undefined, excluded_authors: { renovate: 2 } });
+
+    expect(excludedMerges(partial)).toBe(2);
+  });
+});
+
+describe("cohortCards", () => {
+  it("should state the reported count against what was walked, and name what was left out", () => {
+    const cards = cohortCards(cohort({ merged: 12, reported: 9, excluded_authors: { renovate: 3 }, direct_commits: 2 }));
+
+    expect(cards.map((card) => [card.label, card.value, card.detail])).toEqual([
+      ["Merges reported", "9", "12 merged in the span"],
+      ["Merges excluded", "3", "renovate 3"],
+      ["Direct commits", "2", "landed on the default branch without a pull request"]
+    ]);
+  });
+
+  it("should keep a measured zero as a zero, since nothing merged is a measurement", () => {
+    const cards = cohortCards(cohort({ merged: 0, reported: 0, direct_commits: 0 }));
+
+    expect(cards.map((card) => card.value)).toEqual(["0", "0", "0"]);
+  });
+
+  it("should draw a dash and say why when no merge history was read", () => {
+    const unread = "no merge history was read for this repository, so this is unmeasured rather than none";
+    const cards = cohortCards(cohort({ merged: undefined, reported: undefined, direct_commits: undefined }));
+
+    expect(cards.map((card) => card.value)).toEqual(["-", "-", "-"]);
+    expect(cards.map((card) => card.detail)).toEqual([unread, unread, unread]);
+  });
+
+  it("should dash only the source nobody read when the other one answered", () => {
+    const cards = cohortCards(cohort({ merged: 12, reported: 9, direct_commits: undefined }));
+
+    expect(cards.map((card) => card.value)).toEqual(["9", "0", "-"]);
+  });
+
+  it("should colour a direct commit nobody counted neutrally rather than as none", () => {
+    expect(cohortCards(cohort({ direct_commits: undefined })).at(2)?.tone).toBe("neutral");
+    expect(cohortCards(cohort({ direct_commits: 0 })).at(2)?.tone).toBe("good");
+    expect(cohortCards(cohort({ direct_commits: 3 })).at(2)?.tone).toBe("warn");
   });
 });
 
