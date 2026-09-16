@@ -2,7 +2,8 @@ import { z } from "zod";
 import type { AssuranceEvidence, HygieneSignals, SecretAlertSummary } from "../domain/assurance.ts";
 import { ageInDays } from "../domain/assurance.ts";
 import { GitHubError } from "../domain/availability.ts";
-import type { GitHubClient } from "../github/client.ts";
+import { AliasAnswer, readAliasedBatch, reaskable } from "../github/aliased-batch.ts";
+import type { GitHubClient, GraphqlPartial } from "../github/client.ts";
 
 /**
  * Collecting the assurance signals. The cheap half of `domain/assurance.ts`'s inputs.
@@ -176,21 +177,22 @@ function reason(error: unknown): string {
 }
 
 /**
- * Reads one repository's aliased entry, or nothing where GitHub would not name it.
+ * Reads one repository's aliased entry, or nothing where the node is not one this build can read.
  *
  * NO ENTRY MEANS UNREAD, and the caller leaves both signals absent for it — which the domain then grades as
- * unknown rather than as a repository with scanning switched off. Same three-outcome discipline
- * `readOwnershipRepository` keeps.
+ * unknown rather than as a repository with scanning switched off.
+ *
+ * ONLY EVER GIVEN A NODE GITHUB NAMED: an alias that came back `null`, or one the response did not carry at
+ * all, is judged by `readAliasedBatch` before this is reached, because those two are answers about the
+ * response rather than about the repository and each is reported in its own words. The schema is what refuses
+ * anything else, `null` and a scalar included, so there is no second guard here to keep in step with it.
  */
 function readAssuranceEntry(organization: string, repository: string, value: unknown): GraphAssurance | undefined {
-  if (value == null || typeof value !== "object") {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  const parsed = assuranceEntrySchema.safeParse(record);
+  const parsed = assuranceEntrySchema.safeParse(value);
   if (!parsed.success) {
     return undefined;
   }
+  const record = value as Record<string, unknown>;
   // The one check that guards the aliasing scheme, as the CODEOWNERS walk's does: `a3` must be the repository
   // `$r3` named, or the batch has been read off by one and every signal in it belongs to the wrong repository.
   const echoed = parsed.data.name;
@@ -209,9 +211,12 @@ function readAssuranceEntry(organization: string, repository: string, value: unk
 /**
  * Every repository's GraphQL-only assurance signals, batched.
  *
- * A FAILING BATCH IS RE-READ ONE AT A TIME, verbatim from `readOwnershipBatch` and for its measured reason:
- * GitHub answers a document naming one unreadable repository with errors beside partial data, so without the
- * retry one archived-and-transferred name would record "nobody could look" for the 49 beside it.
+ * THE POPULATED ALIASES ARE CONSUMED AND ONLY THE UNANSWERED ONES ARE ASKED FOR AGAIN. GitHub answers a
+ * document naming one unreadable repository with HTTP 200, the 49 aliases it could resolve, a `null` for the
+ * one it could not and an error saying why — so a reader that treats the whole response as a failure re-reads
+ * every repository in the batch. Since `FORBIDDEN: Resource not accessible by integration` appears in bulk on
+ * this estate, most 50-wide batches hold at least one such node and 38 intended documents became roughly
+ * 1,900 calls. Now they cost 38 plus one re-ask per batch that had a bad node.
  */
 export async function collectAssuranceSignals(
   client: GitHubClient,
@@ -236,27 +241,64 @@ async function readAssuranceBatch(client: GitHubClient, organization: string, ba
     variables[`r${index}`] = name;
   }
 
-  let body: Record<string, unknown>;
+  let answer: GraphqlPartial<Record<string, unknown>>;
   try {
-    body = await client.graphql<Record<string, unknown>>(assuranceQuery(batch.length), variables);
+    answer = await client.graphqlPartial<Record<string, unknown>>(assuranceQuery(batch.length), variables);
   } catch (error) {
-    if (batch.length > 1) {
-      console.warn(`Could not read assurance signals for a batch of ${batch.length} repositories, re-reading them one at a time: ${reason(error)}`);
-      for (const name of batch) {
-        await readAssuranceBatch(client, organization, [name], into);
-      }
-      return;
-    }
-    console.warn(`Could not read assurance signals for ${organization}/${batch[0] as string}: ${reason(error)}`);
+    // NOTHING ARRIVED, so nothing is consumed and the batch is split exactly as it always was. A transport
+    // failure, a spent quota that outlasted the retries or an unparseable body says nothing about any
+    // repository in the batch, and a document too complex for GitHub to serve can succeed one at a time.
+    await reReadOneAtATime(client, organization, batch, into, reason(error));
+    return;
+  }
+  if (answer.data === undefined) {
+    // Errors and NO data: GitHub answered about nothing. Split too, unchanged — `MAX_NODE_LIMIT_EXCEEDED` takes
+    // this shape and is answerable one repository at a time, and this is not the case the cost bug was about.
+    await reReadOneAtATime(client, organization, batch, into, answer.failure.summary);
     return;
   }
 
-  for (const [index, name] of batch.entries()) {
-    const read = readAssuranceEntry(organization, name, body[`a${index}`]);
-    if (read !== undefined) {
-      into.set(name, read);
+  const entries = readAliasedBatch("a", batch, answer.data, answer.failure?.byAlias);
+  for (const entry of entries) {
+    if (entry.answer === AliasAnswer.Answered) {
+      const read = readAssuranceEntry(organization, entry.repository, entry.value);
+      if (read !== undefined) {
+        into.set(entry.repository, read);
+      }
+      continue;
     }
+    // A REFUSAL REPORTED AS A REFUSAL. The signals stay absent either way, but the log says which of GitHub's
+    // answers this was — a `FORBIDDEN` and a repository that was archived and transferred want different
+    // actions, and the third case, an alias GitHub never named, is neither of them.
+    console.warn(`No assurance signals for ${organization}/${entry.repository}: ${entry.refusal as string}`);
   }
+
+  for (const name of reaskable(entries)) {
+    await readAssuranceBatch(client, organization, [name], into);
+  }
+}
+
+/**
+ * Re-reads a batch NOTHING was answered for, one repository at a time.
+ *
+ * The behaviour a whole-batch failure has always had, kept for the failures that are still whole-batch ones.
+ * It runs at most one extra pass, because a batch of one takes the second branch and does not split further.
+ */
+async function reReadOneAtATime(
+  client: GitHubClient,
+  organization: string,
+  batch: readonly string[],
+  into: Map<string, GraphAssurance>,
+  detail: string
+): Promise<void> {
+  if (batch.length > 1) {
+    console.warn(`Could not read assurance signals for a batch of ${batch.length} repositories, re-reading them one at a time: ${detail}`);
+    for (const name of batch) {
+      await readAssuranceBatch(client, organization, [name], into);
+    }
+    return;
+  }
+  console.warn(`Could not read assurance signals for ${organization}/${batch[0] as string}: ${detail}`);
 }
 
 /**

@@ -3,9 +3,24 @@ import { AlertSeverity } from "../domain/security-alerts.ts";
 import { HUMAN_MAINTENANCE_SEARCH_DAYS, humanWindowAnswer, maintenanceEvidence, maintenanceWindows } from "../domain/standards.ts";
 import { createGitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
+import { severeAlertAge } from "./assurance.ts";
 import { bindsAdministrators, collectMergeGate, enforcingRules, mergeGateFromClassicProtection, mergeGateWithoutRuleDetails } from "./merge-gate.ts";
 import { deploysToProduction, entryRepository, ProductionListError, parseProductionRepositories, parseRepositoryUrl } from "./production.ts";
-import { codeScanningSeverity, collectSecurityAlerts, countBySeverity, dependabotSeverity, noSeverity, openAlerts } from "./security-alerts.ts";
+import {
+  alertRepositoryName,
+  alertsFromOrganisation,
+  codeScanningSeverity,
+  collectOrganisationDependabotAlerts,
+  collectSecurityAlerts,
+  countBySeverity,
+  countedAlertsFromOrganisation,
+  dependabotSeverity,
+  noSeverity,
+  OrganisationAnswer,
+  openAlerts,
+  organisationAnswer,
+  organisationRecords
+} from "./security-alerts.ts";
 
 // Ported from tests/test_inventory.py and tests/test_production.py.
 
@@ -347,14 +362,28 @@ describe("severity readers", () => {
 });
 
 describe("collectSecurityAlerts", () => {
-  it("should read all three families independently, so one refusal does not suppress the others", async () => {
-    const fetch = replying([
-      { body: [{ security_advisory: { severity: "high" } }] },
-      { status: 403, body: { message: "Resource not accessible by personal access token" } },
-      { body: [] }
-    ]);
+  /** The two estate-wide families as a run that read them both successfully would hand them in. */
+  function estateWide(options: { dependabot?: readonly unknown[]; open?: number; enabled?: boolean } = {}) {
+    return {
+      dependabot: {
+        from: "organisation" as const,
+        place: { read: true, named: options.dependabot !== undefined, enabled: options.enabled ?? true },
+        records: options.dependabot ?? []
+      },
+      secretScanning: { place: { read: true, named: options.open !== undefined, enabled: options.enabled ?? true }, open: options.open ?? 0 }
+    };
+  }
 
-    const { evidence, failures } = await collectSecurityAlerts(client(fetch), "hmcts", "cath-service");
+  it("should read all three families independently, so one refusal does not suppress the others", async () => {
+    // Only code scanning is fetched here now; the other two are handed in off estate-wide reads.
+    const fetch = replying([{ status: 403, body: { message: "Resource not accessible by personal access token" } }]);
+
+    const { evidence, failures } = await collectSecurityAlerts(
+      client(fetch),
+      "hmcts",
+      "cath-service",
+      estateWide({ dependabot: [{ security_advisory: { severity: "high" } }], open: 0 })
+    );
 
     expect(evidence.dependabot.open).toBe(1);
     expect(evidence.codeScanning.open).toBeUndefined();
@@ -364,15 +393,247 @@ describe("collectSecurityAlerts", () => {
   });
 
   it("should record no failure for a family that is merely not enabled", async () => {
-    const fetch = replying([
-      { status: 404, body: {} },
-      { status: 404, body: {} },
-      { status: 404, body: {} }
-    ]);
+    const fetch = replying([{ status: 404, body: {} }]);
 
-    const { failures } = await collectSecurityAlerts(client(fetch), "hmcts", "cath-service");
+    const { failures } = await collectSecurityAlerts(client(fetch), "hmcts", "cath-service", estateWide({ enabled: false }));
 
     expect(failures).toEqual([]);
+  });
+
+  it("should ask GitHub for code scanning only, since the other two came off estate-wide reads", async () => {
+    // Item 4 of the cost review: `assurance.ts` states the per-repository secret-scanning endpoint "is
+    // deliberately not used: 1,880 calls against one", and this file called it once per walked repository anyway.
+    const asked: string[] = [];
+    const fetch = vi.fn((url: string | URL) => {
+      asked.push(String(url));
+      return Promise.resolve(new Response("[]", { status: 200, headers: { "content-type": "application/json" } }));
+    }) as unknown as typeof globalThis.fetch;
+
+    await collectSecurityAlerts(client(fetch), "hmcts", "cath-service", estateWide({ dependabot: [], open: 0 }));
+
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).toContain("/code-scanning/alerts");
+  });
+
+  it("should report an estate-wide family as unmeasured where its read failed", async () => {
+    // One refused call for the whole estate, and every repository reads unmeasured rather than clean. No
+    // per-repository failure is raised for it: the caller that made the call counts it once.
+    const fetch = replying([{ body: [] }]);
+    const unread = {
+      dependabot: { from: "organisation" as const, place: { read: false, named: false, enabled: true }, records: [] },
+      secretScanning: { place: { read: false, named: false, enabled: true }, open: 0 }
+    };
+
+    const { evidence, failures } = await collectSecurityAlerts(client(fetch), "hmcts", "cath-service", unread);
+
+    expect(evidence.dependabot.open).toBeUndefined();
+    expect(evidence.dependabot.detail).toContain("could not be read for the organisation");
+    expect(evidence.secretScanning.open).toBeUndefined();
+    expect(failures).toEqual([]);
+  });
+});
+
+describe("organisationAnswer", () => {
+  it("should read a repository the response named as counted, whatever the enablement signal says", () => {
+    // Something found those alerts, so something scanned.
+    expect(organisationAnswer({ read: true, named: true, enabled: false })).toBe(OrganisationAnswer.Counted);
+  });
+
+  it("should read an absence as clean ONLY where the feature is enabled", () => {
+    // The response names only repositories the feature is on for, so this is the one absence that is an answer.
+    expect(organisationAnswer({ read: true, named: false, enabled: true })).toBe(OrganisationAnswer.Clean);
+  });
+
+  it("should read an absence as not-enabled where the feature is off", () => {
+    expect(organisationAnswer({ read: true, named: false, enabled: false })).toBe(OrganisationAnswer.NotEnabled);
+  });
+
+  it("should read an absence as UNMEASURED where nothing says whether the feature is on", () => {
+    // The hazard this whole shape carries. Reading it as clean would report every repository with no scanner as
+    // having no findings, and on this estate the signal is false or absent for roughly 890 of them.
+    expect(organisationAnswer({ read: true, named: false, enabled: undefined })).toBe(OrganisationAnswer.Unmeasured);
+  });
+
+  it("should read a failed estate-wide read as saying nothing about any repository", () => {
+    expect(organisationAnswer({ read: false, named: false, enabled: true })).toBe(OrganisationAnswer.Unread);
+  });
+});
+
+describe("alertsFromOrganisation", () => {
+  const source = (place: { read: boolean; named: boolean; enabled: boolean | undefined }, records: readonly unknown[] = []) =>
+    ({ from: "organisation", place, records }) as const;
+
+  it("should count the records the response carried for this repository", () => {
+    const named = source({ read: true, named: true, enabled: true }, [{ security_advisory: { severity: "critical" } }]);
+
+    expect(alertsFromOrganisation(named, "dependabot/alerts", dependabotSeverity).count).toEqual({ open: 1, bySeverity: { critical: 1 } });
+  });
+
+  it("should read a clean absence as zero open, which is an observation rather than a gap", () => {
+    // The response covers every repository the feature is on for, and this one is on and not in it.
+    const clean = source({ read: true, named: false, enabled: true });
+
+    expect(alertsFromOrganisation(clean, "dependabot/alerts", dependabotSeverity).count).toEqual({ open: 0, bySeverity: {} });
+  });
+
+  it.each([
+    [{ read: true, named: false, enabled: false }, "is not enabled for this repository"],
+    [{ read: true, named: false, enabled: undefined }, "nothing says whether it is enabled"],
+    [{ read: false, named: false, enabled: true }, "could not be read for the organisation"]
+  ])("should leave the count absent for %o, and raise no per-repository failure", (place, detail) => {
+    const result = alertsFromOrganisation(source(place), "dependabot/alerts", dependabotSeverity);
+
+    expect(result.count.open).toBeUndefined();
+    expect(result.count.detail).toContain(detail);
+    // The estate-wide read is one call, and its failure is counted once by the caller that made it.
+    expect(result.reason).toBeUndefined();
+  });
+});
+
+describe("organisationRecords", () => {
+  const source = (place: { read: boolean; named: boolean; enabled: boolean | undefined }, records: readonly unknown[] = []) =>
+    ({ from: "organisation", place, records }) as const;
+
+  it("should hand back the records for a repository the response named", () => {
+    expect(organisationRecords(source({ read: true, named: true, enabled: true }, [{}, {}]))).toHaveLength(2);
+  });
+
+  it("should hand back an empty list for a repository that is clean, so it reads as measured", () => {
+    // `severeAlertsRead` turns on this: an empty list is "there were none", and `undefined` is "nobody looked".
+    expect(organisationRecords(source({ read: true, named: false, enabled: true }))).toEqual([]);
+  });
+
+  it.each([
+    [{ read: true, named: false, enabled: false }],
+    [{ read: true, named: false, enabled: undefined }],
+    [{ read: false, named: false, enabled: true }]
+  ])("should hand back nothing for %o, which is unmeasured rather than empty", (place) => {
+    expect(organisationRecords(source(place))).toBeUndefined();
+  });
+});
+
+describe("alertRepositoryName", () => {
+  it("should prefer the unqualified name, which is what the cohort is keyed by", () => {
+    expect(alertRepositoryName({ name: "cath-service", full_name: "hmcts/cath-service" })).toBe("cath-service");
+  });
+
+  it("should fall back to the segment after the slash, the field the live check confirmed populated", () => {
+    expect(alertRepositoryName({ full_name: "hmcts/cath-service" })).toBe("cath-service");
+  });
+
+  it.each([[null], [undefined], [{}], [{ name: "" }], [{ full_name: "hmcts/" }]])("should name no repository for %o", (record) => {
+    expect(alertRepositoryName(record)).toBeUndefined();
+  });
+});
+
+describe("collectOrganisationDependabotAlerts", () => {
+  it("should key every alert by the repository it belongs to", async () => {
+    const fetch = replying([
+      {
+        body: [
+          { created_at: "2026-01-01T00:00:00Z", security_advisory: { severity: "high" }, repository: { name: "alpha", full_name: "hmcts/alpha" } },
+          { created_at: "2026-02-01T00:00:00Z", security_advisory: { severity: "low" }, repository: { name: "alpha", full_name: "hmcts/alpha" } },
+          { created_at: "2026-03-01T00:00:00Z", security_advisory: { severity: "critical" }, repository: { name: "beta", full_name: "hmcts/beta" } }
+        ]
+      }
+    ]);
+
+    const byRepository = await collectOrganisationDependabotAlerts(client(fetch), "hmcts");
+
+    expect(byRepository?.get("alpha")).toHaveLength(2);
+    expect(byRepository?.get("beta")).toHaveLength(1);
+    // A repository with no open alerts is simply not in it, which is why the enablement signal decides what that
+    // absence means.
+    expect(byRepository?.has("gamma")).toBe(false);
+  });
+
+  it("should narrow each record to the two fields its consumers read", async () => {
+    // Read through the same schemas the per-repository path always used, so there is one spelling of where a
+    // severity lives rather than two.
+    const fetch = replying([
+      { body: [{ created_at: "2026-01-01T00:00:00Z", security_advisory: { severity: "high" }, url: "…", repository: { name: "alpha" } }] }
+    ]);
+
+    const records = (await collectOrganisationDependabotAlerts(client(fetch), "hmcts"))?.get("alpha") ?? [];
+
+    expect(records[0]).toEqual({ created_at: "2026-01-01T00:00:00Z", security_advisory: { severity: "high" } });
+    expect(dependabotSeverity(records[0])).toBe("high");
+    expect(severeAlertAge(records, new Date("2026-01-11T00:00:00Z"))).toBe(10);
+  });
+
+  it("should skip a record naming no repository rather than failing the estate", async () => {
+    const fetch = replying([
+      { body: [{ security_advisory: { severity: "high" } }, { security_advisory: { severity: "low" }, repository: { name: "alpha" } }] }
+    ]);
+
+    const byRepository = await collectOrganisationDependabotAlerts(client(fetch), "hmcts");
+
+    expect(byRepository?.size).toBe(1);
+  });
+
+  it("should skip a record this build cannot read rather than failing the estate", async () => {
+    const fetch = replying([{ body: [{ created_at: 7, repository: { name: "alpha" } }, { repository: { name: "beta" } }] }]);
+
+    const byRepository = await collectOrganisationDependabotAlerts(client(fetch), "hmcts");
+
+    expect([...(byRepository?.keys() ?? [])]).toEqual(["beta"]);
+  });
+
+  it("should keep an alert whose advisory or instant GitHub omitted, since it is still an alert", async () => {
+    // `severeAlertAge` drops an unreadable instant and `countBySeverity` drops an ungraded record; neither wants
+    // the whole alert refused for it, and one leaked-but-ungraded record must not vanish from the count.
+    const fetch = replying([{ body: [{ repository: { name: "alpha" } }] }]);
+
+    const records = (await collectOrganisationDependabotAlerts(client(fetch), "hmcts"))?.get("alpha") ?? [];
+
+    expect(records).toEqual([{ created_at: null, security_advisory: { severity: null } }]);
+    expect(severeAlertAge(records, new Date("2026-01-01T00:00:00Z"))).toBeUndefined();
+  });
+});
+
+describe("countedAlertsFromOrganisation", () => {
+  it("should count the open alerts the estate-wide read reported for this repository", () => {
+    expect(countedAlertsFromOrganisation({ read: true, named: true, enabled: true }, 3, "secret-scanning/alerts").count).toEqual({
+      open: 3,
+      bySeverity: {}
+    });
+  });
+
+  it("should read a clean absence as zero, since the response covers every repository the feature is on for", () => {
+    expect(countedAlertsFromOrganisation({ read: true, named: false, enabled: true }, 0, "secret-scanning/alerts").count.open).toBe(0);
+  });
+
+  it.each([
+    [{ read: true, named: false, enabled: false }, "is not enabled for this repository"],
+    [{ read: true, named: false, enabled: undefined }, "nothing says whether it is enabled"],
+    [{ read: false, named: false, enabled: true }, "could not be read for the organisation"]
+  ])("should leave the count absent for %o, saying which absence it was", (place, detail) => {
+    const { count } = countedAlertsFromOrganisation(place, 0, "secret-scanning/alerts");
+
+    expect(count.open).toBeUndefined();
+    expect(count.detail).toContain(detail);
+  });
+
+  it("should report nothing at all where the read failed, so every repository reads unmeasured", async () => {
+    // An empty map would mean "the whole estate has no open alerts", which is the wrong answer that reads like
+    // good news.
+    const fetch = replying([{ status: 403, body: { message: "Resource not accessible by personal access token" } }]);
+
+    expect(await collectOrganisationDependabotAlerts(client(fetch), "hmcts")).toBeUndefined();
+  });
+
+  it("should ask for a hundred open alerts a page", async () => {
+    const asked: string[] = [];
+    const fetch = vi.fn((url: string | URL) => {
+      asked.push(String(url));
+      return Promise.resolve(new Response("[]", { status: 200, headers: { "content-type": "application/json" } }));
+    }) as unknown as typeof globalThis.fetch;
+
+    await collectOrganisationDependabotAlerts(client(fetch), "hmcts");
+
+    expect(asked[0]).toContain("/orgs/hmcts/dependabot/alerts");
+    expect(asked[0]).toContain("state=open");
+    expect(asked[0]).toContain("per_page=100");
   });
 });
 

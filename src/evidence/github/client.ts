@@ -57,6 +57,43 @@ export interface CallOutcome {
   endpoint: string;
 }
 
+/**
+ * Why part of a GraphQL answer is missing, for a caller that consumed the rest of it.
+ *
+ * `message` and `reason` are exactly what `graphql` would have THROWN, so a partial caller reporting a
+ * refusal reports the same refusal in the same words. `summary` is GitHub's own `TYPE: message` text and
+ * `byAlias` says which node each error names — the two things a caller needs to record a null node as a
+ * refusal rather than as an absence.
+ */
+export interface GraphqlFailure {
+  message: string;
+  reason: AvailabilityReason;
+  /** The status the failure IS, which for a refusal wrapped in an HTTP 200 is 403. */
+  status: number;
+  summary: string;
+  /** Each alias GitHub named an error at, as `TYPE: message`. Empty where no error named a node. */
+  byAlias: Map<string, string>;
+}
+
+/**
+ * One GraphQL answer, which may carry data, a failure, or BOTH.
+ *
+ * GitHub answers an aliased document naming one unreadable repository with HTTP 200, the populated aliases it
+ * could resolve, a `null` for the one it could not, and an `errors` array saying why — so "succeeded" and
+ * "failed" do not describe it and a caller that must choose one throws away 49 answers to report the 50th.
+ *
+ * Three combinations, and each means something different. `data` with no `failure` is a whole answer. `data`
+ * with a `failure` is a partial one, and the caller owes the reader a reason for every node it did not get.
+ * `failure` with no `data` is what `graphql` throws for and is NOT partial: GitHub answered about nothing, so
+ * there is nothing to consume.
+ *
+ * A UNION RATHER THAN TWO OPTIONAL FIELDS, so that the fourth combination cannot be written and a caller
+ * narrowing on `data === undefined` is handed a `failure` it does not have to defend against. "There is no data,
+ * and no reason either" is not an answer this can return: where GitHub named no errors, the shape of the
+ * response is itself the reason and is reported as one.
+ */
+export type GraphqlPartial<T> = { data: T; failure?: GraphqlFailure } | { data?: undefined; failure: GraphqlFailure };
+
 /** How long one resource's quota made a run stand still, and how many times. */
 export interface RateLimitWait {
   resource: string;
@@ -321,8 +358,22 @@ export function createGitHubClient(options: GitHubClientOptions) {
    * cost GitHub" and "what did GitHub answer" are different questions — and the second one has to include
    * the attempts that were retried, waited out or given up on, or a run's summary describes a cheaper and
    * more successful run than the one that happened.
+   *
+   * `tolerateBodyFailure` changes ONE line of this: whether a failure GitHub stated inside an HTTP 200 is
+   * thrown or handed back beside the body. Nothing else moves — the retry loop, the rate-limit waits, the
+   * outcome counting and every non-200 still behave identically — which is what makes `graphqlPartial` an
+   * addition rather than a change. In particular a `RATE_LIMITED` inside a 200 never reaches that line: the
+   * retry deciders above have already either paused and asked again or given up, so a spent budget keeps its
+   * wait-and-retry path and is never offered to a caller as partial data.
    */
-  async function request(method: string, url: string, init: RequestInit, resource: string, operation?: string): Promise<GitHubResponse> {
+  async function request(
+    method: string,
+    url: string,
+    init: RequestInit,
+    resource: string,
+    operation?: string,
+    tolerateBodyFailure = false
+  ): Promise<GitHubResponse> {
     requestsIssued += 1;
     let refreshed = false;
     const endpoint = endpointTemplate(url, operation);
@@ -385,7 +436,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
         const [message, reason] = classify(response.status, body);
         throw new GitHubError(message, reason, response.status);
       }
-      if (bodyFailure !== undefined) {
+      if (bodyFailure !== undefined && !tolerateBodyFailure) {
         throw new GitHubError(
           "GitHub refused part of a GraphQL query",
           bodyFailure.status === 403 ? AvailabilityReason.PermissionDenied : AvailabilityReason.CollectionFailed,
@@ -394,7 +445,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
       }
       // The link header travels with the body, so pagination can follow it without re-reading a consumed
       // response.
-      return { body, link: response.headers.get("link") ?? undefined };
+      return { body, link: response.headers.get("link") ?? undefined, ...(bodyFailure === undefined ? {} : { bodyFailure }) };
     }
   }
 
@@ -434,6 +485,53 @@ export function createGitHubClient(options: GitHubClientOptions) {
         throw new GitHubError("GitHub returned a GraphQL response with no data", AvailabilityReason.CollectionFailed);
       }
       return payload.data;
+    },
+
+    /**
+     * One GraphQL query whose caller will handle a PARTIAL answer.
+     *
+     * A SEPARATE METHOD RATHER THAN AN OPTION ON `graphql`, and that is the whole design. `graphql` above is
+     * untouched — same signature, same body, same throw for any non-empty `errors` array — so no existing
+     * caller's semantics can have moved: partial data is reachable only by naming a method that did not exist
+     * before. An options flag would have left a default value to get wrong, and a partial answer silently
+     * reaching a caller that assumed a whole one is a worse fault than the cost this exists to save.
+     *
+     * WHAT THIS BUYS. GitHub answers an aliased 50-repository document containing one archived-and-transferred
+     * repository with HTTP 200, 49 populated aliases, one `null` and one error. `graphql` throws that away and
+     * its callers re-read the batch one repository at a time, so 38 intended documents became roughly 1,900
+     * calls — most 50-wide batches contain at least one node GitHub will not answer for.
+     *
+     * WHAT IT DOES NOT CHANGE. A transport failure still throws from `request`, before anything here runs, so
+     * there is no partial consumption of a response that never arrived. A `RATE_LIMITED` inside a 200 is still
+     * waited out and retried by the loop in `request` and never surfaces here. And a 200 carrying errors and
+     * NO `data` is still a failure — GitHub answered about nothing, and `{ failure }` with no `data` is how
+     * that is said to a caller that cannot be thrown at.
+     */
+    async graphqlPartial<T>(query: string, variables: Record<string, unknown> = {}, resource = "graphql"): Promise<GraphqlPartial<T>> {
+      const { body, bodyFailure } = await request(
+        "POST",
+        graphqlUrl,
+        { body: JSON.stringify({ query, variables }), headers: { "content-type": "application/json" } },
+        resource,
+        graphqlOperationName(query),
+        true
+      );
+      const payload = parseJson<{ data?: T }>(body, "GitHub returned an unreadable GraphQL body");
+      const failure = bodyFailure === undefined ? undefined : graphqlFailure(bodyFailure);
+      if (payload.data === undefined || payload.data === null) {
+        // The same judgement `graphql` throws, handed back instead. Where GitHub named errors they are the
+        // reason; where it named none there is nothing to report but the shape of the answer.
+        return {
+          failure: failure ?? {
+            message: "GitHub returned a GraphQL response with no data",
+            reason: AvailabilityReason.CollectionFailed,
+            status: 200,
+            summary: "no data and no errors",
+            byAlias: new Map()
+          }
+        };
+      }
+      return { data: payload.data, ...(failure === undefined ? {} : { failure }) };
     },
 
     /**
@@ -485,6 +583,25 @@ export function createGitHubClient(options: GitHubClientOptions) {
 interface GitHubResponse {
   body: string;
   link: string | undefined;
+  /** The failure GitHub stated inside an HTTP 200, present only where the caller said it would handle one. */
+  bodyFailure?: BodyFailure;
+}
+
+/**
+ * The failure a partial caller is handed, from the one `graphql` would have thrown.
+ *
+ * THE SAME MESSAGE AND THE SAME REASON, deliberately: a refusal a caller reports out of a partial read has to
+ * read as the same refusal a caller reports out of a thrown one, or the run summary and the log describe two
+ * different faults. Only `byAlias` is new, and it is what lets a caller say which node the refusal was about.
+ */
+function graphqlFailure(bodyFailure: BodyFailure): GraphqlFailure {
+  return {
+    message: "GitHub refused part of a GraphQL query",
+    reason: bodyFailure.status === 403 ? AvailabilityReason.PermissionDenied : AvailabilityReason.CollectionFailed,
+    status: bodyFailure.status,
+    summary: bodyFailure.summary,
+    byAlias: bodyFailure.byAlias
+  };
 }
 
 function parseJson<T>(body: string, message: string): T {

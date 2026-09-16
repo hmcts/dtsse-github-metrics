@@ -221,9 +221,10 @@ one database, one rate-limit budget. `concurrencyPolicy: Forbid` does not help: 
 
 Two concurrent collectors do more than duplicate work:
 
-- The GitHub budget is per **installation**. A full `collect` is ~15,500 calls against 15,000 core and 12,500
-  GraphQL an hour, so one run fits and two do not — both degrade to partial and the estate ends up *less* well
-  collected than if one had run alone.
+- The GitHub budget is per **installation**, against 15,000 core and 12,500 GraphQL an hour. This used to be the
+  decisive reason — a full `collect` was ~15,500 calls, so one run fitted and two did not. It is now the
+  *weakest* of the three: the estate-wide reads brought a run well inside one hour's budget. The two below are
+  unaffected and are each sufficient on their own.
 - Each run stamps `observed_at` at its own start instant, so the later-starting run committing first makes the
   other close a row at an instant *before* it was observed, which `<table>_interval_ordered` rejects.
 - The live-row partial unique indexes catch two writers inserting one key — as a unique violation, which rolls
@@ -248,20 +249,36 @@ The shape of it, with the counts standing in for whatever a given run's were:
 
 ```
 collected 1889 of 1889 repositories (1240 walked for behaviour) in N GitHub calls
-  200 ok GET https://api.github.com/repos/{organization}/{repository}/dependabot/alerts?state=open&per_page=100 (x1889)
+  200 ok GET https://api.github.com/repos/{organization}/{repository}/code-scanning/alerts?state=open&per_page=100 (x1240)
   200 ok POST https://api.github.com/graphql AssuranceSignals (x38)
+  200 ok GET https://api.github.com/orgs/{organization}/dependabot/alerts?state=open&per_page=100 (x24)
   200 ok GET https://api.github.com/orgs/{organization}/repos?per_page=100&type=all (x19)
   502 retried POST https://api.github.com/graphql MergedPullRequests (x11)
-  403 rate-limited GET https://api.github.com/repos/{organization}/{repository}/code-scanning/alerts?state=open&per_page=100 (x4)
   0 exhausted POST https://api.github.com/graphql MergedPullRequests (x1)
   waited 612s for the graphql quota across 3 pauses
 ```
 
-That third line is **the whole estate's metadata**: `security_and_analysis` and the default branch come off one
-paginated `GET /orgs/{org}/repos` rather than one `GET /repos/{org}/{repo}` per repository, which is about 19
-pages against 1,889 calls. A repository the organisation does not list — renamed, transferred or deleted since
-`collect-org` ran — falls back to its own read and is named in the log. `--repository` keeps the direct read,
-because paging an organisation to find one repository costs more than reading it.
+**Three whole-estate reads replace three per-repository ones.** `security_and_analysis` and the default branch
+come off one paginated `GET /orgs/{org}/repos`; the open Dependabot alerts off `GET /orgs/{org}/dependabot/alerts`;
+the open secret-scanning alerts off `GET /orgs/{org}/secret-scanning/alerts`, which is one page for the whole
+organisation. Each is a few dozen pages against 1,240–1,889 calls. A repository the organisation's metadata
+listing does not name — renamed, transferred or deleted since `collect-org` ran — falls back to its own read and
+is named in the log, and `--repository` keeps the direct reads throughout, because paging an organisation to find
+one repository costs more than asking for it.
+
+**An absence from one of those responses is not an answer on its own**, and this is the part to understand before
+reading an alert column. They name only the repositories the feature is switched **on** for. So a repository not
+in the Dependabot response reads as *clean* where `hasVulnerabilityAlertsEnabled` says alerts are on, as *not
+enabled* where it says they are off, and as **unmeasured** where that signal could not be read at all — three
+answers, never collapsed into a zero. Secret scanning is read the same way against
+`security_and_analysis.secret_scanning`.
+
+**Code scanning is still read per repository**, and deliberately. `GET /orgs/{org}/code-scanning/alerts` works and
+would save about 1,240 calls, but nothing collected says whether code scanning is *enabled* on a repository —
+`hasVulnerabilityAlertsEnabled` answers for Dependabot and `security_and_analysis` answers for secret scanning,
+and the eight keys GitHub returns in that block name code scanning nowhere. An absence would therefore be
+indistinguishable from a repository that never turned it on, and reporting an unmeasured posture as zero open
+findings is the one thing this collector will not do. Those 1,240 calls buy that distinction.
 
 Five words carry the answers a total cannot. `retried` and `rate-limited` are attempts that came back and were
 asked again — a 502 that succeeded second time, and a spent quota this client waited out, which is kept apart
@@ -293,10 +310,18 @@ yarn cli doctor --config metrics.yaml
 `doctor` mints a token at startup, so a wrong key fails while somebody is still watching rather than 1,850
 repositories in. Either PKCS#1 (`BEGIN RSA PRIVATE KEY`, what GitHub's download gives you) or PKCS#8 will do.
 
-It also counts the merged pull requests the credential can actually see, and fails if that is zero everywhere.
-That check exists because of a fault it would otherwise have hidden: GitHub answers a request it will not serve
-with an EMPTY RESULT rather than a refusal, so a credential that reads every repository and sees none of their
-pull requests produces a report full of zeroes and a run that claims to have succeeded.
+It also checks whether the credential can see any merged pull requests at all, and fails if it can see none
+anywhere. That check exists because of a fault it would otherwise have hidden: GitHub answers a request it will
+not serve with an EMPTY RESULT rather than a refusal, so a credential that reads every repository and sees none of
+their pull requests produces a report full of zeroes and a run that claims to have succeeded.
+
+**`doctor` reads a sample of about 30 repositories, spread across owners**, and both of its questions are about
+the *credential* rather than about the estate. It used to read the whole cohort — one `GET /repos/{org}/{repo}`
+and one full merge walk each, the heaviest document here, asked for what amounts to a boolean — which cost around
+3,800 calls and made the cheap check somebody runs first more expensive than a collection. The sample is
+deterministic, so two runs read the same repositories and a fault that comes and goes is a fault rather than a
+different sample; ownership is what it spreads across, because that is what the interesting permission faults
+follow. `--all` reads every cohort repository and names each unreadable one, for when that is the question.
 
 ### Nothing here uses GitHub search
 

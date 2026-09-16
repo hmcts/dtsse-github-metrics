@@ -194,22 +194,93 @@ describe("collectAssuranceSignals", () => {
     });
   });
 
-  it("should re-read a failing batch one repository at a time", () => {
-    // GitHub answers a document naming one unreadable repository with errors beside partial data, which the client
-    // raises. Without the retry, one archived-and-transferred name records "nobody could look" for the 49 beside
-    // it. Verbatim from `readOwnershipBatch`, whose comment records the same measurement.
+  it("should consume the populated aliases and ask again only for the one that went unanswered", async () => {
+    // The whole point of the partial read. GitHub answers a 50-repository document holding one
+    // archived-and-transferred name with HTTP 200, 49 populated aliases, one `null` and one error. The 49 are
+    // read off the response, and the re-ask names only the fiftieth — where the whole batch used to be re-read
+    // one repository at a time, which is how 38 intended documents became roughly 1,900 calls.
+    const populated = Object.fromEntries(Array.from({ length: 49 }, (_unused, at) => [`a${at}`, entry(`repo-${at}`)]));
+    const batch = [...Array.from({ length: 49 }, (_unused, at) => `repo-${at}`), "gone"];
     const { fetch, sent } = replying(
-      { body: { data: { a0: entry("alpha"), a1: null }, errors: [{ message: "Could not resolve to a Repository" }] } },
-      { body: { data: { a0: entry("alpha") } } },
-      REFUSED
+      {
+        body: {
+          data: { ...populated, a49: null },
+          errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository with the name 'hmcts/gone'.", path: ["a49"] }]
+        }
+      },
+      { body: { data: { a0: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository", path: ["a0"] }] } }
     );
 
-    return collectAssuranceSignals(client(fetch), "hmcts", ["alpha", "gone"], 2).then((signals) => {
-      expect(signals.get("alpha")).toEqual({ vulnerabilityAlerts: true, updateConfiguration: false });
-      // The unreadable one is ABSENT rather than recorded as having its tooling off.
-      expect(signals.has("gone")).toBe(false);
-      expect(sent).toHaveLength(3);
+    const signals = await collectAssuranceSignals(client(fetch), "hmcts", batch, 50);
+
+    expect(signals.size).toBe(49);
+    expect(signals.get("repo-0")).toEqual({ vulnerabilityAlerts: true, updateConfiguration: false });
+    // The unreadable one is ABSENT rather than recorded as having its tooling off.
+    expect(signals.has("gone")).toBe(false);
+    // ONE document and ONE re-ask, and the re-ask names only the repository that went unanswered.
+    expect(sent).toHaveLength(2);
+    expect(sent[1]?.variables).toEqual({ organization: "hmcts", r0: "gone" });
+  });
+
+  it("should report the reason GitHub gave for a null node rather than only that it was null", async () => {
+    // A refusal is reported AS A REFUSAL. `FORBIDDEN` and a repository that was archived and transferred want
+    // different actions, and a reader told only that the node was null cannot tell which they got.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { fetch } = replying(
+      {
+        body: {
+          data: { a0: entry("alpha"), a1: null },
+          errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration", path: ["a1"] }]
+        }
+      },
+      { body: { data: { a0: null }, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration", path: ["a0"] }] } }
+    );
+
+    await collectAssuranceSignals(client(fetch), "hmcts", ["alpha", "secret"], 2);
+
+    expect(warn.mock.calls.flat().join("\n")).toContain("FORBIDDEN: Resource not accessible by integration");
+  });
+
+  it("should report a batch whose every node is null as unread, without asking again for any of them", async () => {
+    // No alias answered, so the failure is about the document or the credential rather than about fifty
+    // repositories — and asking again fifty times over would spend fifty calls learning the same thing. This is
+    // also what stops the recursion: a batch of one that went unanswered has no answered alias either.
+    const { fetch, sent } = replying({
+      body: {
+        data: { a0: null, a1: null, a2: null },
+        errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }]
+      }
     });
+
+    const signals = await collectAssuranceSignals(client(fetch), "hmcts", ["alpha", "beta", "gamma"], 3);
+
+    // UNREAD rather than empty: every repository is absent from the map, which the domain grades as unknown
+    // rather than as tooling switched off.
+    expect(signals.size).toBe(0);
+    expect(sent).toHaveLength(1);
+  });
+
+  it("should treat a 200 carrying only errors and no data as a failure, splitting the batch as it always did", async () => {
+    // GitHub answered about nothing, so there is nothing to consume. The split is deliberately UNCHANGED here:
+    // `MAX_NODE_LIMIT_EXCEEDED` takes this shape and a document too complex to serve can succeed one repository
+    // at a time. One document plus one pass over the two: three calls.
+    const errors = { body: { errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] } };
+    const { fetch, sent } = replying(errors, errors, errors);
+
+    const signals = await collectAssuranceSignals(client(fetch), "hmcts", ["alpha", "beta"], 2);
+
+    expect(signals.size).toBe(0);
+    expect(sent).toHaveLength(3);
+  });
+
+  it("should treat a transport failure as a failure, consuming nothing and splitting as it always did", async () => {
+    const { fetch, sent } = replying(REFUSED, REFUSED, REFUSED);
+
+    const signals = await collectAssuranceSignals(client(fetch), "hmcts", ["alpha", "beta"], 2);
+
+    // NO PARTIAL CONSUMPTION: nothing arrived to consume, so every repository stays unread.
+    expect(signals.size).toBe(0);
+    expect(sent).toHaveLength(3);
   });
 
   it("should refuse an answer echoing a repository it did not ask for", () => {

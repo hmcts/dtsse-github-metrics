@@ -634,6 +634,68 @@ describe("collectCodeowners", () => {
     expect(facts.get("b")?.refusal).toBeDefined();
   });
 
+  it("should consume the answered aliases and ask again only for the one that went unanswered", async () => {
+    // GitHub answers a document naming one unreadable repository with HTTP 200, the aliases it could resolve, a
+    // `null` for the one it could not and an error saying why. The answered ones are read off that response, so
+    // one archived-and-transferred name no longer costs the others a call each.
+    const { fetch, sent } = replying(
+      {
+        body: {
+          data: { f0: { name: "a", p0: blob("* @hmcts/dtsse\n") }, f1: null },
+          errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository with the name 'hmcts/b'.", path: ["f1"] }]
+        }
+      },
+      { body: { data: { f0: null }, errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository", path: ["f0"] }] } }
+    );
+
+    const facts = await collectCodeowners(client(fetch), "hmcts", ["a", "b"], 2);
+
+    expect(facts.get("a")).toMatchObject({ teams: ["dtsse"] });
+    // ONE document and ONE re-ask, naming only the repository that went unanswered.
+    expect(sent).toHaveLength(2);
+    expect(sent[1]?.variables).toEqual({ organization: "hmcts", r0: "b" });
+    // REFUSED, NOT ABSENT, and carrying the reason GitHub gave: an absence from this map means no CODEOWNERS
+    // file was found, which is a different finding from a repository GitHub would not answer for.
+    expect(facts.get("b")?.refusal).toContain("NOT_FOUND: Could not resolve to a Repository");
+  });
+
+  it("should split a batch GitHub answered no data for, exactly as it always did", async () => {
+    // Errors and NO data is GitHub answering about nothing. The split is deliberately unchanged here —
+    // `MAX_NODE_LIMIT_EXCEEDED` takes this shape and a document too complex to serve can succeed one at a time.
+    const errors = { body: { errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] } };
+    const { fetch, sent } = replying(errors, graphql({ f0: { name: "a", p0: blob("* @hmcts/dtsse\n") } }), errors);
+
+    const facts = await collectCodeowners(client(fetch), "hmcts", ["a", "b"], 2);
+
+    expect(sent).toHaveLength(3);
+    expect(facts.get("a")).toMatchObject({ teams: ["dtsse"] });
+    expect(facts.get("b")?.refusal).toContain("FORBIDDEN");
+  });
+
+  it("should report a batch whose every alias is null as refused, without asking again for any of them", async () => {
+    // No alias answered, so the failure is about the document or the credential rather than about the
+    // repositories — and asking again once per repository would spend those calls learning the same thing.
+    const { fetch, sent } = replying({
+      body: { data: { f0: null, f1: null }, errors: [{ type: "FORBIDDEN", message: "Resource not accessible by integration" }] }
+    });
+
+    const facts = await collectCodeowners(client(fetch), "hmcts", ["a", "b"], 2);
+
+    expect(sent).toHaveLength(1);
+    expect(facts.get("a")?.refusal).toBeDefined();
+    expect(facts.get("b")?.refusal).toBeDefined();
+  });
+
+  it("should keep an alias GitHub never named apart from one it answered null for", async () => {
+    // `null` means GitHub answered about that repository and had nothing to give; an absent alias means it never
+    // answered the question. Both are refusals rather than absences, and each says which it was.
+    const { fetch } = replying({ body: { data: { f0: { name: "a", p0: blob("* @hmcts/dtsse\n") } } } }, { body: { data: {} } });
+
+    const facts = await collectCodeowners(client(fetch), "hmcts", ["a", "b"], 2);
+
+    expect(facts.get("b")?.refusal).toContain("did not answer the alias");
+  });
+
   it("should not split a batch of one, so a failing repository costs exactly one retry pass", async () => {
     const { fetch, sent } = replying(REFUSED);
 

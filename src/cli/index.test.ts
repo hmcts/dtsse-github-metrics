@@ -135,7 +135,7 @@ vi.mock("../evidence/store/org-graph.ts", () => ({
 }));
 vi.mock("../evidence/store/production-override.ts", () => ({ seedProduction }));
 
-const { main } = await import("./index.ts");
+const { DOCTOR_SAMPLE_SIZE, doctorSample, main } = await import("./index.ts");
 
 /** One cohort entry, defaulting to a repository behaviour IS collected for — the ordinary case. */
 function cohortEntry(repository: string, overrides: Record<string, unknown> = {}) {
@@ -217,26 +217,20 @@ describe("doctor", () => {
     teams: [{ identifier: "team", repositories: ["repo-a", "repo-b"] }]
   };
 
-  /** Inside the operational window whenever this test runs, rather than a date that ages out of it. */
-  function recently(): string {
-    return new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-  }
+  /** The client `doctor` drives, reporting how many merged pull requests each repository answered with. */
+  let graphql: MockInstance;
 
-  function withMergeCounts(perRepository: number[]) {
+  function withMergeCounts(perRepository: number[], repositories = ["repo-a", "repo-b"]) {
     loadConfiguration.mockResolvedValue(CONFIG);
-    cohortRepositories.mockResolvedValue(["repo-a", "repo-b"]);
+    readCohort.mockResolvedValue(repositories.map((repository) => cohortEntry(repository)));
     collectionState.mockResolvedValue(undefined);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a personal access token" });
 
     const counts = [...perRepository];
+    graphql = vi.fn().mockImplementation(() => Promise.resolve({ repository: { pullRequests: { totalCount: counts.shift() ?? 0 } } }));
     createGitHubClient.mockReturnValue({
       get: vi.fn().mockResolvedValue({ default_branch: "master" }),
-      graphql: vi.fn().mockImplementation(() => {
-        const count = counts.shift() ?? 0;
-        return Promise.resolve({
-          repository: { pullRequests: { nodes: Array.from({ length: count }, () => ({ mergedAt: recently() })) } }
-        });
-      }),
+      graphql,
       requestsIssued: () => 0,
       callOutcomes: () => []
     });
@@ -246,19 +240,65 @@ describe("doctor", () => {
     // The one state `doctor` must survive: it is the command somebody runs against a database they are unsure
     // about, so an empty graph is a finding to report, not an exception to raise.
     withMergeCounts([12, 30]);
-    cohortRepositories.mockRejectedValue(new CohortUncollectedError("no organisation graph has been collected for hmcts"));
+    readCohort.mockRejectedValue(new CohortUncollectedError("no organisation graph has been collected for hmcts"));
 
     await main(["doctor", "--config", "m.yaml"]);
 
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("no organisation graph has been collected"));
-    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("0 of 0 cohort repositories are readable"));
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("0 of 0 readable"));
   });
 
   it("should pass when the credential can see merged pull requests", async () => {
     withMergeCounts([12, 30]);
 
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
-    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("GitHub shows 42 merged pull requests"));
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("merged pull requests in 2 of the 2 read"));
+  });
+
+  it("should read a SAMPLE of the cohort rather than all of it", async () => {
+    // The whole point of the change. Reading the entire cohort cost one metadata call and one full merge walk —
+    // the heaviest document here — per repository, roughly 3,800 calls, for two questions about the credential.
+    withMergeCounts(
+      Array.from({ length: 200 }, () => 3),
+      Array.from({ length: 200 }, (_unused, at) => `repo-${at}`)
+    );
+
+    expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+    expect(graphql).toHaveBeenCalledTimes(DOCTOR_SAMPLE_SIZE);
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining(`${DOCTOR_SAMPLE_SIZE} of 200 cohort repositories, sampled across owners`));
+  });
+
+  it("should say it sampled, and how to widen it, rather than implying a sweep", async () => {
+    withMergeCounts(
+      Array.from({ length: 50 }, () => 3),
+      Array.from({ length: 50 }, (_unused, at) => `repo-${at}`)
+    );
+
+    await main(["doctor", "--config", "m.yaml"]);
+
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("--all reads every cohort repository"));
+  });
+
+  it("should read every cohort repository on --all", async () => {
+    withMergeCounts(
+      Array.from({ length: 40 }, () => 3),
+      Array.from({ length: 40 }, (_unused, at) => `repo-${at}`)
+    );
+
+    expect(await main(["doctor", "--config", "m.yaml", "--all"])).toBe(EXIT_COMPLETE);
+    expect(graphql).toHaveBeenCalledTimes(40);
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("all 40 cohort repositories"));
+  });
+
+  it("should ask the cheap count query rather than the merge walk", async () => {
+    // `MergedPullRequests` is 25 pull requests with up to 50 reviews and 50 rollup contexts each. The question is
+    // whether the credential can see any at all, and `totalCount` answers it in one node.
+    withMergeCounts([3]);
+
+    await main(["doctor", "--config", "m.yaml"]);
+
+    expect(String(graphql.mock.calls[0]?.[0])).toContain("MergedPullRequestCount");
+    expect(String(graphql.mock.calls[0]?.[0])).toContain("totalCount");
   });
 
   it("should fail when every repository is readable but none yields a merge", async () => {
@@ -284,26 +324,35 @@ describe("doctor", () => {
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
   });
 
-  it("should not count a merge from outside the operational window", async () => {
+  it("should read a repository GitHub reported no count for as having none", async () => {
+    // An answer with no `totalCount` is not a repository with merges, and reading it as one would hide exactly
+    // the fault this check exists for.
     loadConfiguration.mockResolvedValue(CONFIG);
-    cohortRepositories.mockResolvedValue(["repo-a"]);
+    readCohort.mockResolvedValue([cohortEntry("repo-a")]);
     collectionState.mockResolvedValue(undefined);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
     createGitHubClient.mockReturnValue({
       get: vi.fn().mockResolvedValue({ default_branch: "master" }),
-      graphql: vi.fn().mockResolvedValue({ repository: { pullRequests: { nodes: [{ mergedAt: "2020-01-01T00:00:00Z" }] } } }),
+      graphql: vi.fn().mockResolvedValue({ repository: { pullRequests: {} } }),
       requestsIssued: () => 0,
       callOutcomes: () => []
     });
 
-    // A repository with history but none of it recent reads as nothing to report, not as a broken credential.
     expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
-    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("GitHub shows 0 merged pull requests"));
   });
 
-  it("should treat a query that throws as zero rather than crashing the command", async () => {
+  it("should read a repository with no merged pull requests at all as a finding", async () => {
+    // Every repository readable and none answering with a merge is the exact shape of the AAT failure: a
+    // collection would record zero merges without anything reporting an error.
+    withMergeCounts([0], ["repo-a"]);
+
+    expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("no merged pull requests at all"));
+  });
+
+  it("should treat a query that throws as no merges rather than crashing the command", async () => {
     loadConfiguration.mockResolvedValue(CONFIG);
-    cohortRepositories.mockResolvedValue(["repo-a"]);
+    readCohort.mockResolvedValue([cohortEntry("repo-a")]);
     collectionState.mockResolvedValue(undefined);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
     createGitHubClient.mockReturnValue({
@@ -318,13 +367,74 @@ describe("doctor", () => {
   });
 });
 
+describe("doctorSample", () => {
+  /** Owners for repositories named `<owner>-<n>`, so a case can state a lopsided estate in one line. */
+  function estate(perOwner: Record<string, number>): { repositories: string[]; owners: Map<string, string[]> } {
+    const repositories: string[] = [];
+    const owners = new Map<string, string[]>();
+    for (const [owner, held] of Object.entries(perOwner)) {
+      for (let at = 0; at < held; at += 1) {
+        const repository = `${owner}-${String(at).padStart(3, "0")}`;
+        repositories.push(repository);
+        owners.set(repository, [owner]);
+      }
+    }
+    return { repositories, owners };
+  }
+
+  it("should take at most the size it was asked for", () => {
+    const { repositories, owners } = estate({ alpha: 100, beta: 100 });
+
+    expect(doctorSample(repositories, owners, 30)).toHaveLength(30);
+  });
+
+  it("should spread across owners rather than taking one owner's first thirty", () => {
+    // The interesting permission faults follow ownership: an installation that lost a permission, or a team whose
+    // repositories are internal where the rest are public, shows up in one owner's repositories and not another's.
+    const { repositories, owners } = estate({ alpha: 100, beta: 100, gamma: 100 });
+
+    const sampled = doctorSample(repositories, owners, 30);
+
+    expect(new Set(sampled.map((repository) => repository.split("-")[0])).size).toBe(3);
+  });
+
+  it("should give the same answer twice, so a fault that comes and goes is a fault", () => {
+    const { repositories, owners } = estate({ alpha: 40, beta: 40 });
+
+    expect(doctorSample(repositories, owners, 30)).toEqual(doctorSample(repositories, owners, 30));
+  });
+
+  it("should return the whole cohort when it is smaller than the sample", () => {
+    const { repositories, owners } = estate({ alpha: 4 });
+
+    expect(doctorSample(repositories, owners, 30)).toHaveLength(4);
+  });
+
+  it("should sample a repository nobody owns, which is a normal outcome here", () => {
+    // `unowned` is a real bucket rather than a gap, and a permission fault does not care who is on the hook.
+    const sampled = doctorSample(["orphan"], new Map([["orphan", []]]), 30);
+
+    expect(sampled).toEqual(["orphan"]);
+  });
+
+  it("should name a repository once even where several owners hold it", () => {
+    const sampled = doctorSample(["shared"], new Map([["shared", ["alpha", "beta"]]]), 30);
+
+    expect(sampled).toEqual(["shared"]);
+  });
+
+  it("should ask for nothing from an empty cohort", () => {
+    expect(doctorSample([], new Map(), 30)).toEqual([]);
+  });
+});
+
 /**
  * What `collect` walks, which from 2026-09-14 is NOT the whole estate.
  *
  * The activity window stopped deciding cohort membership so that stale repositories could be reported against
  * the assurance criteria — see `CohortPolicy`. That widened the estate from roughly 1,230 repositories to 1,880,
- * and the merge walks are most of a run's 15,500 calls, so this is the seam where that either costs nothing or
- * costs 50%.
+ * and the merge walks are the largest remaining share of a run's calls, so this is the seam where that either
+ * costs nothing or costs 50%.
  */
 describe("what collect walks", () => {
   const CONFIG = {
@@ -344,7 +454,7 @@ describe("what collect walks", () => {
    * metadata now comes from: a repository in it costs no call of its own, and one absent from it falls back to
    * the per-repository read. Both are named by default, which is the ordinary case.
    */
-  async function pathsAskedFor(options: { listed?: string[]; argv?: string[] } = {}): Promise<string[]> {
+  async function pathsAskedFor(options: { listed?: string[]; argv?: string[]; refusing?: string[] } = {}): Promise<string[]> {
     loadConfiguration.mockResolvedValue(CONFIG);
     readCohort.mockResolvedValue([cohortEntry("fresh"), cohortEntry("stale", { behaviourCollectable: false, unmaintained: true })]);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
@@ -357,6 +467,9 @@ describe("what collect walks", () => {
       paginate: function paginate(path: string) {
         paths.push(String(path));
         return (async function* pages() {
+          if (options.refusing?.includes(path) === true) {
+            throw new Error("Resource not accessible by integration");
+          }
           yield path === "/orgs/hmcts/repos" ? listed : [];
         })();
       },
@@ -372,14 +485,11 @@ describe("what collect walks", () => {
   it("should read every repository in the estate, stale ones included, so the assurance columns are populated", async () => {
     // The other half of the change: a stale repository must still be COLLECTED, or the criteria it exists to be
     // judged against have nothing to read. 148 unarchived repositories on AAT are two or more years stale, and
-    // not one of them had a `repository_state` row before this. Asserted on the Dependabot read, which is the
-    // one call every repository at either depth still makes for itself — the metadata is no longer one of them.
-    const asked = await pathsAskedFor();
+    // not one of them had a `repository_state` row before this. Asserted on the stored state rather than on a
+    // call, because every per-repository read either depth used to make is now an estate-wide one.
+    await pathsAskedFor();
 
-    expect(asked.filter((path) => path.endsWith("/dependabot/alerts"))).toEqual([
-      "/repos/hmcts/fresh/dependabot/alerts",
-      "/repos/hmcts/stale/dependabot/alerts"
-    ]);
+    expect(recordRepositoryState.mock.calls.map(([, repository]) => repository)).toEqual(["fresh", "stale"]);
   });
 
   it("should read the estate's metadata as ONE org listing rather than one call per repository", async () => {
@@ -483,21 +593,53 @@ describe("what collect walks", () => {
     expect(walked[0]).not.toHaveProperty("body");
   });
 
-  it("should read each repository's Dependabot alerts ONCE, for two purposes", async () => {
-    // TWO THINGS AT ONCE. The shallow path keeps the read because the patching age is an assurance answer — a
-    // stale repository's unpatched criticals are exactly what the criterion reports — and the deep path must not
-    // read the same endpoint twice, which it did in the first version of this: the assurance age needs each
-    // alert's `created_at` and the security block needs the family counted by severity, and paying separately
-    // for both cost 1,240 needless calls, taking the run from 66% of the hourly core budget to 83%.
-    //
-    // One entry per repository is the whole assertion, so a regression in either direction fails: dropping the
-    // shallow read loses `stale`, and re-fetching for the security block duplicates `fresh`.
+  it("should read the estate's Dependabot alerts ONCE for the whole organisation, and never per repository", async () => {
+    // Item 3 of the cost review: 1,889 per-repository reads become a few dozen pages. The read serves BOTH
+    // purposes it always did — the patching age needs each alert's `created_at` and the security block needs the
+    // family counted by severity — so this must not reintroduce a second read for either.
     const asked = await pathsAskedFor();
 
-    expect(asked.filter((path) => path.includes("dependabot/alerts"))).toEqual([
-      "/repos/hmcts/fresh/dependabot/alerts",
-      "/repos/hmcts/stale/dependabot/alerts"
-    ]);
+    expect(asked.filter((path) => path.includes("dependabot/alerts"))).toEqual(["/orgs/hmcts/dependabot/alerts"]);
+  });
+
+  it("should never read secret-scanning alerts per repository, which duplicated the estate-wide read", async () => {
+    // Item 4, and a contradiction the codebase already carried: `assurance.ts` states the per-repository endpoint
+    // "is deliberately not used: 1,880 calls against one" while `security-alerts.ts` called it once per walked
+    // repository. Two readings of one fact at 1,240 times the cost, which could disagree.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => path.includes("secret-scanning/alerts"))).toEqual(["/orgs/hmcts/secret-scanning/alerts"]);
+  });
+
+  it("should still read code scanning per repository, and only for the ones it walks", async () => {
+    // Kept per-repository deliberately: the organisation endpoint names only repositories the feature is on for,
+    // and nothing collected says whether code scanning is enabled — so an absence could not be told from a
+    // repository that never turned it on. Those calls buy that distinction.
+    const asked = await pathsAskedFor();
+
+    expect(asked.filter((path) => path.includes("code-scanning/alerts"))).toEqual(["/repos/hmcts/fresh/code-scanning/alerts"]);
+  });
+
+  it("should count a refused estate-wide alert read ONCE, and report every repository as unmeasured", async () => {
+    // One call for the whole estate, so one failure. Inflating it to 1,889 would swamp the exit status with one
+    // refusal — and every repository's Dependabot answer must read as unmeasured rather than as clean.
+    await pathsAskedFor({ refusing: ["/orgs/hmcts/dependabot/alerts"] });
+
+    const alerts = recordRepositoryState.mock.calls.map(
+      ([, , state]) => (state as { securityAlerts?: { dependabot?: { open?: number; detail?: string } } }).securityAlerts
+    );
+
+    expect(alerts.every((block) => block?.dependabot?.open === undefined)).toBe(true);
+    expect(alerts[0]?.dependabot?.detail).toContain("could not be read for the organisation");
+  });
+
+  it("should read one repository's own alerts when it was asked for by name", async () => {
+    // Paging the organisation's alerts to find one repository costs far more than asking for it, so
+    // `--repository` keeps the per-repository read exactly as `--repository` keeps the metadata read.
+    const asked = await pathsAskedFor({ argv: ["collect", "--config", "m.yaml", "--repository", "fresh", "--tolerate-partial"] });
+
+    expect(asked).toContain("/repos/hmcts/fresh/dependabot/alerts");
+    expect(asked).not.toContain("/orgs/hmcts/dependabot/alerts");
   });
 });
 

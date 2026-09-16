@@ -128,12 +128,16 @@ cohort:
   # fact about the past that no team can act on.
   include_archived: false
   # How recently a repository must have been pushed to for its BEHAVIOUR to be collected. From 2026-09-14
-  # this decides what `collect` walks and NOT who is in the estate. Still the cheapest lever on cost, since
-  # the merge walks are most of a run's calls — 90 days walks roughly 1,230 of HMCTS's 1,880 — but the rest
-  # are now reported, carrying the assurance answers that need no merge history and none of the behaviour
-  # figures that do. Dropping them from the estate hid the repositories the assurance criteria are most
-  # about: 334 unarchived HMCTS repositories are a year or more stale and not one had been collected.
-  # `null` collects every repository's behaviour.
+  # this decides what `collect` walks and NOT who is in the estate. 90 days walks roughly 1,230 of HMCTS's
+  # 1,880, and the rest are now reported, carrying the assurance answers that need no merge history and none
+  # of the behaviour figures that do. Dropping them from the estate hid the repositories the assurance
+  # criteria are most about: 334 unarchived HMCTS repositories are a year or more stale and not one had been
+  # collected. `null` collects every repository's behaviour.
+  #
+  # NOT THE CHEAPEST LEVER ON COST, whatever this comment used to say. The merge walks were most of a run's
+  # calls before the alert families were added; a run measured on 2026-09-15 spent almost all of its roughly
+  # 11,000 calls on per-repository alert and gate reads instead, and those are read estate-wide now. Narrowing
+  # this window is a judgement about what is worth reporting, not a cost control.
   #
   # A repository GitHub reports NO last push for is not collected. That matters for one run after the column
   # was added, when it is null everywhere: treating absence as active would walk the whole organisation.

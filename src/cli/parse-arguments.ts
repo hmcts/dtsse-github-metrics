@@ -43,6 +43,8 @@ export interface Arguments {
   proposeTeams: boolean;
   /** Override the configured ceiling on repositories one run may pay the per-repository rungs for. */
   unresolvedLimit?: number;
+  /** Read every cohort repository rather than a sample of them (doctor). */
+  all: boolean;
 }
 
 const OPTIONS = {
@@ -62,7 +64,8 @@ const OPTIONS = {
   "period-days": { type: "string" },
   periods: { type: "string" },
   "propose-teams": { type: "boolean" },
-  "unresolved-limit": { type: "string" }
+  "unresolved-limit": { type: "string" },
+  all: { type: "boolean" }
 } as const;
 
 function integer(value: string | undefined, name: string): number | undefined {
@@ -161,6 +164,7 @@ export function parseArguments(argv: readonly string[]): Arguments {
       ? {}
       : { periods: integer(values.periods as string | undefined, "periods") as number }),
     proposeTeams: values["propose-teams"] === true,
+    all: values.all === true,
     ...(unresolvedLimit === undefined ? {} : { unresolvedLimit })
   };
 }
@@ -196,6 +200,7 @@ options:
   --format json         emit the machine-readable contract (the only supported format)
   --propose-teams       print a reviewable teams: block instead of writing the graph (collect-org)
   --unresolved-limit <n>  cap the repositories one run reads CODEOWNERS for (collect-org)
+  --all                 read every cohort repository rather than a sample of them (doctor)
 
 exit status:
   0  every configured repository was observed
