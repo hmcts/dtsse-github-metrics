@@ -63,7 +63,7 @@ function unsafeInAPath(value: string): boolean {
  *   - a control character, because a newline in a `Location` header is a response split.
  */
 export function safeReturnTo(value: string | null | undefined): string {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) {
+  if (!value?.startsWith("/") || value.startsWith("//")) {
     return "/repositories";
   }
   if (unsafeInAPath(value)) {

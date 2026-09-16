@@ -51,7 +51,7 @@ const unfetched = new Map<number, { readonly render: Promise<void>; readonly lan
 
 /** Declare that a render at `span` has not arrived yet, so reaching it suspends. */
 function inFlight(span: number): void {
-  let land = () => undefined as void;
+  let land: () => void = () => {};
   const render = new Promise<void>((arrived) => {
     land = () => {
       unfetched.delete(span);
