@@ -328,6 +328,21 @@ describe("pruneCache", () => {
 });
 
 describe("cachePullRequestFacts", () => {
+  it("should claim an interval a quiet repository merged nothing in, without writing a fact", async () => {
+    // THE ORDINARY CASE ON THIS ESTATE, not an edge one: most repositories merge nothing in most weeks, and the
+    // interval still has to be recorded or the next run walks it again for ever. The insert is SKIPPED rather
+    // than issued with empty arrays — `unnest` of three empty `text[]`s inserts no rows, but it is still a
+    // statement and a round trip, and this is the batch size the collector meets most often.
+    await cachePullRequestFacts(COVERAGE, [], true);
+    await cacheDirectCommitFacts({ ...COVERAGE, source: EvidenceSource.DirectCommits }, [], true);
+
+    expect(await prisma.pullRequestFact.count()).toBe(0);
+    expect(await prisma.directCommitFact.count()).toBe(0);
+    // Both series claimed, which is what stops the interval being re-collected: coverage is about what was READ,
+    // and reading a window that held nothing is a measurement.
+    expect(await prisma.sourceCoverage.count()).toBe(2);
+  });
+
   it("should cache facts without claiming coverage when a collection was incomplete", async () => {
     // A partial collection must leave its facts for reuse but must not record the interval, or the next
     // run would skip the gap it left.

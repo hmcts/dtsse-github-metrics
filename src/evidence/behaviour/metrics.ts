@@ -335,20 +335,23 @@ export const checksPassingAtMerge = governanceRate({
  * always refused; an empty denominator reads as unmeasured instead.
  */
 export function descriptionQuality(traceability: TraceabilityConfiguration): BehaviourMetric {
-  const measured = (pullRequest: PullRequestFact) => pullRequest.bodyLength !== undefined;
-  const described = (pullRequest: PullRequestFact) => (pullRequest.bodyLength ?? 0) >= traceability.minimum_description;
+  // Takes the LENGTH and not the pull request, so there is no `?? 0` for an absent one to fall through: both
+  // callers below establish that it was measured first, and a default here would be an arm nothing can reach that
+  // also quietly reads an unmeasured description as an empty one.
+  const described = (bodyLength: number) => bodyLength >= traceability.minimum_description;
   return defineMetric({
     identifier: "description-quality",
     includesReviews: false,
     summary(cohort) {
-      const judged = cohort.pullRequests.filter((pullRequest) => measured(pullRequest));
-      return rate(judged.filter((pullRequest) => described(pullRequest)).length, judged.length);
+      const measured = cohort.pullRequests.map((pullRequest) => pullRequest.bodyLength).filter((bodyLength): bodyLength is number => bodyLength !== undefined);
+      return rate(measured.filter((bodyLength) => described(bodyLength)).length, measured.length);
     },
     classification(pullRequest) {
-      if (!measured(pullRequest)) {
+      const bodyLength = pullRequest.bodyLength;
+      if (bodyLength === undefined) {
         return "description-unmeasured";
       }
-      return described(pullRequest) ? "described" : "description-too-short";
+      return described(bodyLength) ? "described" : "description-too-short";
     }
   });
 }

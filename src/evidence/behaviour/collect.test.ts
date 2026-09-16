@@ -671,6 +671,7 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
       merged([
         pullRequestNode({
           author: null,
+          title: null,
           body: null,
           additions: null,
           deletions: null,
@@ -709,8 +710,11 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
     expect(fact?.reviews[0]).not.toHaveProperty("authorLogin");
     expect(fact?.checks.map((check) => check.name)).toEqual(["", ""]);
     // An omitted description is a MEASURED absence of one, unlike an omitted author: GitHub answered, and the
-    // answer is zero characters. Absent would mean nobody looked, which is what a pre-narrowing cached row says.
+    // answer is zero characters and nothing referenced. Absent would mean nobody looked, which is what a
+    // pre-narrowing cached row says. Neither field is `nullish`-guarded away, and an omitted TITLE must not
+    // throw on the way to the reference search either.
     expect(fact?.bodyLength).toBe(0);
+    expect(fact?.hasTicketReference).toBe(false);
   });
 
   it("should build a direct-commit fact with no author, size or rollup", async () => {

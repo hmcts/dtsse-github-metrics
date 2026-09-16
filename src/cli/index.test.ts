@@ -13,6 +13,14 @@ const readCohort = vi.hoisted(() => vi.fn());
 // authorship is attributed exactly as it was before the rung existed. The cases that are about the rung live in
 // `org/ownership.test.ts`, against the real ladder.
 const authorshipForOrganisation = vi.hoisted(() => vi.fn(async () => new Map<string, Map<string, number>>()));
+// What `evidence` reports the estate from: one read of every repository's cached facts, and one of their stored
+// states. Empty by default, so a case that is not about `evidence` states neither.
+const loadCachedFactsForOrganisation = vi.hoisted(() => vi.fn(async () => new Map<string, { pullRequests: unknown[]; directCommits: unknown[] }>()));
+const storedRepositoryStates = vi.hoisted(() => vi.fn(async () => new Map<string, { fetchedAt: Date; payload: unknown }>()));
+const prevailingCachedCoverage = vi.hoisted(() => vi.fn(async (): Promise<Date | undefined> => undefined));
+// Stubbed because it reaches Postgres, and a `vi.fn()` rather than an arrow so one case can let the merge walk it
+// wraps actually run — which is the only way to see what the collector was handed.
+const fillCachedSource = vi.hoisted(() => vi.fn(async (..._unused: unknown[]) => []));
 const collectionState = vi.hoisted(() => vi.fn());
 const resolveCredentials = vi.hoisted(() => vi.fn());
 const createGitHubClient = vi.hoisted(() => vi.fn());
@@ -65,12 +73,20 @@ vi.mock("../evidence/org/cohort.ts", async () => ({
   cohortOwners: async () => new Map(),
   readCohort
 }));
+// The two batched readers `evidence` reports the estate through, and the seam its cases are written at: they are
+// what a repository's figures come FROM, so stubbing them is how a cohort with known merges is stated without a
+// database. One call each per run is part of what the cases assert, which is why they are `vi.fn()`s.
 vi.mock("../evidence/store/facts.ts", () => ({
   authorshipForOrganisation,
-  // `evidence` reads the estate through the batched readers the web path uses, rather than five calls per
-  // repository. Stubbed empty because these reach Postgres; the command itself is not exercised here.
-  loadCachedFactsForOrganisation: async () => new Map(),
-  storedRepositoryStates: async () => new Map()
+  loadCachedFactsForOrganisation,
+  storedRepositoryStates
+}));
+// Only `prevailingCachedCoverage` is stubbed, and only because it is what `evidence` anchors its window on and it
+// reaches Postgres. The rest of the module is re-exported real: `fillCachedSource` is stubbed below, so nothing
+// else here calls into it, and a wholesale fake would be three more exports to keep in step for no reader.
+vi.mock("../evidence/store/coverage.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/store/coverage.ts")>("../evidence/store/coverage.ts")),
+  prevailingCachedCoverage
 }));
 vi.mock("../evidence/store/prune.ts", () => ({ pruneCache }));
 // The per-repository writers `collect` ends each repository with. Stubbed because they reach Postgres and
@@ -78,9 +94,13 @@ vi.mock("../evidence/store/prune.ts", () => ({ pruneCache }));
 // the run ends, which silently makes any assertion about which repositories were walked true of a loop that
 // only ever ran once. Found exactly that way.
 vi.mock("../evidence/store/repository-state.ts", () => ({ recordRepositoryState, storedRepositoryState: async () => undefined }));
-vi.mock("../evidence/behaviour/fill.ts", () => ({
-  fillCachedSource: async () => [],
-  deserialiseMerges: () => ({ pullRequests: [], directCommits: [] }),
+// `fillCachedSource` and the two writers are stubbed because they reach Postgres. `deserialiseMerges` is
+// re-exported REAL for the reason the ownership ladder is: it is the step that turns a stored payload into the
+// fact `evidence` counts, so a faked one would leave "the batched read reports the same merges the dashboard
+// does" asserted against a restatement of itself.
+vi.mock("../evidence/behaviour/fill.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/behaviour/fill.ts")>("../evidence/behaviour/fill.ts")),
+  fillCachedSource,
   requestedCoverage: () => ({}),
   pullRequestCacheWriter: () => undefined,
   directCommitCacheWriter: () => undefined
@@ -127,6 +147,13 @@ function cohortEntry(repository: string, overrides: Record<string, unknown> = {}
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // `clearAllMocks` clears the CALLS and not the implementations, so anything a case replaces has to be put back
+  // here or it leaks into every case after it. Two below do: one lets `fillCachedSource` run the merge walk it
+  // wraps, and the `evidence` cases state a cached estate.
+  fillCachedSource.mockImplementation(async () => []);
+  loadCachedFactsForOrganisation.mockResolvedValue(new Map());
+  storedRepositoryStates.mockResolvedValue(new Map());
+  prevailingCachedCoverage.mockResolvedValue(undefined);
   // A one-repository estate by default, so the cases that are not about the cohort do not have to state one.
   // `assertCohortCollected` calls this too, so it must always resolve.
   readCohort.mockResolvedValue([cohortEntry("repo-a")]);
@@ -350,6 +377,67 @@ describe("what collect walks", () => {
     ]);
   });
 
+  it("should hand the merge walk the traceability policy the configuration states", async () => {
+    // THE WIRE THIS COMMAND IS THE ONLY OWNER OF. A pull request's description is no longer stored: the walk
+    // reduces it to `bodyLength` and `hasTicketReference` as the fact is built, and `reference_patterns` reaches
+    // that reduction from here and nowhere else. Passed an empty policy the walk would still succeed and every
+    // merge in the estate would read as referencing nothing — a plausible zero, and invisible.
+    //
+    // Asserted by letting the stubbed `fillCachedSource` RUN the collect callback it is handed, which is the only
+    // way to see what the collector was given: the callback is where the policy is applied.
+    loadConfiguration.mockResolvedValue({ ...CONFIG, traceability: { minimum_description: 30, reference_patterns: ["GH-\\d+"] } });
+    readCohort.mockResolvedValue([cohortEntry("fresh")]);
+    resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
+    createGitHubClient.mockReturnValue({
+      get: vi.fn().mockResolvedValue({ default_branch: "main" }),
+      graphql: vi.fn().mockResolvedValue({
+        repository: {
+          pullRequests: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [
+              {
+                databaseId: 101,
+                number: 11,
+                title: "closes GH-91",
+                body: "a description long enough to count",
+                createdAt: "2026-08-01T00:00:00Z",
+                mergedAt: "2026-08-02T00:00:00Z",
+                updatedAt: "2026-08-02T00:00:00Z",
+                isDraft: false,
+                timelineItems: { nodes: [] },
+                author: { login: "alice", __typename: "User" },
+                reviews: { pageInfo: { hasNextPage: false, endCursor: null }, nodes: [] },
+                commits: { nodes: [{ commit: { statusCheckRollup: null } }] }
+              }
+            ]
+          }
+        }
+      }),
+      paginate: () =>
+        (async function* pages() {
+          yield [];
+        })(),
+      requestsIssued: () => 1,
+      callOutcomes: () => []
+    });
+
+    const walked: unknown[] = [];
+    fillCachedSource.mockImplementation(async (...args: unknown[]) => {
+      const collect = args[2] as (startsAt: Date, endsAt: Date) => Promise<unknown[]>;
+      walked.push(...(await collect(new Date("2026-08-01T00:00:00Z"), new Date("2026-08-31T00:00:00Z"))));
+      return [];
+    });
+
+    await main(["collect", "--config", "m.yaml", "--tolerate-partial"]);
+
+    // The pull-request walk built a fact carrying the two derived answers and neither the title nor the body, and
+    // `GH-91` only matches because the configured pattern reached it — the shipped defaults do not match it.
+    expect(walked.filter((fact) => typeof fact === "object" && fact !== null && "identifier" in fact)).toEqual([
+      expect.objectContaining({ identifier: 101, bodyLength: 34, hasTicketReference: true })
+    ]);
+    expect(walked[0]).not.toHaveProperty("body");
+  });
+
   it("should read each repository's Dependabot alerts ONCE, for two purposes", async () => {
     // TWO THINGS AT ONCE. The shallow path keeps the read because the patching age is an assurance answer — a
     // stale repository's unpatched criticals are exactly what the criterion reports — and the deep path must not
@@ -365,6 +453,169 @@ describe("what collect walks", () => {
       "/repos/hmcts/fresh/dependabot/alerts",
       "/repos/hmcts/stale/dependabot/alerts"
     ]);
+  });
+});
+
+/**
+ * `--format json`, which is documented as "the same figures" the dashboard shows.
+ *
+ * That sentence is the whole of what these cases are about, and it is the one this command can break silently:
+ * it reads the fact cache through its own code path, so a narrowing the pages apply and it does not shows up as
+ * a number somebody quotes in a report rather than as a failure.
+ *
+ * It reads that cache in TWO calls for the estate, not five per repository. It used to walk the cohort calling
+ * `loadCachedMerges` and `storedRepositoryState` — a state lookup, two fact queries and two `accessed_at` WRITES
+ * each, so roughly 9,455 round trips and 3,782 indexed row rewrites to print one document. The web path was
+ * batched for exactly that, and `deserialiseMerges` was split out of `loadCachedMerges` so both halves turn a
+ * payload into a fact the same way.
+ */
+describe("evidence", () => {
+  const CONFIG = {
+    organization: "hmcts",
+    lookback: { operational_days: 90, mutable_hours: 24 },
+    teams: [],
+    cohort: { excluded_authors: ["renovate"], bot_accounts: [] },
+    triviality: { maximum_lines: 10, maximum_files: 1 },
+    assessment: { enabled: false, minimum_merges: 1, "unreviewed-substantial-merges": { maximum_count: 0, maximum_percentage: 1 } },
+    org_graph: { enabled: true }
+  };
+
+  /** One stored pull-request payload, as `serialise` writes it: instants as ISO strings, absent fields omitted. */
+  function merge(overrides: Record<string, unknown> = {}) {
+    return {
+      identifier: 101,
+      repository: "repo-a",
+      number: 11,
+      createdAt: "2026-08-01T00:00:00Z",
+      mergedAt: "2026-08-03T00:00:00Z",
+      draft: false,
+      authorLogin: "alice",
+      authorType: "User",
+      bodyLength: 120,
+      hasTicketReference: true,
+      reviews: [],
+      checks: [],
+      ...overrides
+    };
+  }
+
+  /** One stored direct-commit payload — a change that reached the default branch with no pull request. */
+  function commit(overrides: Record<string, unknown> = {}) {
+    return {
+      sha: "abc123",
+      repository: "repo-a",
+      committedAt: "2026-08-03T00:00:00Z",
+      authorLogin: "alice",
+      authorType: "User",
+      ...overrides
+    };
+  }
+
+  /** Runs `evidence` over a cohort whose cached facts are stated per repository, and parses what it printed. */
+  async function reported(
+    repositories: string[],
+    cached: Record<string, { pullRequests?: unknown[]; directCommits?: unknown[] }>,
+    states: Record<string, unknown> = {}
+  ): Promise<{ status: number; repositories: Record<string, unknown>[] }> {
+    loadConfiguration.mockResolvedValue(CONFIG);
+    cohortRepositories.mockResolvedValue(repositories);
+    prevailingCachedCoverage.mockResolvedValue(new Date("2026-08-31T00:00:00Z"));
+    // `DatedFact`s, which is what the batched reader answers with: the instant the window SELECTED the row on,
+    // beside the payload. Stated in that shape rather than as bare payloads because the shape is the contract —
+    // written the other way the command reads `fact.payload` as undefined and every merge deserialises to nothing.
+    const dated = (payloads: unknown[] = []) => payloads.map((payload) => ({ at: new Date("2026-08-03T00:00:00Z"), payload }));
+    loadCachedFactsForOrganisation.mockResolvedValue(
+      new Map(
+        Object.entries(cached).map(([repository, facts]) => [
+          repository,
+          { pullRequests: dated(facts.pullRequests), directCommits: dated(facts.directCommits) }
+        ])
+      )
+    );
+    storedRepositoryStates.mockResolvedValue(
+      new Map(Object.entries(states).map(([repository, payload]) => [repository, { fetchedAt: new Date("2026-08-31T00:00:00Z"), payload }]))
+    );
+
+    let printed = "";
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
+      printed += String(chunk);
+      return true;
+    });
+    // Re-spied over the global no-op, so a run that refuses reports WHY here instead of failing as a JSON parse
+    // error on an empty string.
+    let complained = "";
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
+      complained += String(chunk);
+      return true;
+    });
+
+    const status = await main(["evidence", "--config", "m.yaml", "--format", "json"]);
+    if (printed === "") {
+      throw new Error(`evidence printed no document and exited ${status}: ${complained.trim()}`);
+    }
+    return { status, ...(JSON.parse(printed) as { repositories: Record<string, unknown>[] }) };
+  }
+
+  it("should read the whole estate's facts and states in one call each, whatever the cohort size", async () => {
+    // THE POINT OF THE BATCHED READERS. Asserted as a call COUNT rather than as a duration, because the cost this
+    // removes is round trips: the per-repository shape issued five per repository, and the figure it prints is
+    // identical either way — which is exactly why it could regress unnoticed.
+    const { repositories } = await reported(["repo-a", "repo-b", "repo-c"], {
+      "repo-a": { pullRequests: [merge()] },
+      "repo-b": { pullRequests: [merge({ identifier: 202, repository: "repo-b" })] }
+    });
+
+    expect(loadCachedFactsForOrganisation).toHaveBeenCalledOnce();
+    expect(storedRepositoryStates).toHaveBeenCalledOnce();
+    expect(repositories.map((row) => [row.repository, row.merged_pull_requests])).toEqual([
+      ["repo-a", 1],
+      ["repo-b", 1],
+      // Read, and holding no merges in the window — a row with zero rather than a repository left out.
+      ["repo-c", 0]
+    ]);
+  });
+
+  it("should narrow the cohort the way a rendered page does, so the two report one figure", async () => {
+    // `excluded_authors` is applied when a report is BUILT, and this command builds one. Reporting Renovate's
+    // merges here while the dashboard drops them would make "the same figures" false of the document somebody
+    // quotes, and neither number would be visibly wrong.
+    const { repositories } = await reported(["repo-a"], {
+      "repo-a": { pullRequests: [merge(), merge({ identifier: 202, authorLogin: "renovate", authorType: "Bot" })] }
+    });
+
+    expect(repositories[0]?.merged_pull_requests).toBe(1);
+  });
+
+  it("should count the direct commits that reached a default branch beside the merges", async () => {
+    // BOTH ROUTES, and read out of the same batched call. A direct commit is a change that arrived unreviewed, so
+    // a command reporting only pull requests would describe a repository whose work bypasses them as quiet.
+    const { repositories } = await reported(["repo-a"], {
+      "repo-a": { pullRequests: [merge()], directCommits: [commit(), commit({ sha: "def456" })] }
+    });
+
+    expect(repositories[0]).toMatchObject({ merged_pull_requests: 1, direct_commits: 2 });
+  });
+
+  it("should read each repository's merge gate from the batched states", async () => {
+    // The other half of what the loop used to fetch per repository. A gate reaches the assessment through this
+    // map now, so a repository whose state was never collected reports no gate rather than a stale one.
+    const { repositories } = await reported(
+      ["repo-a", "repo-b"],
+      { "repo-a": { pullRequests: [merge()] } },
+      { "repo-a": { mergeGate: { gate: { branch: "main", requiredApprovals: 2 }, fetchedAt: "2026-08-31T00:00:00Z" } } }
+    );
+
+    expect(repositories).toHaveLength(2);
+    expect(repositories[0]?.repository).toBe("repo-a");
+  });
+
+  it("should report the window it anchored on rather than one ending now", async () => {
+    // An offline report ends where collection reached, not at the wall clock: `prevailingCachedCoverage` is the
+    // anchor, and a window running past it would report days nothing has walked as having no merges.
+    const document = await reported(["repo-a"], { "repo-a": { pullRequests: [merge()] } });
+
+    expect(document.status).toBe(EXIT_COMPLETE);
+    expect(prevailingCachedCoverage).toHaveBeenCalledOnce();
   });
 });
 
