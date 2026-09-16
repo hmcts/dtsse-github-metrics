@@ -44,7 +44,7 @@ import { Section } from "@/components/Section";
 import { SortHeader } from "@/components/SortHeader";
 import { TeamActorsTable } from "@/components/TeamActorsTable";
 import { TeamsList } from "@/components/TeamsList";
-import { PRODUCTION_BADGE, PRODUCTION_HEX, PRODUCTION_LABEL } from "@/lib/production";
+import { PRODUCTION_BADGE, PRODUCTION_LABEL } from "@/lib/production";
 import { RAG_BORDER } from "@/lib/rag";
 import { INDIVIDUAL_LABEL } from "@/lib/rows";
 import { people } from "@/lib/team";
@@ -288,7 +288,6 @@ describe("ProductionBadge", () => {
 
   it("spends no hex of its own: the colour is the class from lib/production.ts", () => {
     const markup = renderToStaticMarkup(createElement(ProductionBadge, { production: true }));
-    expect(markup).not.toContain(PRODUCTION_HEX);
     expect(markup).not.toContain("#");
   });
 });

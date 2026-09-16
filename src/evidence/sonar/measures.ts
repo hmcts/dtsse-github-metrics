@@ -6,6 +6,9 @@ import { type SonarDeclaration, SonarGateLevel, type SonarMeasures, type SonarQu
  * The rule running through all of it: AN UNREAD SIGNAL MUST NEVER RENDER AS THE GOOD ANSWER. A measure
  * SonarCloud did not send, one that did not parse, a rating off the scale and a gate level this build does not
  * know are all reported as absent rather than as zero, `A`, or `OK`.
+ *
+ * CURRENTLY UNWIRED, with the rest of the SonarCloud layer. `./resolve.ts` states what would reach it and
+ * that whether to wire the layer up or drop it is an open decision.
  */
 
 /** Every metric key one measures request asks for. */

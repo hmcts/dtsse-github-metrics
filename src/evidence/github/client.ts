@@ -303,7 +303,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
     const line = `GitHub ${outcome} ${status}${equivalent} ${method} ${endpoint}: ${detail}`;
     if (outcome === "ok" || outcome === "disabled") {
       // STDERR, not stdout, and that matters rather than being a preference: a command whose product is a
-      // document — `evidence --format json`, `collect-org --propose-teams` — has stdout redirected into a
+      // document — `evidence`, `collect-org --propose-teams` — has stdout redirected into a
       // file, and `console.debug` writes to stdout, so one call per repository was landing in the middle of
       // it. Upstream stated the rule and the port lost it: "writes the report to stdout and progress to
       // stderr, so stdout can be redirected into a file". `console.warn` below was always stderr.

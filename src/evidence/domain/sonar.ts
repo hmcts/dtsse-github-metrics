@@ -1,5 +1,8 @@
 /**
  * SonarCloud evidence. Ported from `metrics.domain`'s Sonar models.
+ *
+ * CURRENTLY UNWIRED, with the rest of the SonarCloud layer. `./resolve.ts` states what would reach it and
+ * that whether to wire the layer up or drop it is an open decision.
  */
 
 export const SONAR_RATING_LETTERS = ["A", "B", "C", "D", "E"] as const;

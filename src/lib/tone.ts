@@ -27,18 +27,8 @@
  * reading them side by side.
  */
 
-import { RAG_HEX, type RAGState, state } from "@/lib/rag";
-import type {
-  AlertFamily,
-  OpenAlertCount,
-  ReadinessCondition,
-  ReadinessLabel,
-  SecurityAlertEvidence,
-  SonarGateLevel,
-  SonarMeasures,
-  SonarRating,
-  UnreviewedSubstantialOutcome
-} from "@/lib/types";
+import { type RAGState, state } from "@/lib/rag";
+import type { AlertFamily, OpenAlertCount, ReadinessCondition, ReadinessLabel, SonarGateLevel, SonarMeasures, SonarRating } from "@/lib/types";
 
 /** The four presentation states: reads well, worth weighing, reads badly, and carries no verdict. */
 export type Tone = "good" | "warn" | "bad" | "neutral";
@@ -73,31 +63,6 @@ export const TONE_BORDER: Record<Tone, string> = {
   bad: "border-l-4 border-l-rag-red",
   neutral: "border-l-4 border-l-slate-800"
 };
-
-/**
- * The same four tones as colour VALUES, for the marks a chart is drawn with.
- *
- * Derived from `RAG_HEX` rather than restating four hexes: recharts takes fills as strings, so a
- * donut cannot reach a Tailwind class, and a second copy of the palette is how a wedge and the row it
- * counts drift into two greens nobody chose. `neutral` reads `RAG_HEX.none`, which is the slate an
- * ungraded repository is already drawn in on the readiness donut beside these.
- */
-export const TONE_HEX: Record<Tone, string> = {
-  good: RAG_HEX.green,
-  warn: RAG_HEX.amber,
-  bad: RAG_HEX.red,
-  neutral: RAG_HEX.none
-};
-
-/**
- * The one mark that is not a tone: `rag-green-strong`, for a band that is better than good.
- *
- * A gate requiring two approvals is not a different verdict from one requiring a single approval —
- * both clear `assessment.review_requirement` — so it is not a fifth tone, and nothing outside a donut
- * legend distinguishes them. It is a deeper shade of the same green, and it exists only where a
- * reader is looking at the whole estate at once and the distinction is the point of the picture.
- */
-export const STRONG_GOOD_HEX = "#16a34a";
 
 export function valueClass(tone: Tone | undefined): string {
   return TONE_VALUE[tone ?? "neutral"];
@@ -433,7 +398,7 @@ function floor(value: number | undefined, good: number, warn: number): Tone {
 }
 
 /**
- * Test coverage, the one Sonar measure two pages grade: a repository's card and the estate donut.
+ * Test coverage, graded on a repository's own card.
  *
  * Factored out of `SONAR_MEASURE_TONE` so the boundary is stated once. Sonar's own default gate
  * boundary for new code is 80%, and 90% is the target a project aiming higher sets. Neither is a
@@ -458,207 +423,4 @@ const SONAR_MEASURE_TONE: Record<SonarMeasure, (measures: SonarMeasures) => Tone
 
 export function sonarMeasureTone(measure: SonarMeasure, measures: SonarMeasures): Tone {
   return SONAR_MEASURE_TONE[measure](measures);
-}
-
-/**
- * One band of a donut: the key rows are counted under, the words it reads as, and the mark it draws.
- *
- * A band table is the whole definition of a donut — `lib/chart.ts` counts rows into one and derives
- * a slice per entry, so the order here IS the order of the legend, and a band left at zero is still
- * listed. Best first, so the picture reads top to bottom as the estate getting worse, and `unknown`
- * is last in every table: an unmeasured repository is not a good result or a bad one.
- */
-export interface Band<Key extends string = string> {
-  key: Key;
-  /** The words the legend and the hover card read; the mark beside them is decoration. */
-  name: string;
-  /** A colour value, not a class: recharts takes fills as strings. */
-  mark: string;
-}
-
-/** How many approving reviews the merge gate requires, banded. */
-export type ReviewBand = "multiple" | "required" | "none" | "unknown";
-
-export const REVIEW_BANDS: readonly Band<ReviewBand>[] = [
-  { key: "multiple", name: "Multiple", mark: STRONG_GOOD_HEX },
-  { key: "required", name: "Enforced", mark: TONE_HEX.good },
-  { key: "none", name: "Unenforced", mark: TONE_HEX.bad },
-  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
-];
-
-/**
- * Band a repository by the approvals its gate requires.
- *
- * `assessment.review_requirement` vetoes a gate requiring none, which is why `0` is red rather than
- * amber, and clears one requiring any — so two or more is not a second verdict but a deeper shade of
- * the one the policy already gives. Absent is the row's own word for unmeasured: no gate was
- * collected, or the branch is protected and GitHub withheld its rules. An unprotected branch reports
- * `0` and lands in the red band, because the gate was read and it requires nothing.
- */
-export function reviewBand(approvals: number | null | undefined): ReviewBand {
-  if (approvals == null) {
-    return "unknown";
-  }
-  if (approvals >= 2) {
-    return "multiple";
-  }
-  return approvals >= 1 ? "required" : "none";
-}
-
-/** Whether the merge gate requires any status check, banded. */
-export type ChecksBand = "required" | "none" | "unknown";
-
-export const CHECKS_BANDS: readonly Band<ChecksBand>[] = [
-  { key: "required", name: "Enforced", mark: TONE_HEX.good },
-  { key: "none", name: "Unenforced", mark: TONE_HEX.bad },
-  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
-];
-
-/**
- * Band a repository by how many status checks its gate requires.
- *
- * Two bands rather than three, for the reason `gateFieldTone` gives the same field: this is the
- * CONFIGURATION — a gate requiring no check cannot block anything — and `checks-passing-at-merge` is
- * the condition that reads what CI actually held. Which checks they are, and whether any of them
- * passed, is not a question a count of required contexts answers. Absent is unmeasured, as above.
- */
-export function checksBand(contexts: number | null | undefined): ChecksBand {
-  if (contexts == null) {
-    return "unknown";
-  }
-  return contexts >= 1 ? "required" : "none";
-}
-
-/** The policy's verdict on unreviewed substantial merging, plus the window it graded nothing in. */
-export type UnreviewedBand = UnreviewedSubstantialOutcome | "unknown";
-
-export const UNREVIEWED_BANDS: readonly Band<UnreviewedBand>[] = [
-  // `none` stays as the key because `unreviewedBand` matches the policy's own outcome values against
-  // it; only the words the legend reads change.
-  { key: "none", name: "Clear", mark: TONE_HEX.good },
-  { key: "within", name: "Within allowance", mark: TONE_HEX.warn },
-  { key: "above", name: "Above allowance", mark: TONE_HEX.bad },
-  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
-];
-
-/**
- * Band a repository by `ReadinessPolicy.unreviewed_substantial_outcome`, which decided this already.
- *
- * The three words are the policy's own, so nothing is graded here — `within` is amber because the
- * allowance forgiving what it was configured to forgive is worth weighing and is not a pass. Absent
- * is the third thing the policy says: a cohort too thin to grade, a window holding no substantial
- * merge, or an assessment that is off. All three are unmeasured, and an unmeasured thing is never
- * reported as clean.
- *
- * A verdict this build does not know is unmeasured too, for the reason `distributionState` folds an
- * unrecognised label: the pages are served from a `metrics-serve` versioned apart from them, and a
- * value falling in no band would be a repository counted in no slice — a donut quietly totalling
- * less than the estate rather than admitting it read something it did not understand.
- */
-export function unreviewedBand(outcome: UnreviewedSubstantialOutcome | null | undefined): UnreviewedBand {
-  return UNREVIEWED_BANDS.find((band) => band.key === outcome)?.key ?? "unknown";
-}
-
-/** Test coverage, banded on the boundary `coverageTone` states. */
-export type CoverageBand = "high" | "moderate" | "low" | "unknown";
-
-export const COVERAGE_BANDS: readonly Band<CoverageBand>[] = [
-  { key: "high", name: "90% or more", mark: TONE_HEX.good },
-  // Not "80% to 90%": exactly 90 is graded good, so a legend naming 90 twice would put the boundary
-  // in the band it is not in.
-  { key: "moderate", name: "80% to under 90%", mark: TONE_HEX.warn },
-  { key: "low", name: "Below 80%", mark: TONE_HEX.bad },
-  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
-];
-
-/** The band each tone `coverageTone` returns falls in, total over the four so no lookup can miss. */
-const COVERAGE_BAND: Record<Tone, CoverageBand> = {
-  good: "high",
-  warn: "moderate",
-  bad: "low",
-  neutral: "unknown"
-};
-
-/**
- * Band a repository by its SonarCloud coverage, through the tone its own page is coloured with.
- *
- * Delegated rather than restated so the 90 and the 80 move together: a reader comparing the donut
- * with the repository's coverage card is entitled to find them agreeing. Absent is unmeasured — the
- * repository resolved to no SonarCloud project, its measures could not be read, or the project sent
- * no coverage metric — and never 0%.
- */
-export function coverageBand(coverage: number | null | undefined): CoverageBand {
-  return COVERAGE_BAND[coverageTone(coverage)];
-}
-
-/** How badly a repository's security signals read, worst signal deciding. */
-export type SecurityBand = "clear" | "medium" | "high" | "unknown";
-
-export const SECURITY_BANDS: readonly Band<SecurityBand>[] = [
-  { key: "clear", name: "Clear", mark: TONE_HEX.good },
-  { key: "medium", name: "Medium", mark: TONE_HEX.warn },
-  { key: "high", name: "High", mark: TONE_HEX.bad },
-  { key: "unknown", name: "Unknown", mark: TONE_HEX.neutral }
-];
-
-/**
- * The three security fields a row carries, named as the row's own so a row IS one of these.
- *
- * Three fields holding five signals between them, `security` carrying three alert families. A shape
- * of its own rather than a `RepositoryRow` parameter so the banding can be tested — and later read
- * off some other list — without inventing a repository and a team around three facts.
- */
-export interface SecuritySignals {
-  security?: SecurityAlertEvidence | null;
-  sonar_security_rating?: SonarRating | null;
-  sonar_security_issues?: number | null;
-}
-
-/**
- * Band a repository by the worst of its security signals, or unmeasured where it has none.
- *
- * Five signals, each resolved to a tone or to `neutral` where there is no data, and the worst tone
- * present decides — so one open critical Dependabot alert bands the repository High however clean the
- * other four read. The three alert families delegate to `alertTone`, which the repository page
- * already colours its security cards with, so the donut and the cards cannot disagree about a family.
- * They are named HERE rather than imported as `ALERT_FAMILIES`: `repository.ts` owns that list and
- * imports this module for `alertTone`, so reaching back for it would close an import cycle. Sonar's
- * one remaining count is worth weighing above zero and never worse: the count is graded by its own
- * rating, which is a signal here in its own right.
- *
- * The security hotspot count was a sixth signal until 2026-09-04, when Sonar's transition of hotspots
- * into vulnerabilities retired it. Dropping it moved NO repository to a WORSE band: all 266 reporting
- * the metric reported zero, so the signal could only ever resolve `good`. It could in principle move
- * a row the other way — one whose ONLY signal was that zero would now read Unknown rather than Clear
- * — but that needs Sonar measures with no rating and no issue count and all three alert families
- * withheld, and the snapshot held no such row.
- *
- * `unknown` is EVERY signal carrying no data — a row the span could not report, or one whose three
- * families GitHub all refused and which has no Sonar measures. A repository with readable families
- * and no Sonar project is Clear: its security was read, and there was nothing open.
- *
- * The rating goes through `sonarRatingTone`, so the donut and the repository page's card grade the
- * letter IDENTICALLY. This donut banded C at High until 2026-09-04, deliberately stricter than the
- * card; that is reversed, and the reason is a measurement rather than a preference — a C-at-High
- * boundary put 78 of the estate's 266 rated repositories in the red band and left 7 in amber, so the
- * middle band named the one letter almost nothing holds. Sonar has already weighed the finding
- * against the project, and a scale that reports A or nothing is not reporting a scale. Alerts are
- * untouched by that reversal: a critical or high alert is still red however the rating reads, so a
- * repository only moves to Medium when its alert families are clean.
- */
-export function securityBand(signals: SecuritySignals): SecurityBand {
-  const alerts = signals.security;
-  const families: Tone[] = alerts
-    ? [alertTone("dependabot", alerts.dependabot), alertTone("code-scanning", alerts.code_scanning), alertTone("secret-scanning", alerts.secret_scanning)]
-    : [];
-  const tones = [...families, sonarRatingTone(signals.sonar_security_rating), counted(signals.sonar_security_issues, "good", "warn")].filter(
-    (tone) => tone !== "neutral"
-  );
-  if (tones.includes("bad")) {
-    return "high";
-  }
-  if (tones.includes("warn")) {
-    return "medium";
-  }
-  return tones.length > 0 ? "clear" : "unknown";
 }

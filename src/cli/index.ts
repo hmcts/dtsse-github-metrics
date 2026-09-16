@@ -37,7 +37,7 @@ import { collectSsoIdentities, namedPeople } from "../evidence/org/identities.ts
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { storedDisplayNames } from "../evidence/org/people.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
-import { configuredTeamSlugs, sonarOrganizationName } from "../evidence/policy/repositories.ts";
+import { configuredTeamSlugs } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
@@ -831,9 +831,9 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
   const owners = await cohortOwners(configuration, reference);
   const repositories = argv.repository === undefined ? await cohortRepositories(configuration, reference) : [argv.repository];
 
-  // The same seam the dashboard narrows at, so `evidence` and the pages report one cohort. `--format json` is
-  // documented as "the same figures" the dashboard shows, and it would not be if this counted Renovate's merges
-  // or Flux's commits.
+  // The same seam the dashboard narrows at, so `evidence` and the pages report one cohort. `evidence` is
+  // documented as printing "the same figures" the dashboard shows, and it would not be if this counted
+  // Renovate's merges or Flux's commits.
   const excluded = excludedAuthors(configuration.cohort.excluded_authors);
   const bots = botAccounts(configuration.cohort.bot_accounts);
 
@@ -899,18 +899,6 @@ function readStoredGate(payload: unknown): MergeGateReport {
   return { gate: report.gate, ...(report.fetchedAt === undefined ? {} : { fetchedAt: new Date(report.fetchedAt) }) };
 }
 
-async function runMapSonar(configuration: Configuration): Promise<number> {
-  console.info(`resolving SonarCloud projects for the ${sonarOrganizationName(configuration)} organisation`);
-  console.warn("map-sonar is not yet wired to the resolution ladder in this build");
-  return EXIT_FAILED;
-}
-
-async function runTrend(configuration: Configuration): Promise<number> {
-  console.info(`reporting trends for the ${configuration.organization} organisation`);
-  console.warn("trend is not yet wired to the period walk in this build");
-  return EXIT_FAILED;
-}
-
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   let parsed: Arguments;
   try {
@@ -949,10 +937,6 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return await onlyCollector(parsed.command, () => runPrune(parsed));
       case "evidence":
         return await runEvidence(configuration, parsed);
-      case "map-sonar":
-        return await runMapSonar(configuration);
-      case "trend":
-        return await runTrend(configuration);
     }
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

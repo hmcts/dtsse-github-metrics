@@ -10,7 +10,6 @@
     "includes": [
       "**",
       "!**/*.js",
-      "scripts/**/*.js",
       "!**/coverage",
       "!**/coverage-integration",
       "!**/dist",
@@ -21,7 +20,6 @@
       "!**/.next",
       "!**/test-results",
       "!**/playwright-report",
-      "!**/test/fixtures",
       "!**/.claude/worktrees"
     ]
   },

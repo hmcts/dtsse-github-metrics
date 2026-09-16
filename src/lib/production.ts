@@ -40,6 +40,3 @@ export const PRODUCTION_TOGGLE_INACTIVE = "bg-slate-800 text-slate-400 hover:bg-
 
 /** The toggle's dot, royal blue in BOTH states so the control's colour is legible while it is off. */
 export const PRODUCTION_DOT = "bg-royal";
-
-/** The hex, for anywhere a class cannot reach — a chart mark takes a colour as a value. */
-export const PRODUCTION_HEX = "#4169e1";

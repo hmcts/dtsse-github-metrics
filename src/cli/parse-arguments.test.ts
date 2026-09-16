@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CollectionStatus } from "../evidence/domain/availability.ts";
 import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE, runStatus } from "./exit-status.ts";
-import { COHORT_COMMANDS, parseArguments, UsageError, usage } from "./parse-arguments.ts";
+import { COHORT_COMMANDS, COMMANDS, parseArguments, UsageError, usage } from "./parse-arguments.ts";
 
 describe("parseArguments", () => {
   it("should parse a command with its configuration", () => {
@@ -63,50 +63,38 @@ describe("parseArguments", () => {
     expect(() => parseArguments(["collect", "--config", "m.yaml", "--days", "seven"])).toThrow(/--days must be a whole number/);
   });
 
-  it("should default a trend period to 28 days", () => {
-    expect(parseArguments(["trend", "--config", "m.yaml"]).periodDays).toBe(28);
-  });
-
-  it("should refuse a period that cannot describe a window, before any repository is read", () => {
-    expect(() => parseArguments(["trend", "--config", "m.yaml", "--period-days", "0"])).toThrow(/--period-days must be at least one day/);
-  });
-
-  it("should accept a known metric identifier", () => {
-    expect(parseArguments(["evidence", "--config", "m.yaml", "--metric", "review-depth"]).metric).toBe("review-depth");
-  });
-
-  it("should refuse an unknown metric, listing the ones it takes", () => {
-    expect(() => parseArguments(["evidence", "--config", "m.yaml", "--metric", "invented"])).toThrow(/--metric must be one of independent-review-coverage/);
-  });
-
-  it("should default the format to json", () => {
-    expect(parseArguments(["evidence", "--config", "m.yaml"]).format).toBe("json");
-  });
-
-  it("should name the replacement when the dropped report format is asked for", () => {
-    expect(() => parseArguments(["evidence", "--config", "m.yaml", "--format", "report"])).toThrow(/use --format json and filter it with jq/);
-  });
-
-  it("should refuse a format that was never supported", () => {
-    expect(() => parseArguments(["evidence", "--config", "m.yaml", "--format", "csv"])).toThrow(/--format must be json or report/);
-  });
-
+  // A flag nothing reads is refused rather than accepted, so `--help` and the behaviour cannot disagree.
+  // Each of these parsed and was then ignored by every command, four of them while `usage` advertised them
+  // against `evidence` — which is implemented and read none of them.
   it.each([
-    ["--refresh", "refresh"],
-    ["--offline", "offline"],
-    ["--identities", "identities"]
-  ])("should read the flag %s", (flag, field) => {
-    const parsed = parseArguments(["evidence", "--config", "m.yaml", flag]) as unknown as Record<string, boolean>;
+    "--logging=debug",
+    "--metric=review-depth",
+    "--refresh",
+    "--offline",
+    "--identities",
+    "--format=json",
+    "--period-days=28",
+    "--periods=3"
+  ])("should refuse %s, which no command reads", (flag) => {
+    expect(() => parseArguments(["evidence", "--config", "m.yaml", flag])).toThrow(UsageError);
+  });
 
-    expect(parsed[field]).toBe(true);
+  it("should refuse --maximum-days, which never raised the window span it claimed to", () => {
+    expect(() => parseArguments(["collect", "--config", "m.yaml", "--maximum-days=400"])).toThrow(UsageError);
+  });
+
+  // A usage error and not a failed run: `map-sonar` and `trend` were dispatched and could only report
+  // themselves unwired, so a caller got exit 1 for asking correctly. Exit 2 says the command line was wrong,
+  // which is now the true answer.
+  it.each(["map-sonar", "trend"])("should refuse the unimplemented command %s as a usage error", (command) => {
+    expect(() => parseArguments([command, "--config", "m.yaml"])).toThrow(/unknown command/);
   });
 });
 
 describe("COHORT_COMMANDS", () => {
   it("should name the commands whose subject is the reported cohort", () => {
-    expect([...COHORT_COMMANDS].sort()).toEqual(["collect", "evidence", "trend"]);
+    expect([...COHORT_COMMANDS].sort()).toEqual(["collect", "evidence"]);
     expect(COHORT_COMMANDS.has("prune")).toBe(false);
-    expect(COHORT_COMMANDS.has("map-sonar")).toBe(false);
   });
 
   it("should not oblige collect-org to have a cohort, since it is what establishes one", () => {
@@ -169,10 +157,27 @@ describe("usage", () => {
   it("should document every command and every exit status", () => {
     const text = usage();
 
-    for (const command of ["doctor", "collect", "collect-org", "prune", "map-sonar", "evidence", "trend"]) {
+    for (const command of COMMANDS) {
       expect(text).toContain(command);
     }
     expect(text).toMatch(/exit status/);
+  });
+
+  /**
+   * The help text and the parser say the same thing, which is what stops a flag being promised and ignored.
+   *
+   * Read off `OPTIONS` through the parser rather than asserted as a list: a flag added to one and not the
+   * other is exactly the drift this catches, and a hardcoded list here would be a third place to forget.
+   */
+  it("should promise no flag the parser refuses", () => {
+    const promised = [...usage().matchAll(/^ {2}(--[a-z-]+)/gm)].map((match) => match[1] as string);
+
+    expect(promised.length).toBeGreaterThan(0);
+    for (const flag of promised) {
+      // Rejection with "Unknown option" is the parser saying it does not have the flag at all. Any other
+      // usage error — a missing value, a bad number — means the flag exists and this one is satisfied.
+      expect(() => parseArguments(["collect", "--config", "m.yaml", flag])).not.toThrow(/Unknown option/);
+    }
   });
 });
 

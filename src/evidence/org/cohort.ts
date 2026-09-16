@@ -33,8 +33,6 @@ export const UnownedIdentifier = "unowned";
 /** Every visibility GitHub reports, lower-cased as the graph stores it. */
 export const Visibilities = ["public", "internal", "private"] as const;
 
-export type Visibility = (typeof Visibilities)[number];
-
 /** Which repositories the estate is, expressed as policy rather than as a list of names. */
 export interface CohortPolicy {
   /**

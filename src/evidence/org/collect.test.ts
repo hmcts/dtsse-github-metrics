@@ -6,7 +6,6 @@ import { CodeownersPaths } from "./graph.ts";
 import {
   DefaultOwnershipBatchSize,
   orgPeopleQuery,
-  orgQuerySignature,
   orgRepositoriesQuery,
   orgTeamsQuery,
   ownershipFilesQuery,
@@ -176,16 +175,6 @@ describe("documents", () => {
 
   it("should read whether a blob was truncated, since a truncated one is refused rather than parsed", () => {
     expect(ownershipFilesQuery(1)).toContain("isTruncated");
-  });
-});
-
-describe("orgQuerySignature", () => {
-  it("should be sixteen hex characters", () => {
-    expect(orgQuerySignature()).toMatch(/^[0-9a-f]{16}$/);
-  });
-
-  it("should be stable across calls, so a reader and a writer agree", () => {
-    expect(orgQuerySignature()).toBe(orgQuerySignature());
   });
 });
 

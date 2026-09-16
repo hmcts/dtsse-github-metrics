@@ -362,18 +362,6 @@ export const DefaultPrefixDominance = 0.8;
 export const DefaultMinimumAuthoredMerges = 2;
 
 /**
- * How far back authorship is read, in days.
- *
- * Matches `lookback.operational_days`' own default rather than being a second window nobody reconciles:
- * "who works in this repository" is the same question the operational window asks, and `collect` fills the
- * fact cache over exactly that span — so a wider window here would read a cache that does not reach and a
- * narrower one would discard evidence already paid for. Ownership is a fact about NOW, so a team that
- * stopped merging two years ago is not the answer; 90 days is a working quarter, which survives a holiday
- * and a release freeze without surviving a reorganisation.
- */
-export const DefaultAuthorshipDays = 90;
-
-/**
  * A quarter of an organisation is far past any team that could be said to own what it holds.
  *
  * On an estate of 3,277 repositories that is over 800, which no service team reaches.

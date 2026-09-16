@@ -4,6 +4,12 @@ import type { RateLimitBudget } from "../github/client.ts";
  * Spacing one kind of call out in time, so a per-minute quota is respected rather than hit. Ported from
  * `metrics.sonar.CallPacer`.
  *
+ * CURRENTLY UNWIRED, with the rest of the SonarCloud layer: the commit search it paces is only issued by
+ * `./resolve.ts`, which nothing calls. `./resolve.ts` states what would reach the layer and that whether to
+ * wire it up or drop it is an open decision. Nothing else in this repository paces a rate limit at all — the
+ * GitHub client retries a refusal rather than avoiding one — so this is the piece worth reading before that
+ * decision is taken, and the piece most expensive to rebuild.
+ *
  * PACING RATHER THAN REACTING: GitHub answers a spent commit-search quota with a 403 whose window takes a full
  * minute to clear, so a run that sprints into the limit is slower than one that never reaches it — and it
  * burns a retry budget that a genuine failure then has none of.

@@ -1,19 +1,18 @@
 import { parseArgs } from "node:util";
-import { behaviourMetricIdentifiers } from "../evidence/behaviour/metrics.ts";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-export const COMMANDS = ["doctor", "collect", "collect-org", "prune", "map-sonar", "evidence", "trend", "migrate"] as const;
+export const COMMANDS = ["doctor", "collect", "collect-org", "prune", "evidence", "migrate"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
 /**
  * The commands whose subject is the cohort, and which therefore refuse an empty `teams:`.
  *
- * `collect-org` is deliberately NOT one of them, for the reason `map-sonar` and `prune` are not: the
- * organisation graph is not about any repository a team owns — it is what establishes who owns them — so
- * obliging a team file to be layered in would make the answer depend on the question.
+ * `collect-org` is deliberately NOT one of them, for the reason `prune` is not: the organisation graph is not
+ * about any repository a team owns — it is what establishes who owns them — so obliging a team file to be
+ * layered in would make the answer depend on the question.
  */
-export const COHORT_COMMANDS: ReadonlySet<Command> = new Set(["collect", "evidence", "trend"]);
+export const COHORT_COMMANDS: ReadonlySet<Command> = new Set(["collect", "evidence"]);
 
 export class UsageError extends Error {
   constructor(message: string) {
@@ -22,23 +21,22 @@ export class UsageError extends Error {
   }
 }
 
+/**
+ * EVERY FIELD IS READ BY A COMMAND, and that is the rule this shape is held to.
+ *
+ * A flag that parses and is then ignored is worse than one that does not exist: `--help` promises it, a
+ * caller sets it, and the run does exactly what it would have done anyway — which reads as the flag having
+ * been considered and rejected rather than never consulted. Nothing is declared here until something reads
+ * it, so `usage()` below and the behaviour cannot drift apart.
+ */
 export interface Arguments {
   command: Command;
   config: string[];
-  logging: string;
   startsAt?: Date;
   endsAt?: Date;
   days?: number;
-  maximumDays?: number;
   repository?: string;
-  metric?: string;
-  refresh: boolean;
   toleratePartial: boolean;
-  offline: boolean;
-  identities: boolean;
-  format: "json" | "report";
-  periodDays: number;
-  periods?: number;
   /** Emit a paste-ready `teams:` block instead of writing the graph (collect-org). */
   proposeTeams: boolean;
   /** Override the configured ceiling on repositories one run may pay the per-repository rungs for. */
@@ -47,20 +45,11 @@ export interface Arguments {
 
 const OPTIONS = {
   config: { type: "string", multiple: true },
-  logging: { type: "string" },
   from: { type: "string" },
   to: { type: "string" },
   days: { type: "string" },
-  "maximum-days": { type: "string" },
   repository: { type: "string" },
-  metric: { type: "string" },
-  refresh: { type: "boolean" },
   "tolerate-partial": { type: "boolean" },
-  offline: { type: "boolean" },
-  identities: { type: "boolean" },
-  format: { type: "string" },
-  "period-days": { type: "string" },
-  periods: { type: "string" },
   "propose-teams": { type: "boolean" },
   "unresolved-limit": { type: "string" }
 } as const;
@@ -109,24 +98,7 @@ export function parseArguments(argv: readonly string[]): Arguments {
     throw new UsageError("--config is required, and may be repeated to layer a policy file with a team file");
   }
 
-  const format = (values.format as string | undefined) ?? "json";
-  if (format !== "json" && format !== "report") {
-    throw new UsageError(`--format must be json or report, and is ${JSON.stringify(format)}`);
-  }
-  if (format === "report") {
-    throw new UsageError("--format report was not carried over from the Python collector; use --format json and filter it with jq");
-  }
-
-  const metric = values.metric as string | undefined;
-  if (metric !== undefined && !behaviourMetricIdentifiers().includes(metric)) {
-    throw new UsageError(`--metric must be one of ${behaviourMetricIdentifiers().join(", ")}, and is ${JSON.stringify(metric)}`);
-  }
-
   const days = integer(values.days as string | undefined, "days");
-  const periodDays = integer(values["period-days"] as string | undefined, "period-days") ?? 28;
-  if (periodDays < 1) {
-    throw new UsageError("--period-days must be at least one day");
-  }
 
   const unresolvedLimit = integer(values["unresolved-limit"] as string | undefined, "unresolved-limit");
   if (unresolvedLimit !== undefined && unresolvedLimit < 0) {
@@ -142,24 +114,11 @@ export function parseArguments(argv: readonly string[]): Arguments {
   return {
     command: command as Command,
     config,
-    logging: (values.logging as string | undefined) ?? "info",
     ...(startsAt === undefined ? {} : { startsAt }),
     ...(endsAt === undefined ? {} : { endsAt }),
     ...(days === undefined ? {} : { days }),
-    ...(integer(values["maximum-days"] as string | undefined, "maximum-days") === undefined
-      ? {}
-      : { maximumDays: integer(values["maximum-days"] as string | undefined, "maximum-days") as number }),
     ...(values.repository === undefined ? {} : { repository: values.repository as string }),
-    ...(metric === undefined ? {} : { metric }),
-    refresh: values.refresh === true,
     toleratePartial: values["tolerate-partial"] === true,
-    offline: values.offline === true,
-    identities: values.identities === true,
-    format,
-    periodDays,
-    ...(integer(values.periods as string | undefined, "periods") === undefined
-      ? {}
-      : { periods: integer(values.periods as string | undefined, "periods") as number }),
     proposeTeams: values["propose-teams"] === true,
     ...(unresolvedLimit === undefined ? {} : { unresolvedLimit })
   };
@@ -173,27 +132,16 @@ commands:
   collect     collect repository inventory and behaviour evidence
   collect-org collect the organisation's teams, people and repository ownership
   prune       delete cached intervals that have not been used recently
-  map-sonar   resolve each SonarCloud project to the repository it analyses
   evidence    explain cached behaviour evidence without GitHub access
-  trend       report each repository's periods since it was enabled
   migrate     apply any pending database migrations (takes no --config)
 
 options:
   --config <file>       path to the YAML configuration; repeat to layer files, later files winning
-  --logging <level>     set the logging level (default: info)
   --from <instant>      start of the window, inclusive: a UTC date or datetime
   --to <instant>        end of the window, exclusive
   --days <n>            span this many days, ending at the most recent UTC midnight
-  --maximum-days <n>    raise the configured maximum window span
   --repository <name>   limit results to one configured repository
-  --metric <id>         show one raw metric
-  --identities          include raw pull-request, author and reviewer references
-  --refresh             contact GitHub to collect missing history (evidence)
   --tolerate-partial    exit 0 when some repositories refused, for a scheduled run (collect)
-  --offline             never contact GitHub, and refuse a period the cache does not cover (trend)
-  --period-days <n>     span each trend period this many days (default: 28)
-  --periods <n>         report at most this many whole periods since enablement
-  --format json         emit the machine-readable contract (the only supported format)
   --propose-teams       print a reviewable teams: block instead of writing the graph (collect-org)
   --unresolved-limit <n>  cap the repositories one run reads CODEOWNERS for (collect-org)
 

@@ -3,7 +3,6 @@ import { loadConfiguration } from "@/evidence/policy/load";
 import type { Configuration } from "@/evidence/policy/schema";
 import {
   actorRows,
-  collectionNotice,
   directPushRows,
   mergeRows,
   overviewSummary,
@@ -63,11 +62,6 @@ let cached: Promise<Configuration> | undefined;
 function configuration(): Promise<Configuration> {
   cached ??= loadConfiguration(...(process.env.METRICS_CONFIG ?? "metrics.yaml").split(",").map((path) => path.trim()));
   return cached;
-}
-
-/** Forgets the held configuration, so a test can point the next call at a different document. */
-export function resetConfiguration(): void {
-  cached = undefined;
 }
 
 export async function getWindows(): Promise<WindowOptions> {
@@ -376,9 +370,4 @@ function teamActors(merges: readonly TeamMergeRow[], pushes: readonly TeamDirect
       // order would put 58% of a team under whatever letter their login starts with, interleaved with the rest.
       .sort((left, right) => left.login.toLowerCase().localeCompare(right.login.toLowerCase()))
   );
-}
-
-/** When the last collection landed, for the notice above every page. */
-export async function getCollectionNotice(): Promise<unknown> {
-  return collectionNotice();
 }
