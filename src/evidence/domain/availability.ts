@@ -28,18 +28,6 @@ export const CollectionStatus = {
 
 export type CollectionStatus = (typeof CollectionStatus)[keyof typeof CollectionStatus];
 
-/** The evidence affected by a collection failure. */
-export const EvidenceKind = {
-  Repository: "repository",
-  MergeGate: "merge_gate",
-  Behaviour: "behaviour",
-  OpenPullRequests: "open_pull_requests",
-  SecurityAlerts: "security_alerts",
-  Codeowners: "codeowners",
-  Maintenance: "maintenance",
-  Sonar: "sonar"
-} as const;
-
 /**
  * One repository's evidence that could not be observed, and why.
  *
