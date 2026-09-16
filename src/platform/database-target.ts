@@ -15,7 +15,7 @@ import { type Environment, LOCAL_DATABASE_URL, mountedDatabaseParts } from "../e
  * identifier anything connects with, so a value that does not read as one of the three is better withheld than
  * printed. An IPv6 literal is one such value, and reads as unrecognised.
  */
-const TARGET = /^[a-z0-9._-]{1,253}:[0-9]{1,5}\/[a-z0-9_$.-]{1,63}$/i;
+const TARGET = /^[a-z0-9._-]{1,253}:\d{1,5}\/[a-z0-9_$.-]{1,63}$/i;
 
 /** What is said instead, so a line nobody can act on is still a line rather than a blank. */
 const UNRECOGNISED = "an unrecognised database target";
