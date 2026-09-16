@@ -3,7 +3,7 @@ import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
 import { builtReport, builtSpanCount, CACHEABLE_SPANS } from "../../src/evidence/report/cache.ts";
-import { forgetBuiltRows, mergeRows, overviewSummary, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
+import { actorRows, directPushRows, forgetBuiltRows, mergeRows, overviewSummary, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
 import { startReportWarmer, warmEverySpan } from "../../src/evidence/report/warmer.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
@@ -153,6 +153,35 @@ async function mergedPullRequest(repository: string, identifier: bigint, mergedA
         // Absent unless a case is about attribution, which is a real shape: GitHub matches no account to some
         // merges, and `builtMergeRows` sends no `author` for them.
         ...(authorLogin === undefined ? {} : { authorLogin, authorType: "User" })
+      }
+    }
+  });
+}
+
+/**
+ * One commit that reached the default branch with no pull request, as a collection stores it.
+ *
+ * `authorType` DEFAULTS TO `User` because that is what GitHub answers on this path — measured over 9,663 stored
+ * direct commits, not one carries `Bot` — so a fixture typing a bot's commit `Bot` would test a shape the
+ * collector never produces and would pass on the `[bot]` suffix rule alone.
+ */
+async function directCommit(repository: string, sha: string, committedAt: Date, author: { login?: string; name?: string }): Promise<void> {
+  await prisma.directCommitFact.create({
+    data: {
+      organization: ORGANIZATION,
+      repository,
+      queryHash: DIRECT_COMMITS,
+      sha,
+      committedAt,
+      payload: {
+        sha,
+        repository,
+        committedAt: committedAt.toISOString(),
+        additions: 4,
+        deletions: 1,
+        changedFiles: 1,
+        ...(author.login === undefined ? {} : { authorLogin: author.login, authorType: "User" }),
+        ...(author.name === undefined ? {} : { authorName: author.name })
       }
     }
   });
@@ -559,6 +588,280 @@ describe("the merge figures a row states", () => {
     expect(((await repositoryRows(CONFIGURATION, 4, anchor)) as ReportedRow[]).map((row) => row.merged_pull_requests)).toEqual(
       alone.map((row) => row.merged_pull_requests)
     );
+  });
+});
+
+/**
+ * Which merges a report counts, and which it leaves out.
+ *
+ * `cohort.excluded_authors` defaulted to `renovate, dependabot` and APPLIED TO NOTHING: `inCohort` and
+ * `excludedAuthors` existed, were unit-tested, and were called from no production path. So every figure on the
+ * dashboard counted dependency automation — a Renovate pull request is small, single-file, frequently
+ * auto-approved and merges in minutes, which inflated the throughput counts and the substantial-merge
+ * denominators, deflated both timing medians, and lifted quiet repositories past `assessment.minimum_merges` so
+ * that a repository with no human activity graded green instead of declining for insufficient sample.
+ *
+ * The direct-commit half is wider and separately measured: of 9,663 stored direct commits NOT ONE carries
+ * `authorType: "Bot"`, and three suffix-less service accounts author 44% of them, so `cohort.bot_accounts` names
+ * them and `reportedDirectCommit` drops them.
+ *
+ * NONE OF IT IS VISIBLE FROM A UNIT TEST OF THE FILTER, which is why these are here: the filter is applied at one
+ * seam inside `readEstate`, and what has to be true is that every report built from that read — the rows, the
+ * labels, the two activity tables, the contributor rows and the estate summary — counts the same cohort, while the
+ * measured-versus-absent contract survives untouched.
+ */
+describe("the merges a report counts", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  /** The estate's policy with one cohort block replaced, which is the only thing that differs between renders. */
+  function policy(cohort: string) {
+    return parseConfiguration(`
+version: 1
+organization: hmcts
+cohort:
+  visibilities:
+    - public
+  include_archived: false
+${cohort}
+`);
+  }
+
+  /** A repository a collection reached, read a gate for and walked both sources of. */
+  async function walkedRepository(repository: string): Promise<void> {
+    await graphRepository(repository, new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({ data: { organization: ORGANIZATION, repository, fetchedAt: new Date(), payload: readableGate() } });
+    await walked(repository);
+  }
+
+  interface CountedRow {
+    repository: string;
+    merged_pull_requests?: number;
+    direct_commits?: number;
+    readiness?: string;
+    detail?: string;
+  }
+
+  async function rowFor(configuration: ReturnType<typeof parseConfiguration>, repository: string): Promise<CountedRow | undefined> {
+    const rows = (await repositoryRows(configuration, 26, REFERENCE)) as CountedRow[];
+    return rows.find((row) => row.repository === repository);
+  }
+
+  it("should leave a dependency bot's merges out of the count a row states", async () => {
+    await walkedRepository("alpha");
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 10)), "ada");
+    await mergedPullRequest("alpha", 2n, new Date(Date.UTC(2026, 7, 11)), "renovate[bot]");
+    await mergedPullRequest("alpha", 3n, new Date(Date.UTC(2026, 7, 12)), "dependabot[bot]");
+
+    expect((await rowFor(CONFIGURATION, "alpha"))?.merged_pull_requests).toBe(1);
+  });
+
+  it("should report a measured zero when every merge in the window was a bot's", async () => {
+    // THE CASE THAT MUST NOT BECOME AN ABSENCE. The walk happened and found merges; the report counts none of
+    // them. That is a measured nothing, and `undefined` here would say nobody looked — which is the distinction
+    // the whole contract rests on and the one filtering could most easily destroy.
+    await walkedRepository("automated");
+    await mergedPullRequest("automated", 1n, new Date(Date.UTC(2026, 7, 10)), "renovate[bot]");
+    await directCommit("automated", "aaa", new Date(Date.UTC(2026, 7, 11)), { login: "fluxcdbot" });
+
+    const row = await rowFor(CONFIGURATION, "automated");
+
+    expect(row?.merged_pull_requests).toBe(0);
+    expect(row?.direct_commits).toBe(0);
+    // No sentence about an unread source, because both sources WERE read.
+    expect(row?.detail).toBeUndefined();
+  });
+
+  it("should still report an absence, and not a zero, where the walk never happened", async () => {
+    // The other half of the same rule, restated against the filter: a repository with no coverage carries no
+    // figures at all, and filtering must not fill them in.
+    await graphRepository("refused", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({
+      data: { organization: ORGANIZATION, repository: "refused", fetchedAt: new Date(), payload: readableGate() }
+    });
+    await walkedRepository("anchor");
+    await mergedPullRequest("refused", 1n, new Date(Date.UTC(2026, 7, 10)), "renovate[bot]");
+
+    const row = await rowFor(CONFIGURATION, "refused");
+
+    expect(row?.merged_pull_requests).toBeUndefined();
+    expect(row?.direct_commits).toBeUndefined();
+    expect(row?.detail).toBe("no merge history was read for this repository, so its merges are unmeasured rather than none");
+  });
+
+  it("should report the figures a changed exclusion asks for, with nothing recollected", async () => {
+    // THE ACCEPTANCE CRITERION FOR THE SEAM'S PLACEMENT. The filter is applied after the cache is read, so the
+    // stored facts stay complete and who counts is a reporting decision: the same rows in the same tables answer
+    // two policies differently, and nothing has to be fetched again to change the answer.
+    await walkedRepository("alpha");
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 10)), "ada");
+    await mergedPullRequest("alpha", 2n, new Date(Date.UTC(2026, 7, 11)), "renovate[bot]");
+    const stored = await prisma.pullRequestFact.count();
+
+    const excluding = (await rowFor(policy("  excluded_authors:\n    - renovate"), "alpha"))?.merged_pull_requests;
+    forgetBuiltRows();
+    const counting = (await rowFor(policy("  excluded_authors: []"), "alpha"))?.merged_pull_requests;
+    forgetBuiltRows();
+    const alsoAda = (await rowFor(policy("  excluded_authors:\n    - ada"), "alpha"))?.merged_pull_requests;
+
+    expect([excluding, counting, alsoAda]).toEqual([1, 2, 1]);
+    // Nothing was collected to make that happen: the cache holds exactly what it held before the three renders.
+    expect(await prisma.pullRequestFact.count()).toBe(stored);
+  });
+
+  /**
+   * One mechanical merge in the shape the estate actually holds them: one line, one file, auto-approved, CI
+   * green, and merged an hour after the review.
+   *
+   * Written out rather than taken from `mergedPullRequest` because this case is about GRADING, and that fixture
+   * stores no `reviews` or `checks` array — a cohort large enough to grade then throws inside `eligibleReviews`
+   * instead of being graded.
+   */
+  async function mechanicalMerge(repository: string, identifier: bigint, mergedAt: Date, authorLogin: string): Promise<void> {
+    const readyAt = new Date(mergedAt.getTime() - 2 * 3_600_000);
+    const reviewedAt = new Date(mergedAt.getTime() - 3_600_000);
+    await prisma.pullRequestFact.create({
+      data: {
+        organization: ORGANIZATION,
+        repository,
+        queryHash: PULL_REQUESTS,
+        identifier,
+        mergedAt,
+        payload: {
+          identifier: Number(identifier),
+          number: Number(identifier),
+          createdAt: readyAt.toISOString(),
+          readyForReviewAt: readyAt.toISOString(),
+          mergedAt: mergedAt.toISOString(),
+          authorLogin,
+          authorType: "User",
+          additions: 1,
+          deletions: 1,
+          changedFiles: 1,
+          draft: false,
+          reviews: [
+            {
+              identifier: Number(identifier),
+              submittedAt: reviewedAt.toISOString(),
+              state: "APPROVED",
+              authorLogin: "reviewer",
+              authorType: "User",
+              commentCount: 1
+            }
+          ],
+          checks: [{ name: "build", conclusion: "SUCCESS", completedAt: reviewedAt.toISOString() }]
+        }
+      }
+    });
+  }
+
+  it("should decline to grade a repository whose only merges were a bot's, rather than grading it green", async () => {
+    // THE READINESS LABEL THE TICKET IS ABOUT, AS A FIXTURE — the live re-check on quiet Renovate-heavy
+    // repositories needs the production estate, which this suite cannot reach.
+    //
+    // Twelve mechanical merges carry a quiet repository past `assessment.minimum_merges: 10`, and every
+    // behavioural rate over them is Renovate's own practice: 100% reviewed, 100% approved, 100% checked, an
+    // hour to review and two to merge. So the repository grades GREEN on the strength of automation, and the
+    // label says a team is working well in a repository no person has touched. Counting the human cohort
+    // instead — nought merges — declines it through `insufficient-merges`, which is what it is.
+    await walkedRepository("quiet");
+    for (let number = 1; number <= 12; number += 1) {
+      await mechanicalMerge("quiet", BigInt(number), new Date(Date.UTC(2026, 7, 10, number)), "renovate[bot]");
+    }
+
+    const graded = (await rowFor(policy("  excluded_authors: []"), "quiet"))?.readiness;
+    forgetBuiltRows();
+    const declined = (await rowFor(policy("  excluded_authors:\n    - renovate"), "quiet"))?.readiness;
+
+    expect(graded).toBe("green");
+    expect(declined).toBe("cannot_assess");
+  });
+
+  it("should leave a named bot's direct commits out, and keep a person whose login merely contains bot", async () => {
+    // `fluxcdbot` is typed `User` by GitHub and carries no `[bot]` suffix, so only the named list catches it.
+    // `gemmatalbot` is Gemma Talbot, and a substring rule would call her work automation — the failure that
+    // would be worse than the miscount it fixed.
+    await walkedRepository("alpha");
+    await directCommit("alpha", "aaa", new Date(Date.UTC(2026, 7, 10)), { login: "gemmatalbot" });
+    await directCommit("alpha", "bbb", new Date(Date.UTC(2026, 7, 11)), { login: "fluxcdbot" });
+    await directCommit("alpha", "ccc", new Date(Date.UTC(2026, 7, 12)), { login: "hmcts-platform-operations" });
+    await directCommit("alpha", "ddd", new Date(Date.UTC(2026, 7, 13)), { login: "renovate[bot]" });
+    // GitHub matched no account, so the git author name is the only identity there is.
+    await directCommit("alpha", "eee", new Date(Date.UTC(2026, 7, 14)), { name: "fluxcdbot" });
+
+    const row = await rowFor(CONFIGURATION, "alpha");
+    const pushes = (await directPushRows(CONFIGURATION, 26, REFERENCE)) as { sha: string }[];
+
+    expect(row?.direct_commits).toBe(1);
+    expect(pushes.map((push) => push.sha)).toEqual(["aaa"]);
+  });
+
+  it("should keep a bot's pull request in the cohort where only the account list names it", async () => {
+    // THE ASYMMETRY, stated as a test so nobody unifies the two lists. An agent's pull request was opened,
+    // reviewed and merged through the gate, which is the practice being measured — `bot_accounts` decides who is
+    // a person, not whose merges count, and `excluded_authors` is what drops a merge.
+    await walkedRepository("alpha");
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 10)), "claude");
+    await directCommit("alpha", "aaa", new Date(Date.UTC(2026, 7, 11)), { login: "claude" });
+
+    const row = await rowFor(CONFIGURATION, "alpha");
+
+    expect(row?.merged_pull_requests).toBe(1);
+    expect(row?.direct_commits).toBe(0);
+  });
+
+  it("should leave the bot's merges out of the estate summary and the team's throughput too", async () => {
+    // Every report off the one read, not just the row: the header's totals and the team card's throughput are
+    // summed from these rows, and a filter applied per report rather than per read would leave them disagreeing.
+    await walkedRepository("alpha");
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 10)), "ada");
+    await mergedPullRequest("alpha", 2n, new Date(Date.UTC(2026, 7, 11)), "renovate[bot]");
+    await directCommit("alpha", "aaa", new Date(Date.UTC(2026, 7, 12)), { login: "fluxcdbot" });
+
+    const summary = (await overviewSummary(CONFIGURATION, 26, REFERENCE)) as { merged_pull_requests: number; direct_commits: number };
+    const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { practice?: Record<string, number> }[];
+
+    expect(summary).toMatchObject({ merged_pull_requests: 1, direct_commits: 0 });
+    expect(cards[0]?.practice).toMatchObject({ merged_pull_requests: 1, direct_commits: 0 });
+  });
+
+  it("should list neither the bot's merge nor the bot as a contributor", async () => {
+    await walkedRepository("alpha");
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 10)), "ada");
+    await mergedPullRequest("alpha", 2n, new Date(Date.UTC(2026, 7, 11)), "renovate[bot]");
+    await directCommit("alpha", "aaa", new Date(Date.UTC(2026, 7, 12)), { login: "fluxcdbot" });
+
+    const merges = (await mergeRows(CONFIGURATION, 26, REFERENCE)) as { author?: string }[];
+    const actors = (await actorRows(CONFIGURATION, 26, REFERENCE)) as { login: string }[];
+
+    expect(merges.map((merge) => merge.author)).toEqual(["ada"]);
+    expect(actors.map((actor) => actor.login)).toEqual(["ada"]);
+  });
+
+  it("should count the same cohort on a warmed span as on one read for itself", async () => {
+    // THE ONE-READ INVARIANT, from the exclusion's side. The filter runs inside `readEstate`, so all five spans
+    // inherit it from one read — and a span derived from the shared read has to report the figure that span
+    // would have read for itself. Anchored at today's midnight because a warm anchors itself at `new Date()`.
+    const anchor = midnight(new Date());
+    await walkedRepository("alpha");
+    await prisma.sourceCoverage.updateMany({ where: { organization: ORGANIZATION, repository: "alpha" }, data: { endsAt: anchor } });
+    await mergedPullRequest("alpha", 1n, new Date(anchor.getTime() - 86_400_000), "ada");
+    await mergedPullRequest("alpha", 2n, new Date(anchor.getTime() - 86_400_000), "renovate[bot]");
+    await directCommit("alpha", "aaa", new Date(anchor.getTime() - 86_400_000), { login: "fluxcdbot" });
+
+    const alone = new Map<number, CountedRow | undefined>();
+    for (const weeks of CACHEABLE_SPANS) {
+      const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as CountedRow[];
+      alone.set(weeks, rows[0]);
+    }
+    expect([...alone.values()].map((row) => row?.merged_pull_requests)).toEqual(CACHEABLE_SPANS.map(() => 1));
+
+    forgetBuiltRows();
+    await warmEverySpan(CONFIGURATION);
+
+    for (const weeks of CACHEABLE_SPANS) {
+      const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as CountedRow[];
+      expect(rows[0]).toEqual(alone.get(weeks));
+    }
   });
 });
 

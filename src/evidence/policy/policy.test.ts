@@ -100,6 +100,20 @@ describe("parseConfiguration", () => {
     expect(parseConfiguration("version: 1\norganization: hmcts\n").cohort.excluded_authors).toEqual(["renovate", "dependabot"]);
   });
 
+  it("should name the three known service accounts as bots by default", () => {
+    // A DIFFERENT LIST FROM THE ONE ABOVE and deliberately so: this one answers "is this account a person",
+    // which GitHub's own `type` never says for any of them.
+    expect(parseConfiguration("version: 1\norganization: hmcts\n").cohort.bot_accounts).toEqual(["fluxcdbot", "hmcts-platform-operations", "claude"]);
+  });
+
+  it("should read the bot accounts a deployment states instead of the default", () => {
+    // The proof that the list is policy rather than code: a deployment that judges `hmcts-platform-operations`
+    // a human account removes one line and nothing else changes.
+    const document = "version: 1\norganization: hmcts\ncohort:\n  bot_accounts:\n    - fluxcdbot\n";
+
+    expect(parseConfiguration(document).cohort.bot_accounts).toEqual(["fluxcdbot"]);
+  });
+
   it("should reject a reference pattern that cannot compile", () => {
     const document = `${VALID}\ntraceability:\n  reference_patterns:\n    - "[unclosed"\n`;
 

@@ -92,7 +92,13 @@ export async function getRepository(repository: string, weeks: number): Promise<
   // repository no collection has touched, which leaves `evidence` absent and the page showing its own empty state
   // with the row's `detail` as the reason — the same branch it took for every repository before this was wired.
   const configured = await configuration();
-  const evidence = await repositoryEvidence(configured, repository, weeks);
+  // WHICH SOURCES WERE READ, off the row rather than a coverage query of its own. The row's two counts are absent
+  // exactly where a source went unread — `behaviourFigures` gates them on the estate's single read of the coverage
+  // table — so the answer is already here, and asking Postgres again would put a query on a per-page path.
+  const evidence = await repositoryEvidence(configured, repository, weeks, {
+    pullRequests: row.merged_pull_requests !== undefined,
+    directCommits: row.direct_commits !== undefined
+  });
   return {
     ...row,
     // Built from the configured organisation rather than stored: the collector never records an `html_url`, and it

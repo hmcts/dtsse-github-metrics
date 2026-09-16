@@ -138,9 +138,19 @@ const orgGraph = z
  */
 const cohort = z
   .object({
-    // Dependency bots raise mechanical version bumps; agent-authored code stays in the cohort
-    // deliberately.
+    // Dependency bots raise mechanical version bumps; agent-authored PULL REQUESTS stay in the cohort
+    // deliberately, because one was opened, reviewed and merged through the gate.
     excluded_authors: z.array(z.string()).default(["renovate", "dependabot"]),
+    // Accounts that are not people, where nothing in GitHub's own answer says so. `isHumanAccount` reads the
+    // `Bot` account type and the `[bot]` login suffix first; this is the third signal, and on the commit path
+    // it is the ONLY one that fires. Measured over 9,663 stored direct commits: not one carries
+    // `authorType: "Bot"` — GitHub answers `User` for every linked account — and these three author 44% of
+    // them, `fluxcdbot` alone 32.9%. A named list rather than a substring rule because `gemmatalbot` is a
+    // person with 53 pull requests, and calling somebody's work automation is worse than the miscount.
+    //
+    // A SEPARATE QUESTION from `excluded_authors` above: this says "this account is not a person", which also
+    // keeps it out of the contributor lists, where that one says "this author's work is not the cohort's".
+    bot_accounts: z.array(z.string()).default(["fluxcdbot", "hmcts-platform-operations", "claude"]),
     // Which visibilities count. All three by default, because narrowing the estate is a decision a deployment
     // should have to state. Worth stating on this one: 830 of 1,796 active repositories are private or internal,
     // and every one is refused until the App's pending `pull_requests: read` is approved — so a deployment that

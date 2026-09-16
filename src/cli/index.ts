@@ -1,4 +1,5 @@
 import { readinessPolicy } from "../evidence/assessment/assessment.ts";
+import { botAccounts, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge } from "../evidence/behaviour/collect.ts";
 import { directCommitCacheWriter, fillCachedSource, loadCachedMerges, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
@@ -772,9 +773,15 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
   const owners = await cohortOwners(configuration, reference);
   const repositories = argv.repository === undefined ? await cohortRepositories(configuration, reference) : [argv.repository];
 
+  // The same seam the dashboard narrows at, so `evidence` and the pages report one cohort. `--format json` is
+  // documented as "the same figures" the dashboard shows, and it would not be if this counted Renovate's merges
+  // or Flux's commits.
+  const excluded = excludedAuthors(configuration.cohort.excluded_authors);
+  const bots = botAccounts(configuration.cohort.bot_accounts);
+
   const rows = [];
   for (const repository of repositories) {
-    const merges = await loadCachedMerges(organization, repository, window);
+    const merges = reportedCohort(await loadCachedMerges(organization, repository, window), excluded, bots).merges;
     const state = await storedRepositoryState(organization, repository);
     const gate = readStoredGate(state?.payload);
     const assessment = policy.enabled ? policy.assess(merges, gate) : undefined;

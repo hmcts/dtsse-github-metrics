@@ -65,10 +65,32 @@ excluded_repositories: []
 # `collect` therefore DEPENDS ON `collect-org` HAVING RUN. On an empty database it refuses and says so
 # rather than reporting an estate of zero repositories; the chart sequences the two at 14:00 and 15:00.
 cohort:
-  # Dependency bots raise mechanical version bumps. Agent-authored code stays in the cohort deliberately.
+  # WHO COUNTS, and the two lists answer different questions. This one is "whose work is not the cohort's":
+  # dependency bots raise mechanical version bumps, and counting them inflated every throughput figure,
+  # deflated both timing medians and pushed quiet repositories past `assessment.minimum_merges`. Applied when
+  # a report is BUILT rather than when facts are collected, so changing it takes effect on the next render
+  # with no recollection. Agent-authored PULL REQUESTS stay in the cohort deliberately — one was opened,
+  # reviewed and merged through the gate, which is the practice being measured.
   excluded_authors:
     - renovate
     - dependabot
+  # And this one is "which accounts are not people". `isHumanAccount` reads the `Bot` account type and the
+  # `[bot]` login suffix first; this is the third signal, and on the direct-commit path it is the only one
+  # that fires — of 9,663 stored direct commits on the HMCTS estate not one carries `authorType: "Bot"`,
+  # because GitHub answers `User` for every linked account, and these three author 44% of them: `fluxcdbot`
+  # 3,179 (32.9%), `hmcts-platform-operations` 1,109 (11.5%), `claude` 36.
+  #
+  # A named list and never a substring rule: `gemmatalbot` is a person with 53 pull requests, and calling
+  # somebody's work automation is worse than the miscount it would fix. Matched case-insensitively and
+  # through the same normalisation as above, so a `[bot]` suffix on either side is tolerated.
+  #
+  # It keeps these accounts out of the direct-commit cohort — a deploy bot reconciling an image tag is not a
+  # person bypassing review — and out of the contributor lists. It does NOT touch merged pull requests, which
+  # `excluded_authors` decides.
+  bot_accounts:
+    - fluxcdbot
+    - hmcts-platform-operations
+    - claude
   # Which visibilities count. All three is the default. Narrowing to `[public]` is what a deployment does
   # when the credential cannot read the others: 830 of HMCTS's 1,796 active repositories are private or
   # internal, and each is refused until the App's pending `pull_requests: read` is approved, so admitting

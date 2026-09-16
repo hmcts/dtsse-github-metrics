@@ -4,6 +4,7 @@ import {
   type DirectCommitFact,
   type DistributionObservation,
   type Merge,
+  type Merges,
   ObservationStatus,
   type PullRequestFact,
   type RateObservation,
@@ -30,20 +31,42 @@ export function percentile(values: readonly number[], proportion: number): numbe
   return roundHalfEven(low + (high - low) * (position - lower), 3);
 }
 
+/** No account named as a bot, for the questions `cohort.bot_accounts` is deliberately not threaded to. */
+const NO_NAMED_BOTS: ReadonlySet<string> = new Set<string>();
+
 /**
  * Whether an authored artefact came from a person rather than from a machine account.
  *
- * Two independent signals, because neither settles it alone: GitHub types an account as `Bot` only where it
- * is a GitHub App, so an ordinary user account driven by automation is typed `User` and gives itself away
- * instead by the `[bot]` suffix convention its login follows. An anonymous author — a commit GitHub could
- * match to no account at all — is nobody, so it is not a person either.
+ * THREE independent signals, because none of them settles it alone:
  *
- * One implementation, shared by the review predicate and the contributor count: two spellings of "is this
- * a bot" would eventually disagree about the same account, and a report would then say a review was human
- * and its author was not.
+ *   • GitHub types an account as `Bot` only where it is a GitHub App, so an ordinary user account driven by
+ *     automation is typed `User`.
+ *   • Such an account usually gives itself away by the `[bot]` suffix convention its login follows.
+ *   • And where it follows neither, only a NAMED LIST can say so — `cohort.bot_accounts`, matched through
+ *     `comparableLogin` so a suffix on either side is tolerated.
+ *
+ * An anonymous author — a commit GitHub could match to no account at all — is nobody, so it is not a person
+ * either.
+ *
+ * THE LIST EXISTS BECAUSE THE FIRST TWO SIGNALS MISS ENTIRELY ON THE COMMIT PATH. Measured over 9,663 stored
+ * direct commits: NOT ONE carries `authorType: "Bot"` — GitHub answers `User` for every linked account — and
+ * three suffix-less service accounts author 44% of them. `fluxcdbot` alone is 32.9% (3,179), reported by GitHub
+ * as `type=User`, `name="Flux project bot"`; `hmcts-platform-operations` is 11.5% (1,109) and `claude` 36. Left
+ * unnamed, they were counted as people pushing unreviewed work to a default branch.
+ *
+ * A SUBSTRING RULE WOULD BE WORSE THAN THE BUG. `gemmatalbot` is Gemma Talbot, a person with 53 pull requests,
+ * and any `login.includes("bot")` test calls her automation. Misattributing somebody's work is the one failure
+ * here that cannot be corrected by a reader, so the mechanism is an auditable list and never a heuristic.
+ *
+ * One implementation, shared by the review predicate, the commit-author rule and the contributor count: two
+ * spellings of "is this a bot" would eventually disagree about the same account, and a report would then say a
+ * review was human and its author was not. The list DEFAULTS TO EMPTY for the two callers it is not threaded
+ * to — `isHumanReview` and the ownership ladder's collaborator filter — because reaching either would mean
+ * carrying the policy through every metric closure and the collector's rungs, and no listed account has ever
+ * submitted a review. Both remain as strict as they were.
  */
-export function isHumanAccount(login: string | undefined, accountType: string | undefined): boolean {
-  return login !== undefined && accountType !== "Bot" && !login.toLowerCase().endsWith("[bot]");
+export function isHumanAccount(login: string | undefined, accountType: string | undefined, bots: ReadonlySet<string> = NO_NAMED_BOTS): boolean {
+  return login !== undefined && accountType !== "Bot" && !login.toLowerCase().endsWith("[bot]") && !bots.has(comparableLogin(login));
 }
 
 /** Whether a review has an attributable non-bot author. */
@@ -57,16 +80,16 @@ export function isHumanReview(review: ReviewFact): boolean {
  * Case-folded, because a GitHub login is unique case-insensitively: `Alice` and `alice` are one person, and
  * two spellings of one login would count as two contributors.
  *
- * Bots are excluded here even though the cohort deliberately KEEPS agent-authored merges — see
+ * Bots are excluded here even though the pull-request cohort deliberately KEEPS agent-authored merges — see
  * `cohort.excluded_authors`, which drops dependency automation and nothing else. The two rules answer
  * different questions and are meant to differ: agent-authored work is work this report covers, and an agent
  * is still not a person who became active.
  */
-export function contributorLogins(changes: Iterable<Merge>): Set<string> {
+export function contributorLogins(changes: Iterable<Merge>, bots: ReadonlySet<string>): Set<string> {
   const logins = new Set<string>();
   for (const change of changes) {
     const login = change.authorLogin;
-    if (login !== undefined && isHumanAccount(login, change.authorType)) {
+    if (login !== undefined && isHumanAccount(login, change.authorType, bots)) {
       logins.add(login.toLowerCase());
     }
   }
@@ -89,18 +112,20 @@ export function comparableLogin(login: string | undefined): string {
  * email matches no account is judged by their name alone.
  *
  * Deliberately wider than `cohort.excluded_authors` on its own: ALL bot accounts fail, not just dependency
- * automation. An agent-authored commit is work the cohort keeps, but it is not a person maintaining the
+ * automation — the `[bot]` convention, the `Bot` account type and every account `cohort.bot_accounts` names. An
+ * agent-authored PULL REQUEST is work the cohort keeps, but its author is not a person maintaining the
  * repository — the same distinction `contributorLogins` draws.
  */
 export function isHumanCommitAuthor(
   login: string | undefined,
   accountType: string | undefined,
   authorName: string | undefined,
-  excluded: ReadonlySet<string>
+  excluded: ReadonlySet<string>,
+  bots: ReadonlySet<string>
 ): boolean {
   const identity = login ?? authorName;
   const linkedType = login !== undefined ? accountType : undefined;
-  return isHumanAccount(identity, linkedType) && !excluded.has(comparableLogin(identity));
+  return isHumanAccount(identity, linkedType, bots) && !excluded.has(comparableLogin(identity));
 }
 
 /** Whether a merge belongs to the reported cohort. */
@@ -108,9 +133,100 @@ export function inCohort(change: Merge, excludedAuthors: ReadonlySet<string>): b
   return !excludedAuthors.has(comparableLogin(change.authorLogin));
 }
 
+/** A configured list of logins as a set a fact's own spelling can be compared against. */
+function comparableSet(logins: Iterable<string>): Set<string> {
+  return new Set([...logins].map((login) => comparableLogin(login)));
+}
+
 /** The comparable set of authors excluded from the cohort. */
 export function excludedAuthors(logins: Iterable<string>): Set<string> {
-  return new Set([...logins].map((login) => comparableLogin(login)));
+  return comparableSet(logins);
+}
+
+/**
+ * The comparable set of accounts the configuration names as bots.
+ *
+ * A SEPARATE SET FROM `excludedAuthors`, holding a separate question: this one says "is this account a person",
+ * which `isHumanAccount` asks, while that one says "does this author's work belong in the reported cohort". Same
+ * normalisation, different policy — folding them would make `cohort.bot_accounts` silently drop merges and
+ * `cohort.excluded_authors` silently rename people.
+ */
+export function botAccounts(logins: Iterable<string>): Set<string> {
+  return comparableSet(logins);
+}
+
+/**
+ * Whether one direct commit belongs in the reported cohort.
+ *
+ * ALL BOTS, not only dependency automation, which is where this parts company with the pull-request rule beside
+ * it — and the asymmetry is the point rather than an oversight. A direct commit is counted as a change that
+ * reached a default branch with nobody reviewing it, so what the figure is FOR is human work bypassing review.
+ * Flux reconciling an image tag, a platform-operations account applying a fleet change and an agent committing on
+ * its own are none of them a person bypassing anything, and on the live estate three such accounts author 44% of
+ * every stored direct commit — so counting them made the direct-push figures mostly a measure of deployment
+ * automation.
+ *
+ * A pull request is different and stays wider: an agent-authored pull request was opened, reviewed and merged
+ * through the gate, which is exactly the practice this report measures. `cohort.excluded_authors` therefore drops
+ * dependency automation there and nothing else, as its own comment has always said.
+ *
+ * Through `isHumanCommitAuthor`, so the commit path has ONE definition of whose commit it is: the linked account
+ * where GitHub matched one, and the git author name where it did not. That fallback is why a suffixed bot name
+ * with no account is caught, and it carries the limitation its own comment states — automation signing a name
+ * that matches nothing still reads as a person.
+ */
+export function reportedDirectCommit(commit: DirectCommitFact, excluded: ReadonlySet<string>, bots: ReadonlySet<string>): boolean {
+  return isHumanCommitAuthor(commit.authorLogin, commit.authorType, commit.authorName, excluded, bots);
+}
+
+/** One window's merges as a report counts them, and how many changes each author it left out had landed. */
+export interface ReportedCohort {
+  merges: Merges;
+  /**
+   * Excluded authors and their change counts, keyed on the COMPARABLE login rather than the spelling a fact
+   * happens to carry: `renovate` and `renovate[bot]` are one account, so they are one row, and the map reads back
+   * against the configuration that produced it.
+   */
+  excluded: Record<string, number>;
+}
+
+/**
+ * One window's merges narrowed to the cohort a report counts, with what it left out named.
+ *
+ * APPLIED AFTER THE CACHE IS READ, AND NOWHERE ELSE. The cached facts stay complete — a collection stores every
+ * merge it walked, automation included — so who counts is a reporting decision that takes effect on the next
+ * render rather than a filter baked into stored history, and changing either list needs no refetch. Every graded
+ * figure and every cohort denominator is computed over what this returns, because both reads of the fact cache
+ * narrow here before anything derives a count from them.
+ *
+ * WHY THE EXCLUSION IS NOT COSMETIC: a Renovate or Dependabot pull request is small, single-file and frequently
+ * auto-approved, and merges in minutes. Counting them inflated `merged_pull_requests` and the substantial-merge
+ * denominators, deflated the two timing medians that are graded against a maximum, inflated both coverage rates
+ * wherever an auto-merge rule approved them, and carried quiet repositories past `assessment.minimum_merges` — so
+ * a repository with no human activity at all graded green instead of declining for insufficient sample.
+ *
+ * ONE PASS FOR BOTH ANSWERS, so the tally cannot disagree with the filter. Counting the exclusions separately
+ * would be a second reading of the same two rules, and the map's whole job is to account for the difference
+ * between `merged` and `reported`.
+ *
+ * WHAT IT MUST NOT DO is turn a measured zero into an absence. Whether a source was READ is answered by
+ * `measuredSources` in `report/repositories.ts`, off the coverage table and never off the facts: a repository
+ * whose walk succeeded and whose only merges were Renovate's reports `0`, measured and holding nothing human.
+ */
+export function reportedCohort(walked: Merges, excluded: ReadonlySet<string>, bots: ReadonlySet<string>): ReportedCohort {
+  const dropped: Record<string, number> = {};
+  const drop = (identity: string | undefined): false => {
+    const login = comparableLogin(identity);
+    dropped[login] = (dropped[login] ?? 0) + 1;
+    return false;
+  };
+  return {
+    merges: {
+      pullRequests: walked.pullRequests.filter((pullRequest) => inCohort(pullRequest, excluded) || drop(pullRequest.authorLogin)),
+      directCommits: walked.directCommits.filter((commit) => reportedDirectCommit(commit, excluded, bots) || drop(commit.authorLogin ?? commit.authorName))
+    },
+    excluded: dropped
+  };
 }
 
 /** Submitted human reviews made by someone other than the pull-request author before merge. */

@@ -9,6 +9,7 @@ import {
   ReviewState
 } from "../domain/facts.ts";
 import {
+  botAccounts,
   changeSize,
   comparableLogin,
   contributorLogins,
@@ -23,6 +24,8 @@ import {
   percentile,
   rate,
   ratePercentage,
+  reportedCohort,
+  reportedDirectCommit,
   reviewStartedAt,
   reviewStateCounts,
   sizeClass
@@ -97,18 +100,45 @@ describe("isHumanAccount", () => {
   ])("should judge login %s of type %s as human=%s", (login, type, expected) => {
     expect(isHumanAccount(login, type)).toBe(expected);
   });
+
+  it("should judge a named account as a bot when GitHub itself reports a user", () => {
+    // THE THIRD SIGNAL, and on the commit path the only one that fires: no stored direct commit carries
+    // `authorType: "Bot"`, and `fluxcdbot` — 32.9% of them — has neither that type nor a `[bot]` suffix.
+    const bots = botAccounts(["fluxcdbot", "hmcts-platform-operations"]);
+
+    expect(isHumanAccount("fluxcdbot", "User", bots)).toBe(false);
+    expect(isHumanAccount("FluxCDBot", "User", bots)).toBe(false);
+    expect(isHumanAccount("hmcts-platform-operations", "User", bots)).toBe(false);
+  });
+
+  it("should judge a person whose login contains bot as human, since the list is not a substring rule", () => {
+    // `gemmatalbot` is Gemma Talbot, who has 53 pull requests on this estate. Any `login.includes("bot")`
+    // test calls her automation, and misattributing somebody's work is worse than the miscount.
+    expect(isHumanAccount("gemmatalbot", "User", botAccounts(["fluxcdbot", "claude"]))).toBe(true);
+  });
+
+  it("should tolerate a suffix on either side of the configured name", () => {
+    expect(isHumanAccount("renovate[bot]", "User", botAccounts(["renovate"]))).toBe(false);
+    expect(isHumanAccount("flux", "User", botAccounts(["flux[bot]"]))).toBe(false);
+  });
 });
 
 describe("contributorLogins", () => {
   it("should count one person once whatever case their login was written in", () => {
     // A GitHub login is unique case-insensitively, so two spellings are one person.
-    expect([...contributorLogins([commit({ authorLogin: "Alice" }), commit({ authorLogin: "alice" })])]).toEqual(["alice"]);
+    expect([...contributorLogins([commit({ authorLogin: "Alice" }), commit({ authorLogin: "alice" })], new Set())]).toEqual(["alice"]);
   });
 
   it("should leave out every bot account", () => {
-    // Bots are excluded here even though the cohort keeps agent-authored merges: an agent is still not a
-    // person who became active.
-    const logins = contributorLogins([commit({ authorLogin: "alice" }), commit({ authorLogin: "dependabot", authorType: "Bot" })]);
+    // Bots are excluded here even though the pull-request cohort keeps agent-authored merges: an agent is
+    // still not a person who became active.
+    const logins = contributorLogins([commit({ authorLogin: "alice" }), commit({ authorLogin: "dependabot", authorType: "Bot" })], new Set());
+
+    expect([...logins]).toEqual(["alice"]);
+  });
+
+  it("should leave out a named account when nothing in GitHub's answer marks it as one", () => {
+    const logins = contributorLogins([commit({ authorLogin: "alice" }), commit({ authorLogin: "fluxcdbot" })], botAccounts(["fluxcdbot"]));
 
     expect([...logins]).toEqual(["alice"]);
   });
@@ -135,18 +165,102 @@ describe("inCohort", () => {
 
 describe("isHumanCommitAuthor", () => {
   it("should let the linked account settle it when GitHub matched one", () => {
-    expect(isHumanCommitAuthor("alice", "User", "Some Bot", new Set())).toBe(true);
-    expect(isHumanCommitAuthor("dependabot", "Bot", "Alice", new Set())).toBe(false);
+    expect(isHumanCommitAuthor("alice", "User", "Some Bot", new Set(), new Set())).toBe(true);
+    expect(isHumanCommitAuthor("dependabot", "Bot", "Alice", new Set(), new Set())).toBe(false);
   });
 
   it("should fall back to the git author name when GitHub linked no account", () => {
     // A stated limitation: a name is whatever the committer's tooling wrote.
-    expect(isHumanCommitAuthor(undefined, undefined, "renovate[bot]", new Set())).toBe(false);
-    expect(isHumanCommitAuthor(undefined, undefined, "Alice", new Set())).toBe(true);
+    expect(isHumanCommitAuthor(undefined, undefined, "renovate[bot]", new Set(), new Set())).toBe(false);
+    expect(isHumanCommitAuthor(undefined, undefined, "Alice", new Set(), new Set())).toBe(true);
   });
 
   it("should exclude a configured author by the same normalisation the cohort uses", () => {
-    expect(isHumanCommitAuthor("renovate[bot]", "User", undefined, new Set(["renovate"]))).toBe(false);
+    expect(isHumanCommitAuthor("renovate[bot]", "User", undefined, new Set(["renovate"]), new Set())).toBe(false);
+  });
+
+  it("should exclude a named bot account when the git author name is the only identity", () => {
+    // The name fallback carries the named list too, which is what catches a service account committing
+    // through tooling GitHub linked to nobody.
+    expect(isHumanCommitAuthor(undefined, undefined, "fluxcdbot", new Set(), botAccounts(["fluxcdbot"]))).toBe(false);
+  });
+});
+
+describe("reportedDirectCommit", () => {
+  it("should keep a person's commit when neither list names them", () => {
+    expect(reportedDirectCommit(commit({ authorLogin: "gemmatalbot" }), excludedAuthors(["renovate"]), botAccounts(["fluxcdbot"]))).toBe(true);
+  });
+
+  it("should drop a bot-suffixed author, which GitHub's own convention already declares", () => {
+    expect(reportedDirectCommit(commit({ authorLogin: "renovate[bot]" }), new Set(), new Set())).toBe(false);
+  });
+
+  it("should drop a named account when GitHub reports it as a user", () => {
+    // The whole reason the list exists: 44% of stored direct commits come from three accounts GitHub types
+    // `User`, `fluxcdbot` alone 32.9%, and a deploy bot reconciling an image tag is not a person bypassing
+    // review.
+    expect(reportedDirectCommit(commit({ authorLogin: "fluxcdbot" }), new Set(), botAccounts(["fluxcdbot"]))).toBe(false);
+  });
+
+  it("should drop a dependency bot the cohort excludes, by either list", () => {
+    expect(reportedDirectCommit(commit({ authorLogin: "renovate" }), excludedAuthors(["renovate"]), new Set())).toBe(false);
+  });
+});
+
+describe("reportedCohort", () => {
+  /** One walked window: two people, one dependency bot and one named service account, by both routes. */
+  function walked() {
+    return {
+      pullRequests: [
+        pullRequest({ identifier: 1, authorLogin: "alice" }),
+        pullRequest({ identifier: 2, authorLogin: "renovate[bot]" }),
+        // An agent's PULL REQUEST stays: it was opened, reviewed and merged through the gate, which is the
+        // practice being measured. Only the direct-commit rule is wider.
+        pullRequest({ identifier: 3, authorLogin: "claude" })
+      ],
+      directCommits: [commit({ sha: "aaa", authorLogin: "bob" }), commit({ sha: "bbb", authorLogin: "fluxcdbot" })]
+    };
+  }
+
+  const EXCLUDED = excludedAuthors(["renovate", "dependabot"]);
+  const BOTS = botAccounts(["fluxcdbot", "claude"]);
+
+  it("should count the merges neither list names and no others", () => {
+    const reported = reportedCohort(walked(), EXCLUDED, BOTS);
+
+    expect(reported.merges.pullRequests.map((fact) => fact.identifier)).toEqual([1, 3]);
+    expect(reported.merges.directCommits.map((fact) => fact.sha)).toEqual(["aaa"]);
+  });
+
+  it("should name every author it left out, keyed as the configuration names them", () => {
+    // `renovate[bot]` reads back as `renovate`, so the map compares against the policy that produced it
+    // rather than against GitHub's suffix convention.
+    expect(reportedCohort(walked(), EXCLUDED, BOTS).excluded).toEqual({ renovate: 1, fluxcdbot: 1 });
+  });
+
+  it("should count nothing excluded when neither list names an author in the window", () => {
+    const reported = reportedCohort(walked(), new Set(), new Set());
+
+    expect(reported.excluded).toEqual({});
+    expect(reported.merges.pullRequests).toHaveLength(3);
+    expect(reported.merges.directCommits).toHaveLength(2);
+  });
+
+  it("should leave the cohort empty rather than absent when every merge was a bot's", () => {
+    // The distinction the whole contract rests on: this is a measured nothing, and the report layer turns it
+    // into `0` because the coverage table says the walk happened.
+    const reported = reportedCohort({ pullRequests: [pullRequest({ authorLogin: "renovate[bot]" })], directCommits: [] }, EXCLUDED, BOTS);
+
+    expect(reported.merges).toEqual({ pullRequests: [], directCommits: [] });
+  });
+
+  it("should tally each excluded author once per change they landed", () => {
+    const cohort = {
+      pullRequests: [pullRequest({ identifier: 1, authorLogin: "renovate[bot]" }), pullRequest({ identifier: 2, authorLogin: "renovate" })],
+      directCommits: [commit({ sha: "aaa", authorLogin: "fluxcdbot" }), commit({ sha: "bbb", authorLogin: undefined, authorName: "fluxcdbot" })]
+    };
+
+    expect(reportedCohort(cohort, EXCLUDED, BOTS).excluded).toEqual({ renovate: 2, fluxcdbot: 2 });
   });
 });
 

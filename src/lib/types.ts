@@ -104,11 +104,23 @@ export interface WindowProvenance {
   intervals_fetched: number;
 }
 
+/**
+ * One window's merge cohort: what was walked, what is counted, and who the difference is owed to.
+ *
+ * `merged` is every merged pull request the walk found and `reported` is the ones the figures beside it were
+ * computed over — `cohort.excluded_authors` names the dependency automation between them, and `excluded_authors`
+ * counts what each of those authors landed by EITHER route, so its total is not always `merged - reported`.
+ *
+ * THE THREE COUNTS ARE OPTIONAL and the map is not, which is the same shape `OpenAlertCount` keeps: a count is
+ * absent where nobody read that source, and an empty map beside a present count is the honest "nothing was
+ * excluded". Absent counts with an empty map means nothing was measured, which is what a refused merge walk leaves
+ * — `lib/repository.cohortCards` renders that as a dash and says so rather than as three zeros.
+ */
 export interface CohortSummary {
-  merged: number;
-  reported: number;
+  merged?: number;
+  reported?: number;
   excluded_authors: Record<string, number>;
-  direct_commits: number;
+  direct_commits?: number;
 }
 
 export interface PullRequestRule {

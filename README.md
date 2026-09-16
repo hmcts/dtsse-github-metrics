@@ -64,6 +64,40 @@ do — so the window still keeps the expensive half of collection as narrow as i
 Two windows therefore exist and they answer different questions. A repository quiet for six months has no
 behaviour collected AND is not flagged as unmaintained; that is a real third state rather than a gap.
 
+## Who counts inside it
+
+Two more lists decide which of a repository's merges are reported, and they answer different questions:
+
+```yaml
+cohort:
+  excluded_authors: [renovate, dependabot]                    # whose merges are not the cohort's
+  bot_accounts: [fluxcdbot, hmcts-platform-operations, claude] # which accounts are not people
+```
+
+**Both are applied when a report is BUILT, not when facts are collected.** The cache holds every merge the walk
+found, so changing either list changes the figures on the next render with nothing refetched.
+
+`excluded_authors` drops **dependency automation from the pull-request cohort**. A Renovate pull request is small,
+single-file, frequently auto-approved and merges in minutes, so counting them inflated the throughput counts and
+the substantial-merge denominators, deflated the merge-cycle-time and time-to-first-review medians that are graded
+against a maximum, and lifted quiet repositories past `assessment.minimum_merges` — a repository with no human
+activity at all graded green instead of declining for insufficient sample. Agent-authored pull requests stay in:
+one was opened, reviewed and merged through the gate, which is the practice being measured.
+
+`bot_accounts` answers whether an account is a **person**, which decides the direct-commit cohort and the
+contributor lists. It exists because GitHub's own answer is useless on that path: of 9,663 stored direct commits
+**not one** carries `authorType: "Bot"` — every linked account comes back `User` — and three suffix-less service
+accounts author 44% of them, `fluxcdbot` alone 32.9%. A deploy bot reconciling an image tag is not a person
+bypassing review, so those are dropped; a direct commit is counted as a change that reached the default branch
+unreviewed, and that figure is about people.
+
+It is a NAMED LIST and never a substring rule. `gemmatalbot` is Gemma Talbot, who has 53 pull requests here, and
+any `login.includes("bot")` test calls her work automation — a wrongness a reader cannot correct.
+
+Where GitHub matched no account at all — 976 of those commits — authorship falls back to the git author NAME,
+which is whatever the committer's tooling wrote. Automation signing a name that matches nothing still reads as a
+person; that is a stated limitation of `isHumanCommitAuthor` rather than a gap in these lists.
+
 `teams:` used to list the estate one repository at a time. It doesn't any more — at 1,872 repositories a
 committed list is stale the day it lands, because a repository created on Tuesday stays invisible and one
 archived on Wednesday keeps being collected. What `teams:` still does is **override ownership**, feeding the
