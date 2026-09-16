@@ -89,6 +89,65 @@ export const orgPeopleSchema = z.object({
 });
 
 /**
+ * One SSO identity: the UPN the identity provider asserted, and the GitHub account it is linked to.
+ *
+ * BOTH SIDES ARE NULLISH AND BOTH ABSENCES ARE ORDINARY. An identity with no `user` is somebody who has an Entra
+ * account and has not linked a GitHub one, and an identity with no `nameId` carries nothing to name them by. On
+ * the live estate 843 of the provider's identities have a login; the rest are not a fault.
+ */
+const samlIdentityNode = z.object({
+  samlIdentity: z.object({ nameId: z.string().nullish() }).nullish(),
+  user: z.object({ login: z.string() }).nullish()
+});
+
+/**
+ * The SSO mapping, whose one nullish level that MATTERS is `samlIdentityProvider`.
+ *
+ * A token without `organization_administration: read` gets null there beside an HTTP 200, so the collector reads
+ * it as "nobody could look" rather than as "this organisation has no SSO" — see `collectSamlIdentities`.
+ */
+export const samlIdentitiesSchema = z.object({
+  organization: z
+    .object({
+      samlIdentityProvider: z
+        .object({ externalIdentities: z.object({ totalCount: z.number().nullish(), pageInfo, nodes: z.array(samlIdentityNode.nullish()) }) })
+        .nullish()
+    })
+    .nullish()
+});
+
+/**
+ * One SCIM record, read for the two structured name parts and the addresses it can be joined on.
+ *
+ * `userName` and `emails` are both read because a SCIM record CARRIES NO GITHUB LOGIN: the only way to reach one
+ * is through the SAML `nameId`, and the two systems do not always spell the same person's UPN into the same
+ * field. Neither address is stored — see `collectScimNames`.
+ *
+ * `roles`, `active`, `externalId`, `id` and `meta` are all present on the wire and all deliberately unread.
+ */
+const scimUser = z.object({
+  userName: z.string().nullish(),
+  name: z.object({ givenName: z.string().nullish(), familyName: z.string().nullish() }).nullish(),
+  emails: z.array(z.object({ value: z.string().nullish() }).nullish()).nullish()
+});
+
+/**
+ * One page of the SCIM directory, as the RFC 7644 list response GitHub answers with.
+ *
+ * `Resources` IS CAPITALISED because SCIM's schema says so, and it is nullish because a body carrying no such
+ * array is one this collector must not read as an empty directory — 688 people silently becoming nobody is
+ * indistinguishable from a refusal to the estate, so it is graded as a refusal.
+ *
+ * `totalResults` is read because a `startIndex` walk has no `hasNextPage` to terminate on.
+ */
+export const scimUsersSchema = z.object({
+  Resources: z.array(scimUser.nullish()).nullish(),
+  totalResults: z.number().nullish(),
+  itemsPerPage: z.number().nullish(),
+  startIndex: z.number().nullish()
+});
+
+/**
  * The ownership document, read as the aliased map it is.
  *
  * The top level cannot be a fixed shape: its keys are `f0`…`fN` for whatever `N` the batch had, beside
@@ -168,6 +227,8 @@ export type TeamRepositoryConnection = z.infer<typeof teamRepositoryConnection>;
 export type TeamRepositoryEdge = z.infer<typeof teamRepositoryEdge>;
 export type RepositoryNode = z.infer<typeof repositoryNode>;
 export type PersonEdge = z.infer<typeof personEdge>;
+export type SamlIdentityNode = z.infer<typeof samlIdentityNode>;
+export type ScimUser = z.infer<typeof scimUser>;
 
 // The INPUT types, for a test describing what GitHub actually sends — instants as ISO strings rather than as
 // the `Date`s parsing turns them into.
