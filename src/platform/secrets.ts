@@ -1,4 +1,5 @@
-import { describeDatabase, type Environment } from "../evidence/store/database-url.ts";
+import type { Environment } from "../evidence/store/database-url.ts";
+import { describeDatabase } from "./database-target.ts";
 
 /**
  * Reading the deployed secrets, which is the one thing a process does before it can reach a database.
