@@ -11,7 +11,7 @@ import {
 } from "./classify.ts";
 import { createGitHubClient, nextLink } from "./client.ts";
 import { personalAccessToken } from "./credentials.ts";
-import { endpointTemplate } from "./endpoint-template.ts";
+import { endpointTemplate, graphqlOperationName } from "./endpoint-template.ts";
 
 // Ported from tests/test_github.py. Every case drives a stubbed `fetch`, so nothing here reaches GitHub,
 // and the injected clock and pause mean nothing sleeps.
@@ -362,6 +362,11 @@ describe("rate limit accounting", () => {
 });
 
 describe("counting", () => {
+  /** Every counted outcome as `status outcome (xcount)`, which is what a reader of the summary compares. */
+  function counted(instance: ReturnType<typeof client>["instance"]): string[] {
+    return instance.callOutcomes().map(({ outcome, count }) => `${outcome.status} ${outcome.outcome} (x${count})`);
+  }
+
   it("should count a retried operation once while counting each of its responses", async () => {
     // Two different numbers: how much the run cost GitHub, and what GitHub answered.
     const { fetch } = replying({ status: 500, body: {} }, { body: { ok: true } });
@@ -370,6 +375,118 @@ describe("counting", () => {
     await instance.get("/repos/hmcts/cath-service");
 
     expect(instance.requestsIssued()).toBe(1);
+  });
+
+  it("should count the failed attempt when a call succeeded on a retry", async () => {
+    // THE ONE THE RUN SUMMARY WAS LYING ABOUT. A 502 that succeeded on attempt two was counted as `200 ok`
+    // and nothing else, so a run spending its afternoon retrying looked like a run that never had to.
+    const { fetch } = replying({ status: 502, body: {} }, { body: { ok: true } });
+    const { instance } = client(fetch);
+
+    await instance.get("/repos/hmcts/cath-service");
+
+    expect(counted(instance)).toEqual(["502 retried (x1)", "200 ok (x1)"]);
+    // Still ONE operation. `requests_issued` counts what the run asked for and the outcomes count what it got.
+    expect(instance.requestsIssued()).toBe(1);
+  });
+
+  it("should count each wait and the attempt it gave up on when a rate limit outlasts the attempt budget", async () => {
+    // THE WORST OF THE THREE: an operation that exhausted `maximumAttempts` was recorded as NO OUTCOME AT ALL,
+    // so the run that failed could not be explained from its own summary. Counted apart from `refused`, because
+    // a 403 is GitHub's answer to both a spent quota and a refusal.
+    const { fetch } = replying({ status: 429, body: {} }, { status: 429, body: {} }, { status: 429, body: {} });
+    const { instance } = client(fetch);
+
+    await expect(instance.get("/repos/hmcts/cath-service")).rejects.toThrow(GitHubError);
+
+    expect(counted(instance)).toEqual(["429 rate-limited (x2)", "429 exhausted (x1)"]);
+  });
+
+  it("should count the attempt it gave up on when a GraphQL rate limit outlasts the budget", async () => {
+    // The real HMCTS shape: GitHub answers a spent GraphQL quota with HTTP 200 and a RATE_LIMITED error, so the
+    // status says nothing and the summary has to say it instead. Counted at the 200 it arrived under, because
+    // that is the status the response HAD — unlike a refusal, a rate limit is not a different status in disguise.
+    const limited = { status: 200, body: { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] } };
+    const { fetch } = replying(limited, limited, limited);
+    const { instance } = client(fetch);
+
+    await expect(instance.graphql("query AssuranceSignals { rateLimit { cost } }")).rejects.toThrow(/rate limit exceeded after 3 attempts/);
+
+    expect(counted(instance)).toEqual(["200 rate-limited (x2)", "200 exhausted (x1)"]);
+  });
+
+  it("should count an operation that never reached GitHub at all, at no status", async () => {
+    // No response arrived, so there is no status to report and the attempts are counted at 0 — which is still an
+    // answer, where the three silent attempts this used to record were not.
+    const fetch = vi.fn(() => Promise.reject(new Error("socket hang up"))) as unknown as typeof globalThis.fetch;
+    const { instance } = client(fetch);
+
+    await expect(instance.get("/repos/hmcts/cath-service")).rejects.toThrow(/could not be reached/);
+
+    expect(counted(instance)).toEqual(["0 unreachable (x2)", "0 exhausted (x1)"]);
+  });
+
+  it("should count a token this client replaced rather than losing the response that refused it", async () => {
+    const { fetch } = replying({ status: 401, body: { message: "Bad credentials" } }, { body: { ok: true } });
+    const instance = createGitHubClient({
+      credentials: { token: () => Promise.resolve("ghs_test"), refresh: () => Promise.resolve(true), describe: () => "test" },
+      fetch,
+      pause: () => Promise.resolve(),
+      clock: () => 1_000
+    });
+
+    await instance.get("/repos/hmcts/cath-service");
+
+    expect(counted(instance)).toEqual(["401 retried (x1)", "200 ok (x1)"]);
+  });
+
+  it("should count each GraphQL operation apart, so an assurance batch is not a merge walk", async () => {
+    // Every GraphQL call is a POST to one address, so counted by URL alone all seven query kinds were one
+    // summary line — which is why a run could not say whether its GraphQL went on assurance or on merges.
+    const { fetch } = replying({ body: { data: {} } }, { body: { data: {} } }, { body: { data: {} } });
+    const { instance } = client(fetch);
+
+    await instance.graphql("query AssuranceSignals($organization: String!) { rateLimit { cost } }");
+    await instance.graphql("query AssuranceSignals($organization: String!) { rateLimit { cost } }");
+    await instance.graphql("query MergedPullRequests($organization: String!) { rateLimit { cost } }");
+
+    expect(instance.callOutcomes().map(({ outcome, count }) => `${outcome.endpoint} (x${count})`)).toEqual([
+      "https://api.github.com/graphql AssuranceSignals (x2)",
+      "https://api.github.com/graphql MergedPullRequests (x1)"
+    ]);
+  });
+
+  it("should count the hours a run stood still when a quota was already spent", async () => {
+    // A pause is NOT counted as a call — none was made — but it is the one thing an outcome line cannot report,
+    // and it is what the 2026-09-15 incident needed the summary to say.
+    const { fetch } = replying(
+      {
+        body: {},
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-limit": "5000",
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-used": "5000",
+          "x-ratelimit-reset": "1060"
+        }
+      },
+      { body: { ok: true } }
+    );
+    const { instance } = client(fetch);
+
+    await instance.get("/repos/hmcts/a");
+    await instance.get("/repos/hmcts/b");
+
+    expect(instance.rateLimitWaits()).toEqual([{ resource: "core", seconds: 60, count: 1 }]);
+  });
+
+  it("should report no waits when nothing waited", async () => {
+    const { fetch } = replying({ body: {} });
+    const { instance } = client(fetch);
+
+    await instance.get("/repos/hmcts/a");
+
+    expect(instance.rateLimitWaits()).toEqual([]);
   });
 
   it("should collapse many repositories into one counted endpoint", async () => {
@@ -399,6 +516,25 @@ describe("endpointTemplate", () => {
     ["https://api.github.com/graphql", "https://api.github.com/graphql"]
   ])("should normalise %s", (url, expected) => {
     expect(endpointTemplate(url)).toBe(expected);
+  });
+
+  it("should name the GraphQL operation when the document declares one", () => {
+    expect(endpointTemplate("https://api.github.com/graphql", "AssuranceSignals")).toBe("https://api.github.com/graphql AssuranceSignals");
+  });
+
+  it("should ignore an operation name on a REST call, which its path already names", () => {
+    expect(endpointTemplate("https://api.github.com/orgs/hmcts/repos", "AssuranceSignals")).toBe("https://api.github.com/orgs/{organization}/repos");
+  });
+
+  it.each([
+    ["query AssuranceSignals($organization: String!) { rateLimit { cost } }", "AssuranceSignals"],
+    ["\n        query OwnershipFiles($organization: String!) {\n", "OwnershipFiles"],
+    ["mutation SomethingElse { field }", "SomethingElse"],
+    // Only the tests write one, and it is counted at the bare address exactly as every call was before.
+    ["query {}", undefined],
+    ["{ viewer { login } }", undefined]
+  ])("should read the operation name out of %s", (document, expected) => {
+    expect(graphqlOperationName(document)).toBe(expected);
   });
 
   it("should placeholder a pagination cursor but keep a describing parameter", () => {

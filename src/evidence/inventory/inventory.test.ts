@@ -305,6 +305,20 @@ describe("openAlerts", () => {
     expect(result.reason).toBe("permission_denied");
   });
 
+  it("should ask for a hundred alerts a page rather than GitHub's default of thirty", async () => {
+    // 20-40% of the run's alert pages. `assurance.ts`' org-wide secret read and `org/collect.ts`' collaborator
+    // listing both already set 100, so the two that omitted it were an inconsistency rather than a decision.
+    const asked: string[] = [];
+    const fetch = vi.fn((url: string | URL) => {
+      asked.push(String(url));
+      return Promise.resolve(new Response("[]", { status: 200, headers: { "content-type": "application/json" } }));
+    }) as unknown as typeof globalThis.fetch;
+
+    await openAlerts(client(fetch), "hmcts", "cath-service", "dependabot/alerts", dependabotSeverity);
+
+    expect(asked[0]).toContain("per_page=100");
+  });
+
   it("should leave the count absent rather than zero whenever the family could not be read", async () => {
     // A family nobody can read and a family nobody turned on are equally not zero open alerts.
     const fetch = replying([{ status: 403, body: { message: "Resource not accessible by personal access token" } }]);
