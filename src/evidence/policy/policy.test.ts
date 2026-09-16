@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
-import { ConfigurationError, parseConfiguration } from "./load.ts";
-import { configuredOwners, enablementInstants, sonarOrganizationName } from "./repositories.ts";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { ConfigurationError, loadConfiguration, parseConfiguration } from "./load.ts";
+import { configuredOwners, configuredTeamSlugs, enablementInstants, sonarOrganizationName, teamDisplayNames } from "./repositories.ts";
 import { PRODUCTION_LIST_URL } from "./schema.ts";
 
 // Ported from tests/test_config.py. Upstream wrote each case to a temp file; these parse the same text
@@ -190,6 +192,13 @@ describe("parseConfiguration", () => {
     const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - other-api\n      - other-api\n`;
 
     expect(() => parseConfiguration(document)).toThrow(/shared lists a repository twice: other-api/);
+  });
+
+  it("should name every repeated repository once, collated, so the message reads the same twice", () => {
+    const repeated = "      - zebra-api\n      - other-api\n      - zebra-api\n      - other-api\n";
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n${repeated}`;
+
+    expect(() => parseConfiguration(document)).toThrow(/shared lists a repository twice: other-api, zebra-api/);
   });
 
   it("should reject duplicate team identifiers", () => {
@@ -383,6 +392,115 @@ describe("configuredOwners", () => {
     // The estate no longer comes from the file, so a file naming no team is a file that disagrees with no
     // inference — not a misconfiguration a cohort command should refuse.
     expect(configuredOwners(parseConfiguration("version: 1\norganization: hmcts\n")).size).toBe(0);
+  });
+});
+
+describe("configuredTeamSlugs", () => {
+  it("should name the github team slugs a team declares, not the identifier that groups the report", () => {
+    // The two namespaces are genuinely different: every collected rung writes a real `org_teams` slug, so a
+    // configured rung writing the identifier could not be joined to any of them.
+    const document = `${POPULATION.replace("  - identifier: opal\n    display_name: Opal\n", "  - identifier: opal\n    display_name: Opal\n    github_team_slugs:\n      - opal-developers\n      - opal-testers\n")}`;
+
+    expect(configuredTeamSlugs(parseConfiguration(document)).get("opal-common-lib")).toEqual(["opal-developers", "opal-testers"]);
+  });
+
+  it("should fall back to the identifier for a team declaring no slug", () => {
+    expect(configuredTeamSlugs(parseConfiguration(POPULATION)).get("nfdiv-case-api")).toEqual(["divorce"]);
+  });
+
+  it("should contribute each owner's slugs once for a shared repository, in the reporting order", () => {
+    const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    github_team_slugs:\n      - divorce\n      - platform\n    repositories:\n      - nfdiv-case-api\n`;
+
+    // `divorce` is contributed by both teams and kept once; the order is `configuredOwners`' order, which is
+    // why this is built on it rather than re-deriving the pairs.
+    expect(configuredTeamSlugs(parseConfiguration(document)).get("nfdiv-case-api")).toEqual(["divorce", "platform"]);
+  });
+
+  it("should be empty where the file overrides nothing", () => {
+    expect(configuredTeamSlugs(parseConfiguration("version: 1\norganization: hmcts\n")).size).toBe(0);
+  });
+});
+
+describe("teamDisplayNames", () => {
+  it("should name only the teams the file overrides, leaving the caller to fall back to the slug", () => {
+    // A lookup with a fallback rather than a complete map: the graph knows teams by slug and most cohort teams
+    // are absent from the file entirely.
+    const names = teamDisplayNames(parseConfiguration(POPULATION));
+
+    expect([...names]).toEqual([
+      ["opal", "Opal"],
+      ["divorce", "Divorce"]
+    ]);
+    expect(names.get("civil")).toBeUndefined();
+  });
+});
+
+describe("loadConfiguration", () => {
+  let directory: string;
+
+  beforeAll(async () => {
+    directory = await mkdtemp(path.join(tmpdir(), "metrics-policy-"));
+    await writeFile(path.join(directory, "policy.yaml"), VALID, "utf8");
+    // No trailing newline, to prove the join does not run this file's last line into the next file's first.
+    await writeFile(path.join(directory, "shared.yaml"), "version: 1\norganization: hmcts", "utf8");
+    await writeFile(
+      path.join(directory, "teams.yaml"),
+      "teams:\n  - identifier: opal\n    display_name: Opal\n    repositories:\n      - opal-common-lib\n",
+      "utf8"
+    );
+    await writeFile(path.join(directory, "unparseable.yaml"), "version: 1\n  organization: [\n", "utf8");
+  });
+
+  afterAll(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it("should read one file as the whole configuration", async () => {
+    const configuration = await loadConfiguration(path.join(directory, "policy.yaml"));
+
+    expect(configuration.organization).toBe("hmcts");
+    expect(configuration.teams[0]?.identifier).toBe("civil");
+  });
+
+  it("should parse several files as one document, so neither is a configuration in its own right", async () => {
+    // `teams.yaml` has no `version:` and would fail the schema alone; the split exists so the shared policy is
+    // written once and paired with whichever team file a run is about.
+    const configuration = await loadConfiguration(path.join(directory, "shared.yaml"), path.join(directory, "teams.yaml"));
+
+    expect(configuration.version).toBe(1);
+    expect(configuration.teams.map((team) => team.identifier)).toEqual(["opal"]);
+  });
+
+  it("should let a later file restate a key an earlier one set, the last occurrence winning", async () => {
+    const override = path.join(directory, "override.yaml");
+    await writeFile(override, "organization: hmcts-sandbox\n", "utf8");
+
+    // The reason the loader parses with `json: true`: js-yaml's default refuses a duplicated mapping key, which
+    // would refuse the layering the split exists to allow.
+    expect((await loadConfiguration(path.join(directory, "shared.yaml"), override)).organization).toBe("hmcts-sandbox");
+  });
+
+  it("should require at least one file rather than loading an empty document", async () => {
+    await expect(loadConfiguration()).rejects.toThrow(/at least one --config file is required/);
+  });
+
+  it("should report an unreadable file as invalid configuration rather than crashing", async () => {
+    await expect(loadConfiguration(path.join(directory, "absent.yaml"))).rejects.toThrow(ConfigurationError);
+  });
+
+  it("should report an unparseable document as invalid configuration", async () => {
+    await expect(loadConfiguration(path.join(directory, "unparseable.yaml"))).rejects.toThrow(ConfigurationError);
+  });
+
+  it("should name every file the document was read from when validation fails", async () => {
+    // A missing `teams:` almost always means the team file was not given, not that the policy file is wrong,
+    // and the message cannot say so without naming what was read.
+    const invalid = path.join(directory, "invalid.yaml");
+    await writeFile(invalid, "organization: hmcts\n", "utf8");
+
+    await expect(loadConfiguration(path.join(directory, "invalid.yaml"))).rejects.toThrow(
+      new RegExp(`version:.*\\(read from ${invalid.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`, "s")
+    );
   });
 });
 

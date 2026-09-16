@@ -1,0 +1,13 @@
+{
+  // `test/e2e` is excluded from the root project because Playwright's `test` and Vitest's collide on the
+  // same global names, so one `tsc` cannot see both source trees. This is the second project that gives
+  // the e2e specs a typechecker of their own; `yarn typecheck` runs both.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "incremental": false,
+    "plugins": []
+  },
+  "include": ["test/e2e/**/*.ts"],
+  "exclude": ["node_modules"]
+}
