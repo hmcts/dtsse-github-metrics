@@ -10,6 +10,7 @@ import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merg
 import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
+import { runSummaryLines } from "../evidence/github/summary.ts";
 import {
   assuranceEvidence,
   collectAssuranceSignals,
@@ -17,6 +18,7 @@ import {
   type GraphAssurance,
   readDependabotAlerts
 } from "../evidence/inventory/assurance.ts";
+import { type EstateRepository, readEstateMetadata } from "../evidence/inventory/estate-metadata.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
 import { collectSecurityAlerts, countBySeverity, dependabotSeverity, FEATURE_NOT_ENABLED } from "../evidence/inventory/security-alerts.ts";
@@ -135,14 +137,21 @@ async function collectRepository(
   window: { startsAt: Date; endsAt: Date },
   reference: Date,
   production: Set<string> | undefined,
-  options: { behaviour: boolean; assurance: GraphAssurance | undefined; secrets: { read: boolean; summary?: SecretAlertSummary } }
+  options: {
+    behaviour: boolean;
+    assurance: GraphAssurance | undefined;
+    secrets: { read: boolean; summary?: SecretAlertSummary };
+    /** This repository's row from the organisation listing, where the run read one. */
+    metadata?: EstateRepository;
+  }
 ): Promise<{ observed: boolean; failures: number }> {
   const organization = configuration.organization;
   let failures = 0;
 
-  // Read for the default branch, and read AGAIN for nothing: `security_and_analysis` rides on this same body, so
-  // three of the five hygiene signals cost no request of their own.
-  const metadata = await client.get<{ default_branch?: string }>(`/repos/${organization}/${repository}`).catch(() => undefined);
+  // The default branch and `security_and_analysis`, off the ORG LISTING the run already read — one paginated
+  // call for the estate against one per repository. Read here only for a repository that listing did not name,
+  // which on a full run is none of them and on `--repository` is the one that was asked for.
+  const metadata = options.metadata ?? (await client.get<{ default_branch?: string }>(`/repos/${organization}/${repository}`).catch(() => undefined));
   if (metadata === undefined) {
     console.warn(`${repository}: could not be read at all, so nothing was collected for it`);
     return { observed: false, failures: 1 };
@@ -279,6 +288,19 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
     walk.map((entry) => entry.repository)
   );
 
+  // ONE PAGINATED LISTING FOR THE WHOLE ESTATE'S METADATA, which is about 19 pages against 1,889
+  // per-repository reads. Only for a run collecting the estate: paging the organisation to find one repository
+  // asked for by name would cost more than reading it, so `--repository` keeps the read it always had.
+  const estate = argv.repository === undefined ? await readEstateMetadata(client, configuration.organization) : undefined;
+  const unlisted = estate === undefined ? [] : walk.filter((entry) => !estate.has(entry.repository));
+  if (unlisted.length > 0) {
+    // Named rather than silent: a repository in the collected graph that the organisation no longer lists has
+    // been renamed, transferred or deleted since `collect-org` ran, and that is worth seeing.
+    console.warn(
+      `${unlisted.length} collected ${unlisted.length === 1 ? "repository is" : "repositories are"} not in the organisation's listing, so each one's metadata is read on its own`
+    );
+  }
+
   let observed = 0;
   let failures = 0;
 
@@ -306,7 +328,8 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
       secrets: {
         read: secretAlerts !== undefined,
         ...(secretAlerts?.get(entry.repository) === undefined ? {} : { summary: secretAlerts.get(entry.repository) })
-      }
+      },
+      ...(estate?.get(entry.repository) === undefined ? {} : { metadata: estate.get(entry.repository) })
     });
     observed += result.observed ? 1 : 0;
     failures += result.failures;
@@ -316,8 +339,8 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   const repositories = walk;
   const walked = walk.filter((entry) => entry.behaviour).length;
   console.info(`collected ${observed} of ${repositories.length} repositories (${walked} walked for behaviour) in ${client.requestsIssued()} GitHub calls`);
-  for (const { outcome, count } of client.callOutcomes()) {
-    console.info(`  ${outcome.status} ${outcome.outcome} ${outcome.method} ${outcome.endpoint} (x${count})`);
+  for (const line of runSummaryLines(client)) {
+    console.info(line);
   }
 
   if (observed === 0) {
@@ -657,6 +680,11 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     `walked ${teamFacts.teams.length} teams, ${repositories.length} repositories and ${people.length} people in ${client.requestsIssued()} GitHub calls`
   );
   progress(`  ${totals.inserted} new, ${totals.changed} changed, ${totals.superseded} ended, ${totals.unchanged} unchanged`);
+  // The same breakdown `collect` prints. This walk spends a quota too, and a single total could not say whether
+  // an hour went on the team walk, the CODEOWNERS ladder or waiting for a window to reset.
+  for (const line of runSummaryLines(client)) {
+    progress(line);
+  }
   if (truncated > 0) {
     progress(`${truncated} repositories were left unresolved by --unresolved-limit, so nothing was superseded`);
   }

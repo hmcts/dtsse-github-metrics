@@ -1,8 +1,12 @@
 /**
- * Normalising a URL into the endpoint it belongs to, so a run can be counted by it.
+ * Normalising a call into the endpoint it belongs to, so a run can be counted by it.
  *
  * Ported from `metrics.github.endpoint_template`. Without this, a collection of 1850 repositories
  * produces 1850 "endpoints" and no reader can take a total from the summary.
+ *
+ * REST is named by its URL and GRAPHQL BY ITS OPERATION, because every GraphQL call is a POST to one
+ * address: counted by URL alone, an assurance batch and a merge walk are the same summary line, which is
+ * why a run could not say where its calls went.
  */
 
 /**
@@ -36,14 +40,32 @@ const NAMED_VALUES: Record<string, string> = { branches: "{branch}", commits: "{
  */
 export const PAGINATION_PARAMETERS = new Set(["page", "after", "before", "cursor"]);
 
-export function endpointTemplate(target: string): string {
+/**
+ * The name a GraphQL document gives its operation, or nothing where it names none.
+ *
+ * A TEXT MATCH ON THE DOCUMENT rather than a parse, and that is the whole of it: every document in this
+ * codebase is a constant declaring `query <Name>(...)`, so the name is the first identifier after the
+ * keyword. An anonymous document — `query {}`, which only the tests write — has no name to report and is
+ * counted at the bare address, which is what every GraphQL call was counted at before.
+ */
+export function graphqlOperationName(document: string): string | undefined {
+  return /\b(?:query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(document)?.[1];
+}
+
+/**
+ * What one call is counted as.
+ *
+ * `operation` is the GraphQL operation name, and is ignored for REST: a REST call is already named by its
+ * path, and there is nothing in the body to name it by.
+ */
+export function endpointTemplate(target: string, operation?: string): string {
   const url = new URL(target);
   const segments = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
 
   if (segments.length === 1 && segments[0] === "graphql") {
-    // Every GraphQL call is a POST to the same address, and the query naming what it asked for is in
-    // the body.
-    return `${url.origin}/graphql`;
+    // Every GraphQL call is a POST to the same address, so the operation the body named is what tells one
+    // apart from another. Appended rather than substituted, so the line still says which API answered.
+    return operation === undefined ? `${url.origin}/graphql` : `${url.origin}/graphql ${operation}`;
   }
 
   const owned = OWNED_PREFIXES[segments[0] ?? ""] ?? [];
