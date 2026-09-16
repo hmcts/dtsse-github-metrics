@@ -31,7 +31,9 @@ import {
   type RepositoryAuthorship,
   type ResolvedOwnership
 } from "../evidence/org/graph.ts";
+import { collectSsoIdentities, namedPeople } from "../evidence/org/identities.ts";
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
+import { storedDisplayNames } from "../evidence/org/people.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
 import { configuredTeamSlugs, sonarOrganizationName } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
@@ -489,7 +491,23 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
     return runStatus(CollectionStatus.Failed);
   }
   const peopleWalk = await collectOrgPeople(client, organization);
-  const people = peopleWalk.facts;
+
+  // The one place the SSO identity mapping can be read: the web pod holds no GitHub credential, so a name the
+  // dashboard shows has to be resolved here and stored. See `evidence/org/identities.ts`.
+  //
+  // AN UNMEASURED PASS CARRIES THE STORED NAMES FORWARD RATHER THAN OMITTING THEM. A credential that cannot see
+  // the mapping — a PAT, which GitHub answers with `samlIdentityProvider: null` and an HTTP 200 — would otherwise
+  // hand the writer facts with no name, and because the graph is change-versioned that ends the interval of every
+  // named person and opens a new one without their name. Blanking the estate is not a value to put back; it is
+  // 778 intervals to reopen, which nothing can do.
+  const identities = await collectSsoIdentities(client, organization);
+  const resolvedNames = identities.measured ? identities.names : await storedDisplayNames(organization);
+  progress(
+    identities.measured
+      ? `resolved ${resolvedNames.size} contributor names from the SSO identity mapping`
+      : `the SSO identity mapping could not be read, so the ${resolvedNames.size} stored contributor names were left as they stand`
+  );
+  const people = namedPeople(peopleWalk.facts, resolvedNames);
 
   const options: OwnershipOptions = {
     prefixSupport: graph.prefix_support,

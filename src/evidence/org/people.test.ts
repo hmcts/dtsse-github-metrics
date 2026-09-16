@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { LiveOrgPerson } from "../store/org-graph.ts";
-import { contributorNames } from "./people.ts";
+import { contributorNames, storedDisplayNames } from "./people.ts";
 
 // The store read is the whole of the impurity here, so it is the one thing mocked: `payloadOf` in the store writes
 // whatever GitHub returned, and what is under test is how a reader gets a usable name back out of it.
@@ -19,6 +19,45 @@ function stub(people: LiveOrgPerson[]): void {
 }
 
 describe("contributorNames", () => {
+  it("should return the name resolved from the SSO identity mapping", async () => {
+    // The rung that answers: `collect-org` resolves it for all 778 live members and stores it on the person's row.
+    stub([person("joedutton", { displayName: "Joe Dutton" })]);
+
+    expect(await contributorNames("hmcts")).toEqual(new Map([["joedutton", "Joe Dutton"]]));
+  });
+
+  it("should prefer the resolved name over the self-reported profile name", async () => {
+    // Both exist for 325 members and they disagree for a fifth of them — middle names and diacritics. The
+    // structured directory record is the better answer.
+    stub([person("jdutton", { displayName: "Joe Dutton", name: "joe" })]);
+
+    expect(await contributorNames("hmcts")).toEqual(new Map([["jdutton", "Joe Dutton"]]));
+  });
+
+  it("should fall back to the profile name for a row no collection has resolved yet", async () => {
+    // TRANSITIONAL. Every row in the database predates this field, and blanking them all in the window before the
+    // first `collect-org` runs would take the dashboard backwards. Dead after one collection.
+    stub([person("parisfreire", { name: "Paris Freire" })]);
+
+    expect(await contributorNames("hmcts")).toEqual(new Map([["parisfreire", "Paris Freire"]]));
+  });
+
+  it("should fall back to the profile name where the resolved one is blank", async () => {
+    stub([person("parisfreire", { displayName: "   ", name: "Paris Freire" })]);
+
+    expect(await contributorNames("hmcts")).toEqual(new Map([["parisfreire", "Paris Freire"]]));
+  });
+
+  it("should hold no entry at all for a member neither source names", async () => {
+    // Which is what makes every caller render the login. Never the empty string and never "undefined".
+    stub([person("ef32", { company: "HMCTS" })]);
+
+    const names = await contributorNames("hmcts");
+
+    expect(names.has("ef32")).toBe(false);
+    expect(names.get("ef32")).toBeUndefined();
+  });
+
   it("should return the profile name GitHub holds for each member", async () => {
     // Both are real pairs from the live estate, and the second is why nothing may be derived from a login.
     stub([person("parisfreire", { name: "Paris Freire" }), person("ef32", { name: "Tam Arah" })]);
@@ -92,5 +131,46 @@ describe("contributorNames", () => {
     stub([]);
 
     expect(await contributorNames("hmcts")).toEqual(new Map());
+  });
+});
+
+describe("storedDisplayNames", () => {
+  it("should return the resolved names an earlier collection stored", async () => {
+    stub([person("joedutton", { displayName: "Joe Dutton" }), person("lgeddis", { displayName: "Lucy Geddis" })]);
+
+    expect(await storedDisplayNames("hmcts")).toEqual(
+      new Map([
+        ["joedutton", "Joe Dutton"],
+        ["lgeddis", "Lucy Geddis"]
+      ])
+    );
+  });
+
+  it("should not promote a self-reported profile name into the resolved field", async () => {
+    // An unmeasured run hands this straight back to the writer. Reading the profile name here would copy it into
+    // `displayName` and keep it there for ever, so the two would stop being distinguishable.
+    stub([person("parisfreire", { name: "Paris Freire" })]);
+
+    expect(await storedDisplayNames("hmcts")).toEqual(new Map());
+  });
+
+  it("should ignore a resolved name that is blank or is not a string", async () => {
+    stub([person("blank", { displayName: "  " }), person("odd", { displayName: 42 }), person("nulled", null)]);
+
+    expect(await storedDisplayNames("hmcts")).toEqual(new Map());
+  });
+
+  it("should fold the login it keys on, so the writer's own fold finds it", async () => {
+    stub([person("ParisFreire", { displayName: "Paris Freire" })]);
+
+    expect(await storedDisplayNames("hmcts")).toEqual(new Map([["parisfreire", "Paris Freire"]]));
+  });
+
+  it("should read the graph for the organisation it was asked about", async () => {
+    stub([]);
+
+    await storedDisplayNames("hmcts");
+
+    expect(liveOrgPeople).toHaveBeenCalledWith("hmcts");
   });
 });

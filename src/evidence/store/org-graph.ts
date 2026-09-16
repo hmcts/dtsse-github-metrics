@@ -583,6 +583,13 @@ async function syncPushedAt(tx: GraphTransaction, organization: string, facts: r
  * A superseded row here is a person who has LEFT THE ORGANISATION, which is the fact the login alone
  * cannot carry: the GitHub account still exists, and asking GitHub about it later says nothing about when
  * their membership ended.
+ *
+ * `displayName` rides in the EXISTING jsonb payload rather than in a column of its own, and it needed no
+ * migration for that reason. The payload is already where what a person is CALLED lives — `name`, `email` and
+ * `company` are all there — and this is one more decoration: nothing filters, joins or orders on it in SQL,
+ * which is the only thing a column would buy. It IS in the digest, because a corrected spelling is a change
+ * to the fact and the point of versioning is that somebody can read when it changed; the price is that the
+ * first run to resolve names supersedes and re-inserts the members it names, once.
  */
 export async function recordOrgPeople(organization: string, observedAt: Date, facts: readonly PersonFact[], complete: boolean): Promise<GraphWriteSummary> {
   try {
@@ -592,7 +599,7 @@ export async function recordOrgPeople(organization: string, observedAt: Date, fa
         live.map((row) => ({ key: { login: row.login }, digest: row.digest })),
         facts.map((fact) => ({
           key: { login: fact.login },
-          digest: digestOf({ role: fact.role, name: fact.name, email: fact.email, company: fact.company }),
+          digest: digestOf({ role: fact.role, name: fact.name, email: fact.email, company: fact.company, displayName: fact.displayName }),
           fact
         })),
         (key) => key.login,
@@ -613,7 +620,12 @@ export async function recordOrgPeople(organization: string, observedAt: Date, fa
               organization,
               login: candidate.key.login,
               role: candidate.fact.role,
-              payload: payloadOf({ name: candidate.fact.name, email: candidate.fact.email, company: candidate.fact.company }),
+              payload: payloadOf({
+                name: candidate.fact.name,
+                email: candidate.fact.email,
+                company: candidate.fact.company,
+                displayName: candidate.fact.displayName
+              }),
               observedAt,
               lastObservedAt: observedAt,
               digest: candidate.digest

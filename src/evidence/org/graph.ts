@@ -197,6 +197,18 @@ export interface PersonFact {
   name?: string;
   email?: string;
   company?: string;
+  /**
+   * What this person is called, resolved from the Entra SSO identity mapping rather than self-reported.
+   *
+   * THE RESOLVED NAME AND NOTHING ELSE. The two sources it comes from — the SAML `nameId` and the SCIM record —
+   * are both keyed on a work email address for some 800 named people, and NEITHER THE UPN NOR THE EMAIL IS
+   * STORED ANYWHERE. The dashboard needs a name to put beside a login; it does not need a way to email
+   * everybody in the organisation, and the less personal data a reporting database holds the better. Do not add
+   * the address here later because it happened to be in hand at the join.
+   *
+   * Absent where nothing resolved, which is what lets a reader fall back — see `contributorNames`.
+   */
+  displayName?: string;
 }
 
 /**

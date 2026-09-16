@@ -1,14 +1,20 @@
 import { getPropertiesVolumeSecrets, MonitoringService } from "@hmcts-cft/cloud-native-platform";
+import { loadSecrets } from "../platform/secrets.ts";
 import { EXIT_COMPLETE, EXIT_FAILED } from "./exit-status.ts";
 
-const CHART_PATH = "./charts/dtsse-github-metrics/values.yaml";
-
+/**
+ * The secrets, and then the telemetry, before anything reads either.
+ *
+ * THE VAULT IS OPT-IN OUTSIDE PRODUCTION, through the same guard the web pod uses — see `platform/secrets.ts`.
+ * The CronJobs are unaffected: the runtime image sets `NODE_ENV=production`, so both of them still resolve
+ * `dtsse-aat` and still get the GitHub App credentials that are the collector's alone.
+ *
+ * It matters more here than it does in the web pod. A local `yarn cli collect` was writing collected facts into
+ * the production database, and `prune` DELETES from it — the same command against a compose stack is a scratch
+ * database, and which of the two it was depended on nothing the command said.
+ */
 async function startPlatform(): Promise<MonitoringService | undefined> {
-  try {
-    await getPropertiesVolumeSecrets({ chartPath: CHART_PATH, failOnError: false });
-  } catch (error) {
-    console.warn(`could not load Key Vault secrets: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  await loadSecrets((chartPath) => getPropertiesVolumeSecrets({ chartPath, failOnError: false }));
 
   const connectionString = process.env.APPLICATIONINSIGHTS_CONNECTION_STRING;
   if (!connectionString) {

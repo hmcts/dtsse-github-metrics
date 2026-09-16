@@ -192,6 +192,54 @@ export function orgPeopleQuery(): string {
     `;
 }
 
+/**
+ * Every SSO identity the organisation's SAML provider has linked to a GitHub account.
+ *
+ * THE ONLY JOIN BETWEEN A GITHUB LOGIN AND THE PERSON BEHIND IT. `orgPeopleQuery` reads a self-reported profile
+ * name, which 41.8% of this organisation has set; this reads the identity Entra asserted when they signed in,
+ * which 843 accounts carry and which covers all 778 live members. `nameId` is their UPN —
+ * `Harpreet.Jhita@justice.gov.uk` — so it is both the name source of last resort and the key the SCIM directory
+ * is joined on, since a SCIM record carries no login.
+ *
+ * NEEDS `organization_administration: read`, which the App holds. A PAT WITHOUT IT GETS `samlIdentityProvider:
+ * null` RATHER THAN AN ERROR, which is why the collector treats null as unmeasured rather than as an
+ * organisation with no SSO: read the other way round, one unprivileged run would blank every stored name.
+ *
+ * `first: 100` is GitHub's maximum and the nodes are two scalars deep, so the whole mapping is 9 round trips.
+ * There is deliberately no `organizationInvitation` or `scimIdentity` selection beside it: neither is needed for
+ * the join, and both are connections that would multiply the node count of every page.
+ */
+export function samlIdentitiesQuery(): string {
+  return `
+        query OrganizationSamlIdentities($organization: String!, $cursor: String) {
+          organization(login: $organization) {
+            samlIdentityProvider {
+              externalIdentities(first: 100, after: $cursor) {
+                ${pageInfoSelection()}
+                nodes { samlIdentity { nameId } user { login } }
+              }
+            }
+          }
+          rateLimit { cost limit remaining resetAt }
+        }
+    `;
+}
+
+/**
+ * The SCIM directory of one organisation, which is where the STRUCTURED names live.
+ *
+ * REST rather than GraphQL because GitHub publishes no GraphQL equivalent, and it is paged by `startIndex`
+ * rather than by a `Link` header, so `client.paginate` cannot walk it — see `collectScimNames`.
+ *
+ * Measured on the live estate: 688 records, every one carrying both `name.givenName` and `name.familyName`.
+ */
+export function scimUsersPath(organization: string): string {
+  return `/scim/v2/organizations/${organization}/Users`;
+}
+
+/** How many SCIM records one page asks for. GitHub's maximum, so 688 members cost 7 round trips. */
+export const ScimPageSize = 100;
+
 /** How many repositories one ownership document reads. */
 export const DefaultOwnershipBatchSize = 25;
 
@@ -272,6 +320,7 @@ export function orgQuerySignature(): string {
     teamRepositoriesQuery(),
     orgRepositoriesQuery(),
     orgPeopleQuery(),
+    samlIdentitiesQuery(),
     ownershipFilesQuery(DefaultOwnershipBatchSize)
   ]
     .join("")
