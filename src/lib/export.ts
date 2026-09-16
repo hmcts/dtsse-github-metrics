@@ -26,6 +26,9 @@ import {
   answerWord,
   criterionResult,
   foundOutcome,
+  HYGIENE_CHECKS,
+  HYGIENE_CRITERION,
+  hygieneSignals,
   metOutcome,
   ownedByIndividual,
   SECRETS_CRITERION
@@ -42,23 +45,34 @@ import type { Contributor, RepositoryRow } from "@/lib/types";
 export const CONTRIBUTOR_SEPARATOR = "; ";
 
 /**
- * The heading of each column, left to right.
+ * The heading of each column, left to right, for a file the reader has or has not expanded the aggregate in.
  *
  * The criteria's headings are `ASSURANCE_LABEL`'s rather than restated, so a criterion added to the domain reaches
  * the file under the same name it reaches the table under — and cannot appear in one and be missing from the other,
- * which is the reason the table generates its own criterion columns instead of listing them.
+ * which is the reason the table generates its own criterion columns instead of listing them. The hygiene checks
+ * read `HYGIENE_CHECKS`' labels on that same rule, and sit where the table draws them: after the aggregate.
+ *
+ * THE COLUMNS FOLLOW THE TOGGLE, which is what keeps this file and the page one document. The alternative — always
+ * carrying the checks — was considered and rejected: a reader who has not expanded the column would be handed four
+ * columns they cannot see on the page, and "the file is a copy of the table" is the promise this module is built on.
+ * The toggle lives in the URL precisely so this control can read it; a column set that could not follow it would be
+ * the drift the module's own note warns about.
  */
-export const REPOSITORY_EXPORT_HEADINGS: readonly string[] = [
-  "Team",
-  "Team contributors",
-  "Repository",
-  "Detail",
-  "Last pushed",
-  "Visibility",
-  ...ASSURANCE_CRITERIA.map((criterion) => ASSURANCE_LABEL[criterion]),
-  "Production",
-  "Assurance"
-];
+export function repositoryExportHeadings(expanded = false): string[] {
+  return [
+    "Team",
+    "Team contributors",
+    "Repository",
+    "Detail",
+    "Last pushed",
+    "Visibility",
+    ...ASSURANCE_CRITERIA.flatMap((criterion) =>
+      criterion === HYGIENE_CRITERION && expanded ? [ASSURANCE_LABEL[criterion], ...HYGIENE_CHECKS.map((check) => check.label)] : [ASSURANCE_LABEL[criterion]]
+    ),
+    "Production",
+    "Assurance"
+  ];
+}
 
 /**
  * One repository's cells, in the headings' order.
@@ -67,7 +81,7 @@ export const REPOSITORY_EXPORT_HEADINGS: readonly string[] = [
  * why a row has no figures — "No merge activity in this window." — and it is also the field most likely to carry a
  * comma, which is what the writer's quoting is for.
  */
-function repositoryExportRow(row: RepositoryRow, contributors: readonly Contributor[] | undefined): string[] {
+function repositoryExportRow(row: RepositoryRow, contributors: readonly Contributor[] | undefined, expanded: boolean): string[] {
   return [
     row.team,
     teamContributorCell(row, contributors),
@@ -75,7 +89,13 @@ function repositoryExportRow(row: RepositoryRow, contributors: readonly Contribu
     row.detail ?? "",
     day(row.pushed_at),
     row.visibility ?? ABSENT,
-    ...ASSURANCE_CRITERIA.map((criterion) => criterionCell(row, criterion)),
+    ...ASSURANCE_CRITERIA.flatMap((criterion) =>
+      criterion === HYGIENE_CRITERION && expanded
+        ? // The aggregate and then its checks, in the headings' order: `answerWord` again, so a signal nobody could
+          // read is the same dash here as on the page and never a "No".
+          [criterionCell(row, criterion), ...HYGIENE_CHECKS.map((check) => answerWord(check.read(hygieneSignals(row))))]
+        : [criterionCell(row, criterion)]
+    ),
     answerWord(row.production),
     ASSURANCE_GRADE_LABEL[row.assurance?.grade ?? "unknown"]
   ];
@@ -125,6 +145,11 @@ function teamContributorCell(row: RepositoryRow, contributors: readonly Contribu
  * a copy of it: deciding the scope here as well as in the component would be two answers to "what is on screen",
  * and the one this file gave would be the one nobody could see.
  */
-export function repositoryExportRows(rows: readonly RepositoryRow[], teamContributors: Readonly<Record<string, Contributor[]>>): string[][] {
-  return [[...REPOSITORY_EXPORT_HEADINGS], ...rows.map((row) => repositoryExportRow(row, teamContributors[row.team]))];
+export function repositoryExportRows(
+  rows: readonly RepositoryRow[],
+  teamContributors: Readonly<Record<string, Contributor[]>>,
+  /** Whether the reader has expanded the hygiene aggregate, read off the URL by the control that calls this. */
+  expanded = false
+): string[][] {
+  return [repositoryExportHeadings(expanded), ...rows.map((row) => repositoryExportRow(row, teamContributors[row.team], expanded))];
 }

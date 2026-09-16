@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import { csvDocument } from "@/lib/csv";
-import { CONTRIBUTOR_SEPARATOR, REPOSITORY_EXPORT_HEADINGS, repositoryExportRows } from "@/lib/export";
+import { CONTRIBUTOR_SEPARATOR, repositoryExportHeadings, repositoryExportRows } from "@/lib/export";
 import type { Contributor, RepositoryRow } from "@/lib/types";
 
 const CONTRIBUTORS: Record<string, Contributor[]> = {
@@ -47,6 +47,23 @@ const MEASURED: RepositoryRow = {
   }
 };
 
+/**
+ * A repository whose hygiene signals separate all three answers and both halves of the update requirement.
+ *
+ * Scanning on, push protection off, vulnerability alerts NOT DISCLOSED, and the two update signals disagreeing —
+ * so the folded column has to read Yes off Renovate alone while the aggregate beside it stays what the report
+ * judged. A fixture with every signal on could not fail.
+ */
+const SIGNALLED: RepositoryRow = {
+  ...MEASURED,
+  repository: "hygiene-service",
+  assurance: {
+    grade: "partial",
+    criteria: [{ criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: push protection" }],
+    hygiene: { secret_scanning: true, push_protection: false, dependabot_security_updates: false, update_configuration: true }
+  }
+};
+
 /** A repository nothing was collected for: every window field absent, and a `detail` saying why. */
 const UNMEASURED: RepositoryRow = {
   repository: "quiet-service",
@@ -55,17 +72,23 @@ const UNMEASURED: RepositoryRow = {
   detail: "No merge activity in this window."
 };
 
-/** One column's cell off a row, found by its heading so an inserted column cannot shift an assertion. */
+/**
+ * One column's cell off a row, found by its heading so an inserted column cannot shift an assertion.
+ *
+ * The heading is located in THE FILE'S OWN HEADER ROW rather than in a list held beside it, because the columns now
+ * depend on whether the reader expanded the hygiene aggregate: an index taken from the collapsed headings would read
+ * the wrong cell of an expanded file, and read it plausibly.
+ */
 function cell(rows: string[][], repository: string, heading: string): string | undefined {
   const row = rows.find((entry) => entry.includes(repository));
-  return row?.[REPOSITORY_EXPORT_HEADINGS.indexOf(heading)];
+  return row?.[(rows[0] ?? []).indexOf(heading)];
 }
 
 describe("repositoryExportRows", () => {
   it("should head every column the table shows, plus the owning team's contributors", () => {
     // `Team` and `Team contributors` lead, because the second unpacks the first: the estate table's Team cell links
     // to a page that lists those people, and a spreadsheet cannot follow a link.
-    expect(REPOSITORY_EXPORT_HEADINGS).toEqual([
+    expect(repositoryExportHeadings()).toEqual([
       "Team",
       "Team contributors",
       "Repository",
@@ -86,11 +109,11 @@ describe("repositoryExportRows", () => {
   it("should put the headings in the first row and one row per repository after it", () => {
     const rows = repositoryExportRows([MEASURED, UNMEASURED], CONTRIBUTORS);
 
-    expect(rows[0]).toEqual([...REPOSITORY_EXPORT_HEADINGS]);
+    expect(rows[0]).toEqual(repositoryExportHeadings());
     expect(rows).toHaveLength(3);
     // Every row is the width of the header, or a reader lines the columns up against the wrong names.
     for (const row of rows) {
-      expect(row).toHaveLength(REPOSITORY_EXPORT_HEADINGS.length);
+      expect(row).toHaveLength(repositoryExportHeadings().length);
     }
   });
 
@@ -99,8 +122,8 @@ describe("repositoryExportRows", () => {
     // would be two answers to "what is on screen", and this one is the answer nobody can see.
     const rows = repositoryExportRows([UNMEASURED, MEASURED], CONTRIBUTORS);
 
-    expect(rows[1]?.[REPOSITORY_EXPORT_HEADINGS.indexOf("Repository")]).toBe("quiet-service");
-    expect(rows[2]?.[REPOSITORY_EXPORT_HEADINGS.indexOf("Repository")]).toBe("pcs-api");
+    expect(rows[1]?.[repositoryExportHeadings().indexOf("Repository")]).toBe("quiet-service");
+    expect(rows[2]?.[repositoryExportHeadings().indexOf("Repository")]).toBe("pcs-api");
   });
 
   it("should print the last push as the UTC day the page prints, not the instant", () => {
@@ -149,8 +172,8 @@ describe("repositoryExportRows", () => {
     const rows = repositoryExportRows([MEASURED, { ...UNMEASURED, production: false }, UNMEASURED], CONTRIBUTORS);
 
     expect(cell(rows, "pcs-api", "Production")).toBe("Yes");
-    expect(rows[2]?.[REPOSITORY_EXPORT_HEADINGS.indexOf("Production")]).toBe("No");
-    expect(rows[3]?.[REPOSITORY_EXPORT_HEADINGS.indexOf("Production")]).toBe("-");
+    expect(rows[2]?.[repositoryExportHeadings().indexOf("Production")]).toBe("No");
+    expect(rows[3]?.[repositoryExportHeadings().indexOf("Production")]).toBe("-");
   });
 
   it("should unpack the owning team's contributors into one cell, separated by a semicolon", () => {
@@ -226,5 +249,101 @@ describe("repositoryExportRows", () => {
 
     expect(document).toContain('"Arah, Tam (ef32)"');
     expect(document.split("\r\n")).toHaveLength(2);
+  });
+});
+
+/**
+ * The columns the hygiene aggregate expands into, which the FILE follows the page on.
+ *
+ * The file and the page must not drift, which is this module's whole premise — so the checks are here exactly when
+ * the reader has expanded them and absent exactly when they have not. Carrying them unconditionally would hand
+ * somebody four columns their page does not show; omitting them from an expanded export would drop data because of
+ * a UI toggle, which is the worse half of the same failure.
+ */
+describe("repositoryExportRows with the hygiene aggregate expanded", () => {
+  it("should head the four checks after the aggregate when the reader has expanded it", () => {
+    // AFTER `Hygiene` AND BEFORE `Secrets`, which is where the table draws them: a file whose column order differed
+    // from the page's is a second document about one window.
+    expect(repositoryExportHeadings(true)).toEqual([
+      "Team",
+      "Team contributors",
+      "Repository",
+      "Detail",
+      "Last pushed",
+      "Visibility",
+      "Code owner",
+      "Hygiene",
+      "Secret scanning",
+      "Push protection",
+      "Vulnerability alerts",
+      "Dependency updates",
+      "Secrets",
+      "Security contact",
+      "Patching cycle",
+      "Maintained",
+      "Production",
+      "Assurance"
+    ]);
+  });
+
+  it("should head no check when the aggregate is collapsed, which is what the page shows", () => {
+    for (const label of ["Secret scanning", "Push protection", "Vulnerability alerts", "Dependency updates"]) {
+      expect(repositoryExportHeadings()).not.toContain(label);
+    }
+  });
+
+  it("should keep every row the width of the header when the checks are drawn", () => {
+    const rows = repositoryExportRows([SIGNALLED, UNMEASURED], CONTRIBUTORS, true);
+
+    for (const row of rows) {
+      expect(row).toHaveLength(repositoryExportHeadings(true).length);
+    }
+  });
+
+  it("should print Yes for a signal that is on and No for one that is off", () => {
+    const rows = repositoryExportRows([SIGNALLED], CONTRIBUTORS, true);
+
+    expect(cell(rows, "hygiene-service", "Secret scanning")).toBe("Yes");
+    expect(cell(rows, "hygiene-service", "Push protection")).toBe("No");
+    // The aggregate is untouched: it is the report's own judgement, not a fold over the cells beside it.
+    expect(cell(rows, "hygiene-service", "Hygiene")).toBe("No");
+  });
+
+  it("should print a dash for a signal nobody read, never a No", () => {
+    // GitHub disclosed nothing about vulnerability alerts on this row, and a repository nobody could read has not
+    // been shown to have the control off. A `No` here would report a missing permission as a finding.
+    const rows = repositoryExportRows([SIGNALLED, UNMEASURED], CONTRIBUTORS, true);
+
+    expect(cell(rows, "hygiene-service", "Vulnerability alerts")).toBe("-");
+    // Nothing was collected for this one at all, so every check is a dash.
+    for (const label of ["Secret scanning", "Push protection", "Vulnerability alerts", "Dependency updates"]) {
+      expect(cell(rows, "quiet-service", label)).toBe("-");
+    }
+  });
+
+  it("should print the two update signals as one column met by either tool", () => {
+    // Dependabot security updates are off and a Renovate configuration is present, which is 244 repositories of
+    // this estate. Two independent columns would put a "No" against every one of them.
+    const rows = repositoryExportRows([SIGNALLED], CONTRIBUTORS, true);
+
+    expect(cell(rows, "hygiene-service", "Dependency updates")).toBe("Yes");
+    expect(repositoryExportHeadings(true).filter((heading) => heading.includes("epend"))).toEqual(["Dependency updates"]);
+  });
+
+  it("should print No for the update requirement only when both signals were read and both are off", () => {
+    const neither: RepositoryRow = {
+      ...SIGNALLED,
+      assurance: { grade: "partial", criteria: [], hygiene: { dependabot_security_updates: false, update_configuration: false } }
+    };
+    const half: RepositoryRow = {
+      ...SIGNALLED,
+      repository: "half-read",
+      assurance: { grade: "partial", criteria: [], hygiene: { dependabot_security_updates: false } }
+    };
+    const rows = repositoryExportRows([neither, half], CONTRIBUTORS, true);
+
+    expect(cell(rows, "hygiene-service", "Dependency updates")).toBe("No");
+    // One read and off, one never read: not a finding, and the dash says so.
+    expect(cell(rows, "half-read", "Dependency updates")).toBe("-");
   });
 });

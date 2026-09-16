@@ -444,9 +444,40 @@ export interface AssuranceCriterionResult {
   detail: string;
 }
 
+/**
+ * The five signals the `automated-hygiene` criterion is judged over, each three-valued.
+ *
+ * ON THE REPORT RATHER THAN INSIDE THE CRITERION'S RESULT, on `oldest_severe_alert_days`'s precedent: the result
+ * carries a SENTENCE naming the control that is missing, and a column cannot render a sentence. A reader expanding
+ * the Hygiene column is asking which of the five is off, so the values reach the contract as values.
+ *
+ * ABSENT IS UNMEASURED AND NEVER `false`. A repository whose `security_and_analysis` block GitHub would not
+ * disclose has not been shown to have scanning switched off, which is why each signal is optional rather than
+ * defaulted — the same rule the outcomes keep by never folding `unknown` into `unmet`.
+ *
+ * `dependabot_security_updates` AND `update_configuration` ARE ONE REQUIREMENT BETWEEN THEM and are carried
+ * separately because they are two facts: which tool keeps the dependencies current. Renovate does not turn
+ * GitHub's Dependabot setting on, so requiring both marked down 244 repositories that update perfectly well.
+ * `HYGIENE_CHECKS` in `lib/rows.ts` is where they are folded back into the one requirement they are.
+ */
+export interface AssuranceHygieneSignals {
+  secret_scanning?: boolean;
+  push_protection?: boolean;
+  vulnerability_alerts?: boolean;
+  dependabot_security_updates?: boolean;
+  update_configuration?: boolean;
+}
+
 export interface AssuranceReport {
   grade: AssuranceGrade;
   criteria: AssuranceCriterionResult[];
+  /**
+   * The hygiene criterion's own signals, for the columns its aggregate expands into.
+   *
+   * Absent for a repository nothing was collected for; present with an absent signal where the collection ran and
+   * GitHub disclosed nothing about that one control.
+   */
+  hygiene?: AssuranceHygieneSignals;
   /**
    * The oldest open critical or high alert, in days.
    *
