@@ -7,11 +7,14 @@ import { PrismaClient } from "./generated/client.js";
  * The one Prisma client, and behind it the one connection pool, that a process is allowed to hold.
  *
  * RESOLVED AT MODULE LOAD AND DELIBERATELY NOT INSIDE `connect`. `cli/run.ts` and `instrumentation.ts` both
- * defer their import of this module until after the properties volume has been read, on the strength of this
- * line running when the module loads: neither chart injects `POSTGRES_*`, they mount the vault as files, so the
- * variables exist only once `getPropertiesVolumeSecrets` has set them. Moving the resolution into the factory
- * would make those two orderings look unnecessary while a pod that got them wrong failed silently, which is the
- * bug those comments were written for.
+ * defer their import of this module until `platform/secrets.ts` has settled where the secrets come from, on the
+ * strength of this line running when the module loads: neither chart injects `POSTGRES_*`, they mount the vault as
+ * files, so the variables exist only once `getPropertiesVolumeSecrets` has set them. Moving the resolution into
+ * the factory would make those two orderings look unnecessary while a pod that got them wrong failed silently,
+ * which is the bug those comments were written for.
+ *
+ * Outside production that decision is to read nothing and leave the compose default standing, which is the same
+ * ordering seen from the other side: what must not happen is this line running before the answer is known.
  */
 const connectionString = applyDatabaseUrl();
 
