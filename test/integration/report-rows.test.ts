@@ -597,13 +597,14 @@ describe("the merge figures a row states", () => {
 });
 
 /**
- * What a row reports for `production`, given the approvals list and the column a person edits.
+ * What a row reports for `production`, given two lists and the column a person edits.
  *
- * THE TWO SOURCES MEET IN THE REPORT LAYER and nowhere else: `deploysToProduction` is stored in the collected
- * payload, `repository_production.production` is set by hand, and the estate read joins them. The rule itself is
- * `reportedProduction`, unit-tested as a truth table; what these cases prove is that the estate read reaches the
- * table at all and that the fold survives the trip — a row keyed by the graph's spelling, looked up against a
- * casefolded key.
+ * THE THREE SOURCES MEET IN THE REPORT LAYER and nowhere else: `deploysToProduction` is stored in the collected
+ * payload, `production_repositories` is read from the policy document, `repository_production.production` is set
+ * by hand, and the estate read joins them. The rule itself is `reportedProduction`, unit-tested as a truth table;
+ * what these cases prove is that the estate read reaches the table at all, that the CONFIGURED LIST reaches the
+ * row from the configuration rather than being dropped between the two, and that the fold survives the trip — a
+ * row keyed by the graph's spelling, looked up against a casefolded key and a hand-typed name.
  */
 describe("the production flag a row reports", () => {
   const REFERENCE = new Date(Date.UTC(2026, 8, 1));
@@ -611,6 +612,21 @@ describe("the production flag a row reports", () => {
   interface ReportedRow {
     repository: string;
     production?: boolean;
+    production_source?: string;
+  }
+
+  /** The estate's policy stating that the named repositories are production services. */
+  function listing(...repositories: string[]) {
+    return parseConfiguration(`
+version: 1
+organization: hmcts
+cohort:
+  visibilities:
+    - public
+  include_archived: false
+production_repositories:
+${repositories.map((repository) => `  - ${repository}`).join("\n")}
+`);
   }
 
   /** One collected repository with the approvals list's answer in its payload, as `runCollect` writes it. */
@@ -632,8 +648,8 @@ describe("the production flag a row reports", () => {
     await prisma.repositoryProduction.create({ data: { organization: ORGANIZATION, repository, production } });
   }
 
-  async function rowFor(repository: string): Promise<ReportedRow | undefined> {
-    const rows = (await repositoryRows(CONFIGURATION, 4, REFERENCE)) as ReportedRow[];
+  async function rowFor(repository: string, configuration = CONFIGURATION): Promise<ReportedRow | undefined> {
+    const rows = (await repositoryRows(configuration, 4, REFERENCE)) as ReportedRow[];
     return rows.find((row) => row.repository === repository);
   }
 
@@ -642,6 +658,70 @@ describe("the production flag a row reports", () => {
     await stated("marked-on", true);
 
     expect((await rowFor("marked-on"))?.production).toBe(true);
+  });
+
+  it("should report production when the configured list names a repository the approvals list does not", async () => {
+    // THE WHOLE POINT OF THE SECOND LIST, and the case that would have been impossible before it: the approvals
+    // list was read and is silent, because the deployment pipeline never approved this repository — 179 of the
+    // 290 names in `metrics.yaml` are in exactly this state, 114 of them Crime Platform.
+    await collected("listed-only", false);
+    await stated("listed-only", null);
+
+    expect(await rowFor("listed-only", listing("listed-only"))).toMatchObject({ production: true, production_source: "configured-list" });
+  });
+
+  it("should report production when the approvals list names a repository the configured list does not", async () => {
+    // The other half of the union. Nothing about adding a list may narrow what the approvals list already answers.
+    await collected("approved-only", true);
+
+    expect(await rowFor("approved-only", listing("something-else"))).toMatchObject({ production: true, production_source: "approvals-list" });
+  });
+
+  it("should report production for a repository the configured list names in another case", async () => {
+    // A name in the policy document is typed by hand and the graph's spelling is not, so the comparison folds at
+    // both ends. Without the fold this repository silently loses its badge.
+    await collected("Cased-Service", false);
+
+    expect(await rowFor("Cased-Service", listing("cased-service"))).toMatchObject({ production: true, production_source: "configured-list" });
+  });
+
+  it("should force production off from the column even where both lists name the repository", async () => {
+    // The only direction that can say no, now that either list saying yes is enough — and the way an entry in
+    // `production_repositories` is retired without deleting the name.
+    await collected("marked-off-both", true);
+    await stated("marked-off-both", false);
+
+    expect(await rowFor("marked-off-both", listing("marked-off-both"))).toMatchObject({ production: false, production_source: "marked" });
+  });
+
+  it("should answer for a listed repository nothing has been collected for", async () => {
+    // The two statement layers do not depend on a walk. A repository the collector has not reached is still one
+    // somebody has listed, and answering nothing here would make the policy conditional on collection — while
+    // the approvals list, which IS read from the collected payload, stays honestly unread.
+    await graphRepository("never-walked", new Date(Date.UTC(2026, 7, 20)));
+
+    expect(await rowFor("never-walked", listing("never-walked"))).toMatchObject({
+      production: true,
+      production_source: "configured-list",
+      detail: "nothing has been collected for this repository"
+    });
+  });
+
+  it("should still report no production answer for an uncollected repository nothing names", async () => {
+    // The other half of the case above: absent means unmeasured, and a repository missing from both lists must not
+    // be reported as "not production" merely for being missing.
+    await graphRepository("never-walked", new Date(Date.UTC(2026, 7, 20)));
+
+    expect(await rowFor("never-walked")).not.toHaveProperty("production");
+  });
+
+  it("should send no source for a repository nothing could answer for", async () => {
+    // The provenance is absent exactly where the answer is: a reader must not meet an authority for an answer
+    // nobody gave.
+    await collected("unlisted");
+    await stated("unlisted", null);
+
+    expect(await rowFor("unlisted", listing("something-else"))).not.toHaveProperty("production_source");
   });
 
   it("should report false when the column says so even though the approvals list names the repository", async () => {

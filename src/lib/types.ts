@@ -53,6 +53,19 @@ export type SonarGateLevel = "OK" | "ERROR" | "NONE";
  */
 export type UnreviewedSubstantialOutcome = "none" | "within" | "above";
 
+/**
+ * Which of the three sources settled a repository's production answer.
+ *
+ * `store.ProductionSource` verbatim, restated here for this file's own rule: the UI contract imports nothing.
+ *
+ * - `approvals-list` — the organisation's production-approvals list, the deployment pipeline's own document. It
+ *   is also what answers `false`: read, and silent about this repository.
+ * - `configured-list` — the service's own list in `metrics.yaml`, which exists for the production services that
+ *   document cannot name. It only ever adds, so it never answers `false`.
+ * - `marked` — the column somebody edited, which decides in both directions over both lists.
+ */
+export type ProductionSource = "approvals-list" | "configured-list" | "marked";
+
 export interface RateObservation {
   status: ObservationStatus;
   numerator: number;
@@ -635,14 +648,23 @@ export interface RepositoryRow {
   sonar_security_issues?: number;
   detail?: string;
   /**
-   * Whether the organisation's production approvals list holds this repository.
+   * Whether this repository is treated as a production service, by any of the three sources that say so.
    *
    * The one field here that is not read from the window at all, and it follows the same rule as
-   * every count above it: ABSENT MEANS NO LIST COULD BE READ, and `false` means the list was read
-   * and does not name this repository. Both render no badge — there is no non-production badge —
-   * but the filter and its count can only be honest about the difference if the field keeps it.
+   * every count above it: ABSENT MEANS NOTHING COULD ANSWER — the organisation's approvals list was
+   * unread, the service's own list does not name it and nobody has marked it — where `false` means
+   * something answered no. Both render no badge — there is no non-production badge — but the filter
+   * and its count can only be honest about the difference if the field keeps it.
    */
   production?: boolean;
+  /**
+   * WHICH of the three said so, absent exactly where `production` is.
+   *
+   * Carried because the column means three things now and a reader meeting "Yes" is owed which one.
+   * It decides no filter, no order and no colour: it is shown as the cell's tooltip and nothing
+   * branches on it, so an older service that sends none renders the cell exactly as before.
+   */
+  production_source?: ProductionSource;
 }
 
 /**

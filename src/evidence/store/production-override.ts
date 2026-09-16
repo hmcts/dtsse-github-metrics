@@ -7,17 +7,19 @@ import { StorageError } from "./storage-error.ts";
  * The organisation states production approval in one document — `environment-approvals.yml` in
  * `cnp-jenkins-config`, read by `inventory/production.ts` — and that document is the pipeline's, not this
  * dashboard's. Some services deploy to production without appearing in it, and some appear in it wrongly, so
- * `repository_production` holds one row per repository and a `production` column somebody edits.
+ * `metrics.yaml` carries a second list this repository maintains and `repository_production` holds one row per
+ * repository and a `production` column somebody edits. `reportedProduction` is where all three meet.
  *
  * A TRI-STATE, and all three states are answers:
  *
- *   `true`   this IS a production service, whatever the approvals list says
- *   `false`  this is NOT a production service, whatever the approvals list says
- *   NULL     nobody has an opinion, so the approvals list answers
+ *   `true`   this IS a production service, whatever either list says
+ *   `false`  this is NOT a production service, whatever either list says
+ *   NULL     nobody has an opinion, so the two lists answer
  *
- * `false` is what a set of marked names cannot express. An override that can only ever ADD leaves no way to
- * say "the approvals list names this and it is wrong", and NULL is what keeps an UNREAD list unread rather
- * than letting anything turn it into a confident `false` — see `reportedProduction`.
+ * `false` is what a set of marked names cannot express, and it is the ONLY WAY TO SAY NO now that two lists can
+ * say yes. An override that can only ever ADD leaves no way to say "a list names this and it is wrong", and NULL
+ * is what keeps an UNREAD approvals list unread rather than letting anything turn it into a confident `false` —
+ * see `reportedProduction`.
  *
  * THE IMPORT CANNOT OVERWRITE THE FLAG, and that is STRUCTURAL rather than a rule to remember: the collection's
  * only contact with this table is `seedProduction`, an `INSERT … ON CONFLICT DO NOTHING`, so it can add keys and
@@ -41,10 +43,11 @@ import { StorageError } from "./storage-error.ts";
  * WHERE organization = 'hmcts' AND repository = 'pcs-api';
  * ```
  *
- * `production = false` forces the badge OFF even where the approvals list names the repository, and
- * `production = NULL` hands the answer back to the list. `marked_by` and `reason` are optional and may be set
- * in the same statement — `SET production = true, marked_by = 'somebody@hmcts.net', reason = '…'` — but nothing
- * refuses the tick without them, which is the point of the shape.
+ * `production = false` forces the badge OFF even where BOTH lists name the repository — which is how an entry in
+ * `metrics.yaml`'s `production_repositories` is retired, rather than by deleting the name — and `production = NULL`
+ * hands the answer back to the lists. `marked_by` and `reason` are optional and may be set in the same statement —
+ * `SET production = true, marked_by = 'somebody@hmcts.net', reason = '…'` — but nothing refuses the tick without
+ * them, which is the point of the shape.
  *
  * `marked_at` IS STAMPED BY A TRIGGER and must not be set by hand. It moves only when `production` moves, so it
  * reads as when the flag was DECIDED: NULL on a row nobody has touched, and unchanged by an `UPDATE` that only
@@ -64,7 +67,7 @@ import { StorageError } from "./storage-error.ts";
 export interface ProductionMark {
   organization: string;
   repository: string;
-  /** `true` forces production on, `false` forces it off, `undefined` defers to the approvals list. */
+  /** `true` forces production on, `false` forces it off, `undefined` defers to the two lists. */
   production: boolean | undefined;
   /** Who is stating this — an email, or whatever identifies them to their colleagues. */
   markedBy?: string;
@@ -76,10 +79,10 @@ export interface ProductionMark {
  * What each of one organisation's repositories has been said about, as `repository → production`.
  *
  * A `Map` AND NOT A `Set`, because a set cannot hold three states: a name absent from a set and a name mapped to
- * `false` are the difference between "the approvals list answers" and "the approvals list is wrong". Rows whose
- * flag is NULL are LEFT OUT rather than mapped to `undefined`, so the map holds only the repositories somebody
- * has an opinion about — a handful of entries against an estate of 3,277 — and `reportedProduction` can read a
- * missing key as deferral without distinguishing two kinds of absence.
+ * `false` are the difference between "the lists answer" and "the lists are wrong". Rows whose flag is NULL are
+ * LEFT OUT rather than mapped to `undefined`, so the map holds only the repositories somebody has an opinion
+ * about — a handful of entries against an estate of 3,277 — and `reportedProduction` can read a missing key as
+ * deferral without distinguishing two kinds of absence.
  *
  * `marked_by` and `reason` are not selected. No report reads them, and lifting them into the report layer would
  * put a person's name on a page nobody asked to publish it on.
@@ -181,29 +184,87 @@ export async function markProduction(mark: ProductionMark): Promise<boolean> {
   }
 }
 
+/** Which of the three layers settled a repository's answer. Absent where none of them could. */
+export type ProductionSource = "approvals-list" | "configured-list" | "marked";
+
 /**
- * What a repository's `production` field reports, given what the approvals list said and what a person said.
+ * One repository's answer and where it came from.
+ *
+ * Both keys absent is the whole of "nobody could say", so nothing here is ever `null` and a caller spreads the
+ * two straight onto a row for `stripAbsent` to drop. A source without an answer cannot happen: a layer that
+ * answered is a layer that said `true` or `false`.
+ */
+export interface ProductionAnswer {
+  production?: boolean;
+  source?: ProductionSource;
+}
+
+/**
+ * The two layers that name repositories, as the rule looks them up: casefolded on both sides.
+ *
+ * `declared` is `metrics.yaml`'s `production_repositories` folded once per report build rather than per row —
+ * 290 names against 1,892 repositories over five spans is the arithmetic that makes a per-row fold worth
+ * avoiding — and `marked` is `productionOverrides`' map, whose keys the CHECK constraint already holds lowercase.
+ */
+export interface ProductionLayers {
+  declared: ReadonlySet<string>;
+  marked: ReadonlyMap<string, boolean>;
+}
+
+/** `metrics.yaml`'s list in the shape `reportedProduction` reads it. Folded, for the reason `ProductionLayers` gives. */
+export function declaredProduction(repositories: readonly string[]): ReadonlySet<string> {
+  return new Set(repositories.map((repository) => repository.toLowerCase()));
+}
+
+/**
+ * What a repository's `production` field reports, given two lists and what a person said.
  *
  * THE ONE RULE, kept here beside the loader that produces the map so that the report layer has a single call to
- * make and no fold to remember.
+ * make and no fold to remember. THREE LAYERS, most authoritative last:
  *
- * | approvals list         | the column | reported    |
- * | ---------------------- | ---------- | ----------- |
- * | names it (`true`)      | NULL       | `true`      |
- * | names it (`true`)      | `true`     | `true`      |
- * | names it (`true`)      | `false`    | `false`     |
- * | read, silent (`false`) | NULL       | `false`     |
- * | read, silent (`false`) | `true`     | `true`      |
- * | read, silent (`false`) | `false`    | `false`     |
- * | unread (`undefined`)   | NULL       | `undefined` |
- * | unread (`undefined`)   | `true`     | `true`      |
- * | unread (`undefined`)   | `false`    | `false`     |
+ *   1. the approvals list — `environment-approvals.yml`, the deployment pipeline's own document
+ *   2. `metrics.yaml`'s `production_repositories` — this repository's list, for the services that document cannot name
+ *   3. `repository_production.production` — the column somebody edits
  *
- * THE COLUMN WINS WHERE IT HAS AN ANSWER, in both directions. What it may not do is invent one: a repository
- * nobody has an opinion about is reported exactly as the approvals list reports it, INCLUDING the `undefined`
- * that says the list could not be read — the distinction `inventory/production.ts` refuses to collapse and that
- * `RepositoryRow.production` carries all the way to an absent JSON key.
+ * | approvals list         | configured list | the column | reported    | source          |
+ * | ---------------------- | --------------- | ---------- | ----------- | --------------- |
+ * | names it (`true`)      | either          | NULL       | `true`      | approvals-list  |
+ * | read, silent (`false`) | names it        | NULL       | `true`      | configured-list |
+ * | read, silent (`false`) | silent          | NULL       | `false`     | approvals-list  |
+ * | unread (`undefined`)   | names it        | NULL       | `true`      | configured-list |
+ * | unread (`undefined`)   | silent          | NULL       | `undefined` | absent          |
+ * | either                 | either          | `true`     | `true`      | marked          |
+ * | either                 | either          | `false`    | `false`     | marked          |
+ *
+ * THE TWO LISTS ARE A UNION and the column is not: either list naming a repository is enough, because each is a
+ * statement that somebody deploys it and neither is a claim about what the other holds. The column then decides in
+ * BOTH DIRECTIONS over both of them, which is what makes `false` the only way to say no.
+ *
+ * WHAT NO LAYER MAY DO IS INVENT AN ANSWER. A repository nobody has an opinion about and neither list names is
+ * reported exactly as the approvals list reports it, INCLUDING the `undefined` that says the list could not be
+ * read — the distinction `inventory/production.ts` refuses to collapse and that `RepositoryRow.production` carries
+ * all the way to an absent JSON key. The configured list cannot turn that absence into a `false`: it holds names,
+ * so its silence about a repository is not a reading of one.
+ *
+ * THE SOURCE IS REPORTED BECAUSE THE COLUMN NOW MEANS THREE THINGS. A reader meeting "Yes" has a fair question —
+ * which of the three said so — and with a hand-maintained list expected to accumulate `false` overrides beneath
+ * it, that question is the one somebody will ask first. The approvals list is named where it says `true` even if
+ * the configured list also names the repository: it is the organisation's own document, so it is the stronger
+ * provenance for the same answer, and the configured list is named only where it is the layer that added one.
  */
-export function reportedProduction(deploysToProduction: boolean | undefined, overrides: ReadonlyMap<string, boolean>, repository: string): boolean | undefined {
-  return overrides.get(repository.toLowerCase()) ?? deploysToProduction;
+export function reportedProduction(deploysToProduction: boolean | undefined, layers: ProductionLayers, repository: string): ProductionAnswer {
+  const folded = repository.toLowerCase();
+  const marked = layers.marked.get(folded);
+  if (marked !== undefined) {
+    return { production: marked, source: "marked" };
+  }
+  if (deploysToProduction === true) {
+    return { production: true, source: "approvals-list" };
+  }
+  if (layers.declared.has(folded)) {
+    return { production: true, source: "configured-list" };
+  }
+  // The approvals list read and silent about a repository nobody has listed anywhere is a `false` somebody
+  // observed. An UNREAD one is not, and stays absent.
+  return deploysToProduction === undefined ? {} : { production: false, source: "approvals-list" };
 }

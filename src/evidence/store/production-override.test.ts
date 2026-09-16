@@ -1,14 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { markProduction, productionOverrides, reportedProduction, seedProduction } from "./production-override.ts";
+import {
+  declaredProduction,
+  markProduction,
+  type ProductionLayers,
+  type ProductionSource,
+  productionOverrides,
+  reportedProduction,
+  seedProduction
+} from "./production-override.ts";
 import { StorageError } from "./storage-error.ts";
 
 /**
  * The rule and the folding, WITHOUT POSTGRES.
  *
  * `reportedProduction` is pure, so the truth table is a table of literals — which is the point of the rule
- * living in one function: the combination of "the approvals list said" and "the column says" is decided here
- * and asserted here, rather than being an expression somewhere in the report layer that only an integration
- * test can reach.
+ * living in one function: the combination of what the approvals list said, what the configured list names and
+ * what the column says is decided here and asserted here, rather than being an expression somewhere in the
+ * report layer that only an integration test can reach. Three layers is 18 combinations, which is exactly why
+ * they belong in one table rather than in a chain of `??`s.
  *
  * The readers and writers touch Postgres, so the generated client is the one thing mocked. What that leaves
  * under test is what this module actually decides about them: that both keys are casefolded before they reach
@@ -33,33 +42,74 @@ beforeEach(() => {
   executeRaw.mockResolvedValue(0);
 });
 
+/** The three layers, none of them naming anything, which each case below adds only what it is about. */
+function layers(declared: string[] = [], marked: [string, boolean][] = []): ProductionLayers {
+  return { declared: declaredProduction(declared), marked: new Map(marked) };
+}
+
+/** One row of the truth table. Every key omitted is that layer saying nothing. */
+interface Case {
+  /** What the approvals list said: named, read and silent, or unread. */
+  approvals?: boolean;
+  /** Whether `metrics.yaml`'s list names it. */
+  configured?: boolean;
+  /** What the column holds, where somebody has an opinion. */
+  marked?: boolean;
+  production?: boolean;
+  source?: ProductionSource;
+}
+
 describe("reportedProduction", () => {
-  it.each([
-    ["names it and nobody has an opinion", true, undefined, true],
-    ["names it and somebody forced it on", true, true, true],
-    ["names it and somebody forced it off", true, false, false],
-    ["was read and is silent, with no opinion", false, undefined, false],
-    ["was read and is silent, but somebody forced it on", false, true, true],
-    ["was read and is silent, and somebody forced it off", false, false, false],
-    ["could not be read, with no opinion", undefined, undefined, undefined],
-    ["could not be read, but somebody forced it on", undefined, true, true],
-    ["could not be read, and somebody forced it off", undefined, false, false]
-  ])("should report %s", (_case, approved: boolean | undefined, stated: boolean | undefined, expected: boolean | undefined) => {
-    const overrides = new Map(stated === undefined ? [] : [["pcs-api", stated]]);
+  it.each<[string, Case]>([
+    ["names it and nobody has an opinion", { approvals: true, production: true, source: "approvals-list" }],
+    ["names it and somebody forced it on", { approvals: true, marked: true, production: true, source: "marked" }],
+    ["names it and somebody forced it off", { approvals: true, marked: false, production: false, source: "marked" }],
+    ["was read and is silent, with no opinion", { approvals: false, production: false, source: "approvals-list" }],
+    ["was read and is silent, but somebody forced it on", { approvals: false, marked: true, production: true, source: "marked" }],
+    ["was read and is silent, and somebody forced it off", { approvals: false, marked: false, production: false, source: "marked" }],
+    ["could not be read, with no opinion", {}],
+    ["could not be read, but somebody forced it on", { marked: true, production: true, source: "marked" }],
+    ["could not be read, and somebody forced it off", { marked: false, production: false, source: "marked" }],
+    // The layer this table gained. It can only add, so every `false` below comes from one of the other two.
+    ["the configured list names it and the approvals list is silent", { approvals: false, configured: true, production: true, source: "configured-list" }],
+    ["the configured list names it and the approvals list could not be read", { configured: true, production: true, source: "configured-list" }],
+    ["both lists name it, the organisation's document answering for it", { approvals: true, configured: true, production: true, source: "approvals-list" }],
+    ["the configured list names it and somebody forced it off", { approvals: false, configured: true, marked: false, production: false, source: "marked" }],
+    ["the configured list names it and somebody forced it on as well", { configured: true, marked: true, production: true, source: "marked" }],
+    ["neither list names it and somebody forced it on", { marked: true, production: true, source: "marked" }]
+  ])("should report %s", (_case, given) => {
+    const stated = layers(given.configured === true ? ["pcs-api"] : [], given.marked === undefined ? [] : [["pcs-api", given.marked]]);
 
-    expect(reportedProduction(approved, overrides, "pcs-api")).toBe(expected);
+    const answer = reportedProduction(given.approvals, stated, "pcs-api");
+
+    expect(answer.production).toBe(given.production);
+    expect(answer.source).toBe(given.source);
   });
 
-  it("should leave an unread list unread when the opinion belongs to another repository", () => {
+  it("should leave an unread list unread when neither list names it and the opinion belongs to another repository", () => {
     // The absence that must not be filled in: `false` would state that the approvals list was read and does not
-    // name this repository, which nobody observed.
-    expect(reportedProduction(undefined, new Map([["something-else", true]]), "pcs-api")).toBeUndefined();
+    // name this repository, which nobody observed. A configured list holding OTHER names does not observe it
+    // either — the list can add an answer and never a negative one.
+    expect(reportedProduction(undefined, layers(["something-else"], [["something-else", true]]), "pcs-api")).toEqual({});
   });
 
-  it("should match the flag against the repository name whatever case the graph reports it in", () => {
+  it("should match both lists against the repository name whatever case the graph reports it in", () => {
     // GitHub names are case-insensitive and the stored keys are casefolded, so the lookup has to fold too —
-    // otherwise a repository the organisation writes as `PCS-API` silently loses its badge.
-    expect(reportedProduction(false, new Map([["pcs-api", true]]), "PCS-API")).toBe(true);
+    // otherwise a repository the organisation writes as `PCS-API` silently loses its badge. The configured list
+    // is typed by hand, so it can differ in case at EITHER end.
+    expect(reportedProduction(false, layers([], [["pcs-api", true]]), "PCS-API")).toEqual({ production: true, source: "marked" });
+    expect(reportedProduction(false, layers(["PCS-API"]), "pcs-api")).toEqual({ production: true, source: "configured-list" });
+    expect(reportedProduction(undefined, layers(["pcs-api"]), "PCS-API")).toEqual({ production: true, source: "configured-list" });
+  });
+});
+
+describe("declaredProduction", () => {
+  it("should fold the configured names once, so the rule does not fold 290 of them per row", () => {
+    expect(declaredProduction(["PCS-API", "cp-maven-parent-pom"])).toEqual(new Set(["pcs-api", "cp-maven-parent-pom"]));
+  });
+
+  it("should hold nothing for a deployment that states no list", () => {
+    expect(declaredProduction([])).toEqual(new Set());
   });
 });
 

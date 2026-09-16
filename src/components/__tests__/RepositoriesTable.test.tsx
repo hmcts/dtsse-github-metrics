@@ -19,7 +19,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositoriesTable } from "@/components/RepositoriesTable";
-import { PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
+import { PRODUCTION_SOURCE_HINT, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
 import { INDIVIDUAL_LABEL } from "@/lib/rows";
 import type { RepositoryRow } from "@/lib/types";
 
@@ -71,6 +71,9 @@ const ROWS: RepositoryRow[] = [
     // The only production service here, so the toggle's count is one and the row it leaves is
     // known: `docs` was read and is not one, and `api`'s answer is absent entirely.
     production: true,
+    // Answered by the organisation's own document, where `docs` below is answered by a hand-marked column: the
+    // two sources are crossed over the two answers, so a cell reading the wrong one cannot pass by coincidence.
+    production_source: "approvals-list",
     assurance: {
       grade: "partial",
       criteria: [
@@ -102,6 +105,8 @@ const ROWS: RepositoryRow[] = [
     direct_commits: 1,
     required_approving_reviews: 2,
     production: false,
+    // Forced off by hand, which is the only layer that can say no — see `reportedProduction`.
+    production_source: "marked",
     assurance: {
       grade: "partial",
       criteria: [
@@ -498,6 +503,38 @@ describe("RepositoriesTable production column", () => {
 
     for (const repository of ["web", "docs", "api"]) {
       expect(productionCell(repository)?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
+    }
+  });
+
+  it("says which of the three sources answered, on the cell rather than in a column of its own", () => {
+    // The column means three things now — the organisation's approvals list, this service's own list, and a
+    // marked column — so "Yes" alone leaves a reader unable to tell an approved service from a hand-listed one.
+    mount();
+
+    expect(productionCell("web")?.getAttribute("title")).toBe(PRODUCTION_SOURCE_HINT["approvals-list"]);
+    expect(productionCell("docs")?.getAttribute("title")).toBe(PRODUCTION_SOURCE_HINT.marked);
+  });
+
+  it("hovers nothing on a row whose answer no source gave", () => {
+    // `api` carries neither field. An empty bubble over a dash would offer a provenance for an answer nobody gave.
+    mount();
+
+    expect(productionCell("api")?.hasAttribute("title")).toBe(false);
+  });
+
+  it("heads the column with all three sources and no CNP qualifier", () => {
+    // The hint used to name the approvals list alone and end "Only applicable to CNP repositories", which the
+    // second list makes false: most of what it adds was never onboarded to CNP at all.
+    mount();
+
+    // Read off the tooltip's trigger, which is where `SortHeader` puts the hint: the `<th>` is named with the
+    // label alone so a screen reader does not recite two sentences of prose under every cell.
+    const tooltip = within(headerCell("Production")).getByRole("button", { name: /production-approvals/ });
+    const hint = tooltip.getAttribute("aria-label") ?? "";
+
+    expect(hint).not.toMatch(/CNP/);
+    for (const phrase of ["production-approvals list", "own production list", "marked by hand"]) {
+      expect(hint).toContain(phrase);
     }
   });
 });

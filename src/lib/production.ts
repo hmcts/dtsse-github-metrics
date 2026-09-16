@@ -21,8 +21,33 @@
  * component holds a `royal-*` utility or a hex literal of its own.
  */
 
+import type { ProductionSource } from "@/lib/types";
+
 /** The word. A repository is either a production service or it is not badged at all. */
 export const PRODUCTION_LABEL = "Production";
+
+/**
+ * WHERE THE ANSWER CAME FROM, as the sentence the cell hovers.
+ *
+ * Three sources answer this column and a reader meeting "Yes" cannot tell which — so each names itself, in the
+ * words a reader could act on: one sends them to the pipeline's document, one to `metrics.yaml` and one to the
+ * database column. `approvals-list` reads for the `false` it also gives, which is why it says "read" rather than
+ * "names this repository".
+ *
+ * A TOOLTIP AND NOT A COLUMN. It qualifies an answer that is already on the row rather than adding one, and a
+ * fourth production column on a table of thirteen would cost every reader width to tell most of them what they
+ * had already guessed.
+ */
+export const PRODUCTION_SOURCE_HINT: Record<ProductionSource, string> = {
+  "approvals-list": "From the organisation's production-approvals list, which the deployment pipeline reads.",
+  "configured-list": "From this service's own production list in metrics.yaml, which names services the approvals list does not.",
+  marked: "Marked by hand in the database, which overrides both lists in either direction."
+};
+
+/** The sentence for a row's source, or nothing for a row whose answer no source gave. */
+export function productionHint(source?: ProductionSource): string | undefined {
+  return source === undefined ? undefined : PRODUCTION_SOURCE_HINT[source];
+}
 
 /** The badge: `RAG_BADGE`'s shape in the royal palette, border included and for its reason. */
 export const PRODUCTION_BADGE = "bg-royal-surface text-royal-text border border-royal-border";

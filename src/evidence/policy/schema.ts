@@ -350,7 +350,23 @@ export const configurationSchema = z
     // HMCTS URL, stated as a policy default to argue with rather than a fact about every
     // organisation. `null` turns the fetch off, which is what an organisation with no such list
     // wants: the field is then absent on every row and no repository carries a production badge.
-    production_list_url: z.string().nullable().default(PRODUCTION_LIST_URL)
+    production_list_url: z.string().nullable().default(PRODUCTION_LIST_URL),
+    // REPOSITORIES THIS ORGANISATION STATES ARE PRODUCTION SERVICES, which is the middle of the three layers a
+    // row's answer is resolved through: the approvals list above, then this, then `repository_production.production`.
+    //
+    // IT EXISTS FOR THE SERVICES THE APPROVALS LIST CANNOT NAME. That document is the deployment pipeline's, so a
+    // production service the pipeline never approved is invisible to it — of the 290 names this deployment lists,
+    // 179 are absent from it and 114 of those are Crime Platform repositories, which were never onboarded to CNP.
+    // Policy belongs in a reviewed file for the reason every other list here does: it can be argued with without
+    // waiting for a release.
+    //
+    // A UNION AND NEVER AN OVERRIDE — this list can only ADD. Saying "not a production service" is the manual
+    // column's job, and that is also how an entry here is retired: `UPDATE repository_production SET production =
+    // false`, and not by deleting the name, which loses the record that the repository was ever considered.
+    //
+    // Matched case-insensitively against the cohort's own spelling, as `cohort.no_direct_pushes` is: a name here
+    // is typed by hand and a repository name is not. A name matching no repository does nothing.
+    production_repositories: z.array(z.string()).default([])
   })
   .strict()
   .superRefine(validateCrossReferences);
