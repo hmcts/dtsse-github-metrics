@@ -239,6 +239,41 @@ Helm does not manage the field — the decision lived only in the cluster, invis
 who re-enabled it, and it did not generalise: `collect-org` arrived enabled on both clusters with nothing to
 explain why its neighbour was not.
 
+### Where a run's calls went
+
+Both collectors end by printing what they spent, and the two numbers there answer different questions.
+**`GitHub calls` counts OPERATIONS**, one per thing the run asked for however many attempts it took. The lines
+under it count **ATTEMPTS**, largest first, so they sum to more than the total whenever anything was retried.
+The shape of it, with the counts standing in for whatever a given run's were:
+
+```
+collected 1889 of 1889 repositories (1240 walked for behaviour) in N GitHub calls
+  200 ok GET https://api.github.com/repos/{organization}/{repository}/dependabot/alerts?state=open&per_page=100 (x1889)
+  200 ok POST https://api.github.com/graphql AssuranceSignals (x38)
+  200 ok GET https://api.github.com/orgs/{organization}/repos?per_page=100&type=all (x19)
+  502 retried POST https://api.github.com/graphql MergedPullRequests (x11)
+  403 rate-limited GET https://api.github.com/repos/{organization}/{repository}/code-scanning/alerts?state=open&per_page=100 (x4)
+  0 exhausted POST https://api.github.com/graphql MergedPullRequests (x1)
+  waited 612s for the graphql quota across 3 pauses
+```
+
+That third line is **the whole estate's metadata**: `security_and_analysis` and the default branch come off one
+paginated `GET /orgs/{org}/repos` rather than one `GET /repos/{org}/{repo}` per repository, which is about 19
+pages against 1,889 calls. A repository the organisation does not list — renamed, transferred or deleted since
+`collect-org` ran — falls back to its own read and is named in the log. `--repository` keeps the direct read,
+because paging an organisation to find one repository costs more than reading it.
+
+Five words carry the answers a total cannot. `retried` and `rate-limited` are attempts that came back and were
+asked again — a 502 that succeeded second time, and a spent quota this client waited out, which is kept apart
+from `refused` because a 403 is GitHub's answer to both. `unreachable` is an attempt no response arrived for,
+counted at status 0 because there is none. **`exhausted` is an operation that gave up**, and it is the one worth
+grepping for: a run that spent its afternoon waiting and got nothing was previously recorded as no outcome at
+all, so the run that failed could not be explained from its own log. The `waited` lines are not calls — no
+request is made while standing still — and are the only place an hour of a run is accounted for.
+
+GraphQL is counted **by operation name**, because every GraphQL call is a POST to one address: without the name
+an assurance batch of 38 documents and a merge walk of several thousand are one indistinguishable line.
+
 ### Authenticating
 
 A run authenticates **either as a GitHub App installation or with a personal access token**, and the two do not

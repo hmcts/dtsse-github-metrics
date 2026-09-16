@@ -82,7 +82,9 @@ export async function openAlerts(
 ): Promise<AlertFamilyResult> {
   const records: unknown[] = [];
   try {
-    for await (const page of client.paginate<unknown>(`/repos/${organization}/${repository}/${family}`, { state: "open" })) {
+    // `per_page=100` for GitHub's default of 30. HMCTS repositories routinely carry 50-200 open Dependabot
+    // alerts, so the default was paying for three or four pages where one would do.
+    for await (const page of client.paginate<unknown>(`/repos/${organization}/${repository}/${family}`, { state: "open", per_page: 100 })) {
       records.push(...page);
     }
   } catch (error) {

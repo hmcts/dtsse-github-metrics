@@ -1,7 +1,7 @@
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { type BodyFailure, classify, failureMessage, graphqlBodyFailure, graphqlRateLimited } from "./classify.ts";
 import type { GitHubCredentials } from "./credentials.ts";
-import { endpointTemplate } from "./endpoint-template.ts";
+import { endpointTemplate, graphqlOperationName } from "./endpoint-template.ts";
 
 /**
  * The authenticated GitHub client. Ported from `metrics.github.GitHubClient`.
@@ -34,13 +34,38 @@ export interface RateLimitBudget {
  * on, and a 502 is neither — so the word beside the status is what a reader counts by. The status is the
  * one the failure IS rather than the one it travelled in, so a GraphQL refusal is counted at 403 with the
  * refusals rather than at the 200 GitHub wrapped it in.
+ *
+ * ONE OUTCOME PER ATTEMPT, and the word says what that attempt did. Four of them describe an attempt that
+ * was not the last:
+ *
+ * - `retried` — the response was not usable and another attempt followed. A 500, or a 401 answered by
+ *   minting a fresh token.
+ * - `rate-limited` — the response was a spent quota, which this client waited out and asked again. Kept
+ *   apart from `refused` because the whole retry policy rests on not confusing the two: a 403 is GitHub's
+ *   answer to both, and counting a spent quota as a refusal records "nobody may look" as a fact about a
+ *   repository.
+ * - `unreachable` — no response arrived at all, so there is no status; counted at 0.
+ * - `exhausted` — this attempt was the last and the operation gave up on it. The one word that says a run
+ *   DID NOT GET ITS ANSWER, which is why it exists: a rate limit or a dead socket that outlasted
+ *   `maximumAttempts` used to be counted as no outcome whatsoever, so the run that failed could not be
+ *   explained from its own summary.
  */
 export interface CallOutcome {
   status: number;
-  outcome: "ok" | "errors" | "disabled" | "refused" | "failed";
+  outcome: "ok" | "errors" | "disabled" | "refused" | "failed" | "retried" | "rate-limited" | "unreachable" | "exhausted";
   method: string;
   endpoint: string;
 }
+
+/** How long one resource's quota made a run stand still, and how many times. */
+export interface RateLimitWait {
+  resource: string;
+  seconds: number;
+  count: number;
+}
+
+/** The status counted for an attempt no response arrived for. There is no HTTP status to report. */
+const NO_RESPONSE = 0;
 
 export interface GitHubClientOptions {
   credentials: GitHubCredentials;
@@ -71,6 +96,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
 
   const rateLimits = new Map<string, RateLimitBudget>();
   const outcomes = new Map<string, { outcome: CallOutcome; count: number }>();
+  const waits = new Map<string, { seconds: number; count: number }>();
   let requestsIssued = 0;
 
   /**
@@ -119,6 +145,10 @@ export function createGitHubClient(options: GitHubClientOptions) {
    *
    * The wait is announced at warning rather than debug because it is the one place a collection stops for
    * minutes at a time without issuing a request: a silent pause here is indistinguishable from a hang.
+   *
+   * It is also COUNTED, and separately from the call outcomes: no call is made here, so recording one would
+   * report a request that never happened. It is counted at all because the summary's job is to say where a
+   * run's hours went, and an hour spent standing still is the one answer the outcome lines cannot give.
    */
   async function waitForRateLimit(resource: string): Promise<void> {
     const budget = rateLimits.get(resource);
@@ -126,6 +156,8 @@ export function createGitHubClient(options: GitHubClientOptions) {
       return;
     }
     const delay = Math.max(budget.resetsAt - clock(), 0);
+    const waited = waits.get(resource);
+    waits.set(resource, { seconds: (waited?.seconds ?? 0) + delay, count: (waited?.count ?? 0) + 1 });
     console.warn(
       `GitHub ${resource} quota spent (${budget.remaining} of ${budget.limit} left, reserve ${rateLimitReserve}), waiting ${delay.toFixed(0)}s for the window to reset`
     );
@@ -204,6 +236,34 @@ export function createGitHubClient(options: GitHubClientOptions) {
   }
 
   /**
+   * Counts one attempt, without logging it.
+   *
+   * SEPARATE FROM `logOutcome` so that the retry paths can be counted while the summary keeps its "exactly
+   * one line per response" rule: an attempt this client is about to retry already logs the line saying so,
+   * and counting it there rather than logging again is what keeps the two from doubling up.
+   */
+  function countOutcome(status: number, outcome: CallOutcome["outcome"], method: string, endpoint: string): void {
+    const key = `${status} ${outcome} ${method} ${endpoint}`;
+    const existing = outcomes.get(key);
+    if (existing === undefined) {
+      outcomes.set(key, { outcome: { status, outcome, method, endpoint }, count: 1 });
+    } else {
+      existing.count += 1;
+    }
+  }
+
+  /**
+   * Whether a response about to be retried was a SPENT QUOTA rather than a server error.
+   *
+   * Re-derived from the response rather than plumbed out of the delay deciders, because the deciders answer
+   * "how long" and this asks "why", and both `rateLimitDelay` and `graphqlRateLimited` are pure reads of a
+   * response already in hand. It decides one word in the summary and nothing about the retry itself.
+   */
+  function isRateLimited(response: Response, body: string, isGraphql: boolean): boolean {
+    return rateLimitDelay(response, body) !== undefined || (isGraphql && graphqlRateLimited(body));
+  }
+
+  /**
    * Logs EXACTLY ONE LINE for one GitHub response, at a level chosen by what came back, and counts it.
    *
    * A disabled feature logs at debug beside a 200 rather than at warning, so AT THE DEFAULT LEVEL A 403 IN
@@ -214,8 +274,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
    * GitHub's access controls into a plain file on disk. A failure logs GitHub's own `message` and nothing
    * else of the body.
    */
-  function logOutcome(response: Response, method: string, url: string, body: string, bodyFailure?: BodyFailure): void {
-    const endpoint = endpointTemplate(url);
+  function logOutcome(response: Response, method: string, endpoint: string, body: string, bodyFailure?: BodyFailure): void {
     const failure = bodyFailure;
     const status = failure?.status ?? response.status;
 
@@ -236,13 +295,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
       outcome = "ok";
     }
 
-    const key = `${status} ${outcome} ${method} ${endpoint}`;
-    const existing = outcomes.get(key);
-    if (existing === undefined) {
-      outcomes.set(key, { outcome: { status, outcome, method, endpoint }, count: 1 });
-    } else {
-      existing.count += 1;
-    }
+    countOutcome(status, outcome, method, endpoint);
 
     // `(equivalent)` so nobody reads the status as one HTTP returned.
     const equivalent = failure !== undefined && failure.status !== response.status ? " (equivalent)" : "";
@@ -264,12 +317,15 @@ export function createGitHubClient(options: GitHubClientOptions) {
    * Issues one request with retries, returning its body.
    *
    * `requestsIssued` counts an OPERATION once regardless of how many attempts it took; the outcome
-   * counters count each RESPONSE. Two different numbers, both surfaced, because "how much did this run
-   * cost GitHub" and "what did GitHub answer" are different questions.
+   * counters count each ATTEMPT. Two different numbers, both surfaced, because "how much did this run
+   * cost GitHub" and "what did GitHub answer" are different questions — and the second one has to include
+   * the attempts that were retried, waited out or given up on, or a run's summary describes a cheaper and
+   * more successful run than the one that happened.
    */
-  async function request(method: string, url: string, init: RequestInit, resource: string): Promise<GitHubResponse> {
+  async function request(method: string, url: string, init: RequestInit, resource: string, operation?: string): Promise<GitHubResponse> {
     requestsIssued += 1;
     let refreshed = false;
+    const endpoint = endpointTemplate(url, operation);
 
     for (let attempt = 1; ; attempt += 1) {
       await waitForRateLimit(resource);
@@ -279,11 +335,14 @@ export function createGitHubClient(options: GitHubClientOptions) {
       try {
         response = await fetchImpl(url, { ...init, method, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       } catch (error) {
+        // No response, so no status: counted at 0 rather than at a status nothing returned.
         if (attempt < maximumAttempts) {
+          countOutcome(NO_RESPONSE, "unreachable", method, endpoint);
           console.warn(`GitHub request failed, retrying (attempt ${attempt} of ${maximumAttempts}): ${error instanceof Error ? error.message : String(error)}`);
           await pause(2 ** (attempt - 1) * 1000);
           continue;
         }
+        countOutcome(NO_RESPONSE, "exhausted", method, endpoint);
         throw new GitHubError(`GitHub could not be reached after ${maximumAttempts} attempts`, AvailabilityReason.CollectionFailed, undefined, {
           cause: error
         });
@@ -297,21 +356,30 @@ export function createGitHubClient(options: GitHubClientOptions) {
       // where it was raised rather than retried against the same string.
       if (response.status === 401 && !refreshed && (await credentials.refresh())) {
         refreshed = true;
+        countOutcome(response.status, "retried", method, endpoint);
         continue;
       }
 
       const isGraphql = url === graphqlUrl;
-      const delay = isGraphql ? graphqlRetryDelay(response, body, attempt) : responseRetryDelay(response, body, attempt);
+      let delay: number | undefined;
+      try {
+        delay = isGraphql ? graphqlRetryDelay(response, body, attempt) : responseRetryDelay(response, body, attempt);
+      } catch (error) {
+        // The deciders raise when a rate limit outlasted `maximumAttempts`, and that attempt is the one the
+        // operation gave up on. Counted before rethrowing, because it was previously the run's largest
+        // silence: hours of waiting ending in nothing, and not a line in the summary to say so.
+        countOutcome(response.status, "exhausted", method, endpoint);
+        throw error;
+      }
       if (delay !== undefined) {
-        console.warn(
-          `GitHub ${response.status} ${method} ${endpointTemplate(url)}, retrying in ${delay.toFixed(0)}s (attempt ${attempt} of ${maximumAttempts})`
-        );
+        countOutcome(response.status, isRateLimited(response, body, isGraphql) ? "rate-limited" : "retried", method, endpoint);
+        console.warn(`GitHub ${response.status} ${method} ${endpoint}, retrying in ${delay.toFixed(0)}s (attempt ${attempt} of ${maximumAttempts})`);
         await pause(delay * 1000);
         continue;
       }
 
       const bodyFailure = isGraphql && response.ok ? graphqlBodyFailure(response.status, body) : undefined;
-      logOutcome(response, method, url, body, bodyFailure);
+      logOutcome(response, method, endpoint, body, bodyFailure);
 
       if (!response.ok) {
         const [message, reason] = classify(response.status, body);
@@ -347,13 +415,19 @@ export function createGitHubClient(options: GitHubClientOptions) {
      * `resource` is a parameter because the commit search is issued under a name of its own precisely so
      * the shared waiter leaves it alone: GitHub reports it as `search`, and a caller pacing that scarce
      * quota by hand reads the real budget rather than assuming a limit.
+     *
+     * The document's OPERATION NAME is what it is counted under, so the summary tells an assurance batch
+     * from a merge walk. Read from the document rather than passed by each caller: there are fifteen named
+     * documents here, and a name a caller supplies is a name that can disagree with the query it travels
+     * with.
      */
     async graphql<T>(query: string, variables: Record<string, unknown> = {}, resource = "graphql"): Promise<T> {
       const { body } = await request(
         "POST",
         graphqlUrl,
         { body: JSON.stringify({ query, variables }), headers: { "content-type": "application/json" } },
-        resource
+        resource,
+        graphqlOperationName(query)
       );
       const payload = parseJson<{ data?: T }>(body, "GitHub returned an unreadable GraphQL body");
       if (payload.data === undefined || payload.data === null) {
@@ -395,9 +469,14 @@ export function createGitHubClient(options: GitHubClientOptions) {
       return requestsIssued;
     },
 
-    /** Every counted call outcome, for the run summary. */
+    /** Every counted call outcome, one entry per attempt kind, for the run summary. */
     callOutcomes(): { outcome: CallOutcome; count: number }[] {
       return [...outcomes.values()];
+    },
+
+    /** How long this run stood still waiting for a quota, per resource. */
+    rateLimitWaits(): RateLimitWait[] {
+      return [...waits.entries()].map(([resource, waited]) => ({ resource, seconds: waited.seconds, count: waited.count }));
     }
   };
 }

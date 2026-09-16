@@ -273,7 +273,9 @@ async function readAssuranceBatch(client: GitHubClient, organization: string, ba
 export async function readDependabotAlerts(client: GitHubClient, organization: string, repository: string): Promise<unknown[] | undefined> {
   const records: unknown[] = [];
   try {
-    for await (const page of client.paginate<unknown>(`/repos/${organization}/${repository}/dependabot/alerts`, { state: "open" })) {
+    // `per_page=100`, matching the org-wide read below. GitHub's default of 30 was three or four pages for a
+    // repository carrying the 50-200 open alerts that are ordinary here.
+    for await (const page of client.paginate<unknown>(`/repos/${organization}/${repository}/dependabot/alerts`, { state: "open", per_page: 100 })) {
       records.push(...page);
     }
   } catch (error) {

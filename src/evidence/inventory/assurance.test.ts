@@ -257,6 +257,17 @@ describe("readDependabotAlerts", () => {
       expect(records).toBeUndefined();
     });
   });
+
+  it("should ask for a hundred records a page, matching the org-wide read beside it", () => {
+    // GitHub's default is 30, and HMCTS repositories routinely carry 50-200 open Dependabot alerts, so the
+    // default was three or four pages where one would do. The org-wide secret read already set 100; this and
+    // `openAlerts` were the two that did not, which was an inconsistency rather than a decision.
+    const { fetch, sent } = replying({ body: [] });
+
+    return readDependabotAlerts(client(fetch), "hmcts", "alpha").then(() => {
+      expect(sent[0]?.url).toContain("per_page=100");
+    });
+  });
 });
 
 describe("assuranceEvidence", () => {

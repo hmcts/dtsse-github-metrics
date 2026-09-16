@@ -337,37 +337,76 @@ describe("what collect walks", () => {
     org_graph: { enabled: true }
   };
 
-  /** A collect run over one fresh and one stale repository, reporting every REST path it asked for. */
-  async function pathsAskedFor(): Promise<string[]> {
+  /**
+   * A collect run over one fresh and one stale repository, reporting every REST path it asked for.
+   *
+   * `listed` is what the organisation's own repository listing names, because that is where the estate's
+   * metadata now comes from: a repository in it costs no call of its own, and one absent from it falls back to
+   * the per-repository read. Both are named by default, which is the ordinary case.
+   */
+  async function pathsAskedFor(options: { listed?: string[]; argv?: string[] } = {}): Promise<string[]> {
     loadConfiguration.mockResolvedValue(CONFIG);
     readCohort.mockResolvedValue([cohortEntry("fresh"), cohortEntry("stale", { behaviourCollectable: false, unmaintained: true })]);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
     const get = vi.fn().mockResolvedValue({ default_branch: "main" });
     const paths: string[] = [];
+    const listed = (options.listed ?? ["fresh", "stale"]).map((name) => ({ name, default_branch: "main" }));
     createGitHubClient.mockReturnValue({
       get,
       graphql: vi.fn().mockResolvedValue({}),
       paginate: function paginate(path: string) {
         paths.push(String(path));
         return (async function* pages() {
-          yield [];
+          yield path === "/orgs/hmcts/repos" ? listed : [];
         })();
       },
       requestsIssued: () => 1,
-      callOutcomes: () => []
+      callOutcomes: () => [],
+      rateLimitWaits: () => []
     });
 
-    await main(["collect", "--config", "m.yaml", "--tolerate-partial"]);
+    await main(options.argv ?? ["collect", "--config", "m.yaml", "--tolerate-partial"]);
     return [...get.mock.calls.map(([path]) => String(path)), ...paths];
   }
 
   it("should read every repository in the estate, stale ones included, so the assurance columns are populated", async () => {
     // The other half of the change: a stale repository must still be COLLECTED, or the criteria it exists to be
     // judged against have nothing to read. 148 unarchived repositories on AAT are two or more years stale, and
-    // not one of them had a `repository_state` row before this.
+    // not one of them had a `repository_state` row before this. Asserted on the Dependabot read, which is the
+    // one call every repository at either depth still makes for itself — the metadata is no longer one of them.
     const asked = await pathsAskedFor();
 
-    expect(asked.filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path))).toEqual(["/repos/hmcts/fresh", "/repos/hmcts/stale"]);
+    expect(asked.filter((path) => path.endsWith("/dependabot/alerts"))).toEqual([
+      "/repos/hmcts/fresh/dependabot/alerts",
+      "/repos/hmcts/stale/dependabot/alerts"
+    ]);
+  });
+
+  it("should read the estate's metadata as ONE org listing rather than one call per repository", async () => {
+    // 1,889 `GET /repos/{o}/{r}` calls against about 19 pages. `collect-org` already stores the default branch,
+    // so `security_and_analysis` was the only thing that read still bought — and the org listing carries it.
+    const asked = await pathsAskedFor();
+
+    expect(asked).toContain("/orgs/hmcts/repos");
+    expect(asked.filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path))).toEqual([]);
+  });
+
+  it("should fall back to a repository's own metadata when the organisation does not list it", async () => {
+    // A repository in the collected graph that the organisation no longer lists has been renamed, transferred or
+    // deleted since `collect-org` ran. It still gets collected, at the cost it always had, and it is named.
+    const asked = await pathsAskedFor({ listed: ["fresh"] });
+
+    expect(asked.filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path))).toEqual(["/repos/hmcts/stale"]);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("1 collected repository is not in the organisation's listing"));
+  });
+
+  it("should read one repository directly when it was asked for by name", async () => {
+    // Paging 19 pages of an organisation to find one repository costs more than reading it, so `--repository`
+    // keeps the read it always had.
+    const asked = await pathsAskedFor({ argv: ["collect", "--config", "m.yaml", "--repository", "fresh", "--tolerate-partial"] });
+
+    expect(asked).not.toContain("/orgs/hmcts/repos");
+    expect(asked.filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path))).toEqual(["/repos/hmcts/fresh"]);
   });
 
   it("should not read a stale repository's merge gate, which is ways-of-working rather than assurance", async () => {
@@ -782,7 +821,9 @@ describe("collect-org", () => {
   ): void {
     loadConfiguration.mockResolvedValue(CONFIG);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
-    createGitHubClient.mockReturnValue({ requestsIssued: () => 0 });
+    // The counters the run summary is printed from. Stubbed empty rather than omitted: `collect-org` prints the
+    // same breakdown `collect` does, so a client missing them is not one this command could run against.
+    createGitHubClient.mockReturnValue({ requestsIssued: () => 0, callOutcomes: () => [], rateLimitWaits: () => [] });
 
     collectOrgTeams.mockResolvedValue(walks.teams ?? wholeTeamPicture());
     collectOrgRepositories.mockResolvedValue({
