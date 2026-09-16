@@ -1,6 +1,12 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { EvidenceSource, type SourceCoverage } from "../../src/evidence/domain/coverage.ts";
-import { findMissingCoverage, getSourceCoverage, prevailingCachedCoverage, recordSourceCoverage } from "../../src/evidence/store/coverage.ts";
+import {
+  cachedCoverageEdges,
+  findMissingCoverage,
+  getSourceCoverage,
+  prevailingCachedCoverage,
+  recordSourceCoverage
+} from "../../src/evidence/store/coverage.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 
 // The interval arithmetic is unit-tested in src/evidence/store/intervals.test.ts. These cases prove the
@@ -137,5 +143,66 @@ describe("prevailingCachedCoverage", () => {
 
     expect((await prevailingCachedCoverage("hmcts", EvidenceSource.PullRequests, "testhash"))?.getUTCDate()).toBe(8);
     expect((await prevailingCachedCoverage("hmcts", EvidenceSource.DirectCommits, "testhash"))?.getUTCDate()).toBe(5);
+  });
+});
+
+/**
+ * The same aggregate `prevailingCachedCoverage` takes the mode of, kept per repository.
+ *
+ * What the report asks it is whether ONE repository was read up to where the estate's coverage ends — the
+ * difference between a repository measured as having merged nothing and one whose merge history was refused. A
+ * repository missing from the answer is the whole point of it, so most of these cases are about what it leaves out.
+ */
+describe("cachedCoverageEdges", () => {
+  const SIGNATURES = { pullRequests: "testhash", directCommits: "commithash" };
+
+  it("should report each repository's own edge, per source", async () => {
+    await recordSourceCoverage(coverage(1, 8, { repository: "read-late" }));
+    await recordSourceCoverage(coverage(1, 5, { repository: "read-late", source: EvidenceSource.DirectCommits, queryHash: "commithash" }));
+    await recordSourceCoverage(coverage(1, 3, { repository: "read-early" }));
+
+    const edges = await cachedCoverageEdges("hmcts", SIGNATURES);
+
+    expect(edges.get("read-late")?.get(EvidenceSource.PullRequests)?.getUTCDate()).toBe(8);
+    expect(edges.get("read-late")?.get(EvidenceSource.DirectCommits)?.getUTCDate()).toBe(5);
+    expect(edges.get("read-early")?.get(EvidenceSource.PullRequests)?.getUTCDate()).toBe(3);
+  });
+
+  it("should report the furthest edge where a repository's coverage has a gap in it", async () => {
+    // Two intervals that do not coalesce, which is what a run refused halfway through a window leaves. How far the
+    // coverage REACHES is the question, and it is the later interval that answers it.
+    await recordSourceCoverage(coverage(1, 3));
+    await recordSourceCoverage(coverage(6, 9));
+
+    const edges = await cachedCoverageEdges("hmcts", SIGNATURES);
+
+    expect(edges.get("cath-service")?.get(EvidenceSource.PullRequests)?.getUTCDate()).toBe(9);
+  });
+
+  it("should omit a source whose only coverage is under a superseded signature", async () => {
+    // A widened query changes the hash, so the intervals the narrower one covered are not coverage this build may
+    // report from — and a report reading them would state figures for a window nothing current has walked.
+    await recordSourceCoverage(coverage(1, 9, { queryHash: "old-signature" }));
+
+    const edges = await cachedCoverageEdges("hmcts", SIGNATURES);
+
+    expect(edges.get("cath-service")).toBeUndefined();
+  });
+
+  it("should omit a repository whose source was never read at all", async () => {
+    // THE ANSWER THE REPORT ACTS ON. The refused walk and the stale path both leave no coverage, and this silence
+    // is what says so.
+    await recordSourceCoverage(coverage(1, 9));
+
+    const edges = await cachedCoverageEdges("hmcts", SIGNATURES);
+
+    expect(edges.get("cath-service")?.get(EvidenceSource.DirectCommits)).toBeUndefined();
+    expect(edges.get("never-collected")).toBeUndefined();
+  });
+
+  it("should read only the organisation it was asked about", async () => {
+    await recordSourceCoverage(coverage(1, 9, { organization: "another-org" }));
+
+    expect(await cachedCoverageEdges("hmcts", SIGNATURES)).toEqual(new Map());
   });
 });
