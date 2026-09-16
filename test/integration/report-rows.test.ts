@@ -592,6 +592,117 @@ describe("the merge figures a row states", () => {
 });
 
 /**
+ * The direct commits `cohort.no_direct_pushes` permits a row to state.
+ *
+ * THE SHAPE IT IS FOR is one repository on the estate: `cnp-flux-config`, 362,987 commits on `master` and 18,714
+ * inside a 90-day window, whose commit walk does not finish. It leaves pull-request coverage and none for the
+ * commits, so the row reported a dash and "the direct commits were not read for this repository" indefinitely,
+ * where the human answer is none — the pushes are `fluxcdbot`'s, which `cohort.bot_accounts` already excludes.
+ *
+ * A DECLARATION, AND THESE CASES ARE WHAT KEEPS IT ONE. Its branch ruleset requires a pull request on `master`,
+ * which is not evidence: 91 of the 413 repositories carrying such a gate here hold direct-commit facts, this one
+ * among them. So the second case below is the important one — a repository nobody declared and nobody walked must
+ * still report an absence, which is VIBE-563's contract and what an inference from the gate would have broken.
+ */
+describe("the direct commits a declaration permits", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  interface ReportedRow {
+    repository: string;
+    merged_pull_requests?: number;
+    direct_commits?: number;
+    detail?: string;
+  }
+
+  /** The estate's policy declaring that no person pushes to the named repositories' default branches. */
+  function declaring(...repositories: string[]) {
+    return parseConfiguration(`
+version: 1
+organization: hmcts
+cohort:
+  visibilities:
+    - public
+  include_archived: false
+  no_direct_pushes:
+${repositories.map((repository) => `    - ${repository}`).join("\n")}
+`);
+  }
+
+  /**
+   * The coverage a run leaves where the pull-request walk finished and the commit walk did not.
+   *
+   * `walked` above writes both rows, which is the one shape this cannot use: the whole case is a repository read
+   * for one source and not the other, and it is what the live estate holds for `cnp-flux-config`.
+   */
+  async function walkedPullRequestsOnly(repository: string): Promise<void> {
+    await prisma.sourceCoverage.create({
+      data: {
+        organization: ORGANIZATION,
+        repository,
+        source: EvidenceSource.PullRequests,
+        queryHash: PULL_REQUESTS,
+        startsAt: COVERAGE_FROM,
+        endsAt: WINDOW.endsAt,
+        accessedAt: new Date()
+      }
+    });
+  }
+
+  /** A repository a collection reached and read a gate for, whose commit walk got nowhere. */
+  async function commitWalkNeverFinished(repository: string): Promise<void> {
+    await graphRepository(repository, new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({ data: { organization: ORGANIZATION, repository, fetchedAt: new Date(), payload: readableGate() } });
+    await walkedPullRequestsOnly(repository);
+  }
+
+  async function rowFor(configuration: ReturnType<typeof parseConfiguration>, repository: string): Promise<ReportedRow | undefined> {
+    const rows = (await repositoryRows(configuration, 26, REFERENCE)) as ReportedRow[];
+    return rows.find((row) => row.repository === repository);
+  }
+
+  it("should report zero direct commits when the repository is declared and its commit walk never ran", async () => {
+    await commitWalkNeverFinished("cnp-flux-config");
+    const configuration = declaring("cnp-flux-config");
+
+    const row = await rowFor(configuration, "cnp-flux-config");
+
+    // Zero, off the facts it holds none of — the declaration permits the figure and never supplies it.
+    expect(row?.direct_commits).toBe(0);
+    expect(row?.merged_pull_requests).toBe(0);
+    // Neither unread sentence: the pull requests were walked and the commits are declared, so the row explains
+    // nothing because there is nothing left to explain.
+    expect(row?.detail).toBeUndefined();
+    // And so it is no longer one of the estate's `unavailable` rows, which counts the rows carrying a detail.
+    const summary = (await overviewSummary(configuration, 26, REFERENCE)) as { repositories: number; unavailable: number };
+    expect(summary).toMatchObject({ repositories: 1, unavailable: 0 });
+  });
+
+  it("should still report an absence when the repository is not declared and its commit walk never ran", async () => {
+    // VIBE-563'S CONTRACT, restated against the declaration: absent means unmeasured. Every repository the gate
+    // does not name keeps the answer it had, and this is the case an inference from the branch ruleset would have
+    // turned into a confident zero for 91 repositories that really do hold direct commits.
+    await commitWalkNeverFinished("undeclared");
+
+    const row = await rowFor(CONFIGURATION, "undeclared");
+
+    expect(row?.direct_commits).toBeUndefined();
+    expect(row?.merged_pull_requests).toBe(0);
+    expect(row?.detail).toBe("the direct commits were not read for this repository, so they are unmeasured rather than none");
+  });
+
+  it("should report zero direct commits when the declared name is cased differently from the repository's", async () => {
+    // Folded on BOTH sides, so neither spelling has to be the canonical one: the name in the file is typed by hand
+    // and a mis-cased one matching nothing would read as a declaration somebody made and the report ignored.
+    await commitWalkNeverFinished("CNP-Flux-Config");
+
+    const row = await rowFor(declaring("cnp-flux-config"), "CNP-Flux-Config");
+
+    expect(row?.direct_commits).toBe(0);
+    expect(row?.detail).toBeUndefined();
+  });
+});
+
+/**
  * Which merges a report counts, and which it leaves out.
  *
  * `cohort.excluded_authors` defaulted to `renovate, dependabot` and APPLIED TO NOTHING: `inCohort` and
