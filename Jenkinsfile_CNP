@@ -14,13 +14,17 @@ def yarnBuilder = new uk.gov.hmcts.contino.YarnBuilder(this)
 //   - the image is the ACR mirror rather than Docker Hub, so the pull is not rate-limited, and the
 //     `az acr login` has to happen inside the hook because a `before` hook runs OUTSIDE the pipeline's own
 //     `withAcrClient` block;
-//   - the published port is not 5432, because the agent image installs its own Postgres cluster which takes
-//     that port. 5421 is what the repos above use; this picks a different one so a concurrent build of one of
-//     them on the same agent cannot take it.
+//   - THE CONTAINER NAME AND THE PORT ARE BOTH PER-BUILD, and that is not tidiness. A fixed name meant two
+//     builds of this repository on one agent destroyed each other: the second one's `docker stop`/`rm` below
+//     killed the first one's database mid-suite, and the first one's `afterAlways` then killed the second's.
+//     The visible symptom is nothing like the cause — the suite hangs on a database that vanished and the
+//     pipeline aborts the stage on its timeout, so four builds reported "aborted" at 42 minutes with no
+//     failing test between them. `BUILD_TAG` is unique per build, and the port is whatever the daemon assigns,
+//     read back below; a fixed port would still have collided even with unique names. The agent image also
+//     runs its own Postgres cluster on 5432, which is why the port is published rather than shared.
 def postgresImage = 'hmctsprod.azurecr.io/imported/postgres:16-alpine'
-def postgresContainer = 'dtsse-github-metrics-test-postgres'
-def postgresPort = '5441'
-def integrationDatabaseUrl = "postgresql://hmcts@localhost:${postgresPort}/github_metrics"
+def buildTag = env.BUILD_TAG
+def postgresContainer = "metrics-test-postgres-${buildTag}".replaceAll('[^A-Za-z0-9_.-]', '-')
 
 static Map<String, Object> secret(String secretName, String envVariable) {
   [
@@ -51,12 +55,20 @@ withPipeline(type, product, component) {
     // typechecked `test/integration` or `test/e2e`. First because it is the cheapest of the three to fail on.
     yarnBuilder.yarn('typecheck')
 
+    // FAILS RATHER THAN FALLING BACK. An unset `BUILD_TAG` would leave the name a constant again — the exact
+    // shape of the bug this replaced — and it would do so invisibly, because a single build in isolation passes
+    // either way. Loud here beats two builds quietly destroying each other's database again.
+    if (!buildTag) {
+      error 'BUILD_TAG is not set, so the integration Postgres container would not be unique to this build'
+    }
+
+    // No `docker stop` of a leftover container first: there is nothing to leave behind now the name is unique,
+    // and removing that step is the point — it is what reached into another build.
     sh script: """
       set -e
       env AZURE_CONFIG_DIR=/opt/jenkins/.azure-nonprod az acr login --name hmctsprod --subscription DCD-CNP-PROD
       docker inspect ${postgresImage} > /dev/null 2>&1 || docker pull ${postgresImage}
-      docker stop ${postgresContainer} && docker rm ${postgresContainer} || echo 'no test postgres left over from an earlier build'
-      docker run --rm --name ${postgresContainer} --publish ${postgresPort}:5432 \
+      docker run --rm --name ${postgresContainer} --publish 0:5432 \
         -e POSTGRES_DB=github_metrics -e POSTGRES_USER=hmcts -e POSTGRES_HOST_AUTH_METHOD=trust \
         -d ${postgresImage}
       for attempt in \$(seq 1 30); do
@@ -66,10 +78,18 @@ withPipeline(type, product, component) {
       docker exec ${postgresContainer} pg_isready -U hmcts -d github_metrics
     """, label: 'Start the integration-test Postgres'
 
+    // The daemon chose the port, so ask it rather than assuming one. `docker port` prints one line per binding
+    // (IPv4 and IPv6), hence the `head -1`.
+    def postgresPort = sh(
+      script: "docker port ${postgresContainer} 5432 | head -1 | sed 's/.*://'",
+      returnStdout: true,
+      label: 'Read the port the daemon assigned'
+    ).trim()
+
     // Runs here rather than in its own stage because this is where the database is: the suite is the only gate
     // on `src/evidence/store/**` and `report/repositories.ts`, both of which the unit config exempts. It also
     // has to precede the sonar scan, which reads `coverage-integration/lcov.info`.
-    withEnv(["DATABASE_URL=${integrationDatabaseUrl}"]) {
+    withEnv(["DATABASE_URL=postgresql://hmcts@localhost:${postgresPort}/github_metrics"]) {
       yarnBuilder.yarn('db:migrate')
       yarnBuilder.yarn('test:integration')
     }
