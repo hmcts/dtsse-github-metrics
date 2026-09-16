@@ -195,6 +195,7 @@ beforeEach(async () => {
   await prisma.repositoryOwnership.deleteMany();
   await prisma.orgRepository.deleteMany();
   await prisma.sourceCoverage.deleteMany();
+  await prisma.repositoryProduction.deleteMany();
 });
 
 afterAll(async () => {
@@ -204,6 +205,7 @@ afterAll(async () => {
   await prisma.repositoryOwnership.deleteMany();
   await prisma.orgRepository.deleteMany();
   await prisma.sourceCoverage.deleteMany();
+  await prisma.repositoryProduction.deleteMany();
   await prisma.$disconnect();
 });
 
@@ -591,6 +593,80 @@ describe("the merge figures a row states", () => {
     expect(((await repositoryRows(CONFIGURATION, 4, anchor)) as ReportedRow[]).map((row) => row.merged_pull_requests)).toEqual(
       alone.map((row) => row.merged_pull_requests)
     );
+  });
+});
+
+/**
+ * What a row reports for `production`, given the approvals list and the column a person edits.
+ *
+ * THE TWO SOURCES MEET IN THE REPORT LAYER and nowhere else: `deploysToProduction` is stored in the collected
+ * payload, `repository_production.production` is set by hand, and the estate read joins them. The rule itself is
+ * `reportedProduction`, unit-tested as a truth table; what these cases prove is that the estate read reaches the
+ * table at all and that the fold survives the trip — a row keyed by the graph's spelling, looked up against a
+ * casefolded key.
+ */
+describe("the production flag a row reports", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  interface ReportedRow {
+    repository: string;
+    production?: boolean;
+  }
+
+  /** One collected repository with the approvals list's answer in its payload, as `runCollect` writes it. */
+  async function collected(repository: string, deploysToProduction?: boolean): Promise<void> {
+    await graphRepository(repository, new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({
+      data: {
+        organization: ORGANIZATION,
+        repository,
+        fetchedAt: new Date(),
+        payload: { defaultBranch: "main", ...(deploysToProduction === undefined ? {} : { deploysToProduction }) }
+      }
+    });
+    await walked(repository);
+  }
+
+  /** The seeded row, and whatever a person has since said on it. */
+  async function stated(repository: string, production: boolean | null): Promise<void> {
+    await prisma.repositoryProduction.create({ data: { organization: ORGANIZATION, repository, production } });
+  }
+
+  async function rowFor(repository: string): Promise<ReportedRow | undefined> {
+    const rows = (await repositoryRows(CONFIGURATION, 4, REFERENCE)) as ReportedRow[];
+    return rows.find((row) => row.repository === repository);
+  }
+
+  it("should report production when the column says so and the approvals list is silent", async () => {
+    await collected("marked-on", false);
+    await stated("marked-on", true);
+
+    expect((await rowFor("marked-on"))?.production).toBe(true);
+  });
+
+  it("should report false when the column says so even though the approvals list names the repository", async () => {
+    // The direction the previous shape could not express. An override that can only add leaves an approvals list
+    // that is wrong about a repository with no way to be corrected.
+    await collected("marked-off", true);
+    await stated("marked-off", false);
+
+    expect((await rowFor("marked-off"))?.production).toBe(false);
+  });
+
+  it("should defer to the approvals list where the column holds no opinion", async () => {
+    await collected("no-opinion", true);
+    await stated("no-opinion", null);
+
+    expect((await rowFor("no-opinion"))?.production).toBe(true);
+  });
+
+  it("should send no key at all when neither the list nor the column could answer", async () => {
+    // `stripAbsent` drops it, and that absence is the contract: an unread approvals list must not be reported as
+    // a confident `false` by anything, including a seeded row nobody has touched.
+    await collected("unknown");
+    await stated("unknown", null);
+
+    expect(await rowFor("unknown")).not.toHaveProperty("production");
   });
 });
 

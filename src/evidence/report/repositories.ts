@@ -36,6 +36,7 @@ import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
 import { cachedCoverageEdges, prevailingCachedCoverage } from "../store/coverage.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
+import { productionOverrides, reportedProduction } from "../store/production-override.ts";
 import { storedRepositoryState } from "../store/repository-state.ts";
 import { collectedAnchor, collectionIsStale, days, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
@@ -167,7 +168,7 @@ function repositoryRow(
   entry: CohortEntry,
   state: { fetchedAt: Date; payload: unknown } | undefined,
   merges: Merges,
-  production: boolean | undefined,
+  overrides: ReadonlyMap<string, boolean>,
   measured: MeasuredRow
 ): Record<string, unknown> {
   const policy = readinessPolicy(configuration);
@@ -221,7 +222,11 @@ function repositoryRow(
     required_status_checks: gate.gate === undefined ? undefined : requiredContexts(gate.gate).length,
     ...behaviourFigures(policy, merges, measured),
     security: reportedAlerts(payload.securityAlerts),
-    production: production ?? payload.deploysToProduction,
+    // THE COLUMN OVER THE APPROVALS LIST, in both directions, and `undefined` where neither has an answer —
+    // `reportedProduction` holds the whole rule, including the fold that lets a repository the graph spells
+    // `PCS-API` be marked as `pcs-api`. Absent stays absent: an unread approvals list nobody has an opinion
+    // about reports no key at all rather than a confident `false`.
+    production: reportedProduction(payload.deploysToProduction, overrides, repository),
     detail: unreportedDetail(gate, measured)
   };
 }
@@ -453,6 +458,13 @@ export interface Estate {
   facts: Map<string, DatedFacts>;
   /** Which repositories each behaviour source was actually read for. See `measuredSources`. */
   measured: MeasuredSources;
+  /**
+   * What a person has said about which repositories are production services, keyed by casefolded name.
+   *
+   * On the estate read for the same reason the cohort and the states are: it is a fact about a repository and
+   * not about a window, so one read answers for every offered span rather than one per span or one per row.
+   */
+  production: ReadonlyMap<string, boolean>;
 }
 
 /** The repositories each behaviour source was read for, by the collection every span derived here is anchored at. */
@@ -462,10 +474,10 @@ interface MeasuredSources {
 }
 
 /**
- * The estate over one window: the cohort, the collected states, the coverage edges, and the window's facts
- * deserialised ONCE.
+ * The estate over one window: the cohort, the collected states, the coverage edges, the hand-set production flags,
+ * and the window's facts deserialised ONCE.
  *
- * The four reads go together because none of them needs another's answer, and because the three that are not the
+ * The five reads go together because none of them needs another's answer, and because the four that are not the
  * fact cache are the ones a per-span build was paying for five times over: `servedCohort` is two queries against
  * the change-versioned graph and `storedRepositoryStates` is 1,891 rows of `jsonb`.
  *
@@ -486,11 +498,12 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
   const signatures = { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) };
   const excluded = excludedAuthors(configuration.cohort.excluded_authors);
   const bots = botAccounts(configuration.cohort.bot_accounts);
-  const [cohort, states, stored, edges] = await Promise.all([
+  const [cohort, states, stored, edges, production] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryStates(organization),
     loadCachedFactsForOrganisation(organization, signatures, window.startsAt, window.endsAt),
-    cachedCoverageEdges(organization, signatures)
+    cachedCoverageEdges(organization, signatures),
+    productionOverrides(organization)
   ]);
 
   return {
@@ -498,6 +511,7 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
     endsAt: window.endsAt,
     cohort,
     states,
+    production,
     measured: measuredSources(edges, window.endsAt, cohort, configuration.cohort.no_direct_pushes),
     facts: new Map(
       [...stored].map(([repository, cached]) => [
@@ -675,7 +689,7 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
   // sources a collection reached, so it is settled once for the estate rather than asked per row or per span.
   const rows = stripAbsent(
     read.cohort.map((entry) =>
-      repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, undefined, {
+      repositoryRow(configuration, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, read.production, {
         pullRequests: read.measured.pullRequests.has(entry.repository),
         directCommits: read.measured.directCommits.has(entry.repository)
       })

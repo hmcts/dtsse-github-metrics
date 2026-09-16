@@ -53,6 +53,7 @@ import {
   recordRepositoryOwnership
 } from "../evidence/store/org-graph.ts";
 import { prisma } from "../evidence/store/prisma.ts";
+import { seedProduction } from "../evidence/store/production-override.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
 import { recordRepositoryState } from "../evidence/store/repository-state.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
@@ -668,6 +669,14 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
       attributed
     )
   ];
+  // A ROW PER LIVE REPOSITORY FOR SOMEBODY TO TICK, in one statement rather than one per repository. It is
+  // `INSERT … ON CONFLICT DO NOTHING`, so the only thing a collection can do to this table is add keys — which is
+  // what makes "the import never overrides what a person said" a property of the statement rather than a rule
+  // somebody has to remember. Run after the graph writers, because it seeds from what they just left live.
+  //
+  // Reported unconditionally, including the zero every steady-state run prints: a line that appears only when
+  // something changed is a line whose absence says nothing.
+  progress(`${await seedProduction(organization)} repositories gained a repository_production row to be marked on`);
   await stampRevision();
 
   const totals = written.reduce(

@@ -19,10 +19,10 @@ import { pruneCache } from "../../src/evidence/store/prune.ts";
  * before somebody moved it. `prune.ts` itself does not change to accommodate them, and that is the point:
  * what grows is this test, because the invariant is what has to hold and not the implementation of it.
  *
- * `repository_production_override` joined them for a reason unlike either: GitHub was never asked. A person
- * stated that a repository is a production service though the organisation's approvals list does not name it,
- * and nothing can recover that but their memory — so a pruned mark is not a hole in a history, it is a badge
- * that quietly went out.
+ * `repository_production` joined them for a reason unlike either: GitHub was never asked. A person stated
+ * whether a repository is a production service, against an approvals list that says nothing about it or says
+ * the wrong thing, and nothing can recover that but their memory — so a pruned row is not a hole in a history,
+ * it is a badge that quietly went out or came on.
  *
  * The last case here is not about `prune` at all. It asserts the partial unique index that makes every
  * `WHERE superseded_at IS NULL` read unambiguous — a guarantee Postgres gives and TypeScript cannot, so it
@@ -55,7 +55,7 @@ async function wipe(): Promise<void> {
   await prisma.orgRepository.deleteMany();
   await prisma.orgPerson.deleteMany();
   await prisma.repositoryOwnership.deleteMany();
-  await prisma.productionOverride.deleteMany();
+  await prisma.repositoryProduction.deleteMany();
 }
 
 beforeEach(wipe);
@@ -226,23 +226,23 @@ describe("pruneCache", () => {
     expect(await prisma.repositoryOwnership.count()).toBe(2);
   });
 
-  it("should never delete a hand-written production mark, which GitHub was never asked about", async () => {
+  it("should never delete a hand-set production flag, which GitHub was never asked about", async () => {
     // Nothing can recover this row. The other durable tables hold answers GitHub will no longer give; this one
-    // holds an answer GitHub was never asked for, stated by a person against an approvals list that does not
-    // name the repository. Pruning it puts the badge out with no trace of what it was.
-    await prisma.productionOverride.create({
+    // holds an answer GitHub was never asked for, stated by a person against an approvals list that disagrees
+    // with them. Pruning it puts the badge out with no trace of what it was.
+    await prisma.repositoryProduction.create({
       data: {
         organization: "hmcts",
         repository: "pcs-api",
+        production: true,
         markedBy: "somebody@hmcts.net",
-        reason: "deploys to production through a pipeline the approvals list does not cover",
-        markedAt: OBSERVED
+        reason: "deploys to production through a pipeline the approvals list does not cover"
       }
     });
 
     await pruneCache(FUTURE);
 
-    expect(await prisma.productionOverride.count()).toBe(1);
+    expect(await prisma.repositoryProduction.count()).toBe(1);
   });
 
   it("should keep coverage and facts a report still reads", async () => {

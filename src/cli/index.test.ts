@@ -47,6 +47,11 @@ const recordOrgRepositories = vi.hoisted(() => vi.fn());
 const recordOrgPeople = vi.hoisted(() => vi.fn());
 const recordRepositoryOwnership = vi.hoisted(() => vi.fn());
 const recordRepositoryState = vi.hoisted(() => vi.fn());
+// The one statement that gives each live repository a row somebody can tick. Stubbed because it is raw SQL against
+// Postgres and `prisma` here is a bare `$disconnect`; what these cases can still say is that `collect-org` reaches
+// it. Whether the statement itself leaves a person's flag alone is asserted against a real database, in
+// `test/integration/production-override.test.ts`.
+const seedProduction = vi.hoisted(() => vi.fn(async () => 0));
 
 vi.mock("../evidence/store/migrate.ts", () => ({ migrate }));
 vi.mock("../evidence/store/prisma.ts", () => ({ prisma: { $disconnect: vi.fn().mockResolvedValue(undefined) } }));
@@ -128,6 +133,7 @@ vi.mock("../evidence/store/org-graph.ts", () => ({
   recordOrgPeople,
   recordRepositoryOwnership
 }));
+vi.mock("../evidence/store/production-override.ts", () => ({ seedProduction }));
 
 const { main } = await import("./index.ts");
 
@@ -857,6 +863,15 @@ describe("collect-org", () => {
     expect(recordOrgTeamRepositories).toHaveBeenCalledWith("hmcts", expect.any(Date), expect.anything(), new Set(["team-a", "team-b"]));
     expect(recordRepositoryOwnership).toHaveBeenCalledWith("hmcts", expect.any(Date), expect.anything(), new Set(["repo-a", "repo-b"]));
     expect(stampRevision).toHaveBeenCalledOnce();
+  });
+
+  it("should seed a production row for the organisation it walked when the graph writers have landed", async () => {
+    // Without this, `repository_production` holds a row only for the repositories somebody has already marked —
+    // and the whole point of the reshaping is that the row is ALREADY THERE when a person goes looking for it.
+    withWalks();
+
+    expect(await main(["collect-org", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+    expect(seedProduction).toHaveBeenCalledWith("hmcts");
   });
 
   it("should exclude a team whose members were refused from the memberships it may supersede", async () => {
