@@ -18,6 +18,14 @@ import { parseInstant } from "../window/instant.ts";
  * Keys stay snake_case, matching the YAML a reader edits and the upstream document verbatim.
  */
 
+/**
+ * Where the production-approval list is published, and the ONE statement of that URL.
+ *
+ * Pinned to `master` because that is the branch the deployment pipeline itself reads. It lives here rather
+ * than beside the fetch in `inventory/production.ts`: this is the schema's default for
+ * `production_list_url`, so the fetch is handed whatever the configuration resolved and never reaches for a
+ * literal of its own.
+ */
 const PRODUCTION_LIST_URL = "https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml";
 
 const positiveInt = z.number().int().positive();
@@ -48,11 +56,7 @@ const enablementInstant = z.union([z.string(), z.date()]).transform((value, ctx)
 const lookback = z
   .object({
     operational_days: positiveInt.default(90),
-    // Behaviour is a pattern, so a window may legitimately reach back the life of a project.
-    maximum_days: positiveInt.default(365),
     mutable_hours: positiveInt.default(6),
-    // Measured from an open pull request's last update, not from when it was opened.
-    stale_open_days: positiveInt.default(14),
     // How old the last collection may be before reporting says so. Collection runs daily, so two days
     // is one missed run rather than one missed day: a warning raised the morning after every run would
     // say nothing about whether the figures can still be trusted. Keep this a run behind the cadence —
@@ -123,7 +127,9 @@ const orgGraph = z
     minimum_authored_merges: positiveInt.default(2),
     // How far back authorship is read, in days. Matches `lookback.operational_days` rather than being a
     // second window nobody reconciles — `collect` fills the fact cache over exactly that span, so a wider
-    // one here reads a cache that does not reach. See DefaultAuthorshipDays.
+    // one here reads a cache that does not reach. Ownership is a fact about NOW, and 90 days is a working
+    // quarter: long enough to survive a holiday and a release freeze, short enough not to survive a
+    // reorganisation.
     authorship_days: positiveInt.default(90)
   })
   .strict();
@@ -317,21 +323,6 @@ const traceability = z
   })
   .strict();
 
-const practiceRule = z
-  .object({
-    enabled: z.boolean().default(true),
-    severity: z.enum(["high", "medium", "low"]).default("high"),
-    minimum_occurrences: positiveInt.default(1),
-    excluded_logins: z.array(z.string()).default([])
-  })
-  .strict();
-
-const practices = z
-  .object({
-    "unreviewed-merge": practiceRule.default({ enabled: true, severity: "high", minimum_occurrences: 1, excluded_logins: [] })
-  })
-  .strict();
-
 export const configurationSchema = z
   .object({
     version: z.literal(1),
@@ -341,7 +332,6 @@ export const configurationSchema = z
     triviality: triviality.default({}),
     assessment: assessment.default({}),
     traceability: traceability.default({}),
-    practices: practices.default({}),
     org_graph: orgGraph.default({}),
     // Removed from the cohort outright, whatever the graph says. Kept from the file era unchanged: the graph
     // can say what a repository IS but not that somebody decided it should not be reported, and that decision
@@ -356,11 +346,6 @@ export const configurationSchema = z
     // be asked — so it is an input fact like every other policy input. A repository with no date gets
     // no series rather than a guessed anchor.
     enablement: z.record(z.string(), enablementInstant).default({}),
-    // Usually the GitHub organisation name, and at HMCTS exactly it. Left absent rather than
-    // defaulted to the same text so the common case is not restated in every configuration file.
-    sonar_organization: z.string().nullish(),
-    // The answer of last resort for a repository whose project the stored map cannot settle.
-    sonar_projects: z.record(z.string(), z.string()).default({}),
     // Where the list of repositories approved to deploy to production is published. The default is an
     // HMCTS URL, stated as a policy default to argue with rather than a fact about every
     // organisation. `null` turns the fetch off, which is what an organisation with no such list
@@ -412,26 +397,11 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
     });
   }
 
-  // A blank override is rejected whatever was configured: it is a fact about the override itself.
-  // Resolution treats an override as the answer that short-circuits every other step, so a blank one
-  // would silently mean "unresolved" while reading as a decision somebody made.
-  const blank = Object.entries(value.sonar_projects)
-    .filter(([, project]) => project.trim() === "")
-    .map(([repository]) => repository)
-    .sort();
-  if (blank.length > 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sonar_projects"], message: `sonar project keys may not be empty: ${blank.join(", ")}` });
-  }
-
-  // TWO CROSS-CHECKS WERE REMOVED HERE, and their absence is a consequence of the cohort moving to the graph
-  // rather than an oversight. They required every `sonar_projects` and `enablement` key to name a repository
-  // that `teams:` listed. `teams:` no longer lists the estate — it holds ownership overrides — so that check
-  // now rejects the ordinary case: a Sonar override for a repository nobody has overridden the OWNER of.
-  //
-  // Nothing replaces them at load time, because nothing here can: the file cannot know the cohort without
+  // AN `enablement:` KEY IS NOT CHECKED AGAINST THE COHORT, and that is a consequence of the cohort moving
+  // to the graph rather than an oversight. Nothing here can check it: the file cannot know the cohort without
   // reading the database, and a schema that opened a connection would make `--help` need Postgres. The
-  // mistake they caught — a typo anchoring nothing — is now caught where the answer lives, by the report
-  // naming a key that matched no repository in the cohort.
+  // mistake such a check would catch — a typo anchoring nothing — is caught where the answer lives, by the
+  // report naming a key that matched no repository in the cohort.
 }
 
 // Declared for `validateCrossReferences`'s parameter type only: `configurationSchema` cannot name its
@@ -439,20 +409,14 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
 const baseObject = z.object({
   teams: z.array(team),
   excluded_repositories: z.array(z.string()),
-  enablement: z.record(z.string(), z.date()),
-  sonar_projects: z.record(z.string(), z.string())
+  enablement: z.record(z.string(), z.date())
 });
 
 export type Configuration = z.infer<typeof configurationSchema>;
-export type TeamConfiguration = z.infer<typeof team>;
-export type LookbackConfiguration = z.infer<typeof lookback>;
 export type AssessmentConfiguration = z.infer<typeof assessment>;
 export type TrivialityConfiguration = z.infer<typeof triviality>;
-export type OrgGraphConfiguration = z.infer<typeof orgGraph>;
 export type TraceabilityConfiguration = z.infer<typeof traceability>;
-export type PracticeRuleConfiguration = z.infer<typeof practiceRule>;
 export type ReadinessThresholds = z.infer<typeof readinessThresholds>;
 export type DistributionThreshold = z.infer<typeof distributionThreshold>;
-export type UnreviewedSubstantialThresholds = z.infer<typeof unreviewedSubstantialThresholds>;
 
 export { PRODUCTION_LIST_URL };

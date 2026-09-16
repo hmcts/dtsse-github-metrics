@@ -8,39 +8,26 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { RAG_HEX } from "@/lib/rag";
-import type { Band, GateField, OpenPullRequestField, SonarMeasure } from "@/lib/tone";
+import type { GateField, OpenPullRequestField, SonarMeasure } from "@/lib/tone";
 import {
   alertTone,
   borderClass,
-  CHECKS_BANDS,
-  COVERAGE_BANDS,
-  checksBand,
   codeownersTone,
   conditionTone,
-  coverageBand,
   coverageTone,
   directCommitTone,
   gateFieldTone,
   maintenanceTone,
   openPullRequestTone,
-  REVIEW_BANDS,
-  reviewBand,
-  SECURITY_BANDS,
-  STRONG_GOOD_HEX,
-  securityBand,
   sonarGateTone,
   sonarMeasureTone,
   sonarRatingTone,
   TONE_BORDER,
-  TONE_HEX,
   TONE_VALUE,
   TONES,
-  UNREVIEWED_BANDS,
-  unreviewedBand,
   valueClass
 } from "@/lib/tone";
-import type { OpenAlertCount, SecurityAlertEvidence, SonarMeasures, UnreviewedSubstantialOutcome } from "@/lib/types";
+import type { OpenAlertCount, SonarMeasures } from "@/lib/types";
 
 /** The measures a repository reported, with only the fields one case is about filled in. */
 function measures(fields: Partial<SonarMeasures> = {}): SonarMeasures {
@@ -49,22 +36,6 @@ function measures(fields: Partial<SonarMeasures> = {}): SonarMeasures {
 
 function alerts(fields: Partial<OpenAlertCount> = {}): OpenAlertCount {
   return { by_severity: {}, ...fields };
-}
-
-/** A security block whose three families are all clear, bar the one a case is about. */
-function security(families: Partial<SecurityAlertEvidence> = {}): SecurityAlertEvidence {
-  return {
-    dependabot: alerts({ open: 0 }),
-    code_scanning: alerts({ open: 0 }),
-    secret_scanning: alerts({ open: 0 }),
-    ...families
-  };
-}
-
-/** A block GitHub refused every family of, which is the shape that carries no security data. */
-function refusedSecurity(): SecurityAlertEvidence {
-  const refused = alerts({ detail: "alerts are not enabled for this repository" });
-  return { dependabot: refused, code_scanning: refused, secret_scanning: refused };
 }
 
 describe("tone maps", () => {
@@ -98,106 +69,16 @@ describe("tone maps", () => {
     expect(valueClass("bad")).toBe(TONE_VALUE.bad);
     expect(borderClass("good")).toBe(TONE_BORDER.good);
   });
-
-  it("draws its chart marks in the report palette rather than a second copy of it", () => {
-    expect(Object.keys(TONE_HEX).sort()).toEqual([...TONES].sort());
-    expect(TONE_HEX.good).toBe(RAG_HEX.green);
-    expect(TONE_HEX.warn).toBe(RAG_HEX.amber);
-    expect(TONE_HEX.bad).toBe(RAG_HEX.red);
-    expect(TONE_HEX.neutral).toBe(RAG_HEX.none);
-  });
-
-  it("keeps the one mark that is not a tone out of the four", () => {
-    // A deeper green than `good`, and nothing else on the site is set in it.
-    expect(STRONG_GOOD_HEX).toBe("#16a34a");
-    expect(Object.values(TONE_HEX)).not.toContain(STRONG_GOOD_HEX);
-  });
 });
 
-describe("donut bands", () => {
-  /** Every table: the marks a reader tells the bands apart by, and the order they read in. */
-  const TABLES: readonly (readonly Band[])[] = [REVIEW_BANDS, CHECKS_BANDS, UNREVIEWED_BANDS, COVERAGE_BANDS, SECURITY_BANDS];
-
-  it("ends every table with the unmeasured band, in the slate an ungraded row is drawn in", () => {
-    for (const table of TABLES) {
-      const last = table.at(-1);
-      expect(last?.key).toBe("unknown");
-      expect(last?.name).toBe("Unknown");
-      expect(last?.mark).toBe(TONE_HEX.neutral);
-    }
-  });
-
-  it("gives every band its own key, its own words and its own mark", () => {
-    for (const table of TABLES) {
-      expect(new Set(table.map((band) => band.key)).size).toBe(table.length);
-      expect(new Set(table.map((band) => band.name)).size).toBe(table.length);
-      expect(new Set(table.map((band) => band.mark)).size).toBe(table.length);
-    }
-  });
-
-  it("orders each table best first, so the legend reads down into the estate’s worst", () => {
-    expect(REVIEW_BANDS.map((band) => band.key)).toEqual(["multiple", "required", "none", "unknown"]);
-    expect(CHECKS_BANDS.map((band) => band.key)).toEqual(["required", "none", "unknown"]);
-    expect(UNREVIEWED_BANDS.map((band) => band.key)).toEqual(["none", "within", "above", "unknown"]);
-    expect(COVERAGE_BANDS.map((band) => band.key)).toEqual(["high", "moderate", "low", "unknown"]);
-    expect(SECURITY_BANDS.map((band) => band.key)).toEqual(["clear", "medium", "high", "unknown"]);
-  });
-});
-
-describe("the required-approvals band", () => {
-  it("separates two approvals from exactly one, and one from none", () => {
-    expect(reviewBand(3)).toBe("multiple");
-    expect(reviewBand(2)).toBe("multiple");
-    expect(reviewBand(1)).toBe("required");
-    expect(reviewBand(0)).toBe("none");
-  });
-
-  it("counts a gate nobody could read as unmeasured rather than as requiring nothing", () => {
-    expect(reviewBand(undefined)).toBe("unknown");
-    expect(reviewBand(null)).toBe("unknown");
-  });
-});
-
-describe("the required-checks band", () => {
-  it("reads any required context as required and none as not required", () => {
-    expect(checksBand(4)).toBe("required");
-    expect(checksBand(1)).toBe("required");
-    expect(checksBand(0)).toBe("none");
-  });
-
-  it("counts a gate nobody could read as unmeasured", () => {
-    expect(checksBand(undefined)).toBe("unknown");
-    expect(checksBand(null)).toBe("unknown");
-  });
-});
-
-describe("the unreviewed-substantial band", () => {
-  it("carries the policy’s three verdicts through unchanged", () => {
-    expect(unreviewedBand("none")).toBe("none");
-    expect(unreviewedBand("within")).toBe("within");
-    expect(unreviewedBand("above")).toBe("above");
-  });
-
-  it("counts a window the policy graded nothing in as unmeasured, never as clean", () => {
-    expect(unreviewedBand(undefined)).toBe("unknown");
-    expect(unreviewedBand(null)).toBe("unknown");
-  });
-
-  it("counts a verdict this build does not know as unmeasured rather than as no band at all", () => {
-    // The pages are served from a `metrics-serve` versioned apart from them, so a value off the
-    // union is a real arrival; a row landing in no band would leave the donut short of the estate.
-    expect(unreviewedBand("forgiven" as UnreviewedSubstantialOutcome)).toBe("unknown");
-  });
-});
-
-describe("the coverage band", () => {
-  it("bands on the boundary the repository page colours coverage with", () => {
-    expect(coverageBand(100)).toBe("high");
-    expect(coverageBand(90)).toBe("high");
-    expect(coverageBand(89.9)).toBe("moderate");
-    expect(coverageBand(80)).toBe("moderate");
-    expect(coverageBand(79.9)).toBe("low");
-    expect(coverageBand(0)).toBe("low");
+describe("coverage", () => {
+  it("grades on the boundary Sonar's own gate sets, and on the target above it", () => {
+    expect(coverageTone(100)).toBe("good");
+    expect(coverageTone(90)).toBe("good");
+    expect(coverageTone(89.9)).toBe("warn");
+    expect(coverageTone(80)).toBe("warn");
+    expect(coverageTone(79.9)).toBe("bad");
+    expect(coverageTone(0)).toBe("bad");
   });
 
   it("reads one boundary with the card beside it, rather than a second copy of the numbers", () => {
@@ -209,8 +90,6 @@ describe("the coverage band", () => {
   it("counts an unreported project as unmeasured rather than as 0%", () => {
     expect(coverageTone(undefined)).toBe("neutral");
     expect(coverageTone(null)).toBe("neutral");
-    expect(coverageBand(undefined)).toBe("unknown");
-    expect(coverageBand(null)).toBe("unknown");
   });
 });
 
@@ -385,91 +264,6 @@ describe("security alerts", () => {
     }
   });
 });
-
-describe("the security band", () => {
-  it("bands a repository on its worst signal, however clean the rest read", () => {
-    expect(
-      securityBand({
-        security: security({ dependabot: alerts({ open: 1, by_severity: { critical: 1 } }) }),
-        sonar_security_rating: { value: 1 },
-        sonar_security_issues: 0
-      })
-    ).toBe("high");
-  });
-
-  it("raises High and Medium off each alert family on its own", () => {
-    const severe = alerts({ open: 2, by_severity: { high: 1, low: 1 } });
-    const mild = alerts({ open: 2, by_severity: { medium: 1, low: 1 } });
-    expect(securityBand({ security: security({ dependabot: severe }) })).toBe("high");
-    expect(securityBand({ security: security({ dependabot: mild }) })).toBe("medium");
-    expect(securityBand({ security: security({ code_scanning: severe }) })).toBe("high");
-    expect(securityBand({ security: security({ code_scanning: mild }) })).toBe("medium");
-    // Secret scanning reports no severity, so any open secret is High and it has no Medium.
-    expect(securityBand({ security: security({ secret_scanning: alerts({ open: 1 }) }) })).toBe("high");
-  });
-
-  it("reads a family GitHub refused as no data rather than as nothing open", () => {
-    const refused = alerts({ detail: "alerts are not enabled for this repository" });
-    // The other two families were read and are clear, so the repository is Clear on those alone.
-    expect(securityBand({ security: security({ code_scanning: refused }) })).toBe("clear");
-    expect(securityBand({ security: refusedSecurity() })).toBe("unknown");
-  });
-
-  it("grades the security rating exactly as the repository page colours the letter", () => {
-    // No divergence since 2026-09-04: the donut reads `sonarRatingTone`, so C is amber in both.
-    expect(securityBand({ sonar_security_rating: { value: 1 } })).toBe("clear");
-    expect(securityBand({ sonar_security_rating: { value: 2 } })).toBe("medium");
-    expect(securityBand({ sonar_security_rating: { value: 3 } })).toBe("medium");
-    expect(sonarRatingTone({ value: 3 })).toBe("warn");
-    expect(securityBand({ sonar_security_rating: { value: 4 } })).toBe("high");
-    expect(securityBand({ sonar_security_rating: { value: 5 } })).toBe("high");
-  });
-
-  it("keeps a severe alert red under a C rating, so only clean families reach Medium", () => {
-    // The reason the C reversal cannot quietly downgrade a repository with work outstanding.
-    const rating = { value: 3 } as const;
-    const severe = alerts({ open: 2, by_severity: { high: 1, low: 1 } });
-    const mild = alerts({ open: 2, by_severity: { medium: 1, low: 1 } });
-    expect(securityBand({ sonar_security_rating: rating, security: security({ dependabot: severe }) })).toBe("high");
-    expect(securityBand({ sonar_security_rating: rating, security: security({ dependabot: mild }) })).toBe("medium");
-    expect(securityBand({ sonar_security_rating: rating, security: security() })).toBe("medium");
-  });
-
-  it("reads a rating off the 1-to-5 scale as no data, not as the worst there is", () => {
-    expect(securityBand({ sonar_security_rating: { value: 0 } })).toBe("unknown");
-    expect(securityBand({ sonar_security_rating: { value: 6 } })).toBe("unknown");
-    expect(securityBand({ sonar_security_rating: { value: 2.5 } })).toBe("unknown");
-    expect(securityBand({ sonar_security_rating: null })).toBe("unknown");
-  });
-
-  it("cautions on a Sonar issue above zero, and clears one at zero", () => {
-    expect(securityBand({ sonar_security_issues: 0 })).toBe("clear");
-    expect(securityBand({ sonar_security_issues: 1 })).toBe("medium");
-  });
-
-  it("counts a repository with no signal at all as unmeasured", () => {
-    expect(securityBand({})).toBe("unknown");
-    expect(
-      securityBand({
-        security: null,
-        sonar_security_rating: null,
-        sonar_security_issues: null
-      })
-    ).toBe("unknown");
-  });
-
-  it("reads clear alerts and no Sonar project as Clear rather than as unmeasured", () => {
-    // Its security WAS read, and there was nothing open; the absent Sonar measures add no doubt.
-    expect(securityBand({ security: security() })).toBe("clear");
-  });
-
-  it("still bands a clean repository Clear now the hotspot signal has gone", () => {
-    // Removing a signal on 2026-09-04 must not turn a measured repository Unknown: clear families
-    // and an A rating are enough on their own, with no Sonar count present at all.
-    expect(securityBand({ security: security(), sonar_security_rating: { value: 1 } })).toBe("clear");
-  });
-});
-
 describe("maintenance", () => {
   it("cautions on a window with no commit in it and clears one with a commit", () => {
     expect(maintenanceTone(true)).toBe("good");

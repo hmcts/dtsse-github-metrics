@@ -418,8 +418,3 @@ export function behaviourMetric(identifier: string, traceability: TraceabilityCo
   }
   return found;
 }
-
-/** Every accepted behaviour metric identifier, for the CLI's `--metric` choices. */
-export function behaviourMetricIdentifiers(): string[] {
-  return behaviourMetrics({ minimum_description: 30, reference_patterns: [] }).map((metric) => metric.identifier);
-}

@@ -222,15 +222,5 @@ export function teamAccess(permission: string | null | undefined): AccessLevel |
 
 export type TeamNode = z.infer<typeof teamNode>;
 export type MemberConnection = z.infer<typeof memberConnection>;
-export type MemberEdge = z.infer<typeof memberEdge>;
 export type TeamRepositoryConnection = z.infer<typeof teamRepositoryConnection>;
-export type TeamRepositoryEdge = z.infer<typeof teamRepositoryEdge>;
-export type RepositoryNode = z.infer<typeof repositoryNode>;
-export type PersonEdge = z.infer<typeof personEdge>;
-export type SamlIdentityNode = z.infer<typeof samlIdentityNode>;
 export type ScimUser = z.infer<typeof scimUser>;
-
-// The INPUT types, for a test describing what GitHub actually sends — instants as ISO strings rather than as
-// the `Date`s parsing turns them into.
-export type RepositoryNodeInput = z.input<typeof repositoryNode>;
-export type TeamNodeInput = z.input<typeof teamNode>;

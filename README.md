@@ -453,5 +453,12 @@ and health is UP — never that any figure is non-zero.
 ## What is not ported
 
 `render.py`, upstream's ASCII terminal renderer, was deliberately left out: it was presentation-only, and the
-dashboard computes its own presentation figures. `--format report` is recognised and refused with a message
-naming `--format json`, so its removal reads as a decision rather than a missing option.
+dashboard computes its own presentation figures. `evidence` therefore has one output — the machine-readable
+contract — and takes no `--format`: a flag with a single legal value that changes nothing is a promise the CLI
+cannot keep.
+
+Three layers are ported, complete and **reached by nothing**, and each says so at the head of its own module
+rather than here: the SonarCloud resolution ladder and measures (`src/evidence/sonar/`, headed by
+`resolve.ts`), the trend report (`src/evidence/report/trend.ts`), and the CODEOWNERS and maintenance evidence
+(`src/evidence/domain/standards.ts`). Each comment names what would reach it. Whether to wire any of them up
+or drop it is an open decision; nothing in the configuration file or the CLI advertises them in the meantime.

@@ -6,6 +6,21 @@ import { type DistributionObservation, ObservationStatus, type RateObservation }
 /**
  * Comparing one repository's windows since enablement. Ported from `metrics.trend`.
  *
+ * CURRENTLY UNWIRED. No entry point imports this module — not the App Router pages, not `proxy.ts`, not
+ * `instrumentation.ts`, not `cli/run.ts`, and not the three `await import` call sites. The `trend` CLI command
+ * that would have called it was removed with this ticket: it was dispatched, listed in `COMMANDS` and in
+ * `usage`, and could only report itself unwired and exit 1.
+ *
+ * NOT THE SAME THING AS `lib/trend.ts`, which IS wired: the repository page's trend section reads that one and
+ * renders `TrendChart` from it. This module is the REPORT half — walking a repository's periods from
+ * `enablement:` and computing the movement between them — and nothing assembles the periods for it to walk.
+ *
+ * WHAT WOULD REACH IT: `report/repositories.ts` building a `RepositoryTrend` per repository from the cached
+ * facts, one period at a time, and `lib/api.ts` serving it. `lib/types.ts` already declares `RepositoryTrend`,
+ * `TrendPeriod` and `TrendWindow`, and the page already draws a series where one is offered.
+ *
+ * WHETHER TO WIRE IT UP OR DROP IT IS AN OPEN PRODUCT DECISION, deliberately not taken here.
+ *
  * DERIVED ARITHMETIC ONLY: nothing here consults a threshold, and no result is graded or coloured. A trend says
  * what moved, and by how much; whether that is good is a question the readiness assessment answers separately.
  */

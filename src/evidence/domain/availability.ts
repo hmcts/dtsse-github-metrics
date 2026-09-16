@@ -40,8 +40,6 @@ export const EvidenceKind = {
   Sonar: "sonar"
 } as const;
 
-export type EvidenceKind = (typeof EvidenceKind)[keyof typeof EvidenceKind];
-
 /**
  * One repository's evidence that could not be observed, and why.
  *

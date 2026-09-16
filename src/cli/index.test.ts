@@ -65,10 +65,7 @@ vi.mock("../evidence/store/collector-lock.ts", () => ({
   takeCollectorLock: async () => ({ held: true, release: async () => undefined })
 }));
 vi.mock("../evidence/policy/load.ts", () => ({ loadConfiguration }));
-vi.mock("../evidence/policy/repositories.ts", () => ({
-  configuredTeamSlugs: () => new Map(),
-  sonarOrganizationName: () => "hmcts"
-}));
+vi.mock("../evidence/policy/repositories.ts", () => ({ configuredTeamSlugs: () => new Map() }));
 // The cohort comes from the graph now, so this is where the estate is stubbed. `CohortUncollectedError` is
 // re-exported real rather than faked: `doctor` branches on `instanceof`, and a stubbed class would make that
 // branch untestable.
@@ -644,7 +641,7 @@ describe("what collect walks", () => {
 });
 
 /**
- * `--format json`, which is documented as "the same figures" the dashboard shows.
+ * `evidence`, which is documented as printing "the same figures" the dashboard shows.
  *
  * That sentence is the whole of what these cases are about, and it is the one this command can break silently:
  * it reads the fact cache through its own code path, so a narrowing the pages apply and it does not shows up as
@@ -736,7 +733,7 @@ describe("evidence", () => {
       return true;
     });
 
-    const status = await main(["evidence", "--config", "m.yaml", "--format", "json"]);
+    const status = await main(["evidence", "--config", "m.yaml"]);
     if (printed === "") {
       throw new Error(`evidence printed no document and exited ${status}: ${complained.trim()}`);
     }

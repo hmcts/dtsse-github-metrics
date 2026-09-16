@@ -244,15 +244,15 @@ model OrgTeam {
   digest         String
 
   @@id([organization, teamSlug, observedAt])
-  @@index([organization, supersededAt])
   @@map("org_teams")
 }
 
 /// One person's membership of one team, over the interval they held that role in it.
 ///
-/// The index is on `(organization, login, superseded_at)` rather than on the team, because the question
-/// this table exists to answer is "which teams is this person in" — asked per person, on a page about a
-/// person. Reading a single team's roster is the primary key's leading columns already.
+/// NO SECONDARY INDEX. Nothing queries this table by login: the `_live` partial unique below answers the
+/// reconcile path, and no page asks "which teams is this person in". A `(organization, login,
+/// superseded_at)` index for that question was maintained on every insert of all six reconciles and chosen
+/// by no plan; it belongs here again when something asks.
 ///
 /// COLLECTED WITH `membership: IMMEDIATE`, NOT GitHub's default of `ALL`. `ALL` folds every descendant
 /// team's people into the parent, which across 336 nested teams makes a parent look as though it employs
@@ -271,7 +271,6 @@ model OrgTeamMembership {
   digest         String
 
   @@id([organization, teamSlug, login, observedAt])
-  @@index([organization, login, supersededAt])
   @@map("org_team_memberships")
 }
 
@@ -293,7 +292,6 @@ model OrgTeamRepository {
   digest         String
 
   @@id([organization, teamSlug, repository, observedAt])
-  @@index([organization, repository, supersededAt])
   @@map("org_team_repositories")
 }
 
@@ -328,7 +326,6 @@ model OrgRepository {
   digest         String
 
   @@id([organization, repository, observedAt])
-  @@index([organization, supersededAt])
   @@map("org_repositories")
 }
 
@@ -354,7 +351,6 @@ model OrgPerson {
   digest         String
 
   @@id([organization, login, observedAt])
-  @@index([organization, supersededAt])
   @@map("org_people")
 }
 
@@ -371,8 +367,10 @@ model OrgPerson {
 /// `("owner_kind" = 'none') = ("owner" = '')` CHECK constraint in the org-graph migration is what keeps
 /// that row from being confused with one somebody half-wrote.
 ///
-/// The index is on `rung` because reports are read by confidence: the `name-prefix` rung is a guess and
-/// `teams-api-admin` is nearly a declaration, and a reader wants them counted apart.
+/// NO SECONDARY INDEX ON `rung`, for the reason `OrgTeamMembership` states about its own. Counting the
+/// attributions by confidence — `name-prefix` is a guess and `teams-api-admin` is nearly a declaration — is
+/// a report nothing assembles, and `liveRepositoryOwnership` reads the whole organisation through the
+/// `_live` partial unique.
 model RepositoryOwnership {
   organization   String
   repository     String
@@ -389,6 +387,5 @@ model RepositoryOwnership {
   digest         String
 
   @@id([organization, repository, ownerKind, owner, observedAt])
-  @@index([organization, rung, supersededAt])
   @@map("repository_ownership")
 }

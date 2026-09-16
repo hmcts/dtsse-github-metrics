@@ -5,8 +5,6 @@ organization: hmcts
 # because where the data lives is a deployment concern rather than a policy decision.
 lookback:
   operational_days: 90
-  maximum_days: 365
-  stale_open_days: 14
   stale_collection_days: 2
 triviality:
   maximum_lines: 10
@@ -169,25 +167,19 @@ teams:
     display_name: Example Team
     repositories:
       - example-service
-# When agentic tooling was turned on for each repository, which the tool cannot observe. It anchors
-# the `trend` baseline and periods, and parses exactly as a window edge does: a bare date is UTC
-# midnight, a naive datetime is UTC, an offset is honoured. A repository listed here gets a series, one
-# omitted reports that it has no date. No longer cross-checked against the cohort at load time: the file
-# cannot know the cohort without opening a database, so a name that matches nothing is reported by the
-# report rather than refused by the schema.
+# When agentic tooling was turned on for each repository, which the tool cannot observe. It parses
+# exactly as a window edge does: a bare date is UTC midnight, a naive datetime is UTC, an offset is
+# honoured. Read by the repository page's trend section, which shows a series for a repository with a
+# date and says there is none for a repository without one. Not cross-checked against the cohort at
+# load time: the file cannot know the cohort without opening a database, so a name that matches nothing
+# is reported by the report rather than refused by the schema.
 enablement:
   example-service: 2026-06-01
-# The SonarCloud organisation key. Omit it when it matches `organization`, as it does at HMCTS; it is
-# here only because the two names are allowed to differ.
-sonar_organization: hmcts
-# The answer of last resort for a repository whose project the stored `map-sonar` map cannot settle,
-# and the only place a human decides a mapping. Ambiguity is real: `rpx-xui-icp-api` declares
-# `em-icp-api` in its `sonar-project.properties`, and so does `em-icp-api` itself, so at most one of
-# them owns the project and no evidence in either repository says which. Every name must be a
-# configured repository and no key may be empty, because an override silently meaning "unresolved"
-# would read as a decision somebody made.
-sonar_projects:
-  example-service: example-service
+# NO `sonar_organization:` OR `sonar_projects:` KEY. The SonarCloud layer under
+# `src/evidence/sonar/` is present and reached by nothing — no collection resolves a project and no
+# report reads a measure — so both keys validated and then decided nothing. They come back with the
+# layer, alongside a `map-sonar` command to resolve the mapping and a report that reads it.
+#
 # Where the list of repositories approved to deploy to production is published: HMCTS's
 # `environment-approvals.yml`, the document its deployment pipeline reads to decide whether a
 # repository may be promoted to an environment at all, whose `prod:` sequence is what puts a

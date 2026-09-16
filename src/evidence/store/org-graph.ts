@@ -747,61 +747,14 @@ export async function recordRepositoryOwnership(
  *
  * Each returns a stable order, for the reason `loadCachedPullRequestFacts` gives: two reports of the same
  * database must not differ.
+ *
+ * THREE OF THE SIX TABLES HAVE A READER HERE, and the other three are written without being read back:
+ * `cohort.ts` reads the repositories and the resolved ownership, `people.ts` reads the members, and nothing
+ * asks this module for a team, a membership or a team access edge. The team tables feed the OWNERSHIP LADDER
+ * during `collect-org`, which walks its own facts in memory and stores the conclusion, so the rows are a
+ * history a person can query rather than an input any page takes. A reader for one of them belongs here when
+ * something reads it; `test/integration/org-graph.test.ts` holds the three it observes the write path with.
  */
-
-/** Live teams, in slug order. */
-export async function liveOrgTeams(organization: string): Promise<LiveOrgTeam[]> {
-  try {
-    const rows = await prisma.orgTeam.findMany({ where: { organization, supersededAt: null }, orderBy: { teamSlug: "asc" } });
-    return rows.map((row) => ({
-      teamSlug: row.teamSlug,
-      parentSlug: row.parentSlug ?? undefined,
-      payload: row.payload,
-      observedAt: row.observedAt,
-      lastObservedAt: row.lastObservedAt
-    }));
-  } catch (error) {
-    throw new StorageError("could not read the organisation graph", error);
-  }
-}
-
-/** Live memberships, in team-then-login order. */
-export async function liveTeamMemberships(organization: string): Promise<LiveTeamMembership[]> {
-  try {
-    const rows = await prisma.orgTeamMembership.findMany({
-      where: { organization, supersededAt: null },
-      orderBy: [{ teamSlug: "asc" }, { login: "asc" }]
-    });
-    return rows.map((row) => ({
-      teamSlug: row.teamSlug,
-      login: row.login,
-      role: row.role,
-      observedAt: row.observedAt,
-      lastObservedAt: row.lastObservedAt
-    }));
-  } catch (error) {
-    throw new StorageError("could not read the organisation graph", error);
-  }
-}
-
-/** Live team access edges, in team-then-repository order. */
-export async function liveTeamRepositories(organization: string): Promise<LiveTeamRepository[]> {
-  try {
-    const rows = await prisma.orgTeamRepository.findMany({
-      where: { organization, supersededAt: null },
-      orderBy: [{ teamSlug: "asc" }, { repository: "asc" }]
-    });
-    return rows.map((row) => ({
-      teamSlug: row.teamSlug,
-      repository: row.repository,
-      permission: row.permission,
-      observedAt: row.observedAt,
-      lastObservedAt: row.lastObservedAt
-    }));
-  } catch (error) {
-    throw new StorageError("could not read the organisation graph", error);
-  }
-}
 
 /** Live repositories, in name order. The denominator every ownership figure is a share of. */
 export async function liveOrgRepositories(organization: string): Promise<LiveOrgRepository[]> {
@@ -868,24 +821,6 @@ export async function liveRepositoryOwnership(organization: string): Promise<Liv
 export interface LiveInterval {
   observedAt: Date;
   lastObservedAt: Date;
-}
-
-export interface LiveOrgTeam extends LiveInterval {
-  teamSlug: string;
-  parentSlug?: string;
-  payload: unknown;
-}
-
-export interface LiveTeamMembership extends LiveInterval {
-  teamSlug: string;
-  login: string;
-  role: string;
-}
-
-export interface LiveTeamRepository extends LiveInterval {
-  teamSlug: string;
-  repository: string;
-  permission: string;
 }
 
 export interface LiveOrgRepository extends LiveInterval {

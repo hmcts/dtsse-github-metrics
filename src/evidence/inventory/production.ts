@@ -18,9 +18,6 @@ import yaml from "js-yaml";
  * host returned a 502.
  */
 
-/** Pinned to `master` because that is the branch the pipeline itself reads. */
-export const PRODUCTION_LIST_URL = "https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/refs/heads/master/environment-approvals.yml";
-
 /**
  * The one environment this project asks about.
  *

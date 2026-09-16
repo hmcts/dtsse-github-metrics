@@ -502,11 +502,6 @@ export interface RepositoryTrend {
   delta_detail?: string;
 }
 
-export interface ServiceHealth {
-  status: string;
-  organization: string;
-}
-
 /**
  * The spans on offer, and the collection every one of them is anchored to.
  *
@@ -556,14 +551,15 @@ export interface OverviewSummary {
  * block carries a reason instead of alerts. None is zero by default — an unprotected default branch is
  * the one thing that reads as a real `0`, because the gate was read and it requires nothing.
  *
- * FOUR OF THESE ARE NEVER SENT BY THIS SERVICE and are kept on the contract rather than deleted:
+ * SEVEN OF THESE ARE NEVER SENT BY THIS SERVICE and are kept on the contract rather than deleted:
  * `currently_open`, `stale_open`, `finding_occurrences`, `sonar_coverage`, `sonar_reported`,
- * `sonar_security_rating` and `sonar_security_issues`. The report layer emits none of them — the open
- * pull-request summary, the practice findings and the Sonar resolution ladder are all collected but not
- * yet assembled into rows — so every column keyed on one rendered a dash for the whole estate. The
- * `/repositories` columns that read them have gone; the fields stay because the components on a
- * repository's own page read them through `lib/repository.ts` and because `map-sonar` reports itself as
- * "not yet wired", so these are a contract waiting on an assembly rather than dead weight.
+ * `sonar_security_rating` and `sonar_security_issues`. The report layer emits none of them, and the
+ * reason is the same in each case: the open pull-request summary and the practice findings have no
+ * producer at all, and the Sonar layer under `src/evidence/sonar/` is written but reached by nothing —
+ * see `sonar/resolve.ts`, which states what would reach it. So every column keyed on one rendered a dash
+ * for the whole estate. The `/repositories` columns that read them have gone; the fields stay because
+ * the components on a repository's own page read them through `lib/repository.ts`, which makes these a
+ * contract waiting on an assembly rather than dead weight.
  *
  * `codeowners_files` DID go, along with `codeownersPresent` in `lib/rows.ts`. It was in the same state and
  * differs in one way that matters: nothing anywhere else reads it, and `owner_kind` answers the question
@@ -571,8 +567,9 @@ export interface OverviewSummary {
  * populated on every row.
  *
  * `security` carries `SecurityAlertEvidence` verbatim rather than flattened into scalars, because the
- * per-family `open`/`by_severity`/`detail` is what `securityBand` needs — a family with nothing open
- * and one GitHub refused are different answers, and only the block itself keeps them apart.
+ * per-family `open`/`by_severity`/`detail` is what `lib/repository.ts` colours the page's security cards
+ * from — a family with nothing open and one GitHub refused are different answers, they take different
+ * tones, and only the block itself keeps them apart.
  */
 export interface RepositoryRow {
   repository: string;
