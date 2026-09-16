@@ -19,12 +19,15 @@ def yarnBuilder = new uk.gov.hmcts.contino.YarnBuilder(this)
 //     killed the first one's database mid-suite, and the first one's `afterAlways` then killed the second's.
 //     The visible symptom is nothing like the cause — the suite hangs on a database that vanished and the
 //     pipeline aborts the stage on its timeout, so four builds reported "aborted" at 42 minutes with no
-//     failing test between them. `BUILD_TAG` is unique per build, and the port is whatever the daemon assigns,
-//     read back below; a fixed port would still have collided even with unique names. The agent image also
-//     runs its own Postgres cluster on 5432, which is why the port is published rather than shared.
+//     failing test between them. The port is now whatever the daemon assigns, read back below; a fixed port
+//     would still have collided even with unique names. The agent image also
+//     runs its own Postgres cluster on 5432, which is why the port is published rather than shared. The name is
+//     `BRANCH_NAME`-`BUILD_NUMBER` — `PR-54-3`, `master-58` — so it names the build that owns it and a rerun of
+//     one PR cannot collide with the run it replaced. NOT `CHANGE_ID`: that is the pull-request number and is
+//     null on master, which would silently make every master build share one name.
 def postgresImage = 'hmctsprod.azurecr.io/imported/postgres:16-alpine'
-def buildTag = env.BUILD_TAG
-def postgresContainer = "metrics-test-postgres-${buildTag}".replaceAll('[^A-Za-z0-9_.-]', '-')
+def buildRef = env.BRANCH_NAME == null ? null : "${env.BRANCH_NAME}-${env.BUILD_NUMBER}"
+def postgresContainer = "metrics-test-postgres-${buildRef}".replaceAll('[^A-Za-z0-9_.-]', '-')
 
 static Map<String, Object> secret(String secretName, String envVariable) {
   [
@@ -55,11 +58,11 @@ withPipeline(type, product, component) {
     // typechecked `test/integration` or `test/e2e`. First because it is the cheapest of the three to fail on.
     yarnBuilder.yarn('typecheck')
 
-    // FAILS RATHER THAN FALLING BACK. An unset `BUILD_TAG` would leave the name a constant again — the exact
+    // FAILS RATHER THAN FALLING BACK. An unset `BRANCH_NAME` would leave the name a constant again — the exact
     // shape of the bug this replaced — and it would do so invisibly, because a single build in isolation passes
     // either way. Loud here beats two builds quietly destroying each other's database again.
-    if (!buildTag) {
-      error 'BUILD_TAG is not set, so the integration Postgres container would not be unique to this build'
+    if (!buildRef) {
+      error 'BRANCH_NAME is not set, so the integration Postgres container would not be unique to this build'
     }
 
     // No `docker stop` of a leftover container first: there is nothing to leave behind now the name is unique,
