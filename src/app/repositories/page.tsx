@@ -47,7 +47,11 @@ export default async function RepositoriesPage({ searchParams }: { searchParams?
       <Panel>
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 p-4">
           <MetricCard
-            label="Repositories"
+            // The qualifier is on the LABEL and not in `detail`, which is spoken for: it carries how many of
+            // these the window could be reported for. `cohort.include_archived` defaults false and `metrics.yaml`
+            // does not override it, so `selectCohort` drops every archived repository and this figure has never
+            // counted one — the count was accurate and only the name for it was not.
+            label="Repositories (excluding archived)"
             value={overview.repositories}
             detail={overview.unavailable > 0 ? `${overview.repositories - overview.unavailable} reported` : "all reported"}
           />
