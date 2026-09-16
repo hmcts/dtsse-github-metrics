@@ -43,6 +43,18 @@ assessment:
   review-depth-minimum-percentage: 50
 # Neither number enters the readiness label. `reference_patterns` is a list because HMCTS traces work
 # through both a GitHub issue and a Jira key; the defaults below match those two.
+#
+# THE TWO ARE APPLIED AT DIFFERENT TIMES, unlike every other pair of options in this file, and it is worth
+# knowing which. Pull-request descriptions are no longer STORED — they were two thirds of the fact cache,
+# read off disk on every render to reach a length and a regex match — so what a collection stores is the
+# length of each description and whether it referenced anything.
+#
+#   `minimum_description` is compared against that stored length when a report is BUILT, so raising or
+#   lowering it regrades every cached merge on the next render with nothing refetched.
+#
+#   `reference_patterns` are applied when facts are COLLECTED, because a pattern cannot be re-run against a
+#   description nobody kept. An edited list takes effect as the cache is rewritten, which is one collection;
+#   merges already cached keep the answer the previous patterns gave.
 traceability:
   minimum_description: 30
   reference_patterns:
@@ -91,6 +103,19 @@ cohort:
     - fluxcdbot
     - hmcts-platform-operations
     - claude
+  # REPOSITORIES WHERE NO PERSON PUSHES TO THE DEFAULT BRANCH. A repository named here reports `0` direct commits
+  # instead of the sentence saying nobody read them; the count itself still comes from the facts, so naming one that
+  # does hold direct commits reports them rather than hiding them.
+  #
+  # A DECLARATION, and the reason it cannot be inferred instead: a ruleset requiring a pull request on the default
+  # branch looks like proof that a direct push is impossible, and 91 of the 413 repositories carrying such a gate on
+  # the HMCTS estate still hold direct-commit facts. Empty is the right default — a repository nobody has declared
+  # and whose walk did not reach it must still report an absence.
+  #
+  # What it is for is a repository whose commit walk cannot finish and so never writes coverage: HMCTS's
+  # `cnp-flux-config` is 362,987 commits on `master`, and the pushes are `fluxcdbot`'s, which `bot_accounts`
+  # already excludes. Matched case-insensitively, because a name here is typed by hand.
+  no_direct_pushes: []
   # Which visibilities count. All three is the default. Narrowing to `[public]` is what a deployment does
   # when the credential cannot read the others: 830 of HMCTS's 1,796 active repositories are private or
   # internal, and each is refused until the App's pending `pull_requests: read` is approved, so admitting

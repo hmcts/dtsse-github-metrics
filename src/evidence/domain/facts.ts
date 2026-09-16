@@ -76,13 +76,44 @@ export interface CheckFact {
   completedAt?: Date;
 }
 
-/** One merged pull request. */
+/**
+ * One merged pull request.
+ *
+ * NEITHER `title` NOR `body` IS A FIELD HERE, and that is the shape rather than an omission. Both were
+ * collected, stored and then projected away on every read, which is two thirds of the estate's fact payload
+ * for two metrics that need PREDICATES over a description and not the description itself. `bodyLength` and
+ * `hasTicketReference` are those predicates, derived once where the fact is built — see
+ * `behaviour/collect.ts` for what each one decides and `store/facts.ts` for what it saved.
+ */
 export interface PullRequestFact extends Merge {
   identifier: number;
   repository: string;
   number: number;
-  title?: string;
-  body?: string;
+  /**
+   * How long the description is, with surrounding whitespace already trimmed off.
+   *
+   * A NUMBER AND NOT A BOOLEAN, so `traceability.minimum_description` stays a policy the REPORT applies:
+   * raising the threshold regrades every cached merge on the next render with nothing refetched, which is how
+   * every other configured boundary in this system behaves. Storing "described" instead would bake one
+   * deployment's threshold into the cache.
+   *
+   * ZERO WHERE THE DESCRIPTION IS EMPTY, absent only where nothing measured it — a row cached before this
+   * field existed. A pull request opened with no description was MEASURED as having none, and the two must
+   * not fold together: see `descriptionQuality`.
+   */
+  bodyLength?: number;
+  /**
+   * Whether the title or the description carries an issue or ticket reference.
+   *
+   * A BOOLEAN AND NOT THE TEXT, which is the whole of what the metric asks — and unlike `bodyLength` this one
+   * bakes its policy in, because `traceability.reference_patterns` cannot be applied to a length. Changing
+   * those patterns therefore regrades nothing already collected; it takes effect as the cache is rewritten.
+   * That is the price of not storing 61 MB of bodies to re-run a regex over, and it is stated at the metric
+   * too.
+   *
+   * Absent means nothing measured it, never that no reference was found.
+   */
+  hasTicketReference?: boolean;
   createdAt: Date;
   mergedAt: Date;
   readyForReviewAt?: Date;

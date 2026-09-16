@@ -498,7 +498,7 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
     endsAt: window.endsAt,
     cohort,
     states,
-    measured: measuredSources(edges, window.endsAt),
+    measured: measuredSources(edges, window.endsAt, cohort, configuration.cohort.no_direct_pushes),
     facts: new Map(
       [...stored].map(([repository, cached]) => [
         repository,
@@ -539,8 +539,20 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
  * The residual `modalEdge` already names is inherited and not introduced: a `collect` that dies past halfway
  * moves the mode, and the repositories it never reached report their merges as unmeasured until the next run
  * reaches them. Unmeasured is what they are.
+ *
+ * `cohort.no_direct_pushes` IS THE ONE EXCEPTION, and it is a declaration rather than a second reading of the
+ * coverage table: a repository named there counts as read for its direct commits whatever was walked, because
+ * somebody has stated that no person pushes to its default branch. The gate cannot be inferred from the branch
+ * ruleset instead — 91 of the 413 repositories on this estate whose default branch requires a pull request still
+ * hold direct-commit facts — and it is not inferred from the facts either, since having none is exactly the state
+ * an unread walk and an empty one share. It permits the figure; the facts still supply it.
  */
-function measuredSources(edges: ReadonlyMap<string, ReadonlyMap<string, Date>>, endsAt: Date): MeasuredSources {
+function measuredSources(
+  edges: ReadonlyMap<string, ReadonlyMap<string, Date>>,
+  endsAt: Date,
+  cohort: readonly CohortEntry[],
+  noDirectPushes: readonly string[]
+): MeasuredSources {
   const measured: MeasuredSources = { pullRequests: new Set<string>(), directCommits: new Set<string>() };
   for (const [repository, bySource] of edges) {
     if (reachesAnchor(bySource.get(EvidenceSource.PullRequests), endsAt)) {
@@ -548,6 +560,15 @@ function measuredSources(edges: ReadonlyMap<string, ReadonlyMap<string, Date>>, 
     }
     if (reachesAnchor(bySource.get(EvidenceSource.DirectCommits), endsAt)) {
       measured.directCommits.add(repository);
+    }
+  }
+  // Resolved through the cohort so the set holds the repository's OWN spelling, which is what both readers of it
+  // look up by, and so the comparison folds on both sides: the configured name is typed by hand and the
+  // repository's is not, and adding a hand-typed name directly would leave a mis-cased one matching nothing.
+  const declared = new Set(noDirectPushes.map((repository) => repository.toLowerCase()));
+  for (const entry of cohort) {
+    if (declared.has(entry.repository.toLowerCase())) {
+      measured.directCommits.add(entry.repository);
     }
   }
   return measured;

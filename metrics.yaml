@@ -59,6 +59,16 @@ cohort:
     - fluxcdbot
     - hmcts-platform-operations
     - claude
+  # REPOSITORIES WHERE NO PERSON PUSHES TO THE DEFAULT BRANCH, stated, so the row reports `0` rather than "the
+  # direct commits were not read". A declaration and never read off the branch ruleset: 91 of the 413 repositories
+  # here carrying a pull-request-required gate still hold direct-commit facts, `cnp-flux-config` among them.
+  #
+  # `cnp-flux-config` is the one repository on the estate whose commit walk cannot finish — 362,987 commits on
+  # `master`, 18,714 inside the window — so it writes no coverage and would report an absence for good. Its last 20
+  # `master` commits are 19 without a pull request and all of them `fluxcdbot`'s, which `bot_accounts` above
+  # already excludes; the human figure is none, and this is what lets the column say so.
+  no_direct_pushes:
+    - cnp-flux-config
   # All three, because the App's `pull_requests: read` has now been approved. This was narrowed to `[public]`
   # while it was pending: 962 private and 547 internal repositories were refused outright, so admitting them
   # would have filled the dashboard with `unavailable` rows rather than figures. Verified after approval —

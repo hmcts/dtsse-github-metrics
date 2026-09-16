@@ -151,6 +151,23 @@ const cohort = z
     // A SEPARATE QUESTION from `excluded_authors` above: this says "this account is not a person", which also
     // keeps it out of the contributor lists, where that one says "this author's work is not the cohort's".
     bot_accounts: z.array(z.string()).default(["fluxcdbot", "hmcts-platform-operations", "claude"]),
+    // Repositories where no person can push to the default branch, declared. A repository named here reports `0`
+    // direct commits rather than an absence, whether or not its commit walk was ever read: the count still comes
+    // from the facts, so this settles only whether the figure may be stated.
+    //
+    // A DECLARATION AND NOT AN INFERENCE, which is the whole reason it is a list of names. A branch ruleset
+    // requiring a pull request looks like proof that a direct push is impossible and is not: 91 of the 413
+    // repositories on this estate carrying such a gate still hold direct-commit facts, so a rule reading the gate
+    // as the answer would be wrong 91 times. Nothing observable settles it; somebody has to state it.
+    //
+    // What it is FOR is a repository whose commit walk cannot finish — `cnp-flux-config` is 362,987 commits on
+    // `master`, 18,714 of them inside a 90-day window — so the walk writes no coverage and the row reports its
+    // direct commits as unmeasured for good. Automation's pushes are already out through `bot_accounts`, so the
+    // figure this permits is the human one.
+    //
+    // Matched case-insensitively against the cohort's own spelling: a name here is typed by hand and a repository
+    // name is not. A name matching no repository does nothing, as an `enablement` key that matches nothing does.
+    no_direct_pushes: z.array(z.string()).default([]),
     // Which visibilities count. All three by default, because narrowing the estate is a decision a deployment
     // should have to state. Worth stating on this one: 830 of 1,796 active repositories are private or internal,
     // and every one is refused until the App's pending `pull_requests: read` is approved — so a deployment that

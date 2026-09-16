@@ -5,7 +5,10 @@ import {
   findMissingCoverage,
   getSourceCoverage,
   prevailingCachedCoverage,
-  recordSourceCoverage
+  recordSourceCoverage,
+  recordSourceCoverageWithin,
+  touchOrganisationCoverage,
+  touchSourceCoverage
 } from "../../src/evidence/store/coverage.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 
@@ -88,7 +91,92 @@ describe("recordSourceCoverage", () => {
       /could not update collection cache/
     );
   });
+
+  it("should lock a series that has no rows yet, and only that series", async () => {
+    // THE CASE `FOR UPDATE` COULD NOT COVER. A row lock only exists for rows that exist, so on the FIRST write
+    // of a series it locked nothing: two writers both read an empty snapshot, both deleted nothing and both
+    // inserted, and because `starts_at` is in the primary key two adjacent intervals both landed with the
+    // coalescing invariant broken and no error anywhere.
+    //
+    // ASSERTED ON THE LOCK RATHER THAN ON THE OUTCOME, and deliberately. Two `recordSourceCoverage` calls raced
+    // through `Promise.all` do not reliably interleave — each is a handful of fast statements, so the first
+    // usually commits before the second reads — and that version of this case passed against `FOR UPDATE` too,
+    // which is worse than no test. This asks a SECOND CONNECTION, while the first write is still uncommitted,
+    // whether the series is locked. `pg_try_advisory_xact_lock` never waits, so a failure is a failure rather
+    // than a hang.
+    //
+    // The key is spelled out here rather than imported, which is the point: if the separator or the column order
+    // changes, this asks about a different series, `mine` comes back true, and the case fails.
+    const series = (repository: string) => ["hmcts", repository, EvidenceSource.PullRequests, "testhash"].join("\u0001");
+
+    const attempt = await prisma.$transaction(async (tx) => {
+      await recordSourceCoverageWithin(tx, coverage(1, 3));
+      return (
+        await prisma.$queryRaw<{ mine: boolean; other: boolean }[]>`
+          SELECT pg_try_advisory_xact_lock(hashtextextended(${series("cath-service")}, 0)) AS mine,
+                 pg_try_advisory_xact_lock(hashtextextended(${series("pcs-api")}, 0)) AS other
+        `
+      )[0];
+    });
+
+    // `other` is the second half of the contract: the lock is derived from the four key columns, so a
+    // collection of another repository at the same instant never waits on this one.
+    expect(attempt).toEqual({ mine: false, other: true });
+  });
 });
+
+/**
+ * Stamping a series as used, which `prune` reads and nothing else does.
+ *
+ * The guard here is a WRITE-VOLUME invariant rather than a correctness one, and it is asserted because the cost
+ * it removes is invisible from the outside: `accessed_at` is indexed, so every stamp is a dead tuple and a new
+ * index tuple, and a whole-organisation render stamped 3,782 rows on every uncached request.
+ */
+describe("touchSourceCoverage", () => {
+  const SIGNATURES = { pullRequests: "testhash", directCommits: "commithash" };
+
+  it("should stamp a series nothing has read today", async () => {
+    await recordSourceCoverage(coverage(1, 3), new Date(Date.UTC(2026, 7, 1, 9)));
+
+    await touchSourceCoverage(coverage(1, 3), new Date(Date.UTC(2026, 7, 4, 9)));
+
+    expect((await stamps())[0]?.toISOString()).toBe("2026-08-04T09:00:00.000Z");
+  });
+
+  it("should leave a series already stamped today alone", async () => {
+    // Same meaning, no write: the cut-off `prune` compares against is measured in days, so a second read the
+    // same day cannot change its answer.
+    await recordSourceCoverage(coverage(1, 3), new Date(Date.UTC(2026, 7, 4, 9)));
+
+    await touchSourceCoverage(coverage(1, 3), new Date(Date.UTC(2026, 7, 4, 23)));
+
+    expect((await stamps())[0]?.toISOString()).toBe("2026-08-04T09:00:00.000Z");
+  });
+
+  it("should stamp a series last read before midnight today", async () => {
+    // The boundary is UTC midnight and not a rolling twenty-four hours: a row stamped late yesterday must be
+    // stamped again this morning, or a series read every day could age past the cut-off.
+    await recordSourceCoverage(coverage(1, 3), new Date(Date.UTC(2026, 7, 3, 23, 59)));
+
+    await touchSourceCoverage(coverage(1, 3), new Date(Date.UTC(2026, 7, 4, 0, 1)));
+
+    expect((await stamps())[0]?.toISOString()).toBe("2026-08-04T00:01:00.000Z");
+  });
+
+  it("should leave the whole organisation's series alone once one render has stamped them", async () => {
+    await recordSourceCoverage(coverage(1, 3), new Date(Date.UTC(2026, 7, 4, 9)));
+    await recordSourceCoverage(coverage(1, 3, { repository: "pcs-api" }), new Date(Date.UTC(2026, 7, 4, 9)));
+
+    await touchOrganisationCoverage("hmcts", SIGNATURES, new Date(Date.UTC(2026, 7, 4, 23)));
+
+    expect(new Set((await stamps()).map((at) => at.toISOString()))).toEqual(new Set(["2026-08-04T09:00:00.000Z"]));
+  });
+});
+
+async function stamps(): Promise<Date[]> {
+  const rows = await prisma.sourceCoverage.findMany({ select: { accessedAt: true } });
+  return rows.map((row) => row.accessedAt);
+}
 
 describe("findMissingCoverage", () => {
   it("should report the gaps a partial collection left", async () => {

@@ -1,7 +1,7 @@
 import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { botAccounts, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge } from "../evidence/behaviour/collect.ts";
-import { directCommitCacheWriter, fillCachedSource, loadCachedMerges, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
+import { deserialiseMerges, directCommitCacheWriter, fillCachedSource, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { CollectionStatus } from "../evidence/domain/availability.ts";
@@ -42,7 +42,7 @@ import type { Configuration } from "../evidence/policy/schema.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
-import { authorshipForOrganisation } from "../evidence/store/facts.ts";
+import { authorshipForOrganisation, loadCachedFactsForOrganisation, storedRepositoryStates } from "../evidence/store/facts.ts";
 import { migrate } from "../evidence/store/migrate.ts";
 import {
   recordOrgPeople,
@@ -54,7 +54,7 @@ import {
 } from "../evidence/store/org-graph.ts";
 import { prisma } from "../evidence/store/prisma.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
-import { recordRepositoryState, storedRepositoryState } from "../evidence/store/repository-state.ts";
+import { recordRepositoryState } from "../evidence/store/repository-state.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
 import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { type Arguments, COHORT_COMMANDS, parseArguments, UsageError } from "./parse-arguments.ts";
@@ -192,7 +192,10 @@ async function collectRepository(
   await fillCachedSource(
     requestedCoverage(organization, repository, EvidenceSource.PullRequests, window),
     edge,
-    (startsAt, endsAt) => collectMergedPullRequests(client, organization, repository, startsAt, endsAt),
+    // The traceability policy reaches the WALK, because the two answers a description is reduced to are
+    // derived where the fact is built rather than stored as 61 MB of prose for a later regex — see
+    // `describedBy` in `behaviour/collect.ts`.
+    (startsAt, endsAt) => collectMergedPullRequests(client, organization, repository, startsAt, endsAt, configuration.traceability),
     pullRequestCacheWriter()
   ).catch((error: unknown) => {
     failures += 1;
@@ -825,11 +828,31 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
   const excluded = excludedAuthors(configuration.cohort.excluded_authors);
   const bots = botAccounts(configuration.cohort.bot_accounts);
 
+  // TWO READS FOR THE COHORT, not five per repository. This loop used to call `loadCachedMerges` and
+  // `storedRepositoryState` per repository — a state lookup, two fact queries and two `accessed_at` WRITES each,
+  // so printing one JSON document over 1,891 repositories cost roughly 9,455 round trips and rewrote 3,782
+  // indexed coverage rows. The web path was batched for exactly this at `loadCachedFactsForOrganisation`, and
+  // `deserialiseMerges` was split out of `loadCachedMerges` so both halves turn a payload into a fact the same
+  // way; `evidence` is documented as reporting "the same figures" the dashboard shows, and reading them through
+  // a different path is how that stops being true.
+  const signatures = {
+    pullRequests: sourceSignature(EvidenceSource.PullRequests),
+    directCommits: sourceSignature(EvidenceSource.DirectCommits)
+  };
+  const [cached, states] = await Promise.all([
+    loadCachedFactsForOrganisation(organization, signatures, window.startsAt, window.endsAt),
+    storedRepositoryStates(organization)
+  ]);
+
   const rows = [];
   for (const repository of repositories) {
-    const merges = reportedCohort(await loadCachedMerges(organization, repository, window), excluded, bots).merges;
-    const state = await storedRepositoryState(organization, repository);
-    const gate = readStoredGate(state?.payload);
+    const facts = cached.get(repository);
+    const payloads = {
+      pullRequests: (facts?.pullRequests ?? []).map((fact) => fact.payload),
+      directCommits: (facts?.directCommits ?? []).map((fact) => fact.payload)
+    };
+    const merges = reportedCohort(deserialiseMerges(payloads), excluded, bots).merges;
+    const gate = readStoredGate(states.get(repository)?.payload);
     const assessment = policy.enabled ? policy.assess(merges, gate) : undefined;
 
     rows.push({
