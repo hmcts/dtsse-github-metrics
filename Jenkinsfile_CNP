@@ -8,6 +8,20 @@ def component = "github-metrics"
 
 def yarnBuilder = new uk.gov.hmcts.contino.YarnBuilder(this)
 
+// The integration suite needs a real Postgres, so `before('test')` starts one on the agent — the pattern
+// hwf-staffapp and the five et-pet repos already run on green masters. Two details are load-bearing:
+//
+//   - the image is the ACR mirror rather than Docker Hub, so the pull is not rate-limited, and the
+//     `az acr login` has to happen inside the hook because a `before` hook runs OUTSIDE the pipeline's own
+//     `withAcrClient` block;
+//   - the published port is not 5432, because the agent image installs its own Postgres cluster which takes
+//     that port. 5421 is what the repos above use; this picks a different one so a concurrent build of one of
+//     them on the same agent cannot take it.
+def postgresImage = 'hmctsprod.azurecr.io/imported/postgres:16-alpine'
+def postgresContainer = 'dtsse-github-metrics-test-postgres'
+def postgresPort = '5441'
+def integrationDatabaseUrl = "postgresql://hmcts@localhost:${postgresPort}/github_metrics"
+
 static Map<String, Object> secret(String secretName, String envVariable) {
   [
     $class: 'AzureKeyVaultSecret',
@@ -28,8 +42,42 @@ withPipeline(type, product, component) {
 
   env.NODE_CONFIG_ENV = 'test'
 
+  // ONE hook per stage name, however many things it does: `registerBefore` is a map put keyed on the stage, so a
+  // second `before('test')` would silently replace this one rather than run alongside it.
   before('test') {
     yarnBuilder.yarn('db:generate')
+
+    // The library invokes `lint`, `test` and `test:coverage` and never the typechecker, so until here nothing
+    // typechecked `test/integration` or `test/e2e`. First because it is the cheapest of the three to fail on.
+    yarnBuilder.yarn('typecheck')
+
+    sh script: """
+      set -e
+      env AZURE_CONFIG_DIR=/opt/jenkins/.azure-nonprod az acr login --name hmctsprod --subscription DCD-CNP-PROD
+      docker inspect ${postgresImage} > /dev/null 2>&1 || docker pull ${postgresImage}
+      docker stop ${postgresContainer} && docker rm ${postgresContainer} || echo 'no test postgres left over from an earlier build'
+      docker run --rm --name ${postgresContainer} --publish ${postgresPort}:5432 \
+        -e POSTGRES_DB=github_metrics -e POSTGRES_USER=hmcts -e POSTGRES_HOST_AUTH_METHOD=trust \
+        -d ${postgresImage}
+      for attempt in \$(seq 1 30); do
+        docker exec ${postgresContainer} pg_isready -U hmcts -d github_metrics && break
+        sleep 2
+      done
+      docker exec ${postgresContainer} pg_isready -U hmcts -d github_metrics
+    """, label: 'Start the integration-test Postgres'
+
+    // Runs here rather than in its own stage because this is where the database is: the suite is the only gate
+    // on `src/evidence/store/**` and `report/repositories.ts`, both of which the unit config exempts. It also
+    // has to precede the sonar scan, which reads `coverage-integration/lcov.info`.
+    withEnv(["DATABASE_URL=${integrationDatabaseUrl}"]) {
+      yarnBuilder.yarn('db:migrate')
+      yarnBuilder.yarn('test:integration')
+    }
+  }
+
+  afterAlways('test') {
+    sh script: "docker stop ${postgresContainer} && docker rm ${postgresContainer} || echo 'test postgres already gone'",
+      label: 'Stop the integration-test Postgres'
   }
 
   onPR() {
