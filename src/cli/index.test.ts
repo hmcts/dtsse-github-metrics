@@ -63,7 +63,13 @@ vi.mock("../evidence/org/cohort.ts", async () => ({
   cohortOwners: async () => new Map(),
   readCohort
 }));
-vi.mock("../evidence/store/facts.ts", () => ({ authorshipForOrganisation }));
+vi.mock("../evidence/store/facts.ts", () => ({
+  authorshipForOrganisation,
+  // `evidence` reads the estate through the batched readers the web path uses, rather than five calls per
+  // repository. Stubbed empty because these reach Postgres; the command itself is not exercised here.
+  loadCachedFactsForOrganisation: async () => new Map(),
+  storedRepositoryStates: async () => new Map()
+}));
 vi.mock("../evidence/store/prune.ts", () => ({ pruneCache }));
 // The per-repository writers `collect` ends each repository with. Stubbed because they reach Postgres and
 // `prisma` here is a bare `$disconnect` — left real, the FIRST repository throws a TypeError out of the walk and
@@ -72,7 +78,7 @@ vi.mock("../evidence/store/prune.ts", () => ({ pruneCache }));
 vi.mock("../evidence/store/repository-state.ts", () => ({ recordRepositoryState, storedRepositoryState: async () => undefined }));
 vi.mock("../evidence/behaviour/fill.ts", () => ({
   fillCachedSource: async () => [],
-  loadCachedMerges: async () => ({ pullRequests: [], directCommits: [] }),
+  deserialiseMerges: () => ({ pullRequests: [], directCommits: [] }),
   requestedCoverage: () => ({}),
   pullRequestCacheWriter: () => undefined,
   directCommitCacheWriter: () => undefined

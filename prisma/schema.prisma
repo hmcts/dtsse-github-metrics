@@ -60,6 +60,12 @@ model SourceCoverage {
 
 /// One merged pull request, as collected. `merged_at` is a column because windows are selected on it;
 /// everything else lives in the payload.
+///
+/// THE PAYLOAD HOLDS NO `body` AND NO `title`. Both were stored and then projected away on every read, and
+/// projecting a jsonb document still detoasts it to build the reduced one — measured on a seeded table of
+/// this row count, the 26-week organisation-wide read cost 35,815 buffers with them and 1,900 without. What
+/// the two metrics that grade a description need are PREDICATES over it, so `bodyLength` and
+/// `hasTicketReference` are derived at collect time and stored instead. See `behaviour/collect.ts`.
 model PullRequestFact {
   organization String
   repository   String
@@ -69,6 +75,15 @@ model PullRequestFact {
   /// the insert was rejected outright — which is the good failure, but the column has to hold what GitHub sends.
   identifier   BigInt
   mergedAt     DateTime @map("merged_at") @db.Timestamptz(6)
+  /// Who merged it, on exactly the criterion that makes `permission` a column on `org_team_repositories`: the
+  /// ownership ladder runs this as a PREDICATE across every fact in the estate, so it is not a detail. Read
+  /// out of the payload it cost 51,139 buffers over a 90-day window against 1,835 as a column, because
+  /// `payload->>'authorLogin'` appears three times in that statement and each evaluation detoasts the whole
+  /// document.
+  ///
+  /// NULL where GitHub matched the merge to no account at all — which is nobody, and not the same answer as
+  /// an account whose login happens to be unreadable. Absent stays absent.
+  authorLogin  String?  @map("author_login")
   payload      Json     @db.JsonB
 
   @@id([organization, repository, queryHash, identifier])

@@ -322,14 +322,34 @@ export const checksPassingAtMerge = governanceRate({
  * A neutral aggregate only: a documentation habit is not evidence a change was governed, and no threshold
  * here has an owner, so this never enters the readiness label. Direct commits are never counted — there was
  * no pull request, so there is no description to judge.
+ *
+ * READ OFF `bodyLength`, and the THRESHOLD IS STILL APPLIED HERE: the collector stores how long the
+ * description was, not whether it was long enough, so raising `minimum_description` regrades every cached
+ * merge on the next render. What the collector no longer stores is the description itself, which was two
+ * thirds of the fact payload for this comparison and one regex.
+ *
+ * A MERGE WITH NO MEASURED LENGTH IS OUT OF THE DENOMINATOR, not counted as a short description. `bodyLength`
+ * is written for every pull request a collection sees — zero where the description is empty — so absent means
+ * one thing only: a row cached before the field existed. Counting those as too-short would report a
+ * description-quality rate over descriptions nobody read, which is the plausible-looking zero this module has
+ * always refused; an empty denominator reads as unmeasured instead.
  */
 export function descriptionQuality(traceability: TraceabilityConfiguration): BehaviourMetric {
-  const described = (pullRequest: PullRequestFact) => (pullRequest.body ?? "").trim().length >= traceability.minimum_description;
+  const measured = (pullRequest: PullRequestFact) => pullRequest.bodyLength !== undefined;
+  const described = (pullRequest: PullRequestFact) => (pullRequest.bodyLength ?? 0) >= traceability.minimum_description;
   return defineMetric({
     identifier: "description-quality",
     includesReviews: false,
-    summary: (cohort) => rate(cohort.pullRequests.filter((pullRequest) => described(pullRequest)).length, cohort.pullRequests.length),
-    classification: (pullRequest) => (described(pullRequest) ? "described" : "description-too-short")
+    summary(cohort) {
+      const judged = cohort.pullRequests.filter((pullRequest) => measured(pullRequest));
+      return rate(judged.filter((pullRequest) => described(pullRequest)).length, judged.length);
+    },
+    classification(pullRequest) {
+      if (!measured(pullRequest)) {
+        return "description-unmeasured";
+      }
+      return described(pullRequest) ? "described" : "description-too-short";
+    }
   });
 }
 
@@ -337,24 +357,40 @@ export function descriptionQuality(traceability: TraceabilityConfiguration): Beh
  * The share of merged pull requests that reference an issue or ticket.
  *
  * A neutral aggregate only, for the same reason as `description-quality`: it never enters the readiness
- * label. Title and body are both searched, because a ticket key in the title is traceability too, and
- * insisting on the body would fail a team whose convention is the title. Direct commits are never counted —
- * there was no pull request to carry a reference.
+ * label. Direct commits are never counted — there was no pull request to carry a reference.
+ *
+ * NO PATTERNS ARE COMPILED HERE ANY MORE. Title and body are still both searched, and still for the reason
+ * they always were — a ticket key in the title is traceability too, and insisting on the body would fail a
+ * team whose convention is the title — but the search happens once, at collect time, against a text this
+ * process no longer holds. See `describedBy` in `behaviour/collect.ts`.
+ *
+ * THE TRADE THAT BUYS: an edited `reference_patterns` list regrades nothing already cached, unlike
+ * `minimum_description`, which `bodyLength` keeps answerable at render time. A boolean cannot be re-derived
+ * under a new pattern, and the alternative is storing 61 MB of descriptions so a regex can be run over them
+ * again on every render. New patterns take effect as the cache is rewritten, which is one collection.
+ *
+ * A merge with no measured answer is out of the denominator, on `description-quality`'s reasoning: absent
+ * means a row cached before the field existed, and reporting it as unreferenced would announce the one thing
+ * this metric exists to find.
+ *
+ * A PLAIN CONSTANT NOW, like the seven metrics that were never configured. It took a
+ * `TraceabilityConfiguration` only to compile the patterns, and a parameter it no longer reads would suggest
+ * a render-time policy that no longer exists.
  */
-export function traceabilityReference(traceability: TraceabilityConfiguration): BehaviourMetric {
-  // Compiled once, rather than per pull request.
-  const patterns = traceability.reference_patterns.map((pattern) => new RegExp(pattern));
-  const references = (pullRequest: PullRequestFact) => {
-    const text = `${pullRequest.title ?? ""}\n${pullRequest.body ?? ""}`;
-    return patterns.some((pattern) => pattern.test(text));
-  };
-  return defineMetric({
-    identifier: "traceability-reference",
-    includesReviews: false,
-    summary: (cohort) => rate(cohort.pullRequests.filter((pullRequest) => references(pullRequest)).length, cohort.pullRequests.length),
-    classification: (pullRequest) => (references(pullRequest) ? "referenced" : "reference-missing")
-  });
-}
+export const traceabilityReference = defineMetric({
+  identifier: "traceability-reference",
+  includesReviews: false,
+  summary(cohort: Merges): RateObservation {
+    const judged = cohort.pullRequests.filter((pullRequest) => pullRequest.hasTicketReference !== undefined);
+    return rate(judged.filter((pullRequest) => pullRequest.hasTicketReference === true).length, judged.length);
+  },
+  classification(pullRequest: PullRequestFact): string {
+    if (pullRequest.hasTicketReference === undefined) {
+      return "reference-unmeasured";
+    }
+    return pullRequest.hasTicketReference ? "referenced" : "reference-missing";
+  }
+});
 
 /** Every available behaviour metric, in the order a report presents them. */
 export function behaviourMetrics(traceability: TraceabilityConfiguration): BehaviourMetric[] {
@@ -367,7 +403,7 @@ export function behaviourMetrics(traceability: TraceabilityConfiguration): Behav
     pullRequestSize,
     checksPassingAtMerge,
     descriptionQuality(traceability),
-    traceabilityReference(traceability)
+    traceabilityReference
   ];
 }
 

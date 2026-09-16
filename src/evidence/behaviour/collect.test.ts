@@ -4,6 +4,7 @@ import { EvidenceSource } from "../domain/coverage.ts";
 import { CheckConclusion } from "../domain/facts.ts";
 import { createGitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
+import type { TraceabilityConfiguration } from "../policy/schema.ts";
 import { checkFact, collectDirectCommits, collectMergedPullRequests, collectOpenPullRequestState, mutableEdge, statusConclusion } from "./collect.ts";
 import { deserialise } from "./fill.ts";
 import { commitQuerySignature, querySignature, sourceSignature } from "./queries.ts";
@@ -24,6 +25,9 @@ function client(fetch: typeof globalThis.fetch) {
 }
 
 const PAGE_END = { hasNextPage: false, endCursor: null };
+
+/** The documented default policy, which is what the collector reduces a title and a description against. */
+const TRACEABILITY: TraceabilityConfiguration = { minimum_description: 30, reference_patterns: ["#\\d+", "[A-Z][A-Z0-9]+-\\d+"] };
 
 function pullRequestNode(overrides: Record<string, unknown> = {}) {
   return {
@@ -88,10 +92,53 @@ describe("collectMergedPullRequests", () => {
   it("should convert a page of merged pull requests into facts", async () => {
     const { fetch } = replying(merged([pullRequestNode()]));
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts).toHaveLength(1);
     expect(facts[0]).toMatchObject({ identifier: 101, number: 11, authorLogin: "alice", authorType: "User", additions: 10, deletions: 2, changedFiles: 3 });
+  });
+
+  it("should store what a description was measured to be rather than the description", async () => {
+    // The whole of VIBE-571: `body` and `title` were two thirds of the estate's stored payload, read off disk on
+    // every render to reach a length and a regex match. Both answers are derived here instead, and neither field
+    // reaches a fact.
+    const { fetch } = replying(merged([pullRequestNode({ title: "a change", body: `  ${"x".repeat(40)}  ` })]));
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
+
+    expect(facts[0]).not.toHaveProperty("body");
+    expect(facts[0]).not.toHaveProperty("title");
+    // Trimmed, so the stored length is the one the threshold is compared against.
+    expect(facts[0]?.bodyLength).toBe(40);
+  });
+
+  it("should find a ticket reference in the title when the description carries none", async () => {
+    const { fetch } = replying(merged([pullRequestNode({ title: "DTSSE-42 add the thing", body: "no reference at all" })]));
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
+
+    expect(facts[0]?.hasTicketReference).toBe(true);
+  });
+
+  it("should record a merge referencing nothing as measured and unreferenced", async () => {
+    // `false`, not absent. Absent is reserved for a row cached before the field existed, and the two must stay
+    // distinguishable — see `traceabilityReference`.
+    const { fetch } = replying(merged([pullRequestNode({ title: "tidy up", body: "no reference at all" })]));
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
+
+    expect(facts[0]?.hasTicketReference).toBe(false);
+  });
+
+  it("should apply the configured reference patterns rather than a built-in set", async () => {
+    const { fetch } = replying(merged([pullRequestNode({ title: "closes GH-91", body: "" })]));
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), {
+      minimum_description: 30,
+      reference_patterns: ["GH-\\d+"]
+    });
+
+    expect(facts[0]?.hasTicketReference).toBe(true);
   });
 
   it("should stop walking once a pull request was updated before the window opened", async () => {
@@ -105,7 +152,7 @@ describe("collectMergedPullRequests", () => {
       merged([pullRequestNode({ databaseId: 98, number: 8 })])
     );
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts.map((fact) => fact.number)).toEqual([11]);
     // One call only: the second page is never asked for, even though the first said there was one.
@@ -118,7 +165,7 @@ describe("collectMergedPullRequests", () => {
       merged([pullRequestNode({ databaseId: 102, number: 12 })])
     );
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts.map((fact) => fact.number)).toEqual([11, 12]);
     expect(sent).toHaveLength(2);
@@ -127,7 +174,9 @@ describe("collectMergedPullRequests", () => {
   it("should fail loudly when GitHub omits the repository", async () => {
     const { fetch } = replying({ repository: null });
 
-    const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
+    const error = await failing(
+      collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY)
+    );
 
     expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
     expect(error.message).toMatch(/omitted the repository/);
@@ -136,7 +185,7 @@ describe("collectMergedPullRequests", () => {
   it("should exclude a merge outside the half-open window even though the shard range is inclusive", async () => {
     const { fetch } = replying(merged([pullRequestNode({ mergedAt: "2026-08-31T00:00:00Z" })]));
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts).toEqual([]);
   });
@@ -145,7 +194,7 @@ describe("collectMergedPullRequests", () => {
     const onBoundary = pullRequestNode({ mergedAt: "2026-06-09T00:00:00Z" });
     const { fetch } = replying(merged([onBoundary]), merged([onBoundary]), merged([]), merged([]));
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-05-10Z"), new Date("2026-08-08Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-05-10Z"), new Date("2026-08-08Z"), TRACEABILITY);
 
     expect(facts).toHaveLength(1);
   });
@@ -154,7 +203,7 @@ describe("collectMergedPullRequests", () => {
     const mergedAt = "2026-08-02T00:00:00Z";
     const { fetch } = replying(merged([pullRequestNode({ databaseId: 20, mergedAt }), pullRequestNode({ databaseId: 10, mergedAt })]));
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts.map((fact) => fact.identifier)).toEqual([10, 20]);
   });
@@ -165,7 +214,7 @@ describe("collectMergedPullRequests", () => {
       merged([pullRequestNode({ databaseId: 2 })])
     );
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts).toHaveLength(2);
     expect(sent[1]?.variables.cursor).toBe("CURSOR");
@@ -174,7 +223,7 @@ describe("collectMergedPullRequests", () => {
   it("should read the ready-for-review event as the anchor a waiting time is measured from", async () => {
     const { fetch } = replying(merged([pullRequestNode({ timelineItems: { nodes: [{ createdAt: "2026-08-01T12:00:00Z" }] } })]));
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts[0]?.readyForReviewAt?.toISOString()).toBe("2026-08-01T12:00:00.000Z");
   });
@@ -217,7 +266,7 @@ describe("collectMergedPullRequests", () => {
       }
     );
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts[0]?.reviews.map((r) => r.identifier)).toEqual([1, 2]);
     expect(sent[1]?.variables.cursor).toBe("REVIEWS");
@@ -268,7 +317,7 @@ describe("collectMergedPullRequests", () => {
       }
     );
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts[0]?.checks.map((c) => c.name)).toEqual(["build", "lint"]);
   });
@@ -276,7 +325,9 @@ describe("collectMergedPullRequests", () => {
   it("should report an unreadable body as a collection failure rather than crashing the run", async () => {
     const { fetch } = replying({ search: { issueCount: "not a number" } });
 
-    const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
+    const error = await failing(
+      collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY)
+    );
 
     expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
   });
@@ -540,7 +591,7 @@ describe("collecting through a hole in GitHub's answer", () => {
   it("should skip a null node in a merged-pull-request search rather than fail the repository", async () => {
     const { fetch } = replying(merged([null, pullRequestNode()]));
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts.map((fact) => fact.number)).toEqual([11]);
   });
@@ -574,7 +625,9 @@ describe("collecting through a hole in GitHub's answer", () => {
       { repository: { pullRequest: null } }
     );
 
-    const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
+    const error = await failing(
+      collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY)
+    );
 
     expect(error.message).toMatch(/omitted a pull request while collecting reviews/);
     expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
@@ -603,7 +656,9 @@ describe("collecting through a hole in GitHub's answer", () => {
       { repository: { pullRequest: null } }
     );
 
-    const error = await failing(collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z")));
+    const error = await failing(
+      collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY)
+    );
 
     expect(error.message).toMatch(/omitted a pull request while collecting status checks/);
     expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
@@ -645,7 +700,7 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
       ])
     );
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     const fact = facts[0];
     expect(fact).toBeDefined();
@@ -653,6 +708,9 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
     expect(fact).not.toHaveProperty("additions");
     expect(fact?.reviews[0]).not.toHaveProperty("authorLogin");
     expect(fact?.checks.map((check) => check.name)).toEqual(["", ""]);
+    // An omitted description is a MEASURED absence of one, unlike an omitted author: GitHub answered, and the
+    // answer is zero characters. Absent would mean nobody looked, which is what a pre-narrowing cached row says.
+    expect(fact?.bodyLength).toBe(0);
   });
 
   it("should build a direct-commit fact with no author, size or rollup", async () => {
@@ -725,7 +783,7 @@ describe("collecting a fact whose optional fields GitHub omitted", () => {
       merged([pullRequestNode({ databaseId: 102, number: 12 })])
     );
 
-    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
 
     expect(facts.map((fact) => fact.number)).toEqual([11, 12]);
     expect(sent[1]?.variables.cursor).toBeNull();

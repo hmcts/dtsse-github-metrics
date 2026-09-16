@@ -264,10 +264,11 @@ describe("the batched readers", () => {
     expect(identifiers).toEqual([2]);
   });
 
-  it("should drop the payload fields nothing reads, which is two thirds of the bytes", async () => {
-    // `body` and `title` are collected for two neutral metrics that neither grade the readiness label nor
-    // reach the dashboard, and on AAT they are 62 MB of a 93 MB read. They are subtracted in Postgres, so a
-    // regression to a whole-payload projection is a regression in transferred bytes that nothing else notices.
+  it("should serve a row cached before the descriptions stopped being stored", async () => {
+    // WHAT REPLACED THE PROJECTION, which is nothing: this read used to select `payload - 'body' - 'title'`, and
+    // dropping them in SQL still detoasted every document to build the reduced one. The collector no longer
+    // writes either field, so there is nothing to drop — but rows written before that keep theirs until a
+    // collection rewrites them, and the reader has to serve those unchanged rather than assume the new shape.
     await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
     await prisma.pullRequestFact.create({
       data: {
@@ -288,8 +289,10 @@ describe("the batched readers", () => {
     );
 
     const payload = (facts.get("alpha")?.pullRequests ?? [])[0]?.payload as Record<string, unknown>;
-    expect(payload).not.toHaveProperty("body");
-    expect(payload).not.toHaveProperty("title");
+    expect(payload).toMatchObject({ identifier: 1, additions: 10 });
+    // Neither derived answer is on it, which is what the two metrics read as unmeasured rather than as zero.
+    expect(payload).not.toHaveProperty("bodyLength");
+    expect(payload).not.toHaveProperty("hasTicketReference");
   });
 
   it("should keep every payload field the readiness assessment grades", async () => {

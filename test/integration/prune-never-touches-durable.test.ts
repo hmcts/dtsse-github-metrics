@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+import { deserialiseMerges, pullRequestCacheWriter } from "../../src/evidence/behaviour/fill.ts";
 import { EvidenceSource, type SourceCoverage } from "../../src/evidence/domain/coverage.ts";
-import { cacheDirectCommitFacts, cachePullRequestFacts, loadCachedPullRequestFacts } from "../../src/evidence/store/facts.ts";
+import { authorshipForOrganisation, cacheDirectCommitFacts, cachePullRequestFacts, loadCachedPullRequestFacts } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 import { pruneCache } from "../../src/evidence/store/prune.ts";
 
@@ -356,6 +357,44 @@ describe("cachePullRequestFacts", () => {
     expect(await prisma.sourceCoverage.count()).toBe(0);
   });
 
+  it("should keep a measured nothing distinct from an unmeasured absence through a round trip", async () => {
+    // THE STANDING CONTRACT, END TO END, and the one this change could most easily have broken. `serialise`
+    // omits a field that is `undefined` or `null`, so a `bodyLength` of 0 and a `hasTicketReference` of `false`
+    // have to survive it as VALUES — a falsy test in there instead of a nullish one would drop both, and the
+    // two metrics would then read a merge with no description as one nobody measured. Written through the
+    // collector's own writer rather than against the column, because `serialise` is what would do the dropping.
+    const write = pullRequestCacheWriter();
+    await write(
+      COVERAGE,
+      [
+        {
+          identifier: 101,
+          repository: "cath-service",
+          number: 11,
+          createdAt: new Date(Date.UTC(2026, 6, 2)),
+          mergedAt: new Date(Date.UTC(2026, 6, 3)),
+          draft: false,
+          bodyLength: 0,
+          hasTicketReference: false,
+          reviews: [],
+          checks: []
+        }
+      ],
+      true
+    );
+
+    const [fact] = deserialiseMerges({
+      pullRequests: await loadCachedPullRequestFacts(COVERAGE, COVERAGE.startsAt, COVERAGE.endsAt),
+      directCommits: []
+    }).pullRequests;
+
+    expect(fact?.bodyLength).toBe(0);
+    expect(fact?.hasTicketReference).toBe(false);
+    // And neither the description nor the title reaches the cache at all, which is the change's whole point.
+    expect(fact).not.toHaveProperty("body");
+    expect(fact).not.toHaveProperty("title");
+  });
+
   it("should replace a fact collected again rather than duplicating it", async () => {
     await cachePullRequestFacts(
       COVERAGE,
@@ -383,6 +422,49 @@ describe("cachePullRequestFacts", () => {
     );
 
     expect(await loadCachedPullRequestFacts(COVERAGE, COVERAGE.startsAt, COVERAGE.endsAt)).toEqual([{ n: "at the inclusive start" }]);
+  });
+
+  it("should write the author out to its own column, and read it back through the ownership rung", async () => {
+    // The column exists because `authorshipForOrganisation` runs the login as a predicate across the whole
+    // estate, and reading it out of the payload detoasted the document three times per row. Asserted through
+    // the reader rather than off the column, because a value written and never read is not the invariant.
+    await cachePullRequestFacts(
+      COVERAGE,
+      [
+        { identifier: BigInt(101), mergedAt: new Date(Date.UTC(2026, 6, 3)), authorLogin: "Alice", payload: { authorLogin: "Alice" } },
+        { identifier: BigInt(102), mergedAt: new Date(Date.UTC(2026, 6, 4)), authorLogin: "alice", payload: { authorLogin: "alice" } },
+        { identifier: BigInt(103), mergedAt: new Date(Date.UTC(2026, 6, 5)), payload: {} }
+      ],
+      true
+    );
+
+    const authorship = await authorshipForOrganisation("hmcts", new Date(Date.UTC(2026, 6, 1)));
+
+    // Case-folded in SQL, so one person spelling their login two ways is one author; the merge GitHub matched
+    // to no account is nobody, and contributes no row at all.
+    expect(authorship.get("cath-service")).toEqual(new Map([["alice", 2]]));
+    expect(await prisma.pullRequestFact.findMany({ where: { identifier: 103n }, select: { authorLogin: true } })).toEqual([{ authorLogin: null }]);
+  });
+
+  it("should write a whole repository's facts in one statement whatever the batch size", async () => {
+    // The batch a 26-week backfill of a busy repository produces. As one `upsert` per fact this was one round
+    // trip each inside a transaction against Prisma's five-second default — the failure `org-graph.ts` records
+    // from a real cluster — and as a `VALUES` list it would put six bind parameters per row into the statement
+    // text and meet PostgreSQL's 65,535 ceiling at around 10,000 facts. Through `unnest` the parameter count is
+    // fixed at seven, so this size is not special and there is no chunk boundary to be wrong about.
+    const facts = Array.from({ length: 12_000 }, (_unused, at) => ({
+      identifier: BigInt(3_977_105_018 + at),
+      mergedAt: new Date(Date.UTC(2026, 6, 3)),
+      authorLogin: `person-${at % 50}`,
+      payload: { identifier: 3_977_105_018 + at, number: at }
+    }));
+
+    await cachePullRequestFacts(COVERAGE, facts, true);
+
+    expect(await prisma.pullRequestFact.count()).toBe(12_000);
+    // And the same batch again is an update rather than a unique violation, which is what `ON CONFLICT` buys.
+    await cachePullRequestFacts(COVERAGE, facts, true);
+    expect(await prisma.pullRequestFact.count()).toBe(12_000);
   });
 
   it("should order facts stably when two merged at the same instant", async () => {

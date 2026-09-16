@@ -67,7 +67,17 @@ export function pullRequestCacheWriter(): (coverage: SourceCoverage, facts: Pull
       coverage,
       // BigInt at the boundary: the column is a BIGINT because GitHub's databaseId exceeds a 32-bit integer,
       // while the in-memory fact keeps a number, which holds it exactly.
-      facts.map((fact) => ({ identifier: BigInt(fact.identifier), mergedAt: fact.mergedAt, payload: serialise(fact) })),
+      //
+      // `authorLogin` is lifted out of the fact and ALSO left in the serialised payload — the column serves the
+      // estate-wide predicate `authorshipForOrganisation` runs, and the payload is what `deserialiseMerges`
+      // revives for every metric that attributes a merge. One value written twice beats two readers
+      // disagreeing about which copy is the fact.
+      facts.map((fact) => ({
+        identifier: BigInt(fact.identifier),
+        mergedAt: fact.mergedAt,
+        ...(fact.authorLogin === undefined ? {} : { authorLogin: fact.authorLogin }),
+        payload: serialise(fact)
+      })),
       complete
     );
 }
