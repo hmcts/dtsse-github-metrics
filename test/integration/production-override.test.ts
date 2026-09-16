@@ -1,33 +1,47 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "../../src/evidence/store/prisma.ts";
-import { clearProductionOverride, markProductionOverride, productionOverrides, reportedProduction } from "../../src/evidence/store/production-override.ts";
+import { markProduction, productionOverrides, reportedProduction, seedProduction } from "../../src/evidence/store/production-override.ts";
 
 // The rule is pure and unit-tested in src/evidence/store/production-override.test.ts. These cases prove the
-// Postgres half: that a mark round-trips, that re-marking replaces the provenance instead of accumulating a
-// second row, that the two CHECK constraints hold, and — the case this table exists for — that a collection
-// rewriting `repository_state` wholesale leaves the mark standing.
+// Postgres half, which is where the whole design of this table lives: that the seed gives every live repository
+// a row to be marked on, that the seed CANNOT change a flag somebody has set, that the casefold CHECK holds,
+// and that `marked_at` is stamped when the flag moves and only then.
 //
-// The last case here is the operator's own path. There is no admin UI, so the way a flag is set today is an
-// `INSERT` in `psql`, and a statement documented in a pull request body and nowhere else is a statement that
-// stops working silently. It runs here with its values bound rather than inlined, which is the only
-// difference between it and what an operator pastes.
+// The statement a person runs is exercised here verbatim. There is no admin UI, so marking a repository is an
+// `UPDATE` in pgAdmin or `psql`, and a statement documented in a pull-request body and nowhere else is a
+// statement that stops working silently. It runs below with its values bound rather than inlined, which is the
+// only difference between it and what a person types.
 
 const ORGANIZATION = "hmcts";
-const MARKED_AT = new Date(Date.UTC(2026, 8, 15, 9));
+const OBSERVED = new Date(Date.UTC(2026, 8, 15, 9));
 
-function mark(repository: string, overrides: Partial<Parameters<typeof markProductionOverride>[0]> = {}) {
-  return {
-    organization: ORGANIZATION,
-    repository,
-    markedBy: "somebody@hmcts.net",
-    reason: "deploys to production through a pipeline the approvals list does not cover",
-    markedAt: MARKED_AT,
-    ...overrides
-  };
+/** One live repository in the organisation graph, which is what the seed reads. */
+async function graphRepository(repository: string, observedAt: Date = OBSERVED, supersededAt?: Date): Promise<void> {
+  await prisma.orgRepository.create({
+    data: {
+      organization: ORGANIZATION,
+      repository,
+      archived: false,
+      visibility: "PUBLIC",
+      payload: { defaultBranch: "main" },
+      observedAt,
+      lastObservedAt: observedAt,
+      ...(supersededAt === undefined ? {} : { supersededAt }),
+      digest: `${repository}-${observedAt.toISOString()}-digest`
+    }
+  });
+}
+
+/** The row's whole state, so a case can assert what the seed left alone as well as what it added. */
+async function stored(repository: string) {
+  return await prisma.repositoryProduction.findUnique({
+    where: { organization_repository: { organization: ORGANIZATION, repository } }
+  });
 }
 
 async function wipe(): Promise<void> {
-  await prisma.productionOverride.deleteMany();
+  await prisma.repositoryProduction.deleteMany();
+  await prisma.orgRepository.deleteMany();
   await prisma.repositoryState.deleteMany();
 }
 
@@ -38,107 +52,203 @@ afterAll(async () => {
   await prisma.$disconnect();
 });
 
-describe("markProductionOverride", () => {
-  it("should round-trip a mark, casefolding what the caller typed", async () => {
-    await markProductionOverride(mark("PCS-API", { organization: "HMCTS" }));
+describe("seedProduction", () => {
+  it("should give every live repository a row with no opinion on it", async () => {
+    await graphRepository("pcs-api");
+    await graphRepository("cath-service");
 
-    expect(await productionOverrides(ORGANIZATION)).toEqual(new Set(["pcs-api"]));
-    const stored = await prisma.productionOverride.findUnique({ where: { organization_repository: { organization: "hmcts", repository: "pcs-api" } } });
-    expect(stored).toMatchObject({ markedBy: "somebody@hmcts.net", markedAt: MARKED_AT });
-    expect(stored?.reason).toContain("approvals list does not cover");
+    expect(await seedProduction("HMCTS")).toBe(2);
+    // NULL and not `false`: a seeded row states nothing, so the approvals list still answers for both.
+    expect(await stored("pcs-api")).toMatchObject({ production: null, markedBy: null, markedAt: null, reason: null });
+    expect(await productionOverrides(ORGANIZATION)).toEqual(new Map());
   });
 
-  it("should replace a mark rather than accumulating a second one for the same repository", async () => {
-    await markProductionOverride(mark("pcs-api"));
-    await markProductionOverride(mark("pcs-api", { markedBy: "somebody-else@hmcts.net", reason: "still production, and now correctly attributed" }));
+  it("should add nothing on a second run over an unchanged estate", async () => {
+    await graphRepository("pcs-api");
+    await seedProduction(ORGANIZATION);
 
-    expect(await prisma.productionOverride.count()).toBe(1);
-    const stored = await prisma.productionOverride.findUnique({ where: { organization_repository: { organization: ORGANIZATION, repository: "pcs-api" } } });
-    expect(stored?.markedBy).toBe("somebody-else@hmcts.net");
+    expect(await seedProduction(ORGANIZATION)).toBe(0);
+    expect(await prisma.repositoryProduction.count()).toBe(1);
   });
 
-  it("should read only the organisation it was asked about", async () => {
-    await markProductionOverride(mark("pcs-api"));
-    await markProductionOverride(mark("some-service", { organization: "another-org" }));
+  it("should add a row for a repository the previous run had never seen", async () => {
+    await graphRepository("pcs-api");
+    await seedProduction(ORGANIZATION);
+    await graphRepository("cath-service");
 
-    expect(await productionOverrides(ORGANIZATION)).toEqual(new Set(["pcs-api"]));
-    expect(await productionOverrides("another-org")).toEqual(new Set(["some-service"]));
-  });
-});
-
-describe("clearProductionOverride", () => {
-  it("should remove a mark and report that it did", async () => {
-    await markProductionOverride(mark("pcs-api"));
-
-    expect(await clearProductionOverride(ORGANIZATION, "PCS-API")).toBe(true);
-    expect(await productionOverrides(ORGANIZATION)).toEqual(new Set());
+    expect(await seedProduction(ORGANIZATION)).toBe(1);
+    expect(await prisma.repositoryProduction.count()).toBe(2);
   });
 
-  it("should report a repository that was never marked rather than failing", async () => {
-    expect(await clearProductionOverride(ORGANIZATION, "pcs-api")).toBe(false);
-  });
-});
+  it("should leave a flag somebody has set exactly as they set it", async () => {
+    // THE PROPERTY THE WHOLE SHAPE RESTS ON. `ON CONFLICT DO NOTHING` means the seed can only ever ADD keys, so
+    // "the import never overrides a person" is a fact about the statement rather than a rule somebody has to
+    // remember. Asserted over both directions of the flag AND over the stamp, since a seed that touched the row
+    // at all would restamp it and lose when the decision was made.
+    await graphRepository("pcs-api");
+    await graphRepository("cath-service");
+    await seedProduction(ORGANIZATION);
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: true, markedBy: "somebody@hmcts.net", reason: "deploys to prod" });
+    await markProduction({ organization: ORGANIZATION, repository: "cath-service", production: false });
+    const marked = await stored("pcs-api");
 
-describe("the production override table", () => {
-  it("should survive a collection replacing the repository state it describes", async () => {
-    // THE WHOLE REASON THIS IS A TABLE. `recordRepositoryState` upserts the entire payload, so a mark kept in
-    // that jsonb document would live until the next `collect` walked the repository and no further. Written
-    // through Prisma directly rather than through the collector, because what is being asserted is that the
-    // two rows are independent — no collector code has to cooperate for that to hold.
-    await markProductionOverride(mark("pcs-api"));
-    await prisma.repositoryState.upsert({
-      where: { organization_repository: { organization: ORGANIZATION, repository: "pcs-api" } },
-      create: { organization: ORGANIZATION, repository: "pcs-api", fetchedAt: MARKED_AT, payload: { deploysToProduction: false } },
-      update: { fetchedAt: MARKED_AT, payload: { deploysToProduction: false } }
+    expect(await seedProduction(ORGANIZATION)).toBe(0);
+    expect(await stored("pcs-api")).toMatchObject({ production: true, markedBy: "somebody@hmcts.net", markedAt: marked?.markedAt });
+    expect(await stored("cath-service")).toMatchObject({ production: false });
+    expect(await productionOverrides(ORGANIZATION)).toEqual(
+      new Map([
+        ["pcs-api", true],
+        ["cath-service", false]
+      ])
+    );
+  });
+
+  it("should read the live estate and not the superseded versions of it", async () => {
+    // The graph is change-versioned, so one repository holds a row per interval and only the open one is the
+    // estate. A seed reading them all would add nothing extra — the key is the same — but one reading ONLY the
+    // superseded rows would give a row to a repository that no longer exists.
+    await graphRepository("pcs-api", new Date(Date.UTC(2026, 7, 1)), new Date(Date.UTC(2026, 8, 1)));
+    await graphRepository("pcs-api");
+    await graphRepository("archived-away", new Date(Date.UTC(2026, 7, 1)), new Date(Date.UTC(2026, 8, 1)));
+
+    expect(await seedProduction(ORGANIZATION)).toBe(1);
+    expect(await prisma.repositoryProduction.findMany({ select: { repository: true } })).toEqual([{ repository: "pcs-api" }]);
+  });
+
+  it("should fold two spellings of one repository into the single row the constraint allows", async () => {
+    // `org_repositories` carries no casefold constraint, and GitHub names are case-insensitive, so the graph can
+    // hold `PCS-API` beside `pcs-api`. Both lower to one key: without the `DISTINCT` applied AFTER `lower()` this
+    // statement would offer the same key twice, and without `lower()` at all the casefold CHECK would refuse it.
+    await graphRepository("pcs-api");
+    await graphRepository("PCS-API");
+
+    expect(await seedProduction(ORGANIZATION)).toBe(1);
+    expect(await prisma.repositoryProduction.findMany({ select: { repository: true } })).toEqual([{ repository: "pcs-api" }]);
+  });
+
+  it("should seed only the organisation it was asked about", async () => {
+    await graphRepository("pcs-api");
+    await prisma.orgRepository.create({
+      data: {
+        organization: "another-org",
+        repository: "some-service",
+        archived: false,
+        visibility: "PUBLIC",
+        payload: {},
+        observedAt: OBSERVED,
+        lastObservedAt: OBSERVED,
+        digest: "another-digest"
+      }
     });
 
-    expect(await productionOverrides(ORGANIZATION)).toEqual(new Set(["pcs-api"]));
-    // And the combination the report layer will make: the approvals list was read and is silent, the mark
-    // stands, so the repository reports as production.
+    expect(await seedProduction(ORGANIZATION)).toBe(1);
+    expect(await prisma.repositoryProduction.count()).toBe(1);
+  });
+});
+
+describe("marking a repository", () => {
+  beforeEach(async () => {
+    await graphRepository("pcs-api");
+    await seedProduction(ORGANIZATION);
+  });
+
+  it("should force production on when a person runs the documented UPDATE", async () => {
+    // The statement, structurally verbatim: one column, on a row that is already there, found by its two keys.
+    // Only the values are bound.
+    await prisma.$executeRaw`
+      UPDATE repository_production SET production = true
+      WHERE organization = ${ORGANIZATION} AND repository = ${"pcs-api"}
+    `;
+
+    expect(await productionOverrides(ORGANIZATION)).toEqual(new Map([["pcs-api", true]]));
+    // And the combination the report layer makes: the approvals list was read and is silent, the column says
+    // otherwise, so the repository reports as production.
     expect(reportedProduction(false, await productionOverrides(ORGANIZATION), "pcs-api")).toBe(true);
   });
 
-  it("should refuse a mark nobody stands behind", async () => {
-    const anonymous = prisma.productionOverride.create({
-      data: { organization: ORGANIZATION, repository: "pcs-api", markedBy: "  ", reason: "deploys to production", markedAt: MARKED_AT }
-    });
+  it("should force production off even where the approvals list names the repository", async () => {
+    // The state the previous shape could not hold. An override that can only ever add leaves no way to correct
+    // an approvals list that is wrong about a repository.
+    await markProduction({ organization: ORGANIZATION, repository: "PCS-API", production: false });
 
-    await expect(anonymous).rejects.toThrow();
+    expect(reportedProduction(true, await productionOverrides(ORGANIZATION), "pcs-api")).toBe(false);
   });
 
-  it("should refuse a mark with no reason, which is the folklore this table exists to prevent", async () => {
-    const unexplained = prisma.productionOverride.create({
-      data: { organization: ORGANIZATION, repository: "pcs-api", markedBy: "somebody@hmcts.net", reason: "", markedAt: MARKED_AT }
-    });
+  it("should hand the answer back to the approvals list when the flag is set to NULL again", async () => {
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: true });
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: undefined });
 
-    await expect(unexplained).rejects.toThrow();
+    expect(await productionOverrides(ORGANIZATION)).toEqual(new Map());
+    expect(reportedProduction(false, await productionOverrides(ORGANIZATION), "pcs-api")).toBe(false);
+    expect(reportedProduction(undefined, await productionOverrides(ORGANIZATION), "pcs-api")).toBeUndefined();
   });
 
-  it("should refuse an uncasefolded key, so one repository cannot hold two marks", async () => {
-    // The primary key alone would let `(hmcts, PCS-API)` sit beside `(hmcts, pcs-api)`, each with its own
-    // author and its own reason, and "who marked this and why" would stop having an answer.
-    const shouted = prisma.productionOverride.create({
-      data: { organization: ORGANIZATION, repository: "PCS-API", markedBy: "somebody@hmcts.net", reason: "deploys to production", markedAt: MARKED_AT }
+  it("should report a repository the seed has not reached rather than inserting a row for it", async () => {
+    expect(await markProduction({ organization: ORGANIZATION, repository: "never-collected", production: true })).toBe(false);
+    expect(await prisma.repositoryProduction.count()).toBe(1);
+  });
+
+  it("should survive a collection replacing the repository state it describes", async () => {
+    // Why this is a table of its own. `recordRepositoryState` upserts the entire payload, so a flag kept in that
+    // jsonb document would live until the next `collect` walked the repository and no further.
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: true });
+    await prisma.repositoryState.upsert({
+      where: { organization_repository: { organization: ORGANIZATION, repository: "pcs-api" } },
+      create: { organization: ORGANIZATION, repository: "pcs-api", fetchedAt: OBSERVED, payload: { deploysToProduction: false } },
+      update: { fetchedAt: OBSERVED, payload: { deploysToProduction: false } }
     });
+
+    expect(await productionOverrides(ORGANIZATION)).toEqual(new Map([["pcs-api", true]]));
+  });
+});
+
+describe("the marked_at trigger", () => {
+  beforeEach(async () => {
+    await graphRepository("pcs-api");
+    await seedProduction(ORGANIZATION);
+  });
+
+  it("should stamp the instant the flag first moved off NULL", async () => {
+    expect(await stored("pcs-api")).toMatchObject({ markedAt: null });
+
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: true });
+
+    // Compared loosely against this process's clock rather than exactly: the instant comes from Postgres, and
+    // the assertion is that the trigger supplied one at all rather than that two clocks agree.
+    const marked = await stored("pcs-api");
+    expect(Math.abs((marked?.markedAt?.getTime() ?? 0) - Date.now())).toBeLessThan(60 * 60 * 1000);
+  });
+
+  it("should stamp a withdrawal, which is a decision like any other", async () => {
+    // `NULL` is the transition `<>` would answer NULL for, so the guard has to be `IS DISTINCT FROM` — without
+    // it, taking an opinion back would leave the stamp of the opinion behind.
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: true });
+    const first = (await stored("pcs-api"))?.markedAt;
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: undefined });
+
+    expect((await stored("pcs-api"))?.markedAt?.getTime()).toBeGreaterThanOrEqual(first?.getTime() ?? 0);
+    expect(await stored("pcs-api")).toMatchObject({ production: null });
+  });
+
+  it("should leave the stamp alone when an update changes the reason and not the flag", async () => {
+    // Otherwise the column records EDITS rather than DECISIONS, and "when was this decided" stops having an
+    // answer the moment somebody fixes a typo in the reason.
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: true, reason: "deploys to prod" });
+    const decided = (await stored("pcs-api"))?.markedAt;
+
+    await markProduction({ organization: ORGANIZATION, repository: "pcs-api", production: true, reason: "deploys to production through the shared pipeline" });
+
+    expect((await stored("pcs-api"))?.markedAt).toEqual(decided);
+    expect((await stored("pcs-api"))?.reason).toContain("shared pipeline");
+  });
+});
+
+describe("the production table's constraint", () => {
+  it("should refuse an uncasefolded key, so one repository cannot hold two answers", async () => {
+    // The primary key alone would let `(hmcts, PCS-API)` sit beside `(hmcts, pcs-api)`, each with its own flag,
+    // and "is this a production service" would stop having an answer.
+    const shouted = prisma.repositoryProduction.create({ data: { organization: ORGANIZATION, repository: "PCS-API", production: true } });
 
     await expect(shouted).rejects.toThrow();
-  });
-
-  it("should accept the statement an operator runs in psql, and stamp the instant itself", async () => {
-    // The documented operator statement, structurally verbatim: `lower()` on both keys so a name typed in any
-    // case satisfies the casefold constraint, `marked_at` omitted so the column default supplies it, and
-    // `ON CONFLICT` so re-marking is a correction rather than an error. Only the five values are bound.
-    await prisma.$executeRaw`
-      INSERT INTO repository_production_override (organization, repository, marked_by, reason)
-      VALUES (lower(${ORGANIZATION}), lower(${"PCS-API"}), ${"somebody@hmcts.net"}, ${"deploys to production, and the approvals list does not name it"})
-      ON CONFLICT (organization, repository) DO UPDATE
-        SET marked_by = EXCLUDED.marked_by, reason = EXCLUDED.reason, marked_at = now()
-    `;
-
-    expect(await productionOverrides(ORGANIZATION)).toEqual(new Set(["pcs-api"]));
-    // Compared loosely against this process's clock rather than exactly: the instant comes from Postgres, and
-    // the assertion is that the column default supplied one at all rather than that two clocks agree.
-    const stored = await prisma.productionOverride.findUnique({ where: { organization_repository: { organization: ORGANIZATION, repository: "pcs-api" } } });
-    expect(Math.abs((stored?.markedAt.getTime() ?? 0) - Date.now())).toBeLessThan(60 * 60 * 1000);
   });
 });

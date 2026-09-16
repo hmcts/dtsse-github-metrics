@@ -73,7 +73,7 @@ describe("migrate", () => {
       "org_teams",
       "pull_request_facts",
       "repository_ownership",
-      "repository_production_override",
+      "repository_production",
       "repository_state",
       "sonar_project_map",
       "source_coverage"

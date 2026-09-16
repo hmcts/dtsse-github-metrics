@@ -7,7 +7,7 @@
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
 // `alert_observations`, `sonar_project_map`, the six organisation-graph tables, or
-// `repository_production_override`. That is enforced by
+// `repository_production`. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
 //
 // Facts are stored as `jsonb` payloads beside the few queryable columns, exactly as upstream stored
@@ -154,46 +154,50 @@ model CollectionState {
   @@map("collection_state")
 }
 
-/// A repository somebody has marked as a production service BY HAND, because the organisation's
-/// approvals list does not name it.
+/// Whether each repository is a production service, as far as a PERSON is concerned.
 ///
-/// A row here is the mark. There is no boolean column, and that is the whole design: `production` is
-/// reported true when the approvals list names a repository OR a row here does, so an absent row means
-/// nothing at all and a present one means production. A `production BOOLEAN` column would invite a
-/// negative override, which cannot be honoured without breaking the tri-state the approvals list is read
-/// through — an unread list must not be turned into a confident `false` by anything.
+/// ONE ROW PER REPOSITORY, seeded from the organisation graph by `collect-org`, so marking a repository
+/// is editing a column on a row that already exists rather than composing an insert. See
+/// `store/production-override.ts` for the statement a person runs and why the seed cannot overwrite it.
 ///
-/// IT IS A TABLE OF ITS OWN AND NOT A FIELD IN `repository_state.payload`, for one reason: a collection
-/// REPLACES that row wholesale on every run (`recordRepositoryState` upserts the whole payload), so a
-/// mark stored there would live until the next collection walked the repository and no longer. Nothing
-/// the collector writes reaches this table, so the import cannot overwrite what a person stated.
+/// `production` IS A TRI-STATE and is NOT change-versioned: `true` forces the badge on, `false` forces it
+/// off, and NULL defers to the organisation's approvals list. `false` is the answer the list itself cannot
+/// express a correction to — an override that can only add leaves no way to say the list is wrong — and
+/// NULL is what keeps an UNREAD list unread rather than turning it into a confident `false`.
+///
+/// IT IS A TABLE OF ITS OWN AND NOT A COLUMN ON `OrgRepository`, which is change-versioned: a value set by
+/// hand there is superseded and lost the next time a collected field moves. `pushedAt` above is the
+/// non-digest column pattern, and it works because THE COLLECTOR writes it; this flag is written by a
+/// person, so the same pattern does not transfer. `repository_state.payload` is out for the neighbouring
+/// reason — `recordRepositoryState` replaces that document wholesale on every run.
 ///
 /// DURABLE for a different reason from the tables above. Theirs is that GitHub serves only the present;
-/// this one's is that GitHub was never asked — the fact came from a person, and nothing can recover it
+/// this one's is that GitHub was never asked — the flag came from a person, and nothing can recover it
 /// but that person's memory. `prune` may not touch it, which
 /// test/integration/prune-never-touches-durable.test.ts asserts rather than leaving to convention.
 ///
-/// `marked_by` and `reason` are NOT NULL and non-blank, enforced by CHECK constraints in the migration.
-/// An override with no provenance becomes folklore inside a quarter: somebody finds a repository badged
-/// Production that the approvals list does not name, and there is nothing to read but the flag itself.
-/// Neither column is read by any report — they exist to be read by a human in `psql`, which is also how
-/// a row is written today.
-///
-/// Both key columns are CASEFOLDED, again by CHECK constraint, so `(hmcts, PCS-API)` and `(hmcts,
-/// pcs-api)` cannot both exist and mark one repository twice with two different explanations. Reads fold
-/// the name they are looking up, as `inventory/production.ts` folds the approvals list for the same
-/// reason: GitHub owner and repository names are case-insensitive.
-model ProductionOverride {
+/// Both key columns are CASEFOLDED by CHECK constraint, so `(hmcts, PCS-API)` and `(hmcts, pcs-api)`
+/// cannot both exist and answer for one repository twice. Reads fold the name they look up, as
+/// `inventory/production.ts` folds the approvals list for the same reason: GitHub owner and repository
+/// names are case-insensitive.
+model RepositoryProduction {
   organization String
   repository   String
-  /// Who marked it — an email, or whatever identifies the person to their colleagues.
-  markedBy     String   @map("marked_by")
-  markedAt     DateTime @default(now()) @map("marked_at") @db.Timestamptz(6)
-  /// Why this repository is a production service despite the approvals list not naming it.
-  reason       String
+  /// `true` forces production on, `false` forces it off, NULL defers to the approvals list.
+  production   Boolean?
+  /// Who moved the flag — an email, or whatever identifies them to their colleagues. Optional: a tick that
+  /// refuses to be recorded without a name is a tick nobody makes.
+  markedBy     String?   @map("marked_by")
+  /// When `production` was last moved, MAINTAINED BY A DATABASE TRIGGER and by nothing in this codebase.
+  /// The trigger fires `BEFORE UPDATE` only when the flag actually changed, so a seeded row reads NULL —
+  /// never marked — and correcting `reason` alone does not restamp a decision. Invisible from this schema,
+  /// which is why it is stated here; see the migration `20260916120000_production_as_a_column`.
+  markedAt     DateTime? @map("marked_at") @db.Timestamptz(6)
+  /// Why the flag was moved. Optional, and no report reads it: it is there for the next person who asks.
+  reason       String?
 
   @@id([organization, repository])
-  @@map("repository_production_override")
+  @@map("repository_production")
 }
 
 // ─── Durable: the organisation graph, never pruned ───────────────────────────────────────────────
