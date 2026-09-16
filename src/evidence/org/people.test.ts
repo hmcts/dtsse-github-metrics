@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
-import type { LiveOrgPerson } from "../store/org-graph.ts";
-import { contributorNames, storedDisplayNames } from "./people.ts";
+import type { LiveOrgPerson, LiveOrgTeamMembership } from "../store/org-graph.ts";
+import { contributorNames, storedDisplayNames, teamMembers } from "./people.ts";
 
 // The store read is the whole of the impurity here, so it is the one thing mocked: `payloadOf` in the store writes
 // whatever GitHub returned, and what is under test is how a reader gets a usable name back out of it.
 const liveOrgPeople = vi.hoisted(() => vi.fn<(organization: string) => Promise<LiveOrgPerson[]>>());
+const liveOrgTeamMemberships = vi.hoisted(() => vi.fn<(organization: string) => Promise<LiveOrgTeamMembership[]>>());
 
-vi.mock("../store/org-graph.ts", () => ({ liveOrgPeople }));
+vi.mock("../store/org-graph.ts", () => ({ liveOrgPeople, liveOrgTeamMemberships }));
 
 const OBSERVED = new Date("2026-09-01T14:00:00Z");
 
@@ -16,6 +17,14 @@ function person(login: string, payload: unknown, role = "MEMBER"): LiveOrgPerson
 
 function stub(people: LiveOrgPerson[]): void {
   liveOrgPeople.mockResolvedValue(people);
+}
+
+function membership(teamSlug: string, login: string, role = "MEMBER"): LiveOrgTeamMembership {
+  return { teamSlug, login, role, observedAt: OBSERVED, lastObservedAt: OBSERVED };
+}
+
+function stubMemberships(memberships: LiveOrgTeamMembership[]): void {
+  liveOrgTeamMemberships.mockResolvedValue(memberships);
 }
 
 describe("contributorNames", () => {
@@ -172,5 +181,86 @@ describe("storedDisplayNames", () => {
     await storedDisplayNames("hmcts");
 
     expect(liveOrgPeople).toHaveBeenCalledWith("hmcts");
+  });
+});
+
+/**
+ * Who GitHub says is in each team, which the report layer needs kept apart from who contributed to its
+ * repositories.
+ *
+ * The distinction is the whole reason this exists: a team page's contributor list is folded from the merges in the
+ * repositories attributed to that team, so `platform-operations` — the sole `admin` team on 217 repositories —
+ * shows most of the organisation as a contributor and 56 people as members. Neither list is the other's subset.
+ */
+describe("teamMembers", () => {
+  it("should group each team's members under its own slug", async () => {
+    stubMemberships([membership("civil", "ada"), membership("civil", "grace"), membership("probate", "alan")]);
+
+    const members = await teamMembers("hmcts");
+
+    expect(members.get("civil")).toEqual([
+      { login: "ada", role: "MEMBER" },
+      { login: "grace", role: "MEMBER" }
+    ]);
+    expect(members.get("probate")).toEqual([{ login: "alan", role: "MEMBER" }]);
+  });
+
+  it("should keep the role GitHub words the membership with", async () => {
+    stubMemberships([membership("civil", "ada", "MAINTAINER"), membership("civil", "grace", "MEMBER")]);
+
+    expect(await teamMembers("hmcts")).toEqual(
+      new Map([
+        [
+          "civil",
+          [
+            { login: "ada", role: "MAINTAINER" },
+            { login: "grace", role: "MEMBER" }
+          ]
+        ]
+      ])
+    );
+  });
+
+  it("should hold no entry at all for a team no membership was read for", async () => {
+    // ABSENT AND NOT EMPTY, which is the answer the whole section rests on: nothing stores which teams a run read
+    // in full, and 15 teams on this estate have no membership row — so a team with no rows is indistinguishable
+    // from a team nobody walked, and an empty list would state that GitHub puts nobody in it.
+    stubMemberships([membership("civil", "ada")]);
+
+    const members = await teamMembers("hmcts");
+
+    expect(members.has("platform-operations")).toBe(false);
+    expect(members.get("platform-operations")).toBeUndefined();
+  });
+
+  it("should keep the login's own spelling, which is what a reader is shown", async () => {
+    stubMemberships([membership("civil", "ParisFreire")]);
+
+    expect(await teamMembers("hmcts")).toEqual(new Map([["civil", [{ login: "ParisFreire", role: "MEMBER" }]]]));
+  });
+
+  it("should fold the team slug it keys on, so an overridden team's membership is still found", async () => {
+    // A `configured` owner is a name somebody typed into `metrics.yaml` while every other rung's is the slug
+    // GitHub served. A case difference between them would report that team's membership as unread.
+    stubMemberships([membership("Civil", "ada")]);
+
+    const members = await teamMembers("hmcts");
+
+    expect(members.get("civil")).toEqual([{ login: "ada", role: "MEMBER" }]);
+    expect(members.has("Civil")).toBe(false);
+  });
+
+  it("should read the graph for the organisation it was asked about", async () => {
+    stubMemberships([]);
+
+    await teamMembers("hmcts");
+
+    expect(liveOrgTeamMemberships).toHaveBeenCalledWith("hmcts");
+  });
+
+  it("should return an empty map where no membership has been collected at all", async () => {
+    stubMemberships([]);
+
+    expect(await teamMembers("hmcts")).toEqual(new Map());
   });
 });

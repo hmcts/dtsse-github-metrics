@@ -43,11 +43,12 @@ import { RAGCard, RAGLabel, RAGRow } from "@/components/RAGCard";
 import { Section } from "@/components/Section";
 import { SortHeader } from "@/components/SortHeader";
 import { TeamActorsTable } from "@/components/TeamActorsTable";
+import { TeamMembersTable } from "@/components/TeamMembersTable";
 import { TeamsList } from "@/components/TeamsList";
 import { PRODUCTION_BADGE, PRODUCTION_LABEL } from "@/lib/production";
 import { RAG_BORDER } from "@/lib/rag";
 import { INDIVIDUAL_LABEL } from "@/lib/rows";
-import { people } from "@/lib/team";
+import { contributors } from "@/lib/team";
 import { TONE_BORDER, TONE_VALUE, TONES } from "@/lib/tone";
 import type { OverviewSummary, PracticeFinding, ReadinessAssessment, RepositoryRow } from "@/lib/types";
 
@@ -872,13 +873,16 @@ describe("the shared vocabulary", () => {
         })
       ),
       renderToStaticMarkup(createElement(ActorRepositoriesTable, { rows: [], teams: {}, weeks: 4 })),
+      // The members table names people and links none of them, which is the one row of this sweep where the
+      // absence of a `/contributors/` link is the correct answer rather than a miss — see `TeamMembersTable`.
+      renderToStaticMarkup(createElement(TeamMembersTable, { rows: [{ login: "octocat", role: "MEMBER" }] })),
       renderToStaticMarkup(
         createElement(TeamsList, {
           rows: [{ team: "platform", repositories: 4, unavailable: 0, actors: 6, labels: {} }],
           weeks: 4
         })
       ),
-      people({ team: "platform", repositories: [], actors: [], unavailable: 0, labels: {} })
+      contributors({ team: "platform", repositories: [], actors: [], unavailable: 0, labels: {} })
     ].join("");
   }
 });

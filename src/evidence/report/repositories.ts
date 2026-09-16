@@ -31,7 +31,7 @@ import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requir
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import { type CohortEntry, cohortTeams, servedCohort } from "../org/cohort.ts";
 import { OwnerKind } from "../org/graph.ts";
-import { contributorNames } from "../org/people.ts";
+import { contributorNames, type TeamMember, teamMembers } from "../org/people.ts";
 import { teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { cachedCoverageEdges, prevailingCachedCoverage } from "../store/coverage.ts";
@@ -505,17 +505,26 @@ export async function repositoryRows(configuration: Configuration, weeks: number
 }
 
 /**
- * The four reports one window's facts produce, built together because they read the same facts.
+ * The four reports one window's facts produce, built together because they read the same facts, and the one
+ * report that comes from the graph instead.
  *
  * EACH IS THE CONTRACT'S OWN ROW TYPE, which is what makes `src/lib/api.ts` able to hand them to a page with no
  * cast. It was four `unknown[]`, and that is how `teamRows` came to emit `TeamRow.actors` as a list where the
  * contract declares a number: two interfaces of one name, and nothing between the two able to disagree.
+ *
+ * `members` IS NOT DERIVED FROM THE FACTS AT ALL, and is held here because of what holding it costs rather than
+ * where it comes from: it is what GitHub says about each team, so it does not vary by span and nothing in the
+ * window can change it. Its rows ride this entry so that a collection landing invalidates the membership and the
+ * four fact reports together — one stamp, one thing to reason about — instead of leaving a second cache to notice
+ * on its own. See `builtTeamMemberRows`.
  */
 interface EstateReports {
   rows: contract.RepositoryRow[];
   actors: contract.ActorRow[];
   merges: contract.TeamMergeRow[];
   directPushes: contract.TeamDirectPushRow[];
+  /** Each team's members, keyed on the folded team slug. A team absent from it had no membership read. */
+  members: ReadonlyMap<string, contract.TeamMemberRow[]>;
 }
 
 /** A repository the window holds no facts for. Whether that is a measured nothing is `measuredSources`' answer. */
@@ -561,6 +570,17 @@ export interface Estate {
    * not about a window, so one read answers for every offered span rather than one per span or one per row.
    */
   production: ReadonlyMap<string, boolean>;
+  /**
+   * Who GitHub says is in each team, keyed on the folded team slug.
+   *
+   * ON THE ESTATE READ AND NOT PER TEAM OR PER SPAN, which is the whole of why it is here. Membership is a fact
+   * about a team rather than about a window, so one read answers for all five spans and all 154 teams; reading it
+   * per team would be 154 queries a page, and reading it per span would repeat all of them five times over.
+   *
+   * A team absent from this map had no membership read, which is NOT the same answer as a team with nobody in it
+   * — see `teamMembers`, which is where the distinction is made and why it cannot be made any later.
+   */
+  memberships: ReadonlyMap<string, readonly TeamMember[]>;
 }
 
 /** The repositories each behaviour source was read for, by the collection every span derived here is anchored at. */
@@ -571,9 +591,9 @@ interface MeasuredSources {
 
 /**
  * The estate over one window: the cohort, the collected states, the coverage edges, the hand-set production flags,
- * and the window's facts deserialised ONCE.
+ * each team's membership, and the window's facts deserialised ONCE.
  *
- * The five reads go together because none of them needs another's answer, and because the four that are not the
+ * The six reads go together because none of them needs another's answer, and because the five that are not the
  * fact cache are the ones a per-span build was paying for five times over: `servedCohort` is two queries against
  * the change-versioned graph and `storedRepositoryStates` is 1,891 rows of `jsonb`.
  *
@@ -594,12 +614,13 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
   const signatures = { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) };
   const excluded = excludedAuthors(configuration.cohort.excluded_authors);
   const bots = botAccounts(configuration.cohort.bot_accounts);
-  const [cohort, states, stored, edges, production] = await Promise.all([
+  const [cohort, states, stored, edges, production, memberships] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryStates(organization),
     loadCachedFactsForOrganisation(organization, signatures, window.startsAt, window.endsAt),
     cachedCoverageEdges(organization, signatures),
-    productionOverrides(organization)
+    productionOverrides(organization),
+    teamMembers(organization)
   ]);
 
   return {
@@ -608,6 +629,7 @@ async function readEstate(configuration: Configuration, window: ReportingWindow,
     cohort,
     states,
     production,
+    memberships,
     measured: measuredSources(edges, window.endsAt, cohort, configuration.cohort.no_direct_pushes),
     facts: new Map(
       [...stored].map(([repository, cached]) => [
@@ -769,13 +791,13 @@ export async function estateForEverySpan(configuration: Configuration, reference
  */
 async function estateReports(configuration: Configuration, weeks: number, reference: Date, read?: Estate): Promise<EstateReports> {
   // Wrapped in a one-element array because `builtReport` holds `unknown[]`. The alternative is widening the cache
-  // to `unknown`, which buys nothing: every reader of it goes through the four accessors below.
+  // to `unknown`, which buys nothing: every reader of it goes through the five accessors below.
   const held = await builtReport<EstateReports>(configuration.organization, weeks, async () => [
     await buildEstateReports(configuration, weeks, reference, read)
   ]);
   // `builtReport` holds a list and this build produces one entry, so the element is present by construction —
   // `noUncheckedIndexedAccess` cannot see that, and the alternative is widening the cache to a single value, which
-  // buys nothing: every reader of it goes through the four accessors below.
+  // buys nothing: every reader of it goes through the five accessors below.
   return held[0] as EstateReports;
 }
 
@@ -810,8 +832,56 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
     rows,
     actors: builtActorRows(rows, facts, names, botAccounts(configuration.cohort.bot_accounts)),
     merges: builtMergeRows(facts),
-    directPushes: builtDirectPushRows(facts)
+    directPushes: builtDirectPushRows(facts),
+    // Off the shared read, so the membership behind all five spans is one query — and named through the same map
+    // the contributor rows above are, which is the point of building the two here rather than a layer up.
+    members: builtTeamMemberRows(read.memberships, names)
   };
+}
+
+/**
+ * Each team's members as the team page lists them, named through the SAME map the contributor rows are.
+ *
+ * ONE NAMING SEAM AND NOT TWO. `contributorNames` resolves every live member of the organisation from the SSO
+ * identity mapping, so a member who merged nothing in the window is named exactly as well as one who merged
+ * fifty — and a member and a contributor who are the same person cannot be shown under two different names. A
+ * second lookup for this section would be a second thing to keep true.
+ *
+ * ABSENT AND EMPTY ARE DIFFERENT ANSWERS, which this preserves rather than decides: a team missing from
+ * `memberships` is missing from what this returns, so the page states that no membership was read instead of
+ * printing an empty table under a heading that would read as "GitHub says this team has nobody in it".
+ *
+ * `stripAbsent` per team rather than over the map, because it walks objects and arrays and a `Map` is neither —
+ * handed one it would return an empty object and take the whole section with it.
+ */
+function builtTeamMemberRows(
+  memberships: ReadonlyMap<string, readonly TeamMember[]>,
+  names: ReadonlyMap<string, string>
+): ReadonlyMap<string, contract.TeamMemberRow[]> {
+  const members = new Map<string, contract.TeamMemberRow[]>();
+  for (const [team, people] of memberships) {
+    members.set(
+      team,
+      stripAbsent(
+        people
+          .map(
+            (person): contract.TeamMemberRow => ({
+              login: person.login,
+              // Folded on the way in, for `contributorNames`' reason: the team walk and the people walk spell a
+              // login however GitHub answered each of them, and a case difference would read as a member with no
+              // name.
+              name: names.get(person.login.toLowerCase()),
+              role: person.role
+            })
+          )
+          // Alphabetical by login, case-insensitively — the rule `builtActorRows` and `teamActors` order by, so
+          // the two lists on a team's page are alphabetised the same way and neither is ordered by a database
+          // collation the other is not.
+          .sort((left, right) => left.login.toLowerCase().localeCompare(right.login.toLowerCase()))
+      )
+    );
+  }
+  return members;
 }
 
 /** The estate's summary for one window. */
@@ -959,6 +1029,25 @@ function readinessRank(label: string): number {
 
 export async function actorRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.ActorRow[]> {
   return (await estateReports(configuration, weeks, reference)).actors;
+}
+
+/**
+ * Every team's members, keyed on the folded team slug.
+ *
+ * A MAP FOR THE WHOLE ESTATE AND NOT ONE TEAM'S LIST, which is what keeps the read off the page: a team page looks
+ * its own slug up in a report the estate already built, so the 154th team page of a revision costs a map lookup
+ * and no query. `getTeam` is the caller.
+ *
+ * The `weeks` it takes is the cache key and nothing else — membership does not vary by span, and the read behind
+ * this happens once per estate read for all five of them. It is a parameter so that a team page reads the same
+ * held entry as the rows and tables beside it rather than a build of its own.
+ */
+export async function teamMemberRows(
+  configuration: Configuration,
+  weeks: number,
+  reference = new Date()
+): Promise<ReadonlyMap<string, contract.TeamMemberRow[]>> {
+  return (await estateReports(configuration, weeks, reference)).members;
 }
 
 /**

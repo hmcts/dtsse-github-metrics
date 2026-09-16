@@ -3,7 +3,17 @@ import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
 import { builtReport, builtSpanCount, CACHEABLE_SPANS } from "../../src/evidence/report/cache.ts";
-import { actorRows, directPushRows, forgetBuiltRows, mergeRows, overviewSummary, repositoryRows, teamRows } from "../../src/evidence/report/repositories.ts";
+import {
+  actorRows,
+  directPushRows,
+  estateForEverySpan,
+  forgetBuiltRows,
+  mergeRows,
+  overviewSummary,
+  repositoryRows,
+  teamMemberRows,
+  teamRows
+} from "../../src/evidence/report/repositories.ts";
 import { startReportWarmer, warmEverySpan } from "../../src/evidence/report/warmer.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
@@ -187,6 +197,41 @@ async function directCommit(repository: string, sha: string, committedAt: Date, 
   });
 }
 
+/**
+ * One person GitHub says is in a team, as `collect-org` stores the membership.
+ *
+ * `role` is GitHub's own word. The digest is what the writer compares to decide whether a fact moved, and is
+ * irrelevant to every reader — these fixtures only have to be distinct.
+ */
+async function teamMember(teamSlug: string, login: string, role = "MEMBER"): Promise<void> {
+  await prisma.orgTeamMembership.create({
+    data: {
+      organization: ORGANIZATION,
+      teamSlug,
+      login,
+      role,
+      observedAt: new Date(Date.UTC(2026, 7, 15)),
+      lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+      digest: `${teamSlug}-${login}-digest`
+    }
+  });
+}
+
+/** One organisation member with a name resolved from the SSO identity mapping, which is the one naming seam. */
+async function namedPerson(login: string, displayName: string): Promise<void> {
+  await prisma.orgPerson.create({
+    data: {
+      organization: ORGANIZATION,
+      login,
+      role: "MEMBER",
+      payload: { displayName },
+      observedAt: new Date(Date.UTC(2026, 7, 15)),
+      lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+      digest: `${login}-digest`
+    }
+  });
+}
+
 beforeEach(async () => {
   forgetBuiltRows();
   await prisma.pullRequestFact.deleteMany();
@@ -196,6 +241,11 @@ beforeEach(async () => {
   await prisma.orgRepository.deleteMany();
   await prisma.sourceCoverage.deleteMany();
   await prisma.repositoryProduction.deleteMany();
+  // The two graph tables the report reads people out of. Cleared here rather than only where a case seeds them:
+  // this file shares a database with `org-graph.test.ts`, whose write-path fixtures would otherwise name members
+  // of teams these cases never mentioned.
+  await prisma.orgTeamMembership.deleteMany();
+  await prisma.orgPerson.deleteMany();
 });
 
 afterAll(async () => {
@@ -206,6 +256,8 @@ afterAll(async () => {
   await prisma.orgRepository.deleteMany();
   await prisma.sourceCoverage.deleteMany();
   await prisma.repositoryProduction.deleteMany();
+  await prisma.orgTeamMembership.deleteMany();
+  await prisma.orgPerson.deleteMany();
   await prisma.$disconnect();
 });
 
@@ -1658,6 +1710,135 @@ describe("the team rows", () => {
     const cards = (await teamRows(CONFIGURATION, 26, REFERENCE)) as { practice?: Record<string, number> }[];
 
     expect(cards[0]?.practice).toMatchObject({ gates_measured: 0, checks_measured: 0, unreviewed_measured: 0 });
+  });
+});
+
+/**
+ * WHO IS IN A TEAM against WHO CONTRIBUTED TO ITS REPOSITORIES, which are two answers one section used to give.
+ *
+ * `platform-operations` is the case: 56 GitHub members, 328 repositories attributed to it — 217 of them because it
+ * is the only team holding `admin` — and therefore a contributor list holding most of the organisation, including
+ * people in none of its teams at all. The figure was right and the heading was not.
+ *
+ * `org_team_memberships` had been collected since the graph landed and no reader in the report layer, so these
+ * cases are about the reader as much as the section: where the membership is read (once, on the estate), what an
+ * unread membership answers (nothing, rather than nobody), and that a member is named through the same map a
+ * contributor is.
+ */
+describe("the team members a report sends", () => {
+  const REFERENCE = new Date(Date.UTC(2026, 8, 1));
+
+  it("should send who GitHub says is in the team, and not who merged into its repositories", async () => {
+    // The two directions at once. `ada` and `alan` are in `dtsse` and only `ada` merged; `linusnorton` merged and is
+    // in no team — which on the real estate is why he appears under `platform-operations`, whose repositories he has
+    // landed seven changes in without being one of its 56 members.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await teamMember("dtsse", "ada", "MAINTAINER");
+    await teamMember("dtsse", "alan");
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 21)), "ada");
+    await mergedPullRequest("alpha", 2n, new Date(Date.UTC(2026, 7, 22)), "linusnorton");
+
+    const members = (await teamMemberRows(CONFIGURATION, 26, REFERENCE)).get("dtsse") as { login: string; role: string }[];
+    const actors = (await actorRows(CONFIGURATION, 26, REFERENCE)) as { login: string }[];
+
+    expect(members).toEqual([
+      { login: "ada", role: "MAINTAINER" },
+      { login: "alan", role: "MEMBER" }
+    ]);
+    // A member who merged nothing is on the first list only, and a contributor in no team on the second only.
+    expect(actors.map((actor) => actor.login)).toEqual(["ada", "linusnorton"]);
+  });
+
+  it("should send a team's members where nobody contributed to its repositories at this span", async () => {
+    // Membership does not depend on the window. A team whose window is empty still has the people GitHub puts in it,
+    // and a section that could only list people who merged would report it as having none.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await teamMember("dtsse", "ada");
+
+    const members = (await teamMemberRows(CONFIGURATION, 26, REFERENCE)).get("dtsse") as unknown[];
+    const actors = await actorRows(CONFIGURATION, 26, REFERENCE);
+
+    expect(members).toHaveLength(1);
+    expect(actors).toHaveLength(0);
+  });
+
+  it("should hold no entry at all for a team whose membership was never read", async () => {
+    // ABSENT, NOT EMPTY. Nothing stores which teams a run read in full, so a team with no row cannot be told from
+    // one nobody walked — 15 teams on the estate have none — and the page states that rather than drawing an empty
+    // table under a heading a reader would take for GitHub's answer.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+
+    const members = await teamMemberRows(CONFIGURATION, 26, REFERENCE);
+
+    expect(members.has("dtsse")).toBe(false);
+    expect(members.get("dtsse")).toBeUndefined();
+  });
+
+  it("should name a member through the same map the contributor rows are named through", async () => {
+    // ONE NAMING SEAM. `contributorNames` resolves every live member of the organisation from the SSO identity
+    // mapping — 762 of 762 on this estate — so `alan`, who merged nothing, is named exactly as well as `ada`, who
+    // merged. A member with no resolved name carries no `name` key at all rather than an empty one.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await teamMember("dtsse", "ada");
+    await teamMember("dtsse", "alan");
+    await teamMember("dtsse", "ef32");
+    await namedPerson("ada", "Ada Lovelace");
+    await namedPerson("alan", "Alan Turing");
+    await mergedPullRequest("alpha", 1n, new Date(Date.UTC(2026, 7, 21)), "ada");
+
+    const members = (await teamMemberRows(CONFIGURATION, 26, REFERENCE)).get("dtsse") as { login: string; name?: string }[];
+    const actors = (await actorRows(CONFIGURATION, 26, REFERENCE)) as { login: string; name?: string }[];
+
+    expect(members).toEqual([
+      { login: "ada", name: "Ada Lovelace", role: "MEMBER" },
+      { login: "alan", name: "Alan Turing", role: "MEMBER" },
+      { login: "ef32", role: "MEMBER" }
+    ]);
+    // The same person, the same name, off the same map: a member and a contributor cannot be shown as two people.
+    expect(actors[0]?.name).toBe("Ada Lovelace");
+  });
+
+  it("should fold the login it names a member by, the team walk and the people walk spelling it separately", async () => {
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await teamMember("dtsse", "ParisFreire");
+    await namedPerson("parisfreire", "Paris Freire");
+
+    const members = (await teamMemberRows(CONFIGURATION, 26, REFERENCE)).get("dtsse") as { login: string; name?: string }[];
+
+    // GitHub's own spelling is what a reader sees, and the fold is only how the name was found.
+    expect(members).toEqual([{ login: "ParisFreire", name: "Paris Freire", role: "MEMBER" }]);
+  });
+
+  it("should read the membership once for the whole estate, off the read every span derives from", async () => {
+    // ONCE PER REPORT BUILD, NOT PER TEAM AND NEVER PER PAGE, which is the invariant `readEstate` already holds the
+    // cohort and the states to. The read happens inside `estateForEverySpan`; deleting the rows after it and before
+    // the accessor is asked proves the answer did not come from a second query — and two teams' members out of one
+    // map proves it was not asked per team.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await graphOwnership("alpha", "team", "civil", "codeowners-sole");
+    await teamMember("dtsse", "ada");
+    await teamMember("civil", "grace");
+
+    const shared = await estateForEverySpan(CONFIGURATION, REFERENCE);
+    await repositoryRows(CONFIGURATION, 4, REFERENCE, shared);
+    await prisma.orgTeamMembership.deleteMany();
+
+    const members = await teamMemberRows(CONFIGURATION, 4, REFERENCE);
+
+    expect(members.get("dtsse")).toHaveLength(1);
+    expect(members.get("civil")).toHaveLength(1);
+  });
+
+  it("should serve a second team page from the first build rather than reading the table again", async () => {
+    // The per-page half of the same invariant: 154 team pages against one revision cost one read between them.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await teamMember("dtsse", "ada");
+
+    const first = await teamMemberRows(CONFIGURATION, 26, REFERENCE);
+    await teamMember("dtsse", "alan");
+
+    expect(await teamMemberRows(CONFIGURATION, 26, REFERENCE)).toBe(first);
+    expect(first.get("dtsse")).toHaveLength(1);
   });
 });
 

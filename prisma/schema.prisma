@@ -250,9 +250,11 @@ model OrgTeam {
 /// One person's membership of one team, over the interval they held that role in it.
 ///
 /// NO SECONDARY INDEX. Nothing queries this table by login: the `_live` partial unique below answers the
-/// reconcile path, and no page asks "which teams is this person in". A `(organization, login,
-/// superseded_at)` index for that question was maintained on every insert of all six reconciles and chosen
-/// by no plan; it belongs here again when something asks.
+/// reconcile path, and the one reader — `liveOrgTeamMemberships`, which feeds each team page's Members
+/// section — takes every live row for the organisation in one scan and groups them in memory, so "which
+/// teams is this person in" is still a question nothing asks the database. A `(organization, login,
+/// superseded_at)` index for it was maintained on every insert of all six reconciles and chosen by no plan;
+/// it belongs here again when something asks.
 ///
 /// COLLECTED WITH `membership: IMMEDIATE`, NOT GitHub's default of `ALL`. `ALL` folds every descendant
 /// team's people into the parent, which across 336 nested teams makes a parent look as though it employs

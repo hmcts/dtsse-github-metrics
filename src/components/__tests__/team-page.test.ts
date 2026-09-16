@@ -17,7 +17,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TeamPage, { dynamic } from "@/app/teams/[team]/page";
 import { RepositoryUnknownError } from "@/lib/not-found";
-import type { RepositoryRow, TeamActorRow, TeamDetail, WindowOptions } from "@/lib/types";
+import type { RepositoryRow, TeamActorRow, TeamDetail, TeamMemberRow, WindowOptions } from "@/lib/types";
 
 const WINDOWS: WindowOptions = {
   options: [4, 12, 26],
@@ -55,12 +55,26 @@ const ACTORS: TeamActorRow[] = [
   { login: "grace", repositories: 1, contributions: 3 }
 ];
 
+/**
+ * Who GitHub says is in the team, which overlaps the contributors above without matching them.
+ *
+ * `ada` is both. `alan` is a member who landed nothing at this span, and `grace` contributed without being in the
+ * team — the two directions the page has to keep legible. Real names on two of the three, because a member is named
+ * through the same seam a contributor is.
+ */
+const MEMBERS: TeamMemberRow[] = [
+  { login: "ada", name: "Ada Lovelace", role: "MAINTAINER" },
+  { login: "alan", name: "Alan Turing", role: "MEMBER" },
+  { login: "ef32", role: "MEMBER" }
+];
+
 /** One team, full in every block the page draws, before any narrowing. */
 function team(): TeamDetail {
   return {
     team: "platform",
     repositories: REPOSITORIES,
     actors: ACTORS,
+    members: MEMBERS,
     unavailable: 0,
     labels: { green: 1, amber: 1 }
   };
@@ -128,13 +142,16 @@ afterEach(() => {
 });
 
 describe("the team page", () => {
-  it("names the team and counts what it holds and who worked in it", async () => {
+  it("names the team and counts what it holds, who is in it and who worked in it", async () => {
     stubService();
     const markup = await render();
 
     expect(markup).toContain(">platform<");
     expect(markup).toContain("team");
     expect(markup).toContain("2 repositories");
+    // TWO COUNTS OF PEOPLE AND NOT ONE. Three members and two contributors, which is the arithmetic that says they
+    // are counts of different sets: one figure headed neither way would be read as membership and is not.
+    expect(markup).toContain("3 members");
     expect(markup).toContain("2 contributors");
   });
 
@@ -260,7 +277,115 @@ describe("the team page", () => {
     expect(markup).toContain("Nobody authored a reported merge in platform’s repositories");
     expect(markup).toContain("0 contributors");
   });
+});
 
+/**
+ * The two sections about people, which answer two questions and used to answer them as one.
+ *
+ * `platform-operations` is the case these are written from: 56 GitHub members, and a Contributors section that
+ * listed people in none of its teams because it holds admin on 328 repositories and their authors were folded under
+ * it. The figure was never wrong — the section's own detail said "counted within this team's repositories" — but the
+ * heading read as the team's people, so the page now answers both questions and names the source of each.
+ */
+describe("the team’s members and its contributors", () => {
+  /** What the section headings and their details say, which is the whole of the distinction a reader gets. */
+  function sections(markup: string): string {
+    return markup.replace(/href="[^"]*"/g, "");
+  }
+
+  it("heads each section with what it is and where it came from, so neither reads as the other", async () => {
+    stubService();
+    const markup = sections(await render());
+
+    // GitHub is named on the membership side and the repositories on the contribution side. A reader meeting either
+    // heading alone must not be able to take it for the other.
+    expect(markup).toContain(">Members<");
+    expect(markup).toContain("who GitHub says is in this team, whatever they worked on");
+    expect(markup).toContain(">Contributors to its repositories<");
+    expect(markup).toContain("authors of the changes above, in or out of the team");
+  });
+
+  it("lists a member who contributed nothing at this span", async () => {
+    // `alan` is in the team and authored nothing, so he is in the membership table and absent from the contributor
+    // one. A section that could only list people who merged would lose him entirely.
+    stubService();
+    const markup = await render();
+
+    const [, members = "", contributorsSection = ""] = markup.split(/>(?:Members|Contributors to its repositories)</);
+
+    expect(markup).toContain("Alan Turing");
+    expect(members).toContain("Alan Turing");
+    expect(contributorsSection).not.toContain("Alan Turing");
+  });
+
+  it("lists a contributor who is not in the team, which is the whole confusion", async () => {
+    // The `linusnorton` case: he is in 28 teams, none of them this one, and appears here because he merged into
+    // repositories it owns. He belongs in the contributor list and must not appear in the membership one.
+    stubService((detail) => ({
+      ...detail,
+      actors: [{ login: "linusnorton", name: "Linus Norton", repositories: 6, contributions: 7 }],
+      members: [{ login: "alan", name: "Alan Turing", role: "MEMBER" }]
+    }));
+    const markup = await render();
+
+    const [, members = "", contributorsSection = ""] = markup.split(/>(?:Members|Contributors to its repositories)</);
+
+    expect(members).not.toContain("Linus Norton");
+    expect(contributorsSection).toContain("Linus Norton");
+    expect(markup).toContain("1 member");
+    expect(markup).toContain("1 contributor");
+  });
+
+  it("lists the members of a team nobody contributed to at this span", async () => {
+    // Both answers at once, and both true: GitHub says three people are in the team, and none of them landed a
+    // change in its repositories in this window.
+    stubService((detail) => ({ ...detail, actors: [] }));
+    const markup = await render();
+
+    expect(markup).toContain("Ada Lovelace");
+    expect(markup).toContain("Nobody authored a reported merge in platform’s repositories");
+    expect(markup).toContain("3 members");
+    expect(markup).toContain("0 contributors");
+  });
+
+  it("reads an unread membership as unmeasured rather than as a team with nobody in it", async () => {
+    // ABSENT IS NOT ZERO. Nothing records which teams a collection walked in full, so a team with no stored row is
+    // indistinguishable from one nobody walked — and `unowned`, a reporting bucket rather than a GitHub team,
+    // arrives here too. The header states no figure at all rather than "0 members".
+    stubService((detail) => ({ ...detail, members: undefined }));
+    const markup = await render();
+
+    expect(markup).toContain("No membership has been read for platform.");
+    expect(markup).toContain("Nothing read is not the same as nobody in the team.");
+    expect(markup).not.toContain("0 members");
+    // The contributor list is untouched by an unread membership: it is built from the window's merges.
+    expect(markup).toContain("2 contributors");
+  });
+
+  it("names a member through the same seam a contributor is named through", async () => {
+    // `contributorNames` resolves every live member of the organisation, so a member who merged nothing is named as
+    // well as one who merged fifty — and a login with no resolved name falls back to the login on both lists rather
+    // than being blanked. One naming path, so the two sections cannot call one person two things.
+    stubService();
+    const markup = await render();
+
+    expect(markup).toContain("Ada Lovelace");
+    expect(markup).toContain("Alan Turing");
+    expect(markup).toContain("ef32");
+  });
+
+  it("links nobody in the membership list, there being no page for a member who landed nothing", async () => {
+    // `/contributors/<login>` is built from the window's merges and refuses a login with none, so `alan` has no
+    // page. The contributor table below carries the links.
+    stubService();
+    const markup = await render();
+
+    expect(markup).not.toContain('href="/contributors/alan');
+    expect(markup).toContain('href="/contributors/ada?weeks=4"');
+  });
+});
+
+describe("the team page’s refusals", () => {
   it("answers an identifier the configuration does not hold as not found", async () => {
     stubService((detail) => detail, 404);
     await expect(render()).rejects.toThrow("notFound");
