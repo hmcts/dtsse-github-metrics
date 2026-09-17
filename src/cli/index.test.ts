@@ -32,6 +32,12 @@ const asSoleCollector = vi.hoisted(() => vi.fn(async (run: () => Promise<unknown
 // thing this CLI does, and the whole question about it is whether a collector holding the lock stops it.
 const pruneCache = vi.hoisted(() => vi.fn(async () => 0));
 
+// The one-off backfill's two store calls, stubbed at the AAT numbers so the cases below are about what the
+// command does with them. What the SQL itself does to a real table is asserted in
+// `test/integration/reduce-descriptions.test.ts`.
+const censusOfDescriptions = vi.hoisted(() => vi.fn(async () => ({ rows: 24_249, carryingDescription: 23_854, derived: 395, unmeasurable: 0 })));
+const reduceStoredDescriptions = vi.hoisted(() => vi.fn(async () => ({ scanned: 23_854, changed: 23_854 })));
+
 const collectOrgTeams = vi.hoisted(() => vi.fn());
 const collectOrgRepositories = vi.hoisted(() => vi.fn());
 const collectOrgPeople = vi.hoisted(() => vi.fn());
@@ -91,6 +97,7 @@ vi.mock("../evidence/store/coverage.ts", async () => ({
   prevailingCachedCoverage
 }));
 vi.mock("../evidence/store/prune.ts", () => ({ pruneCache }));
+vi.mock("../evidence/store/descriptions.ts", () => ({ censusOfDescriptions, reduceStoredDescriptions, DEFAULT_BATCH_SIZE: 500 }));
 // The per-repository writers `collect` ends each repository with. Stubbed because they reach Postgres and
 // `prisma` here is a bare `$disconnect` — left real, the FIRST repository throws a TypeError out of the walk and
 // the run ends, which silently makes any assertion about which repositories were walked true of a loop that
@@ -160,6 +167,8 @@ beforeEach(() => {
   // A one-repository estate by default, so the cases that are not about the cohort do not have to state one.
   // `assertCohortCollected` calls this too, so it must always resolve.
   readCohort.mockResolvedValue([cohortEntry("repo-a")]);
+  censusOfDescriptions.mockResolvedValue({ rows: 24_249, carryingDescription: 23_854, derived: 395, unmeasurable: 0 });
+  reduceStoredDescriptions.mockResolvedValue({ scanned: 23_854, changed: 23_854 });
   vi.spyOn(console, "info").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
@@ -1203,5 +1212,123 @@ describe("collect-org", () => {
     expect(entryOf(proposed(), "team-a")).toContain("    github_team_slugs:");
     expect(entryOf(proposed(), "unknown")).not.toContain("    github_team_slugs:");
     expect(entryOf(proposed(), "unknown")).toContain("      - mystery-repo");
+  });
+});
+
+/**
+ * The one-off that reduces descriptions cached before the two answers existed.
+ *
+ * Its SQL is asserted against a real table in `test/integration/reduce-descriptions.test.ts`. What these cases are
+ * about is the two decisions an operator's fingers depend on: that nothing is written without `--write`, and that
+ * the patterns the estate is graded by come out of the reviewed configuration.
+ */
+describe("reduce-descriptions", () => {
+  const CONFIG = {
+    organization: "hmcts",
+    lookback: { operational_days: 90 },
+    teams: [],
+    org_graph: { enabled: true },
+    traceability: { minimum_description: 30, reference_patterns: ["#\\d+", "[A-Z][A-Z0-9]+-\\d+"] }
+  };
+
+  beforeEach(() => {
+    loadConfiguration.mockResolvedValue(CONFIG);
+  });
+
+  /** Everything the command said, as one block rather than as the lines it said it in. */
+  function reported(): string {
+    return (process.stderr.write as unknown as MockInstance).mock.calls.map((call) => String(call[0])).join("");
+  }
+
+  it("should count what it would change and write nothing at all", async () => {
+    expect(await main(["reduce-descriptions", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+
+    expect(reduceStoredDescriptions).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ dryRun: true }));
+    expect(reported()).toContain("DRY RUN");
+    expect(reported()).toContain("23854 rows would be reduced");
+  });
+
+  it("should print the two commands the operation is finished with, rather than filing them somewhere", async () => {
+    await main(["reduce-descriptions", "--config", "metrics.yaml"]);
+
+    // The apply, with the configuration the count was taken against rather than a placeholder somebody has to
+    // remember to substitute.
+    expect(reported()).toContain("yarn cli reduce-descriptions --config metrics.yaml --write");
+    // And the VACUUM, which is where the space the descriptions held becomes reusable. `VACUUM FULL` would return
+    // it to the operating system and take an ACCESS EXCLUSIVE lock the web pod's every read would block on, so
+    // the instruction printed is deliberately the plain one.
+    expect(reported()).toContain("VACUUM (VERBOSE, ANALYZE) pull_request_facts");
+    expect(reported()).not.toContain("VACUUM FULL");
+  });
+
+  it("should name the database it resolved, because this one rewrites every row", async () => {
+    await main(["reduce-descriptions", "--config", "m.yaml"]);
+
+    expect(reported()).toContain("localhost:5432/github_metrics");
+  });
+
+  it("should apply the change when asked to, and report the table before and after", async () => {
+    censusOfDescriptions.mockResolvedValueOnce({ rows: 24_249, carryingDescription: 23_854, derived: 395, unmeasurable: 0 });
+    censusOfDescriptions.mockResolvedValueOnce({ rows: 24_249, carryingDescription: 0, derived: 24_249, unmeasurable: 0 });
+
+    expect(await main(["reduce-descriptions", "--config", "m.yaml", "--write"])).toBe(EXIT_COMPLETE);
+
+    expect(reduceStoredDescriptions).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ dryRun: false }));
+    expect(reported()).toContain("before: 24249 cached pull requests, 23854 carrying a description, 395 measurable");
+    expect(reported()).toContain("after: 24249 cached pull requests, 0 carrying a description, 24249 measurable");
+    expect(reported()).toContain("reduced 23854 of 23854 rows read");
+  });
+
+  it("should grade with the patterns the configuration states and no others", async () => {
+    // THE POINT OF READING THEM FROM CONFIG. A hardcoded pair would keep working here and would stop being what
+    // `traceabilityReference` means the moment somebody edited the reviewed file.
+    loadConfiguration.mockResolvedValue({ ...CONFIG, traceability: { minimum_description: 30, reference_patterns: ["WIBBLE-\\d+"] } });
+
+    await main(["reduce-descriptions", "--config", "m.yaml", "--write"]);
+
+    expect(reduceStoredDescriptions).toHaveBeenCalledWith([/WIBBLE-\d+/], expect.anything());
+  });
+
+  it("should do nothing when no row still carries a description", async () => {
+    censusOfDescriptions.mockResolvedValue({ rows: 24_249, carryingDescription: 0, derived: 24_249, unmeasurable: 0 });
+
+    expect(await main(["reduce-descriptions", "--config", "m.yaml", "--write"])).toBe(EXIT_COMPLETE);
+
+    expect(reduceStoredDescriptions).not.toHaveBeenCalled();
+    expect(reported()).toContain("nothing to do");
+  });
+
+  it("should batch at the size the operator asked for", async () => {
+    await main(["reduce-descriptions", "--config", "m.yaml", "--batch-size", "25"]);
+
+    expect(reduceStoredDescriptions).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ batchSize: 25 }));
+  });
+
+  it("should fail loudly if a row ended up with neither a description nor a derivation", async () => {
+    // The invariant the single-statement update exists to hold. It cannot be broken by any ordering of the
+    // batches — which is exactly why a run that observes it broken has to stop rather than carry on reporting.
+    censusOfDescriptions.mockResolvedValueOnce({ rows: 24_249, carryingDescription: 23_854, derived: 395, unmeasurable: 0 });
+    censusOfDescriptions.mockResolvedValueOnce({ rows: 24_249, carryingDescription: 0, derived: 24_246, unmeasurable: 3 });
+
+    expect(await main(["reduce-descriptions", "--config", "m.yaml", "--write"])).toBe(EXIT_FAILED);
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("neither a description nor a derivation"));
+  });
+
+  it("should report rows a concurrent prune deleted under the read without failing", async () => {
+    reduceStoredDescriptions.mockResolvedValue({ scanned: 23_854, changed: 23_850 });
+
+    expect(await main(["reduce-descriptions", "--config", "m.yaml", "--write"])).toBe(EXIT_COMPLETE);
+
+    expect(reported()).toContain("4 rows were read but not written");
+  });
+
+  it("should not take the collector lock", async () => {
+    // Deliberate, and the opposite of `prune`. Each row's update derives from that row's CURRENT payload, so a
+    // collection writing the same row concurrently keeps everything it wrote — and standing down would leave a
+    // hand-run one-off exiting 0 having done nothing at all.
+    await main(["reduce-descriptions", "--config", "m.yaml", "--write"]);
+
+    expect(asSoleCollector).not.toHaveBeenCalled();
+    expect(reduceStoredDescriptions).toHaveBeenCalledOnce();
   });
 });

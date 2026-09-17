@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-export const COMMANDS = ["doctor", "collect", "collect-org", "prune", "evidence", "migrate"] as const;
+export const COMMANDS = ["doctor", "collect", "collect-org", "prune", "evidence", "migrate", "reduce-descriptions"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
@@ -43,6 +43,15 @@ export interface Arguments {
   unresolvedLimit?: number;
   /** Read every cohort repository rather than a sample of them (doctor). */
   all: boolean;
+  /**
+   * Apply the change rather than only counting it (reduce-descriptions).
+   *
+   * OPT IN, so the default of the one command that rewrites stored payloads is to write nothing. An operator who
+   * mistypes the connection details finds out from a count rather than from a table.
+   */
+  write: boolean;
+  /** Rows per batch, for a command that walks the whole fact table (reduce-descriptions). */
+  batchSize?: number;
 }
 
 const OPTIONS = {
@@ -54,7 +63,9 @@ const OPTIONS = {
   "tolerate-partial": { type: "boolean" },
   "propose-teams": { type: "boolean" },
   "unresolved-limit": { type: "string" },
-  all: { type: "boolean" }
+  all: { type: "boolean" },
+  write: { type: "boolean" },
+  "batch-size": { type: "string" }
 } as const;
 
 function integer(value: string | undefined, name: string): number | undefined {
@@ -108,6 +119,11 @@ export function parseArguments(argv: readonly string[]): Arguments {
     throw new UsageError("--unresolved-limit may not be negative; zero skips the per-repository rungs entirely");
   }
 
+  const batchSize = integer(values["batch-size"] as string | undefined, "batch-size");
+  if (batchSize !== undefined && batchSize < 1) {
+    throw new UsageError("--batch-size must be at least one row");
+  }
+
   const startsAt = instant(values.from as string | undefined, "from");
   const endsAt = instant(values.to as string | undefined, "to");
   if (startsAt !== undefined && endsAt !== undefined && days !== undefined) {
@@ -124,7 +140,9 @@ export function parseArguments(argv: readonly string[]): Arguments {
     toleratePartial: values["tolerate-partial"] === true,
     proposeTeams: values["propose-teams"] === true,
     all: values.all === true,
-    ...(unresolvedLimit === undefined ? {} : { unresolvedLimit })
+    write: values.write === true,
+    ...(unresolvedLimit === undefined ? {} : { unresolvedLimit }),
+    ...(batchSize === undefined ? {} : { batchSize })
   };
 }
 
@@ -138,6 +156,9 @@ commands:
   prune       delete cached intervals that have not been used recently
   evidence    explain cached behaviour evidence without GitHub access
   migrate     apply any pending database migrations (takes no --config)
+  reduce-descriptions
+              replace the stored descriptions of pull requests cached before they
+              were reduced with the two answers reports read; counts unless --write
 
 options:
   --config <file>       path to the YAML configuration; repeat to layer files, later files winning
@@ -149,6 +170,8 @@ options:
   --propose-teams       print a reviewable teams: block instead of writing the graph (collect-org)
   --unresolved-limit <n>  cap the repositories one run reads CODEOWNERS for (collect-org)
   --all                 read every cohort repository rather than a sample of them (doctor)
+  --write               apply the change; without it nothing is written (reduce-descriptions)
+  --batch-size <n>      rows per batch, so a failure part-way commits what it did (reduce-descriptions)
 
 exit status:
   0  every configured repository was observed
