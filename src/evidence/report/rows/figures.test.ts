@@ -122,13 +122,10 @@ describe("the figures a row states about its window", () => {
     expect(figures.merge_cycle_time_hours).toBe(4);
   });
 
-  it("should report absent medians and log the reason when a stored payload has no reviews array", () => {
+  it("should withhold every review-derived figure and log the reason when a trivial merge has no reviews array", () => {
     // A REAL SHAPE IN THE CACHE, not defensive padding: `eligibleReviews` reads `pullRequest.reviews` without a
-    // check, and one such row must not turn the whole page into a 500.
-    //
-    // The merge is TRIVIAL on purpose. `unreviewedSubstantialCounts` reaches `eligibleReviews` only for a
-    // substantial merge, so a trivial one is the cohort where the timings are the first thing to read the missing
-    // array — which is the shape this guard can actually answer for. See the note below on the shape it cannot.
+    // check, and one such row must not turn the whole page into a 500. A trivial merge is the shape whose counts
+    // never read the array, and the timings still do — so all five go together.
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const trivial = { ...merge(1), additions: 2, deletions: 0, changedFiles: 1, reviews: undefined as unknown as ReviewFact[] };
 
@@ -136,19 +133,42 @@ describe("the figures a row states about its window", () => {
 
     expect("time_to_first_review_hours" in figures).toBe(false);
     expect("merge_cycle_time_hours" in figures).toBe(false);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("the review timings could not be measured"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("the review history was not stored for every merge"));
     warn.mockRestore();
   });
 
-  it("should still fail the whole row when a SUBSTANTIAL merge is missing its reviews array", () => {
-    // WHAT THE GUARD DOES NOT COVER, asserted so the limit is stated rather than assumed. `timingMedians` catches
-    // its own throw, but `unreviewedSubstantial` is evaluated first in the same literal and reads the same array
-    // without a check — so on a substantial merge the row throws before the catch is reached, which is the 500 the
-    // guard's own header says the report layer must not produce. Narrowing that is a change to the policy's
-    // reader, not to this module, and it is left as a finding rather than made here.
+  it("should withhold every review-derived figure when a SUBSTANTIAL merge is missing its reviews array", () => {
+    // THE CASE THE GUARD WAS WRITTEN FOR, and the one it used to miss: `unreviewed_substantial` is evaluated first
+    // and reads the same array, so this cohort threw before any catch was reached. The counts are ABSENT and not
+    // `1 of 1` — a merge whose reviews were never read must not report as reviewed by nobody — while the merge
+    // count itself stands, because that walk did happen.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const substantial = { ...merge(1), reviews: undefined as unknown as ReviewFact[] };
 
-    expect(() => behaviourFigures(POLICY, { pullRequests: [substantial], directCommits: [] }, BOTH)).toThrow(TypeError);
+    const figures = behaviourFigures(POLICY, { pullRequests: [substantial], directCommits: [] }, BOTH);
+
+    expect("unreviewed_substantial" in figures).toBe(false);
+    expect("unreviewed_substantial_merges" in figures).toBe(false);
+    expect("substantial_merges" in figures).toBe(false);
+    expect("time_to_first_review_hours" in figures).toBe(false);
+    expect(figures.merged_pull_requests).toBe(1);
+    expect(figures.direct_commits).toBe(0);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("the review history was not stored for every merge"));
+    warn.mockRestore();
+  });
+
+  it("should withhold every review-derived figure when a stored payload is short of another field the metrics read", () => {
+    // WHAT THE SHAPE CHECK CANNOT NAME. The reviews array is the absence the cache is known to hold; a payload that
+    // failed to round-trip can be short of anything, and the report layer must still render the page.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const undated = { ...merge(1), mergedAt: undefined as unknown as Date };
+
+    const figures = behaviourFigures(POLICY, { pullRequests: [undated], directCommits: [] }, BOTH);
+
+    expect("unreviewed_substantial" in figures).toBe(false);
+    expect("merge_cycle_time_hours" in figures).toBe(false);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("the review figures could not be measured"));
+    warn.mockRestore();
   });
 });
 

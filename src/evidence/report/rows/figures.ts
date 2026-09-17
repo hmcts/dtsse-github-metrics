@@ -49,18 +49,7 @@ export function behaviourFigures(policy: ReadinessPolicy, merges: Merges, measur
   return {
     ...(measured.pullRequests ? { merged_pull_requests: merges.pullRequests.length } : {}),
     ...(measured.directCommits ? { direct_commits: merges.directCommits.length } : {}),
-    ...(measured.pullRequests && measured.directCommits
-      ? {
-          unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
-          // THE COUNTS BEHIND THAT VERDICT, which the team page aggregates: how many substantial changes reached
-          // the default branch with no independent review, out of how many substantial changes there were. The
-          // verdict alone cannot be summed across a team's repositories, and the policy already computes both.
-          ...substantialCounts(policy, merges),
-          // The two timing medians. Read off `BehaviourMetric.summary`, so the page and the assessment compare the
-          // same number at the same percentile rather than two derivations that could disagree.
-          ...timingMedians(merges)
-        }
-      : {})
+    ...(measured.pullRequests && measured.directCommits ? reviewDerivedFigures(policy, merges) : {})
   };
 }
 
@@ -110,28 +99,65 @@ function substantialCounts(policy: ReadinessPolicy, merges: Merges): Pick<Behavi
   return { unreviewed_substantial_merges: counts.unreviewed, substantial_merges: counts.merges };
 }
 
+/** The five figures every one of which is derived from the stored review history. */
+type ReviewDerivedFigures = Pick<
+  BehaviourFigures,
+  "unreviewed_substantial" | "unreviewed_substantial_merges" | "substantial_merges" | "time_to_first_review_hours" | "merge_cycle_time_hours"
+>;
+
 /**
- * The two timing medians, or nothing where the facts cannot support them.
+ * Every figure derived from the review history, or nothing where that history cannot be read.
  *
- * GUARDED, and the guard is not defensive padding — it is a real shape in the cache. `eligibleReviews` reads
- * `pullRequest.reviews` without a check, so a stored payload lacking that array throws rather than reporting an
- * absence, and the report layer must not turn one such row into a 500 for the whole page. Rows like that exist:
- * `deserialiseMerges` passes a payload through as it was stored, and the projection in `loadCachedFactsForOrganisation`
- * has been narrowed once already, so "every payload carries every field the metrics read" is an assumption about
- * history rather than a guarantee.
+ * ONE GUARD OVER ALL FIVE, because all five reach `pullRequest.reviews` through the same unchecked `eligibleReviews`
+ * and so are unmeasurable together. Guarding the medians alone made the guard hold only for the case it was not
+ * written for: `unreviewed_substantial` is evaluated first, so a SUBSTANTIAL merge missing that array threw before
+ * any catch below it was reached, and a trivial merge — the one shape the narrower guard did hold for — is the shape
+ * where the counts never read the array in the first place.
  *
- * The failure is reported as an ABSENT median, which is the same answer a window with no reviews gives, and the
- * reason is logged once per repository rather than swallowed — an unmeasurable metric is worth knowing about, and a
- * page that renders is worth more than a page that is right about one column.
+ * THE COHORT IS THE UNIT and not the individual merge, because these are rates and medians over a denominator.
+ * Dropping the merges whose reviews were not stored would count them as reviewed by nobody, which is the confusion
+ * ABSENT MEANS UNMEASURED AND ZERO MEANS MEASURED-AS-NOTHING exists to prevent; a rate over the subset that happens
+ * to have round-tripped is not the rate the column claims to state.
+ *
+ * DECIDED FROM THE SHAPE AND NOT CAUGHT, so a real defect in the policy still surfaces as one rather than reading
+ * as a cache that predates a field. The catch is what remains for the fields this cannot name in advance.
  */
-function timingMedians(merges: Merges): Pick<BehaviourFigures, "time_to_first_review_hours" | "merge_cycle_time_hours"> {
+function reviewDerivedFigures(policy: ReadinessPolicy, merges: Merges): ReviewDerivedFigures {
+  if (!reviewsStored(merges)) {
+    console.warn("the review history was not stored for every merge, so the figures derived from it are unmeasured rather than none");
+    return {};
+  }
   try {
     return {
+      unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
+      // THE COUNTS BEHIND THAT VERDICT, which the team page aggregates: how many substantial changes reached
+      // the default branch with no independent review, out of how many substantial changes there were. The
+      // verdict alone cannot be summed across a team's repositories, and the policy already computes both.
+      ...substantialCounts(policy, merges),
+      // The two timing medians. Read off `BehaviourMetric.summary`, so the page and the assessment compare the
+      // same number at the same percentile rather than two derivations that could disagree.
       time_to_first_review_hours: medianOf(timeToFirstReview.summary(merges)),
       merge_cycle_time_hours: medianOf(mergeCycleTime.summary(merges))
     };
   } catch (error) {
-    console.warn(`the review timings could not be measured: ${error instanceof Error ? error.message : String(error)}`);
+    // ANY OTHER FIELD THE METRICS READ. The reviews array is the absence the cache is known to hold and is checked
+    // above; a payload that failed to round-trip can be short of anything. One such row must not become a 500 for
+    // the whole page, so the figures are ABSENT — the answer a window with nothing to measure gives — and the
+    // reason is logged rather than swallowed, because an unmeasurable metric is worth knowing about.
+    console.warn(`the review figures could not be measured: ${error instanceof Error ? error.message : String(error)}`);
     return {};
   }
+}
+
+/**
+ * Whether every merged pull request in the cohort carries the reviews array those figures read.
+ *
+ * A REAL SHAPE IN THE CACHE and not defensive padding: `deserialiseMerges` passes a payload through as it was
+ * stored, and the projection in `loadCachedFactsForOrganisation` has been narrowed once already, so "every payload
+ * carries every field the metrics read" is an assumption about history rather than a guarantee. `builtMergeRows`
+ * keeps the same check on the same field, on the array's PRESENCE rather than its contents — an empty array was read
+ * and found no reviews, which is a measurement.
+ */
+function reviewsStored(merges: Merges): boolean {
+  return merges.pullRequests.every((pullRequest) => Array.isArray(pullRequest.reviews));
 }
