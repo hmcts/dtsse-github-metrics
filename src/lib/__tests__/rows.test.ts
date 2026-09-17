@@ -606,8 +606,11 @@ describe("parseExpanded", () => {
     expect(parseExpanded((parameter) => query[parameter] ?? null)).toBe(true);
   });
 
-  it("should name the control after what it shows rather than after the click", () => {
-    expect(EXPAND_LABEL).toBe("Hygiene checks");
+  it("should name the control after the action rather than after the column it opens", () => {
+    // NOT "Hygiene checks", which is what it read until 2026-09-17: the column it expands is headed `Hygiene`
+    // immediately to its left, so naming the button after its contents put the word on the page twice and left a
+    // reader unable to tell the heading from the control.
+    expect(EXPAND_LABEL).toBe("Expand");
   });
 });
 

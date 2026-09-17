@@ -350,13 +350,16 @@ export function parseExpanded(read: (parameter: string) => string | null): boole
 }
 
 /**
- * The word on the expand toggle: WHAT IT SHOWS rather than what it does.
+ * The word on the expand toggle: WHAT IT DOES, which is the one control on this bar named that way.
  *
- * "Hygiene checks" on the visibility toggles' precedent, which are named `public` and `internal` for the rows they
- * bring in rather than "Show public". Beside the parameter it writes, so the control and the state it carries are
- * one decision.
+ * The four filter toggles are named for what they bring IN — `public`, `internal`, `Production` — because each names
+ * a set of rows the reader has not got. This one names an action instead, and deliberately: the column it opens is
+ * headed `Hygiene` a few centimetres to its left, so naming the control after its content put the same word on the
+ * page twice with no way to tell the heading from the button.
+ *
+ * Beside the parameter it writes, so the control and the state it carries are one decision.
  */
-export const EXPAND_LABEL = "Hygiene checks";
+export const EXPAND_LABEL = "Expand";
 
 /**
  * Whether one of two signals answers yes, for a requirement either tool satisfies.
