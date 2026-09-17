@@ -83,11 +83,18 @@ describe("parseArguments", () => {
     expect(() => parseArguments(["collect", "--config", "m.yaml", "--maximum-days=400"])).toThrow(UsageError);
   });
 
-  // A usage error and not a failed run: `map-sonar` and `trend` were dispatched and could only report
-  // themselves unwired, so a caller got exit 1 for asking correctly. Exit 2 says the command line was wrong,
-  // which is now the true answer.
-  it.each(["map-sonar", "trend"])("should refuse the unimplemented command %s as a usage error", (command) => {
-    expect(() => parseArguments([command, "--config", "m.yaml"])).toThrow(/unknown command/);
+  // A usage error and not a failed run: `trend` was dispatched and could only report itself unwired, so a caller
+  // got exit 1 for asking correctly. Exit 2 says the command line was wrong, which is the true answer.
+  it("should refuse the unimplemented command trend as a usage error", () => {
+    expect(() => parseArguments(["trend", "--config", "m.yaml"])).toThrow(/unknown command/);
+  });
+
+  it("should accept map-sonar, which resolves the project map rather than reporting the cohort", () => {
+    expect(parseArguments(["map-sonar", "--config", "m.yaml", "--tolerate-partial"])).toMatchObject({
+      command: "map-sonar",
+      toleratePartial: true
+    });
+    expect(COHORT_COMMANDS.has("map-sonar")).toBe(false);
   });
 });
 

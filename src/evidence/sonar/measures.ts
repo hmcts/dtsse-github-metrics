@@ -7,8 +7,9 @@ import { type SonarDeclaration, SonarGateLevel, type SonarMeasures, type SonarQu
  * SonarCloud did not send, one that did not parse, a rating off the scale and a gate level this build does not
  * know are all reported as absent rather than as zero, `A`, or `OK`.
  *
- * CURRENTLY UNWIRED, with the rest of the SonarCloud layer. `./resolve.ts` states what would reach it and
- * that whether to wire the layer up or drop it is an open decision.
+ * `parseMeasures` is reached by `./client.ts` on every measures read a collection makes; `declaredProject` is
+ * reached by the resolution ladder wherever a caller has a repository's `sonar-project.properties` in hand — see
+ * `./resolve.ts` for why `collect` does not fetch one.
  */
 
 /** Every metric key one measures request asks for. */

@@ -262,7 +262,16 @@ export interface SonarQualityGateCondition {
   comparator: string;
   threshold?: string;
   actual?: string;
-  level: SonarGateLevel;
+  /**
+   * How this one condition stood, as SonarCloud worded it, and NOT the gate's three-valued verdict.
+   *
+   * A string rather than `SonarGateLevel`, which it was declared as while nothing populated it. The two are
+   * different vocabularies: `alert_status` is `OK`, `ERROR` or `NONE`, while a condition inside
+   * `quality_gate_details` has also been sent as `WARN`. Narrowing it would mean either dropping a condition
+   * whose word this build does not know or restating it as one it does, and a reader of a gate's reasons is
+   * exactly the reader that must not be handed a substitute.
+   */
+  level: string;
 }
 
 export interface SonarQualityGate {
@@ -615,11 +624,13 @@ export const UNCOLLECTED_DETAIL = "nothing has been collected for this repositor
  *
  * SEVEN OF THESE ARE NEITHER SENT NOR READ, and are kept on the contract rather than deleted:
  * `currently_open`, `stale_open`, `finding_occurrences`, `sonar_coverage`, `sonar_reported`,
- * `sonar_security_rating` and `sonar_security_issues`. The report layer emits none of them, and the
- * reason is the same in each case: the open pull-request summary and the practice findings have no
- * producer at all, and the Sonar layer under `src/evidence/sonar/` is written but reached by nothing —
- * see `sonar/resolve.ts`, which states what would reach it. So every column keyed on one rendered a dash
- * for the whole estate, and those `/repositories` columns have gone.
+ * `sonar_security_rating` and `sonar_security_issues`. The report layer emits none of them, so every
+ * `/repositories` column keyed on one rendered a dash for the whole estate and those columns have gone.
+ * The reasons now DIFFER between the two groups, and the difference is what to read before reviving
+ * either. The open pull-request summary and the practice findings have no producer at all. The four Sonar
+ * fields do: `collect` resolves a project and reads its measures per repository since 2026-09-17, and the
+ * repository page renders them — what is missing is the ESTATE aggregation, which means carrying one
+ * repository's measures into `estate.ts`'s row and giving `/repositories` its columns back.
  *
  * NOTHING READS THESE SEVEN OFF A `RepositoryRow`, and the near-miss is worth naming because it has been
  * mistaken for a reader twice. `lib/repository.ts` does render `currently_open` and `stale_open` — but off
@@ -629,9 +640,8 @@ export const UNCOLLECTED_DETAIL = "nothing has been collected for this repositor
  * `security_issues` — not the `sonar_`-prefixed ones here. Same words, different contracts. Deleting a
  * field from this list will not break a render, so do not use a passing build as evidence that one is read.
  *
- * What keeps them is that each is the display half of a layer whose collection half is missing, so the work
- * to finish is an assembly rather than a contract change. That is a decision to revisit, not a fact: if the
- * Sonar layer is dropped rather than wired, these go with it.
+ * What keeps them is that each is the display half of an assembly that is not finished, so the work to do is
+ * an assembly rather than a contract change.
  *
  * `codeowners_files` DID go, along with `codeownersPresent` in `lib/rows.ts`. It was in the same state and
  * differs in one way that matters: nothing anywhere else reads it, and `owner_kind` answers the question

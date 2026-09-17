@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AvailabilityReason } from "../domain/availability.ts";
-import { ratingLetter, SonarGateLevel, SonarResolutionMethod, type StoredSonarMapping } from "../domain/sonar.ts";
+import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
+import { isSonarObservation, ratingLetter, SonarGateLevel, SonarMappingOutcome, SonarResolutionMethod, type StoredSonarMapping } from "../domain/sonar.ts";
 import { createGitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
-import { createSonarClient, SonarError, searchableRevisions } from "./client.ts";
+import { alreadyAnswered, attributedRepository, attributeProject, SEARCH_CALLS_PER_MINUTE, searchPacer } from "./attribute.ts";
+import { createSonarClient, SonarError, searchableRevisions, sonarToken } from "./client.ts";
+import { sonarProjectMap } from "./map.ts";
 import { declaredProject, gateLevel, measuredCount, measuredGate, measuredNumber, measuredRating, parseMeasures, parseProperties } from "./measures.ts";
 import { createCallPacer } from "./pacer.ts";
 import { checkDeclaration, confirmsCandidate, declaredKey, mappedProject, namesRepository, resolveRepositoryProject } from "./resolve.ts";
 
 // Ported from tests/test_sonar.py.
+
+/** A real object name, because `searchableRevisions` refuses anything that is not one. */
+const REVISION = "671d77770bda9760854fcf0bc5e086eed92bfb3a";
 
 function replying(...replies: { status?: number; body?: unknown }[]): typeof globalThis.fetch {
   const queue = [...replies];
@@ -219,11 +224,53 @@ describe("createSonarClient", () => {
 
     expect((await createSonarClient({ organization: "hmcts", fetch }).projects()).map((project) => project.key)).toEqual(["a", "b"]);
   });
+
+  it("should list projects through the endpoint an anonymous caller may read, asking for each analysis instant", async () => {
+    // `/api/projects/search` answers 401 without a credential; this is the endpoint SonarCloud's own project
+    // explorer reads. The instant is what the skip watermark compares against, so it is asked for by name.
+    const fetch = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ components: [{ key: "hmcts.cath", analysisDate: "2026-09-16T10:15:55+0000" }] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        })
+      )
+    ) as unknown as typeof globalThis.fetch;
+
+    const projects = await createSonarClient({ organization: "hmcts", fetch }).projects();
+
+    const asked = new URL(String((fetch as unknown as { mock: { calls: [string][] } }).mock.calls[0]?.[0]));
+    expect(asked.pathname).toBe("/api/components/search_projects");
+    expect(asked.searchParams.get("f")).toBe("analysisDate");
+    expect(projects[0]?.analysisAt?.toISOString()).toBe("2026-09-16T10:15:55.000Z");
+  });
+});
+
+describe("sonarToken", () => {
+  it("should read the variable SonarCloud's own scanner documents first", () => {
+    expect(sonarToken({ SONAR_TOKEN: "first", SONARCLOUD_TOKEN: "second" })).toBe("first");
+    expect(sonarToken({ SONARCLOUD_TOKEN: "second" })).toBe("second");
+  });
+
+  it("should read a blank variable as no token, which is the anonymous read this deployment makes", () => {
+    expect(sonarToken({ SONAR_TOKEN: "  " })).toBeUndefined();
+    expect(sonarToken({})).toBeUndefined();
+  });
 });
 
 describe("searchableRevisions", () => {
   it("should drop an analysis carrying no revision to search for", () => {
-    expect(searchableRevisions([{ analysisAt: new Date() }, { revision: "abc", analysisAt: new Date() }]).map((entry) => entry.revision)).toEqual(["abc"]);
+    expect(searchableRevisions([{ analysisAt: new Date() }, { revision: REVISION, analysisAt: new Date() }]).map((entry) => entry.revision)).toEqual([
+      REVISION
+    ]);
+  });
+
+  it("should ask about one revision once when several analyses name it, since each question costs the scarcest quota", () => {
+    expect(searchableRevisions([{ revision: REVISION }, { revision: REVISION }])).toHaveLength(1);
+  });
+
+  it("should drop a revision that is not an object name, which no commit can match", () => {
+    expect(searchableRevisions([{ revision: "not-a-sha" }, { revision: "../../rate_limit" }])).toEqual([]);
   });
 });
 
@@ -381,12 +428,12 @@ describe("checkDeclaration", () => {
   it("should confirm by commit where the map has never resolved the project", async () => {
     const sonarClient = createSonarClient({
       organization: "hmcts",
-      fetch: replying({ body: { analyses: [{ revision: "abc", date: "2026-08-01T00:00:00Z" }] } })
+      fetch: replying({ body: { analyses: [{ revision: REVISION, date: "2026-08-01T00:00:00Z" }] } })
     });
 
     const checked = await checkDeclaration(
       sonarClient,
-      githubClient(replying({ body: { sha: "abc" } })),
+      githubClient(replying({ body: { sha: REVISION } })),
       "hmcts",
       "cath-service",
       "hmcts.cath",
@@ -395,7 +442,7 @@ describe("checkDeclaration", () => {
     );
 
     expect(checked.mapping?.method).toBe(SonarResolutionMethod.DeclaredConfirmedByCommit);
-    expect(checked.mapping?.revision).toBe("abc");
+    expect(checked.mapping?.revision).toBe(REVISION);
   });
 
   it("should refute a declared key SonarCloud does not list, without recording a failure", async () => {
@@ -496,5 +543,207 @@ describe("resolveRepositoryProject", () => {
 
     expect(resolved.mapping).toBeUndefined();
     expect(resolved.note).toMatch(/declares no sonar\.projectKey/);
+  });
+});
+
+describe("attributedRepository", () => {
+  it("should read the repository out of an owner/name pair", () => {
+    expect(attributedRepository("hmcts", "HMCTS/cath-service")).toBe("cath-service");
+  });
+
+  it("should refuse a commit that belongs to another owner rather than trimming the owner off", () => {
+    // The project analyses somebody else's code, and attributing it would put another organisation's quality gate
+    // on this one's report.
+    expect(attributedRepository("hmcts", "somebody/cath-service")).toBeUndefined();
+    expect(attributedRepository("hmcts", "cath-service")).toBeUndefined();
+  });
+});
+
+describe("attributeProject", () => {
+  const now = new Date("2026-09-17T00:00:00Z");
+  const analysed = new Date("2026-09-16T00:00:00Z");
+  /** The pacing is asserted in `createCallPacer` above, against an injected clock rather than by waiting. */
+  const IDLE_PACER = { spacing: () => 0, wait: () => Promise.resolve() };
+
+  function attributing(options: { sonar: typeof globalThis.fetch; github: typeof globalThis.fetch }) {
+    return attributeProject({
+      sonarClient: createSonarClient({ organization: "hmcts", fetch: options.sonar }),
+      githubClient: githubClient(options.github),
+      organization: "hmcts",
+      projectKey: "hmcts.cath",
+      pacer: IDLE_PACER,
+      now
+    });
+  }
+
+  it("should name the repository that holds the analysed commit", async () => {
+    const attempt = await attributing({
+      sonar: replying({ body: { analyses: [{ revision: REVISION, date: analysed.toISOString() }] } }),
+      github: replying({ body: { items: [{ repository: { full_name: "hmcts/cath-service" } }] } })
+    });
+
+    expect(attempt.outcome).toBe(SonarMappingOutcome.Resolved);
+    expect(attempt.mapping).toMatchObject({ repository: "cath-service", method: SonarResolutionMethod.AnalysisRevision, revision: REVISION });
+    expect(attempt.analysesTried).toBe(1);
+  });
+
+  it("should walk back to an older analysis when the newest commit is in no repository", async () => {
+    // A pull-request analysis names a commit on a branch since force-pushed, which is then in no repository at
+    // all — while the analysis under it, on the default branch, is permanent.
+    const older = "0f".repeat(20);
+    const attempt = await attributing({
+      sonar: replying({
+        body: {
+          analyses: [
+            { revision: REVISION, date: analysed.toISOString() },
+            { revision: older, date: analysed.toISOString() }
+          ]
+        }
+      }),
+      github: replying({ body: { items: [] } }, { body: { items: [{ repository: { full_name: "hmcts/cath-service" } }] } })
+    });
+
+    expect(attempt.mapping?.revision).toBe(older);
+    expect(attempt.analysesTried).toBe(2);
+  });
+
+  it("should answer for a project SonarCloud has never analysed without searching for anything", async () => {
+    const github = vi.fn();
+    const attempt = await attributing({ sonar: replying({ body: { analyses: [] } }), github: github as unknown as typeof globalThis.fetch });
+
+    expect(attempt.outcome).toBe(SonarMappingOutcome.NoAnalysis);
+    expect(attempt.detail).toContain("records no analysis");
+    expect(github).not.toHaveBeenCalled();
+  });
+
+  it("should answer for a project whose analyses name no commit to search for", async () => {
+    const attempt = await attributing({ sonar: replying({ body: { analyses: [{ date: analysed.toISOString() }] } }), github: replying() });
+
+    expect(attempt.outcome).toBe(SonarMappingOutcome.NoRevision);
+    expect(attempt.detail).toContain("names the commit it ran against");
+  });
+
+  it("should record a commit outside the organisation as an answer about the project", async () => {
+    const attempt = await attributing({
+      sonar: replying({ body: { analyses: [{ revision: REVISION, date: analysed.toISOString() }] } }),
+      github: replying({ body: { items: [{ repository: { full_name: "somebody/cath-service" } }] } })
+    });
+
+    expect(attempt.outcome).toBe(SonarMappingOutcome.OutsideOrganization);
+    expect(attempt.detail).toContain("which is outside hmcts");
+  });
+
+  it("should answer for a project no commit matches, which is what stops the next run re-paying", async () => {
+    const attempt = await attributing({
+      sonar: replying({ body: { analyses: [{ revision: REVISION, date: analysed.toISOString() }] } }),
+      github: replying({ body: { items: [] } })
+    });
+
+    expect(attempt.outcome).toBe(SonarMappingOutcome.UnknownCommit);
+    expect(attempt.mapping).toBeUndefined();
+    expect(attempt.detail).toContain("no commit in hmcts matches");
+  });
+
+  it("should report a refused SonarCloud read as this run's failure rather than the project's answer", async () => {
+    const attempt = await attributing({ sonar: replying({ status: 403, body: {} }), github: replying() });
+
+    expect(attempt.outcome).toBe(SonarMappingOutcome.Failed);
+    expect(isSonarObservation(attempt.outcome)).toBe(false);
+  });
+
+  it("should raise a spent search quota rather than recording it as the project's dead end", async () => {
+    const rateLimited = { status: 429, body: {} };
+    const raised = await attributing({
+      sonar: replying({ body: { analyses: [{ revision: REVISION, date: analysed.toISOString() }] } }),
+      github: replying(rateLimited, rateLimited, rateLimited, rateLimited)
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown
+    );
+
+    expect(raised).toBeInstanceOf(GitHubError);
+    expect((raised as GitHubError).reason).toBe(AvailabilityReason.RateLimited);
+  });
+});
+
+describe("searchPacer", () => {
+  it("should pace off the SEARCH budget rather than the core one, spreading what is left over the window", async () => {
+    // The two names are deliberately different strings: the call is issued under `commit-search` so the client's
+    // core-quota waiter leaves it alone, and the budget is read under `search`, which is what GitHub's own headers
+    // call the quota it spends. Reading the wrong one would pace against 5,000 an hour instead of 10 a minute.
+    const fetch = replying({ body: { items: [] } });
+    const client = createGitHubClient({ credentials: personalAccessToken("ghp_test"), fetch, pause: () => Promise.resolve(), clock: () => 1000 });
+    // `resetsAt` is relative to the wall clock, because `searchPacer` wires the pacer to the real one — the
+    // injected clock in the cases above is the pacer's own seam and not this function's.
+    const resetsAt = Date.now() / 1000 + 30;
+    vi.spyOn(client, "budget").mockImplementation((resource: string) => (resource === "search" ? { limit: 10, remaining: 5, used: 5, resetsAt } : undefined));
+
+    const pacer = searchPacer(client);
+
+    expect(pacer.spacing()).toBeCloseTo(6, 1);
+  });
+
+  it("should fall back to the documented allowance until a response has reported a budget", () => {
+    const client = createGitHubClient({ credentials: personalAccessToken("ghp_test"), fetch: replying(), pause: () => Promise.resolve(), clock: () => 1000 });
+
+    expect(searchPacer(client).spacing()).toBe(60 / SEARCH_CALLS_PER_MINUTE);
+  });
+});
+
+describe("alreadyAnswered", () => {
+  const stored: StoredSonarMapping = { projectKey: "hmcts.cath", repository: "cath-service", resolvedAt: new Date("2026-09-16T00:00:00Z") };
+
+  it("should skip a project nothing has been analysed since the row was written", () => {
+    expect(alreadyAnswered(new Date("2026-09-15T00:00:00Z"), stored)).toBe(true);
+  });
+
+  it("should skip a project SonarCloud reports no analysis instant for, since nothing can have changed", () => {
+    expect(alreadyAnswered(undefined, stored)).toBe(true);
+  });
+
+  it("should ask again once a newer analysis exists, which is the only thing that can change the answer", () => {
+    expect(alreadyAnswered(new Date("2026-09-17T00:00:00Z"), stored)).toBe(false);
+  });
+});
+
+describe("sonarProjectMap", () => {
+  const resolvedAt = new Date("2026-09-17T00:00:00Z");
+
+  it("should answer by project including a remembered negative, which is what stops a re-resolve", () => {
+    const map = sonarProjectMap([{ projectKey: "hmcts.gone", resolvedAt, detail: "no commit matched" }]);
+
+    expect(map.byProject("hmcts.gone")?.detail).toBe("no commit matched");
+    expect(map.answered).toBe(1);
+    // A negative names no repository, so nothing is attributed by it.
+    expect(map.attributed).toBe(0);
+  });
+
+  it("should let the most recently analysed project win where two claim one repository", () => {
+    const map = sonarProjectMap([
+      { projectKey: "hmcts.cath.old", repository: "cath-service", analysisAt: new Date("2026-01-01T00:00:00Z"), resolvedAt },
+      { projectKey: "hmcts.cath", repository: "cath-service", analysisAt: new Date("2026-09-16T00:00:00Z"), resolvedAt }
+    ]);
+
+    expect(map.byRepository("cath-service")).toMatchObject({ mapping: { projectKey: "hmcts.cath" }, candidates: 2 });
+  });
+
+  it("should never let an undated candidate beat a dated one, and should break a tie by key", () => {
+    const undated = sonarProjectMap([
+      { projectKey: "hmcts.a", repository: "cath-service", resolvedAt },
+      { projectKey: "hmcts.b", repository: "cath-service", analysisAt: new Date("2026-01-01T00:00:00Z"), resolvedAt }
+    ]);
+    const tied = sonarProjectMap([
+      { projectKey: "hmcts.b", repository: "cath-service", resolvedAt },
+      { projectKey: "hmcts.a", repository: "cath-service", resolvedAt }
+    ]);
+
+    expect(undated.byRepository("cath-service")?.mapping.projectKey).toBe("hmcts.b");
+    expect(tied.byRepository("cath-service")?.mapping.projectKey).toBe("hmcts.a");
+  });
+
+  it("should fold case, because one name was returned by GitHub and the other typed by a human", () => {
+    const map = sonarProjectMap([{ projectKey: "hmcts.cath", repository: "CaTH-Service", resolvedAt }]);
+
+    expect(map.byRepository("cath-service")?.mapping.projectKey).toBe("hmcts.cath");
   });
 });

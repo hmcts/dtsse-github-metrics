@@ -165,6 +165,70 @@ orgJob:
     METRICS_CONFIG: /app/metrics.yaml
     NODE_OPTIONS: --max-old-space-size=3072
 
+sonarJob:
+  enabled: true
+  image: hmctsprod.azurecr.io/dtsse/github-metrics:latest
+  aadIdentityName: dtsse
+  # Smaller than the two collectors, and deliberately: this run holds 315 SonarCloud projects and one small table,
+  # where `collect` deserialises tens of MB of jsonb. The heap ceiling in `environment` below still has to sit
+  # inside this limit — change one, change the other.
+  memoryRequests: 1Gi
+  memoryLimits: 2Gi
+  command: ["node"]
+  args: ["dist/cli/run.js", "map-sonar", "--config", "/app/metrics.yaml", "--tolerate-partial"]
+  # WEEKLY, AND ON A MONDAY MORNING. Three decisions, and each is about what this run costs rather than about
+  # tidiness.
+  #
+  # WEEKLY because the answer only changes when SonarCloud's project list does. A resolved project is skipped
+  # until something is analysed after the row was written, so a daily run would re-read the listing, skip almost
+  # everything and buy nothing — while a project created this week is one week late at worst, and `collect` reads
+  # the map every day either way.
+  #
+  # NOT INSIDE `collect` OR `collect-org` for the reason `map-sonar` is a command of its own: one commit search
+  # per unanswered project against a quota of 30 a minute documented and 10 observed is 10 to 30 minutes for this
+  # organisation. Adding that to the daily walk would lengthen it by a third for a map that had not changed, and
+  # it would couple two failures — a spent search quota would land inside the run that collects the estate.
+  #
+  # 09:00 UTC, four and a half hours ahead of `collect-org` at 13:30, because all three take the same collector
+  # lock: a run still going when the next one starts makes the next one stand down. Four and a half hours is an
+  # order of magnitude more than the longest resolve, and it keeps this inside the same in-hours window the other
+  # two jobs run in rather than trusting an out-of-hours cluster to be up.
+  schedule: "0 9 * * 1"
+  concurrencyPolicy: Forbid
+  backoffLimit: 1
+  # One hour: twice the longest measured resolve. A run still going after that has found something the estimate
+  # did not, and the rows it already wrote are kept — every answer is stored as it is arrived at.
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 86400
+  keyVaults:
+    dtsse:
+      secrets:
+        # The GitHub App credentials, because the commit search that resolves a project is a GitHub call. There is
+        # NO SonarCloud secret here: the reads this makes — the project listing, a project's analyses and its
+        # measures — all answer anonymously, and the `dtsse` vault holds no SonarCloud token. `sonarToken` in
+        # `sonar/client.ts` picks one up from `SONAR_TOKEN` if a deployment ever adds one, which would widen the
+        # answers to the organisation's private projects and change nothing else.
+        - name: github-app-id
+          alias: GH_APP_ID
+        - name: github-app-installation-id
+          alias: GH_APP_INSTALLATION_ID
+        - name: github-app-private-key
+          alias: GH_APP_PRIVATE_KEY
+        - name: github-metrics-postgres-host
+          alias: POSTGRES_HOST
+        - name: github-metrics-postgres-port
+          alias: POSTGRES_PORT
+        - name: github-metrics-postgres-user
+          alias: POSTGRES_USER
+        - name: github-metrics-postgres-password
+          alias: POSTGRES_PASSWORD
+        - name: github-metrics-postgres-database
+          alias: POSTGRES_DATABASE
+  environment:
+    NODE_CONFIG_ENV: "{{ .Values.global.environment }}"
+    METRICS_CONFIG: /app/metrics.yaml
+    NODE_OPTIONS: --max-old-space-size=1536
+
 postgresql:
   enabled: false
 

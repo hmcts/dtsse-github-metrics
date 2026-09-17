@@ -4,10 +4,11 @@ import { collectDirectCommits, collectMergedPullRequests, mutableEdge, reference
 import { deserialiseMerges, directCommitCacheWriter, fillCachedSource, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestCountQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
-import { CollectionStatus } from "../evidence/domain/availability.ts";
+import { AvailabilityReason, CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
+import { isSonarObservation, SonarMappingOutcome, type SonarResolutionAttempt, type SonarState } from "../evidence/domain/sonar.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
 import { runSummaryLines } from "../evidence/github/summary.ts";
@@ -47,8 +48,12 @@ import { collectSsoIdentities, namedPeople } from "../evidence/org/identities.ts
 import { attributeOwnership, ownershipEvidence, rungCounts, unresolvedRepositories } from "../evidence/org/ownership.ts";
 import { storedDisplayNames } from "../evidence/org/people.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
-import { configuredTeamSlugs } from "../evidence/policy/repositories.ts";
+import { configuredTeamSlugs, sonarOrganizationName } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
+import { alreadyAnswered, attributeProject, searchPacer } from "../evidence/sonar/attribute.ts";
+import { createSonarClient, type SonarClient, SonarError, sonarToken } from "../evidence/sonar/client.ts";
+import { sonarProjectMap } from "../evidence/sonar/map.ts";
+import { resolveRepositoryProject } from "../evidence/sonar/resolve.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
@@ -67,6 +72,7 @@ import { prisma } from "../evidence/store/prisma.ts";
 import { seedProduction } from "../evidence/store/production-override.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
 import { recordRepositoryState } from "../evidence/store/repository-state.ts";
+import { recordSonarMapping, storedSonarMappings } from "../evidence/store/sonar-map.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
 import { describeDatabase } from "../platform/database-target.ts";
 import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
@@ -167,6 +173,15 @@ async function collectRepository(
      * refused too. Every repository reads unmeasured instead.
      */
     estateAlerts?: { dependabot: Map<string, unknown[]> | undefined };
+    /**
+     * What the stored SonarCloud map says about this repository, and the measures where it named a project.
+     *
+     * ASKED ON BOTH DEPTHS, unlike every other signal the shallow path drops. A stale repository's quality gate
+     * is assurance material rather than ways-of-working material — it is exactly the kind of thing an assurance
+     * report on a repository nobody has pushed to wants — and it costs a call only where the map attributes a
+     * project, which is 315 projects against 1,889 repositories.
+     */
+    sonar: SonarSource;
   }
 ): Promise<{ observed: boolean; failures: number }> {
   const organization = configuration.organization;
@@ -217,6 +232,9 @@ async function collectRepository(
     open: options.secrets.summary?.open ?? 0
   };
 
+  const sonar = await options.sonar.answer(repository);
+  failures += sonar.failures;
+
   if (!options.behaviour) {
     // The shallow path. No gate, no other alert family, and above all no merge walk — which is what keeps
     // admitting roughly 650 stale repositories from adding a behaviour call. The row they produce carries the
@@ -224,6 +242,7 @@ async function collectRepository(
     await recordRepositoryState(organization, repository, {
       defaultBranch,
       fetchedAt: reference,
+      sonar: sonar.state,
       // The two families this path has answers for, counted rather than thrown away — both come off estate-wide
       // reads, so a stale repository costs nothing to report them for. Code scanning stays absent, which reads
       // as unmeasured: this path never looked at it, and saying so is the honest answer rather than nothing open.
@@ -275,7 +294,8 @@ async function collectRepository(
     mergeGate: gate,
     securityAlerts: alerts.evidence,
     deploysToProduction: deploysToProduction(production, organization, repository),
-    assurance
+    assurance,
+    sonar: sonar.state
   });
 
   return { observed: true, failures };
@@ -299,6 +319,140 @@ function withoutCodeScanning(dependabot: AlertSource, secretScanning: { place: O
     codeScanning: {},
     secretScanning: countedAlertsFromOrganisation(secretScanning.place, secretScanning.open, "secret-scanning/alerts").count
   };
+}
+
+/** What one repository's SonarCloud answer cost, beside the answer itself. */
+interface SonarAnswer {
+  state: SonarState;
+  failures: number;
+}
+
+/** What `collect` asks about each repository's SonarCloud project, once the map has been read. */
+interface SonarSource {
+  answer(repository: string): Promise<SonarAnswer>;
+  /**
+   * What the two whole-run reads cost the exit status: one, when the map or the project listing was refused.
+   *
+   * COUNTED ONCE FOR THE RUN and not once per repository, exactly as the estate-wide alert reads are: each is a
+   * single call, and inflating it to 1,889 would swamp the exit status with one refusal.
+   */
+  failures: number;
+}
+
+/**
+ * Every repository's SonarCloud answer will be this one, because nothing repository-specific was learned.
+ *
+ * Used for the three whole-run conditions — no map, an unreadable map, an unreadable project listing — and
+ * stated in each repository's own block rather than left absent, because an absent block means NOBODY LOOKED
+ * and each of these means somebody looked and could not see.
+ */
+function statedSonarAbsence(detail: string, failures = 0): SonarSource {
+  return { answer: async () => ({ state: { detail }, failures: 0 }), failures };
+}
+
+/**
+ * What a collection asks the stored map, and the one SonarCloud read it pays per mapped repository.
+ *
+ * THE MAP IS READ ONCE AND THE PROJECT LISTING ONCE, both before the estate walk. Together they cost two calls
+ * for the whole run, and what they buy is that resolution itself spends NOTHING: `resolveRepositoryProject`
+ * without a declaration is a lookup in the map this already holds. Only a repository the map attributes a
+ * project to costs a call, and that is the measures read.
+ *
+ * THE LISTING IS WHERE THE ANALYSIS INSTANT COMES FROM, and asking for it there is why it is affordable at all.
+ * `/api/measures/component` does not report when the project was last analysed, and the card that renders the
+ * gate says "never analysed" for a measure set that carries no instant — a claim about the project rather than
+ * about the measurement. Reading each project's own analyses would answer it in one call per mapped repository;
+ * the organisation's listing answers it for all 315 in one.
+ *
+ * A DECLARATION IS NOT READ HERE, so two rungs of the ladder in `sonar/resolve.ts` are unreachable from
+ * `collect`: `sonar-project.properties` is not among the files this collection fetches, and adding a content
+ * read for it would be one call per repository across the estate to obtain a hypothesis the map answers for
+ * anyway. Upstream got the declaration free inside a GraphQL document it already sent; this port sends no such
+ * document. The rungs stay, reached by the map's own evidence and by an override.
+ */
+async function sonarSource(configuration: Configuration, githubClient: ReturnType<typeof createGitHubClient>, now: Date): Promise<SonarSource> {
+  const organization = configuration.organization;
+  const sonarOrganization = sonarOrganizationName(configuration);
+
+  let rows: Awaited<ReturnType<typeof storedSonarMappings>>;
+  try {
+    rows = await storedSonarMappings(sonarOrganization);
+  } catch (error) {
+    console.warn(`the SonarCloud project map could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    return statedSonarAbsence("the stored SonarCloud project map could not be read", 1);
+  }
+
+  const map = sonarProjectMap(rows);
+  if (map.answered === 0) {
+    // NOT A FAILURE, and the wording is the whole point of this branch: an empty map means `map-sonar` has never
+    // run for this organisation, which is a fact about this deployment and not about any repository in it.
+    console.info(`the SonarCloud project map holds nothing for ${sonarOrganization}, so no repository can be attributed a project; run map-sonar`);
+    return statedSonarAbsence(`the SonarCloud project map has not been built for ${sonarOrganization}, so no project has been looked for`);
+  }
+
+  const client = createSonarClient({ organization: sonarOrganization, ...tokenOptions() });
+  let listed: Map<string, Date | undefined>;
+  try {
+    const projects = await client.projects();
+    listed = new Map(projects.map((project) => [project.key, project.analysisAt]));
+    console.info(`SonarCloud lists ${projects.length} projects for ${sonarOrganization}; the map attributes ${map.attributed} repositories`);
+  } catch (error) {
+    console.warn(`SonarCloud's project listing could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    return statedSonarAbsence(`SonarCloud's ${sonarOrganization} project listing could not be read, so no project was measured`, 1);
+  }
+
+  return {
+    failures: 0,
+    async answer(repository: string): Promise<SonarAnswer> {
+      const resolved = await resolveRepositoryProject({
+        sonarClient: client,
+        githubClient,
+        organization,
+        sonarOrganization,
+        repository,
+        ...(configuration.sonar_projects[repository] === undefined ? {} : { configuredKey: configuration.sonar_projects[repository] }),
+        storedByProject: map.byProject,
+        storedByRepository: map.byRepository,
+        now
+      });
+      const mapping = resolved.mapping;
+      if (mapping === undefined) {
+        return {
+          state: { detail: resolved.note ?? `no SonarCloud project in ${sonarOrganization} analyses this repository` },
+          failures: resolved.reason === undefined ? 0 : 1
+        };
+      }
+      if (!listed.has(mapping.projectKey)) {
+        // AN OBSERVATION AND NOT A FAILURE. A mapped project can be deleted, renamed or made private after the
+        // map was built, and `map-sonar` walks only what SonarCloud still lists, so it never clears the row. The
+        // method is named because it is what a human needs to fix it: a stale map row is cleared by re-running
+        // `map-sonar`, a wrong `sonar_projects` override by editing it.
+        return {
+          state: { mapping, detail: `SonarCloud no longer lists project ${mapping.projectKey}, resolved for ${repository} by ${mapping.method}` },
+          failures: 0
+        };
+      }
+      try {
+        return { state: { mapping, measures: await client.measures(mapping.projectKey, listed.get(mapping.projectKey)) }, failures: 0 };
+      } catch (error) {
+        if (!(error instanceof SonarError)) {
+          throw error;
+        }
+        const gone = error.reason === AvailabilityReason.NotFoundOrInaccessible;
+        return {
+          state: { mapping, detail: gone ? `SonarCloud lists no project ${mapping.projectKey} to measure` : error.message },
+          // A refused read keeps its reason and fails the run; a project that is simply not there does not.
+          failures: gone ? 0 : 1
+        };
+      }
+    }
+  };
+}
+
+/** The SonarCloud token, where the environment sets one. Anonymous otherwise, which is what AAT runs. */
+function tokenOptions(): { token?: string } {
+  const token = sonarToken(process.env);
+  return token === undefined ? {} : { token };
 }
 
 async function runCollect(configuration: Configuration, argv: Arguments): Promise<number> {
@@ -383,9 +537,15 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
     console.info(`${open} open Dependabot alerts across ${dependabotAlerts.size} repositories`);
   }
 
+  // The map and the project listing, read once each before the walk. See `sonarSource`: resolution itself spends
+  // nothing after this, and only a repository the map attributes a project to pays for its measures.
+  const sonar = await sonarSource(configuration, client, reference);
+  failures += sonar.failures;
+
   for (const entry of walk) {
     const result = await collectRepository(configuration, client, entry.repository, window, reference, production, {
       behaviour: entry.behaviour,
+      sonar,
       assurance: assurance.get(entry.repository),
       // Absent from the map is CLEAN rather than unread, because the org-wide read covers every repository — which
       // is why `read` is carried separately from the summary rather than inferred from its absence.
@@ -928,6 +1088,203 @@ function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
   return lines.join("\n");
 }
 
+/**
+ * What one `map-sonar` run learned and what it spent, tallied as it goes.
+ *
+ * ACCUMULATED RATHER THAN ASSEMBLED AT THE END, because the run is INTERRUPTIBLE: it is paced against the
+ * scarcest quota this project spends, and a rate limit or a human can stop it part way through an organisation.
+ * The summary must then describe the projects it did answer, which is the whole reason each row is written as it
+ * is resolved rather than in one batch.
+ */
+interface MappingProgress {
+  listed: number;
+  unchanged: number;
+  searches: number;
+  stopped: boolean;
+  outcomes: Map<SonarMappingOutcome, number>;
+  /** Every project key that named each repository, so the many-to-one case is visible rather than counted. */
+  claims: Map<string, string[]>;
+}
+
+function countOutcome(progress: MappingProgress, attempt: SonarResolutionAttempt): void {
+  progress.outcomes.set(attempt.outcome, (progress.outcomes.get(attempt.outcome) ?? 0) + 1);
+  progress.searches += attempt.analysesTried;
+  const repository = attempt.mapping?.repository;
+  if (repository !== undefined) {
+    progress.claims.set(repository, [...(progress.claims.get(repository) ?? []), attempt.projectKey]);
+  }
+}
+
+function outcomesCounted(progress: MappingProgress, ...outcomes: SonarMappingOutcome[]): number {
+  return outcomes.reduce((total, outcome) => total + (progress.outcomes.get(outcome) ?? 0), 0);
+}
+
+/**
+ * How many projects the run has an answer for, whether it resolved one or read one back.
+ *
+ * A NEVER-ANALYSED OR UNRESOLVABLE PROJECT IS ANSWERED: there is nothing more to learn about it until it is
+ * analysed again, which is why it is stored with its reason. Only a failed call leaves a project unanswered.
+ */
+function answeredProjects(progress: MappingProgress): number {
+  return progress.unchanged + [...progress.outcomes.entries()].reduce((total, [outcome, count]) => total + (isSonarObservation(outcome) ? count : 0), 0);
+}
+
+function mappingStatus(progress: MappingProgress): CollectionStatus {
+  if (answeredProjects(progress) === 0) {
+    return CollectionStatus.Failed;
+  }
+  return progress.stopped || outcomesCounted(progress, SonarMappingOutcome.Failed) > 0 ? CollectionStatus.Partial : CollectionStatus.Complete;
+}
+
+/**
+ * Resolves every project the SonarCloud organisation lists, storing each answer as it is arrived at.
+ *
+ * BOTH ORGANISATION NAMES ARE CARRIED, because they are allowed to differ: `organization` is the GitHub one the
+ * commit search is qualified by and the owner an answer must belong to, and `sonarOrganization` is the
+ * SonarCloud one the map is keyed under. Collapsing them would search GitHub for an organisation that need not
+ * exist there.
+ *
+ * STOPPED RATHER THAN FAILED BY A RATE LIMIT that survived the client's own retries: the limit applies to every
+ * project still to come exactly as it applied to this one, so continuing would write this run's exhaustion into
+ * the map as each remaining project's own dead end.
+ */
+async function resolveListedProjects(
+  sonarClient: SonarClient,
+  githubClient: ReturnType<typeof createGitHubClient>,
+  organization: string,
+  sonarOrganization: string,
+  projects: readonly { key: string; analysisAt?: Date }[],
+  reference: Date
+): Promise<MappingProgress> {
+  const stored = sonarProjectMap(await storedSonarMappings(sonarOrganization));
+  const pacer = searchPacer(githubClient);
+  const progress: MappingProgress = { listed: projects.length, unchanged: 0, searches: 0, stopped: false, outcomes: new Map(), claims: new Map() };
+
+  let position = 0;
+  for (const project of projects) {
+    position += 1;
+    const known = stored.byProject(project.key);
+    if (known !== undefined && alreadyAnswered(project.analysisAt, known)) {
+      progress.unchanged += 1;
+      if (known.repository !== undefined) {
+        progress.claims.set(known.repository, [...(progress.claims.get(known.repository) ?? []), known.projectKey]);
+      }
+      console.debug(`SKIP   ${project.key} (${position}/${projects.length}): nothing analysed since it was resolved`);
+      continue;
+    }
+
+    let attempt: SonarResolutionAttempt;
+    try {
+      attempt = await attributeProject({ sonarClient, githubClient, organization, projectKey: project.key, pacer, now: new Date() });
+    } catch (error) {
+      // The one error `attributeProject` raises rather than classifying is an exhausted search quota, which is
+      // why this is a stop and not one project's failure.
+      console.error(
+        `ERROR  ${project.key} (${position}/${projects.length}): ${error instanceof Error ? error.message : String(error)}; stopping and keeping the ${answeredProjects(progress)} projects already answered`
+      );
+      progress.stopped = true;
+      return progress;
+    }
+
+    countOutcome(progress, attempt);
+    reportAttempt(attempt, position, projects.length);
+    if (isSonarObservation(attempt.outcome)) {
+      const written = await recordSonarMapping(sonarOrganization, {
+        projectKey: attempt.projectKey,
+        resolvedAt: reference,
+        ...(attempt.mapping === undefined ? {} : { mapping: attempt.mapping }),
+        ...(attempt.detail === undefined ? {} : { detail: attempt.detail })
+      });
+      if (!written) {
+        console.debug(`kept the stored mapping for ${attempt.projectKey}: it was resolved from a newer analysis`);
+      }
+    }
+  }
+  return progress;
+}
+
+/** Says what became of one project, as `doctor` says what became of one repository. */
+function reportAttempt(attempt: SonarResolutionAttempt, position: number, listed: number): void {
+  const where = `(${position}/${listed})`;
+  if (attempt.mapping !== undefined) {
+    console.info(`OK     ${attempt.projectKey} ${where}: ${attempt.mapping.repository}`);
+    return;
+  }
+  if (attempt.outcome === SonarMappingOutcome.Failed) {
+    console.error(`ERROR  ${attempt.projectKey} ${where}: ${attempt.detail}`);
+    return;
+  }
+  // An observation, not a failure: the project has been answered for, and the answer is that nothing on either
+  // side names a repository for it.
+  console.info(`NONE   ${attempt.projectKey} ${where}: ${attempt.detail}`);
+}
+
+/** Reports what the run cost and what the map now holds, including the repositories two projects claim. */
+function reportMapping(sonarOrganization: string, progress: MappingProgress): void {
+  console.info(
+    `mapped ${answeredProjects(progress)} of ${progress.listed} projects listed for ${sonarOrganization}: ` +
+      `${outcomesCounted(progress, SonarMappingOutcome.Resolved)} resolved, ${progress.unchanged} unchanged, ` +
+      `${outcomesCounted(progress, SonarMappingOutcome.NoAnalysis)} never analysed, ` +
+      `${outcomesCounted(progress, SonarMappingOutcome.NoRevision, SonarMappingOutcome.UnknownCommit, SonarMappingOutcome.OutsideOrganization)} unresolvable, ` +
+      `${outcomesCounted(progress, SonarMappingOutcome.Failed)} failed; ${progress.claims.size} repositories mapped in ${progress.searches} commit searches`
+  );
+  for (const [repository, projects] of progress.claims) {
+    if (projects.length > 1) {
+      // A WARNING RATHER THAN AN ERROR: it is legitimate — SonarCloud has no rename, so a re-created project
+      // leaves its abandoned twin behind — and the reverse lookup settles it by analysis recency. It is surfaced
+      // because the alternative to a human seeing both keys is a report quietly showing one project's gate for a
+      // repository that has two.
+      console.warn(`${repository} is claimed by ${projects.length} projects: ${projects.join(", ")}`);
+    }
+  }
+}
+
+/**
+ * Resolves every project the configured SonarCloud organisation lists, and stores the map.
+ *
+ * A COMMAND OF ITS OWN, AND NOT A STEP OF `collect`, because of what it spends: one commit search per project
+ * against a quota of 30 a minute documented and 10 observed, which is 10 to 30 minutes for an organisation of
+ * 315 projects. `collect` runs daily inside a window it shares with everything else; this only needs to run
+ * when the projects change.
+ *
+ * AN ORGANISATION THAT LISTS NOTHING IS A REFUSAL rather than an empty success: the configured organisation
+ * names nothing readable, and reporting `0` would leave `collect` reading an empty map as "no repository has a
+ * SonarCloud project".
+ */
+async function runMapSonar(configuration: Configuration, argv: Arguments): Promise<number> {
+  const sonarOrganization = sonarOrganizationName(configuration);
+  const credentials = await resolveCredentials();
+  console.info(`authenticating as ${credentials.describe()}`);
+  const githubClient = createGitHubClient({ credentials });
+  const token = tokenOptions();
+  console.info(`resolving SonarCloud projects for ${sonarOrganization} ${token.token === undefined ? "anonymously" : "with a token"}`);
+
+  const sonarClient = createSonarClient({ organization: sonarOrganization, ...token });
+  let projects: { key: string; analysisAt?: Date }[];
+  try {
+    projects = await sonarClient.projects();
+  } catch (error) {
+    console.error(`SonarCloud's project listing failed for ${sonarOrganization}: ${error instanceof Error ? error.message : String(error)}`);
+    return EXIT_FAILED;
+  }
+  if (projects.length === 0) {
+    console.error(`SonarCloud lists no project for organisation ${sonarOrganization}`);
+    return EXIT_FAILED;
+  }
+  console.info(`SonarCloud lists ${projects.length} projects for ${sonarOrganization}`);
+
+  const progress = await resolveListedProjects(sonarClient, githubClient, configuration.organization, sonarOrganization, projects, new Date());
+  reportMapping(sonarOrganization, progress);
+  for (const line of runSummaryLines(githubClient)) {
+    console.info(line);
+  }
+  const status = mappingStatus(progress);
+  if (status === CollectionStatus.Partial && argv.toleratePartial) {
+    console.info("some projects refused, which a scheduled run reports as success; see collector.exit_status");
+  }
+  return collectionStatus(status, argv.toleratePartial);
+}
+
 async function runPrune(argv: Arguments): Promise<number> {
   const unusedSince = new Date(Date.now() - days(argv.days ?? 30));
   const deleted = await pruneCache(unusedSince);
@@ -1119,6 +1476,12 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return await onlyCollector(parsed.command, () => runCollect(configuration, parsed));
       case "collect-org":
         return await onlyCollector(parsed.command, () => runCollectOrg(configuration, parsed));
+      // UNDER THE LOCK for a reason neither collector's applies: this is the one command whose cost is a
+      // per-minute quota rather than an hourly one. Both AAT clusters run the same schedule, so without the lock
+      // both would resolve the same 315 projects at once, each pacing off a budget the other is also spending —
+      // which is slower than one run and writes the same rows twice.
+      case "map-sonar":
+        return await onlyCollector(parsed.command, () => runMapSonar(configuration, parsed));
       case "doctor":
         return await runDoctor(configuration, parsed);
       case "prune":

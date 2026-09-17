@@ -346,6 +346,14 @@ export const configurationSchema = z
     // be asked — so it is an input fact like every other policy input. A repository with no date gets
     // no series rather than a guessed anchor.
     enablement: z.record(z.string(), enablementInstant).default({}),
+    // The SonarCloud organisation whose projects are mapped and measured. Usually the GitHub organisation name,
+    // and at HMCTS exactly it. Left absent rather than defaulted to the same text so the common case is not
+    // restated in every configuration file; read through `sonarOrganizationName`.
+    sonar_organization: z.string().nullish(),
+    // The answer of last resort for a repository whose project the stored map cannot settle, and the only way
+    // to settle a genuine ambiguity: `rpx-xui-icp-api` and `em-icp-api` are analysed by projects neither a
+    // declaration nor a commit search can tell apart, so somebody has to say which is which.
+    sonar_projects: z.record(z.string(), z.string()).default({}),
     // Where the list of repositories approved to deploy to production is published. The default is an
     // HMCTS URL, stated as a policy default to argue with rather than a fact about every
     // organisation. `null` turns the fetch off, which is what an organisation with no such list
@@ -413,8 +421,20 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
     });
   }
 
-  // AN `enablement:` KEY IS NOT CHECKED AGAINST THE COHORT, and that is a consequence of the cohort moving
-  // to the graph rather than an oversight. Nothing here can check it: the file cannot know the cohort without
+  // A BLANK SONAR OVERRIDE IS REJECTED whatever was configured: it is a fact about the override itself.
+  // Resolution treats an override as the answer that short-circuits every other rung, so a blank one would
+  // silently mean "unresolved" while reading as a decision somebody made.
+  const blank = Object.entries(value.sonar_projects)
+    .filter(([, project]) => project.trim() === "")
+    .map(([repository]) => repository)
+    .sort();
+  if (blank.length > 0) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sonar_projects"], message: `sonar project keys may not be empty: ${blank.join(", ")}` });
+  }
+
+  // NEITHER AN `enablement:` NOR A `sonar_projects:` KEY IS CHECKED AGAINST THE COHORT, and that is a
+  // consequence of the cohort moving to the graph rather than an oversight. Nothing here can check it: the file
+  // cannot know the cohort without
   // reading the database, and a schema that opened a connection would make `--help` need Postgres. The
   // mistake such a check would catch — a typo anchoring nothing — is caught where the answer lives, by the
   // report naming a key that matched no repository in the cohort.
@@ -425,7 +445,8 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
 const baseObject = z.object({
   teams: z.array(team),
   excluded_repositories: z.array(z.string()),
-  enablement: z.record(z.string(), z.date())
+  enablement: z.record(z.string(), z.date()),
+  sonar_projects: z.record(z.string(), z.string())
 });
 
 export type Configuration = z.infer<typeof configurationSchema>;

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
+import { AvailabilityReason, GitHubError } from "../evidence/domain/availability.ts";
 import { CohortUncollectedError } from "../evidence/org/cohort.ts";
+import { SonarError } from "../evidence/sonar/client.ts";
 import { EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE } from "./exit-status.ts";
 
 const migrate = vi.hoisted(() => vi.fn<() => Promise<string[]>>());
@@ -59,6 +61,17 @@ const recordRepositoryState = vi.hoisted(() => vi.fn());
 // `test/integration/production-override.test.ts`.
 const seedProduction = vi.hoisted(() => vi.fn(async () => 0));
 
+// The durable SonarCloud map: what `collect` reads and what `map-sonar` writes. Stubbed because it reaches
+// Postgres, and EMPTY by default — which is the honest default for a case that says nothing about SonarCloud,
+// since an empty map is a deployment where `map-sonar` has not run. Whether the writer honours the table's
+// attribution-or-negative constraint is asserted against a real database, in test/integration/sonar-map.test.ts.
+const storedSonarMappings = vi.hoisted(() => vi.fn(async (): Promise<unknown[]> => []));
+const recordSonarMapping = vi.hoisted(() => vi.fn(async (_organization: string, _answer: { mapping?: unknown; detail?: string }) => true));
+// SonarCloud itself. Stubbed at the module rather than at `fetch`, because these cases are about what the
+// commands do with a project listing and a measures read; what the client makes of a real response is asserted in
+// `evidence/sonar/sonar.test.ts` against fetch.
+const createSonarClient = vi.hoisted(() => vi.fn());
+
 vi.mock("../evidence/store/migrate.ts", () => ({ migrate }));
 vi.mock("../evidence/store/prisma.ts", () => ({ prisma: { $disconnect: vi.fn().mockResolvedValue(undefined) } }));
 // Stubbed to ALWAYS grant, so these cases test the orchestration rather than the lock. `collector-lock.ts` opens
@@ -71,7 +84,13 @@ vi.mock("../evidence/store/collector-lock.ts", () => ({
   takeCollectorLock: async () => ({ held: true, release: async () => undefined })
 }));
 vi.mock("../evidence/policy/load.ts", () => ({ loadConfiguration }));
-vi.mock("../evidence/policy/repositories.ts", () => ({ configuredTeamSlugs: () => new Map() }));
+// Only `configuredTeamSlugs` is stubbed; the rest is real, `sonarOrganizationName` included — it is the fallback
+// from the GitHub organisation to the SonarCloud one, and a faked one would make the cases that read the map's
+// organisation key assert a restatement of the fixture.
+vi.mock("../evidence/policy/repositories.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/policy/repositories.ts")>("../evidence/policy/repositories.ts")),
+  configuredTeamSlugs: () => new Map()
+}));
 // The cohort comes from the graph now, so this is where the estate is stubbed. `CohortUncollectedError` is
 // re-exported real rather than faked: `doctor` branches on `instanceof`, and a stubbed class would make that
 // branch untestable.
@@ -138,6 +157,22 @@ vi.mock("../evidence/store/org-graph.ts", () => ({
   recordRepositoryOwnership
 }));
 vi.mock("../evidence/store/production-override.ts", () => ({ seedProduction }));
+vi.mock("../evidence/store/sonar-map.ts", () => ({ storedSonarMappings, recordSonarMapping }));
+// Only the PACER is replaced, and only because it is the one piece of this layer that spends wall-clock time:
+// spacing the commit search to a per-minute quota is what makes a real run take 10 to 30 minutes, and a suite
+// that honoured it would sleep two seconds between the searches these cases make. What the pacer itself does is
+// asserted against an injected clock in `evidence/sonar/sonar.test.ts`; the rest of `attribute.ts` is real here,
+// because which projects a run pays for is exactly what these cases are about.
+vi.mock("../evidence/sonar/attribute.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/sonar/attribute.ts")>("../evidence/sonar/attribute.ts")),
+  searchPacer: () => ({ spacing: () => 0, wait: async () => undefined })
+}));
+// `SonarError` and `sonarToken` are re-exported REAL: the first is what the command branches on to tell a project
+// that is not there from a read that was refused, and a faked class would make that branch untestable.
+vi.mock("../evidence/sonar/client.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/sonar/client.ts")>("../evidence/sonar/client.ts")),
+  createSonarClient
+}));
 
 const { DOCTOR_SAMPLE_SIZE, doctorSample, main } = await import("./index.ts");
 
@@ -167,10 +202,16 @@ beforeEach(() => {
   // A one-repository estate by default, so the cases that are not about the cohort do not have to state one.
   // `assertCohortCollected` calls this too, so it must always resolve.
   readCohort.mockResolvedValue([cohortEntry("repo-a")]);
+  storedSonarMappings.mockResolvedValue([]);
+  recordSonarMapping.mockResolvedValue(true);
   censusOfDescriptions.mockResolvedValue({ rows: 24_249, carryingDescription: 23_854, derived: 395, unmeasurable: 0 });
   reduceStoredDescriptions.mockResolvedValue({ scanned: 23_854, changed: 23_854 });
   vi.spyOn(console, "info").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  // `map-sonar` reports a project it could not put the question for at error level, which is the level a refusal
+  // belongs at and not one the suite should print.
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+  vi.spyOn(console, "debug").mockImplementation(() => undefined);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 });
 
@@ -450,7 +491,8 @@ describe("what collect walks", () => {
     cohort: { excluded_authors: [] },
     production_list_url: null,
     assessment: { enabled: false },
-    org_graph: { enabled: true }
+    org_graph: { enabled: true },
+    sonar_projects: {}
   };
 
   /**
@@ -647,6 +689,68 @@ describe("what collect walks", () => {
     expect(asked).toContain("/repos/hmcts/fresh/dependabot/alerts");
     expect(asked).not.toContain("/orgs/hmcts/dependabot/alerts");
   });
+
+  /** What one repository's stored state says about SonarCloud after a run. */
+  function storedSonar(repository: string): { mapping?: { projectKey?: string }; measures?: { coverage?: number }; detail?: string } | undefined {
+    const call = recordRepositoryState.mock.calls.find(([, named]) => named === repository);
+    return (call?.[2] as { sonar?: { mapping?: { projectKey?: string }; measures?: { coverage?: number }; detail?: string } } | undefined)?.sonar;
+  }
+
+  it("should say the map has not been built rather than that a repository has no project, when nothing has mapped", async () => {
+    // The wording this ticket exists for. An empty map means `map-sonar` has never run, which is a fact about the
+    // deployment; the sentence every page carried before said it was a fact about the repository.
+    await pathsAskedFor();
+
+    expect(storedSonar("fresh")?.detail).toContain("has not been built");
+    expect(createSonarClient).not.toHaveBeenCalled();
+  });
+
+  it("should measure a repository the map attributes a project to, and spend no call resolving it", async () => {
+    storedSonarMappings.mockResolvedValue([
+      { projectKey: "hmcts.fresh", repository: "fresh", method: "analysis_revision", analysisAt: new Date(Date.UTC(2026, 8, 16)), resolvedAt: new Date() }
+    ]);
+    const measures = vi.fn().mockResolvedValue({ projectKey: "hmcts.fresh", coverage: 92.5 });
+    createSonarClient.mockReturnValue({
+      projects: async () => [{ key: "hmcts.fresh", analysisAt: new Date(Date.UTC(2026, 8, 16)) }],
+      measures
+    });
+
+    await pathsAskedFor();
+
+    expect(storedSonar("fresh")).toMatchObject({ mapping: { projectKey: "hmcts.fresh" }, measures: { coverage: 92.5 } });
+    // ONE listing for the estate and one measures read for the one mapped repository: the resolution itself is a
+    // lookup in the map, so the repository the map says nothing about costs nothing.
+    expect(measures).toHaveBeenCalledOnce();
+    expect(storedSonar("stale")?.detail).toContain("no SonarCloud project in hmcts analyses this repository");
+  });
+
+  it("should keep a mapped project's name beside the reason SonarCloud would not show it", async () => {
+    // A project deleted, renamed or made private since the map was built. An observation and not a failure: no
+    // operator action fixes it on this run, and the project name is what somebody needs to chase it.
+    storedSonarMappings.mockResolvedValue([{ projectKey: "hmcts.gone", repository: "fresh", method: "stored_map", resolvedAt: new Date() }]);
+    createSonarClient.mockReturnValue({ projects: async () => [{ key: "hmcts.other" }], measures: vi.fn() });
+
+    await pathsAskedFor();
+
+    expect(storedSonar("fresh")).toMatchObject({ mapping: { projectKey: "hmcts.gone" } });
+    expect(storedSonar("fresh")?.detail).toContain("no longer lists project hmcts.gone");
+  });
+
+  it("should count a refused SonarCloud listing ONCE and state it on every repository", async () => {
+    storedSonarMappings.mockResolvedValue([{ projectKey: "hmcts.fresh", repository: "fresh", method: "stored_map", resolvedAt: new Date() }]);
+    createSonarClient.mockReturnValue({
+      projects: async () => {
+        throw new SonarError("SonarCloud refused the projects read", AvailabilityReason.PermissionDenied);
+      },
+      measures: vi.fn()
+    });
+
+    await pathsAskedFor();
+
+    expect(storedSonar("fresh")?.detail).toContain("could not be read");
+    // Stated rather than absent: an absent block means nobody looked, and somebody did look and was refused.
+    expect(storedSonar("fresh")?.mapping).toBeUndefined();
+  });
 });
 
 /**
@@ -812,8 +916,206 @@ describe("evidence", () => {
   });
 });
 
+/**
+ * `map-sonar`, which builds the durable project map and collects no evidence.
+ *
+ * THE SEAM IS THE COMMIT SEARCH AND THE WRITER. SonarCloud's listing and analyses are stubbed because what the
+ * client makes of a real response is asserted in `evidence/sonar/sonar.test.ts`; what these cases are about is
+ * which projects a run pays the scarce quota for, and what it writes for the ones it cannot resolve.
+ */
+describe("map-sonar", () => {
+  const CONFIG = { organization: "hmcts", lookback: { operational_days: 90 }, teams: [], sonar_projects: {}, org_graph: { enabled: true } };
+  const REVISION = "671d77770bda9760854fcf0bc5e086eed92bfb3a";
+
+  /**
+   * One `map-sonar` run over a stubbed SonarCloud and a stubbed commit search.
+   *
+   * `searching` answers `/search/commits`; anything else is a repository read, which this command never makes.
+   */
+  async function mapping(options: {
+    projects?: { key: string; analysisAt?: Date }[];
+    analyses?: { revision?: string; analysisAt?: Date }[];
+    searching?: (revision: string) => unknown;
+    argv?: string[];
+  }): Promise<{ status: number; searches: string[] }> {
+    loadConfiguration.mockResolvedValue(CONFIG);
+    resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
+    const searches: string[] = [];
+    createGitHubClient.mockReturnValue({
+      get: vi.fn((path: string, parameters: Record<string, string>) => {
+        searches.push(`${path}?q=${parameters.q}`);
+        const revision = String(parameters.q).split("hash:")[1] ?? "";
+        return Promise.resolve(options.searching?.(revision) ?? { items: [] });
+      }),
+      budget: () => undefined,
+      requestsIssued: () => searches.length,
+      callOutcomes: () => [],
+      rateLimitWaits: () => []
+    });
+    createSonarClient.mockReturnValue({
+      projects: async () => options.projects ?? [],
+      projectAnalyses: async () => options.analyses ?? []
+    });
+
+    const status = await main(options.argv ?? ["map-sonar", "--config", "m.yaml"]);
+    return { status, searches };
+  }
+
+  it("should store the repository that holds a project's analysed commit", async () => {
+    const { status, searches } = await mapping({
+      projects: [{ key: "hmcts.cath", analysisAt: new Date(Date.UTC(2026, 8, 16)) }],
+      analyses: [{ revision: REVISION, analysisAt: new Date(Date.UTC(2026, 8, 16)) }],
+      searching: () => ({ items: [{ repository: { full_name: "hmcts/cath-service" } }] })
+    });
+
+    expect(status).toBe(EXIT_COMPLETE);
+    // The `org:` qualifier is what makes the answer usable: an unqualified hash search reaches every public
+    // repository on GitHub, and a commit found in somebody else's fork says nothing about who owns the project.
+    expect(searches).toEqual([`/search/commits?q=org:hmcts hash:${REVISION}`]);
+    expect(recordSonarMapping).toHaveBeenCalledWith("hmcts", expect.objectContaining({ mapping: expect.objectContaining({ repository: "cath-service" }) }));
+  });
+
+  it("should store a remembered negative for a project no commit in the organisation matches", async () => {
+    // The whole point of storing it: the next run reads the answer instead of re-paying the quota to learn it.
+    const { status } = await mapping({
+      projects: [{ key: "hmcts.orphan", analysisAt: new Date(Date.UTC(2026, 8, 16)) }],
+      analyses: [{ revision: REVISION, analysisAt: new Date(Date.UTC(2026, 8, 16)) }]
+    });
+
+    expect(status).toBe(EXIT_COMPLETE);
+    const answer = recordSonarMapping.mock.calls[0]?.[1];
+    expect(answer?.mapping).toBeUndefined();
+    expect(answer?.detail).toContain("no commit in hmcts matches");
+  });
+
+  it("should store a project SonarCloud has never analysed without spending a search on it", async () => {
+    const { status, searches } = await mapping({ projects: [{ key: "hmcts.new", analysisAt: new Date(Date.UTC(2026, 8, 16)) }], analyses: [] });
+
+    expect(status).toBe(EXIT_COMPLETE);
+    expect(searches).toEqual([]);
+    expect(recordSonarMapping.mock.calls[0]?.[1].detail).toContain("records no analysis");
+  });
+
+  it("should pay nothing for a project nothing has been analysed since it was resolved", async () => {
+    // The watermark is when the row was WRITTEN, so a project whose latest analysis predates it is settled.
+    storedSonarMappings.mockResolvedValue([
+      { projectKey: "hmcts.cath", repository: "cath-service", method: "analysis_revision", resolvedAt: new Date(Date.UTC(2026, 8, 17)) }
+    ]);
+
+    const { status, searches } = await mapping({ projects: [{ key: "hmcts.cath", analysisAt: new Date(Date.UTC(2026, 8, 16)) }] });
+
+    expect(status).toBe(EXIT_COMPLETE);
+    expect(searches).toEqual([]);
+    expect(recordSonarMapping).not.toHaveBeenCalled();
+  });
+
+  it("should re-resolve a project analysed since the map was written, which is the only thing that can change the answer", async () => {
+    storedSonarMappings.mockResolvedValue([
+      { projectKey: "hmcts.cath", repository: "old-name", method: "analysis_revision", resolvedAt: new Date(Date.UTC(2026, 8, 1)) }
+    ]);
+
+    const { searches } = await mapping({
+      projects: [{ key: "hmcts.cath", analysisAt: new Date(Date.UTC(2026, 8, 16)) }],
+      analyses: [{ revision: REVISION, analysisAt: new Date(Date.UTC(2026, 8, 16)) }],
+      searching: () => ({ items: [{ repository: { full_name: "hmcts/cath-service" } }] })
+    });
+
+    expect(searches).toHaveLength(1);
+    expect(recordSonarMapping).toHaveBeenCalledWith("hmcts", expect.objectContaining({ mapping: expect.objectContaining({ repository: "cath-service" }) }));
+  });
+
+  it("should refuse an organisation SonarCloud lists no project for, rather than report an empty success", async () => {
+    // Reporting 0 would leave `collect` reading an empty map as "no repository has a SonarCloud project".
+    expect((await mapping({ projects: [] })).status).toBe(EXIT_FAILED);
+    expect(recordSonarMapping).not.toHaveBeenCalled();
+  });
+
+  it("should stop on a spent search quota and keep every project it had already answered", async () => {
+    // The limit applies to every project still to come exactly as it applied to this one, so continuing would
+    // write this run's exhaustion into the map as each remaining project's own dead end.
+    const analysed = new Date(Date.UTC(2026, 8, 16));
+    let searched = 0;
+    const { status } = await mapping({
+      projects: [
+        { key: "hmcts.one", analysisAt: analysed },
+        { key: "hmcts.two", analysisAt: analysed }
+      ],
+      analyses: [{ revision: REVISION, analysisAt: analysed }],
+      searching: () => {
+        searched += 1;
+        if (searched === 1) {
+          return { items: [{ repository: { full_name: "hmcts/one-service" } }] };
+        }
+        throw new GitHubError("GitHub rate limit exceeded after 3 attempts", AvailabilityReason.RateLimited, 403);
+      }
+    });
+
+    expect(status).toBe(EXIT_INCOMPLETE);
+    expect(recordSonarMapping).toHaveBeenCalledOnce();
+    expect(console.error).toHaveBeenCalledWith(expect.stringContaining("stopping and keeping the 1 projects already answered"));
+  });
+
+  it("should report a partial run as success for a scheduled one, as a collection does", async () => {
+    // A CronJob has no third state, and across 315 projects something always refuses: a weekly job reporting
+    // failure every week is an alert nobody reads. The true status still reaches `collector.exit_status`.
+    const analysed = new Date(Date.UTC(2026, 8, 16));
+    let searched = 0;
+    const { status } = await mapping({
+      projects: [
+        { key: "hmcts.one", analysisAt: analysed },
+        { key: "hmcts.two", analysisAt: analysed }
+      ],
+      analyses: [{ revision: REVISION, analysisAt: analysed }],
+      searching: () => {
+        searched += 1;
+        if (searched === 1) {
+          return { items: [{ repository: { full_name: "hmcts/one-service" } }] };
+        }
+        throw new GitHubError("GitHub refused the search", AvailabilityReason.PermissionDenied, 403);
+      },
+      argv: ["map-sonar", "--config", "m.yaml", "--tolerate-partial"]
+    });
+
+    expect(status).toBe(EXIT_COMPLETE);
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("some projects refused"));
+  });
+
+  it("should fail a run that could answer for nothing at all", async () => {
+    const analysed = new Date(Date.UTC(2026, 8, 16));
+    const { status } = await mapping({
+      projects: [{ key: "hmcts.one", analysisAt: analysed }],
+      analyses: [{ revision: REVISION, analysisAt: analysed }],
+      searching: () => {
+        throw new GitHubError("GitHub refused the search", AvailabilityReason.PermissionDenied, 403);
+      },
+      argv: ["map-sonar", "--config", "m.yaml", "--tolerate-partial"]
+    });
+
+    // Nothing tolerates `Failed`: no project was answered for, so the map is exactly as it was and somebody
+    // should be woken.
+    expect(status).toBe(EXIT_FAILED);
+    expect(recordSonarMapping).not.toHaveBeenCalled();
+  });
+
+  it("should warn with both keys where two projects claim one repository", async () => {
+    const analysed = new Date(Date.UTC(2026, 8, 16));
+    await mapping({
+      projects: [
+        { key: "hmcts.cath", analysisAt: analysed },
+        { key: "hmcts.cath.old", analysisAt: analysed }
+      ],
+      analyses: [{ revision: REVISION, analysisAt: analysed }],
+      searching: () => ({ items: [{ repository: { full_name: "hmcts/cath-service" } }] })
+    });
+
+    // Legitimate — SonarCloud has no rename, so a re-created project leaves its twin behind — and the reverse
+    // lookup settles it by analysis recency. Surfaced because the alternative is a page quietly showing one of two.
+    expect(console.warn).toHaveBeenCalledWith("cath-service is claimed by 2 projects: hmcts.cath, hmcts.cath.old");
+  });
+});
+
 describe("the collector lock", () => {
-  it.each([["collect"], ["collect-org"]])("should stand %s down as SUCCESS when another run holds the lock", async (command) => {
+  it.each([["collect"], ["collect-org"], ["map-sonar"]])("should stand %s down as SUCCESS when another run holds the lock", async (command) => {
     // Both AAT clusters run the same schedule against one database, so one of them loses the lock EVERY DAY.
     // Reporting that as failure would make a CronJob show Failed daily for a system behaving exactly as designed,
     // and an alert that always fires is one nobody reads. The estate was collected — by the peer.

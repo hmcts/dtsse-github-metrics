@@ -175,10 +175,22 @@ teams:
 # is reported by the report rather than refused by the schema.
 enablement:
   example-service: 2026-06-01
-# NO `sonar_organization:` OR `sonar_projects:` KEY. The SonarCloud layer under
-# `src/evidence/sonar/` is present and reached by nothing — no collection resolves a project and no
-# report reads a measure — so both keys validated and then decided nothing. They come back with the
-# layer, alongside a `map-sonar` command to resolve the mapping and a report that reads it.
+# The SonarCloud organisation whose projects are mapped to repositories and measured. Usually the GitHub
+# organisation name, and at HMCTS exactly it, so it is left out here: absent falls back to `organization`
+# above rather than being restated. `map-sonar` lists this organisation's projects and asks GitHub which
+# repository holds each one's analysed commit; `collect` then reads the map and measures the projects that
+# resolved. Every read is made ANONYMOUSLY unless `SONAR_TOKEN` (or `SONARCLOUD_TOKEN`) is set in the
+# environment, which widens the answers to the organisation's private projects and changes nothing else.
+# sonar_organization: hmcts
+#
+# THE ANSWER OF LAST RESORT for a repository whose project the map cannot settle: a repository name to a
+# SonarCloud project key. It short-circuits every other rung, so a blank value is refused at load time — a
+# blank override would silently mean "unresolved" while reading as a decision somebody made. The case it
+# exists for is a genuine ambiguity: `rpx-xui-icp-api` and `em-icp-api` are analysed by projects that
+# neither a declaration nor a commit search can tell apart, and somebody has to say which is which.
+# sonar_projects:
+#   rpx-xui-icp-api: uk.gov.hmcts.reform:rpx-xui-icp-api
+#
 #
 # Where the list of repositories approved to deploy to production is published: HMCTS's
 # `environment-approvals.yml`, the document its deployment pipeline reads to decide whether a

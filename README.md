@@ -14,6 +14,7 @@ One Next.js application and one image, with two entry points:
 | `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
 | `node dist/cli/run.js collect` | a daily CronJob | contacts GitHub, caches facts, stamps the collection |
 | `node dist/cli/run.js collect-org` | a second daily CronJob | walks the organisation's teams, people and repository ownership |
+| `node dist/cli/run.js map-sonar` | a weekly CronJob | resolves each SonarCloud project to the repository it analyses |
 
 The web pod holds **no GitHub credential**. It never contacts GitHub, which is what makes the serving path
 read-only and the credential the collector's alone.
@@ -247,6 +248,48 @@ CODEOWNERS requests per unresolved repository and one collaborator listing after
 12,500 GraphQL), so it runs as its own CronJob at 13:30, half an hour ahead of `collect`, and each day's
 figures are read against the same day's ownership. A repository may have several owners.
 
+## Which SonarCloud project analyses which repository
+
+Neither GitHub nor SonarCloud records the pairing, so the commit SHA is the identifier the two share.
+`map-sonar` lists the SonarCloud organisation's projects, reads each one's most recent analyses, and asks GitHub
+which repository in the organisation holds the analysed commit:
+
+```bash
+yarn cli map-sonar --config metrics.yaml                   # build or refresh the map
+```
+
+```yaml
+# sonar_organization: hmcts     # absent falls back to `organization`
+# sonar_projects:               # the answer of last resort, for a genuine ambiguity
+#   rpx-xui-icp-api: uk.gov.hmcts.reform:rpx-xui-icp-api
+```
+
+**Every answer is stored, including the ones that say there is no repository.** A project SonarCloud has never
+analysed, one whose analyses name no commit, and one whose commit is in no repository of this organisation are
+all *answered* — there is nothing more to learn until it is analysed again — so each is written to
+`sonar_project_map` with its reason. That row is a **remembered negative**, and it is what stops the next run
+re-paying the quota; the table's `(repository IS NULL) <> (detail IS NULL)` CHECK is what keeps it from being
+confused with a half-written one. A project is skipped entirely when nothing has been analysed since its row was
+written, which is the only thing that can change the answer. **`prune` may never delete from this table.**
+
+`collect` then asks the reverse question of every repository in the estate, and it costs nothing: the map is one
+read, the project listing is one more, and only a repository the map attributes a project to pays for its
+measures. `sonar/resolve.ts` holds the ladder — a configured override, then the map's own answer, with two
+declaration rungs that a collection reading `sonar-project.properties` would reach.
+
+**Name matching is deliberately absent.** It was measured and rejected: wrong for 6 of 70 projects, which is
+close enough to look right and wrong often enough to mislead. A declaration is a hypothesis rather than an
+answer for the same reason — of 240 repositories declaring a key, 123 name a project SonarCloud does not list
+and 69 sit in collision groups where several repositories declare one template's key.
+
+The reads are **anonymous**: there is no SonarCloud token in the `dtsse` vault, and the project listing, a
+project's analyses and its measures all answer without one. Set `SONAR_TOKEN` to widen them to the
+organisation's private projects; nothing else changes.
+
+A repository's page distinguishes three answers, which is the whole point of the wording: the mapping has not
+been run, no project analyses this repository, or here are the figures. Absent means unmeasured and a stated
+reason means measured-as-nothing — the same rule the rest of the contract follows.
+
 ### Only one collector runs at a time, and the database enforces it
 
 AAT runs this application on **two clusters** — `cft-aat-00` and `cft-aat-01` — and both mount the same
@@ -265,8 +308,10 @@ Two concurrent collectors do more than duplicate work:
 - The live-row partial unique indexes catch two writers inserting one key — as a unique violation, which rolls
   back the whole transaction. A colliding run writes **no graph at all**.
 
-So `collect` and `collect-org` both take one Postgres advisory lock, the same mechanism `migrate` uses for the
-same reason. A run that does not get it stands down and **exits 0**: on an estate where both clusters share a
+So `collect`, `collect-org` and `map-sonar` all take one Postgres advisory lock, the same mechanism `migrate`
+uses for the same reason. `map-sonar` takes it for a reason of its own on top: it is paced against a per-minute
+quota rather than an hourly one, so two concurrent runs would each pace off a budget the other was also
+spending — slower than one run, and writing the same rows twice. A run that does not get it stands down and **exits 0**: on an estate where both clusters share a
 schedule one of them loses every day, and a CronJob reporting Failed daily for correct behaviour is an alert
 nobody reads.
 
@@ -368,11 +413,18 @@ deterministic, so two runs read the same repositories and a fault that comes and
 different sample; ownership is what it spreads across, because that is what the interesting permission faults
 follow. `--all` reads every cohort repository and names each unreadable one, for when that is the question.
 
-### Nothing here uses GitHub search
+### Nothing here uses GitHub search, except the SonarCloud map
 
 Collection walks `repository.pullRequests`, never `search`. An App installation token is served an **empty search**
 over repositories it reads perfectly well — the same query returns 1807 rows with a personal access token and 0
 with the App's — so anything derived from search reports zero and claims to have succeeded.
+
+`map-sonar` is the one exception, and it uses a different endpoint for a different question: `/search/commits`,
+asked which repository in the organisation holds one commit. It is the only quota here counted in **calls a
+minute** — 30 documented, 10 observed — which is why it is the only call this codebase paces rather than
+retries, and why it runs weekly in a CronJob of its own instead of inside `collect`. If the installation is ever
+served an empty commit search the way it is served an empty repository search, `map-sonar` reports every project
+as unresolvable rather than resolving it wrongly, and the reason is stored beside each one.
 
 The walk is ordered by `updatedAt` descending, which is what lets it stop: `mergedAt <= updatedAt` always, so
 once `updatedAt` falls below the window start nothing later can be inside it.
@@ -502,13 +554,18 @@ dashboard computes its own presentation figures. `evidence` therefore has one ou
 contract — and takes no `--format`: a flag with a single legal value that changes nothing is a promise the CLI
 cannot keep.
 
-Two layers are ported, complete and **reached by nothing**, and each says so at the head of its own module
-rather than here: the SonarCloud resolution ladder and measures (`src/evidence/sonar/`, headed by
-`resolve.ts`) and the CODEOWNERS and maintenance evidence (`src/evidence/domain/standards.ts`). Each comment
-names what would reach it. Whether to wire either up or drop it is an open decision; nothing in the
-configuration file or the CLI advertises them in the meantime.
+One layer is ported, complete and **reached by nothing**, and it says so at the head of its own module rather
+than here: the CODEOWNERS and maintenance evidence (`src/evidence/domain/standards.ts`). The comment names
+what would reach it. Whether to wire it up or drop it is an open decision; nothing in the configuration file
+or the CLI advertises it in the meantime.
 
-The trend report (`src/evidence/report/trend.ts`) was the third until VIBE-592 wired it: `getTrend` now builds
-one repository's series from `enablement:` and the cached facts, and the repository page draws it. There is
-still no `trend` CLI command — the series is a page, not a report anybody asked to print — and
-`alert_observations` still holds no rows, so a series carries an empty alert history and says so.
+Two others were in that state until they were wired, and each left one thing unfinished:
+
+- the trend report (`src/evidence/report/trend.ts`), wired by VIBE-592. `getTrend` builds one repository's
+  series from `enablement:` and the cached facts, and the repository page draws it. There is still no `trend`
+  CLI command — the series is a page, not a report anybody asked to print — and `alert_observations` holds no
+  rows, so a series carries an empty alert history and says so.
+- the SonarCloud resolution ladder and measures (`src/evidence/sonar/`, headed by `resolve.ts`), wired by
+  VIBE-591. The four `sonar_*` fields on `RepositoryRow` are declared and not sent, so `/repositories` has no
+  SonarCloud columns. The repository page has the figures; what is missing is carrying one repository's
+  measures into the estate read. See the comment on `RepositoryRow` in `src/lib/types.ts`.

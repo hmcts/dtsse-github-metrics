@@ -6,32 +6,22 @@ import { type SonarClient, SonarError, searchableRevisions } from "./client.ts";
 /**
  * Attributing a SonarCloud project to a GitHub repository. Ported from `metrics.sonar`'s resolution half.
  *
- * CURRENTLY UNWIRED, AND THE ENTRY POINT OF A LAYER THAT IS. This function is the head of the SonarCloud
- * layer — `./client.ts`, `./measures.ts`, `./pacer.ts` and `../domain/sonar.ts` are reached only from here or
- * from each other — and nothing calls it. No entry point in the application imports any of the five: not the
- * App Router pages, not `proxy.ts`, not `instrumentation.ts`, not `cli/run.ts`, and not the three
- * `await import` call sites.
- *
- * WHAT WOULD REACH IT: a `map-sonar` command in `cli/index.ts` walking the cohort through this ladder and
- * storing each answer in `sonar_project_map`, a `collect` pass reading `parseMeasures` for the repositories
- * that resolved, and `report/repositories.ts` emitting the result instead of the `"no SonarCloud project is
- * mapped for this repository"` detail it emits today. `lib/types.ts` already declares the contract fields —
- * `sonar_coverage`, `sonar_reported`, `sonar_security_rating`, `sonar_security_issues` — and `lib/repository.ts`
- * has the cards to render a project's measures, though it draws them from `SonarMeasures` (`coverage`,
- * `security_rating`, `security_issues`) rather than from those row fields, so wiring this means populating the
- * row fields AND pointing the row's cells at them. The measure-to-card work exists; the assembly does not.
- * The `sonar_organization:` and `sonar_projects:` policy keys were removed with this ticket for validating
- * without deciding anything; wiring the layer means restoring them.
- *
- * WHETHER TO WIRE IT OR DROP IT IS AN OPEN PRODUCT DECISION, deliberately not taken here. The layer is
- * complete, tested and expensive to rebuild, and `./pacer.ts` in particular is the only adaptive rate-limit
- * pacer in this repository.
+ * THE REPOSITORY DIRECTION, and the cheap one. `collect` asks this of every repository in the estate and pays
+ * nothing for the answer: `./attribute.ts` has already spent the commit-search quota building the map, so this
+ * is a lookup in it plus, where a repository declares a key the map has never seen, one core-quota commit read.
+ * `cli/index.ts`'s `sonarSource` is the caller, and `report/contract/sonar.ts` puts what it establishes in front
+ * of a reader.
  *
  * THE LADDER, in the order it is climbed:
- *   1. `configured`                     — an explicit override in the policy file settles it.
+ *   1. `configured`                     — an explicit `sonar_projects:` override in the policy file settles it.
  *   2. `declared_confirmed_by_map`      — the repository declares a key, and the stored map agrees.
  *   3. `declared_confirmed_by_commit`   — the declared project's latest analysed commit is one of ours.
  *   4. `stored_map`                     — no declaration, but the map already attributes a project.
+ *
+ * RUNGS 2 AND 3 ARE UNREACHABLE FROM `collect` TODAY, and that is a cost decision rather than an oversight: a
+ * declaration is read from a repository's own `sonar-project.properties`, which this port fetches for nothing
+ * else, so reaching them means one content call per repository across the estate to obtain a hypothesis the map
+ * answers anyway. They are exercised by the suite and stand ready for a collection that does read the file.
  *
  * NAME MATCHING IS ABSENT ON PURPOSE. It was measured and rejected: wrong for 6 of 70 projects, which is close
  * enough to look right and wrong often enough to mislead.
