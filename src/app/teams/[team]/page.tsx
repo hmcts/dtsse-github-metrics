@@ -9,15 +9,24 @@ import { RepositoriesTable, TERM_PARAMETER } from "@/components/RepositoriesTabl
 import { Section } from "@/components/Section";
 import { TeamActorsTable } from "@/components/TeamActorsTable";
 import { TeamDirectPushesTable } from "@/components/TeamDirectPushesTable";
+import { TeamMembersTable } from "@/components/TeamMembersTable";
 import { TeamMergesTable } from "@/components/TeamMergesTable";
 import { TeamPractice, TeamThroughput } from "@/components/TeamPractice";
 import { getTeam, getWindows, isNotFound } from "@/lib/api";
-import { holdings, people, unreported } from "@/lib/team";
+import { contributors, holdings, members, unreported } from "@/lib/team";
 import type { TeamDetail } from "@/lib/types";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
- * One team's window: what it owns, how it works, what it merged, and who worked in it.
+ * One team's window: what it owns, how it works, what it merged, who is in it, and who worked in it.
+ *
+ * TWO SECTIONS ABOUT PEOPLE, ANSWERING TWO QUESTIONS. `Members` is GitHub's own team membership, out of
+ * `org_team_memberships`; `Contributors` is who authored a merge or a direct push in the repositories attributed to
+ * this team. Neither is the other's subset in either direction — a member who wrote nothing this window is on the
+ * first list only, and somebody from another team who merged into a repository this one owns is on the second only.
+ * Both the heading and the detail of each section name its source, because one section headed for the team's people
+ * and filled from its repositories' authors is the confusion this page had: `platform-operations` is attributed 328
+ * repositories, 217 of them by holding the only `admin` team, so most of the organisation appeared under it.
  *
  * NO READINESS DONUT, from 2026-09-15. It distributed `detail.labels` across this team's repositories and was the
  * last chart on the page; it went the way the ones on `/repositories` did, and for the same reason — it had already
@@ -39,6 +48,7 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const detail = await readTeam((await params).team, weeks);
   const missing = unreported(detail);
+  const membership = members(detail);
 
   return (
     <div className="space-y-8">
@@ -51,7 +61,11 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
         context={
           <>
             <span>{holdings(detail)}</span>
-            <span>{people(detail)}</span>
+            {/* BOTH COUNTS OF PEOPLE, in the order the sections below appear in. One figure headed neither way is
+                read as membership whichever it is, so the header states which is which or states only the one it
+                has — see `members`, which is absent where no membership was read. */}
+            {membership === undefined ? null : <span>{membership}</span>}
+            <span>{contributors(detail)}</span>
             {missing ? <span className="text-slate-500">{missing}</span> : null}
           </>
         }
@@ -110,7 +124,27 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
         )}
       </Section>
 
-      <Section heading="Contributors" detail="alphabetical, counted within this team’s repositories">
+      {/* WHO IS IN THE TEAM, which is GitHub's answer and not this service's. It does not depend on the span, and
+          says nothing about whether any of these people did anything: a member who wrote no code this window is
+          listed here in full standing and is absent from the section below. */}
+      <Section heading="Members" detail="who GitHub says is in this team, whatever they worked on">
+        {detail.members === undefined ? (
+          // UNMEASURED, NOT EMPTY, and there is no third branch because the report layer cannot emit one: a team
+          // with no stored membership row is absent from what it sends rather than carried as an empty list, since
+          // nothing records which teams a collection walked in full. `unowned` arrives here too, it being a
+          // reporting bucket rather than a GitHub team.
+          <EmptyState
+            message={`No membership has been read for ${detail.team}.`}
+            detail="Members come from GitHub’s own team membership, which metrics collect-org reads. Nothing read is not the same as nobody in the team."
+          />
+        ) : (
+          <TeamMembersTable rows={detail.members} />
+        )}
+      </Section>
+
+      {/* WHO WORKED IN ITS REPOSITORIES, which is a different list and is named as one. Somebody in no team at all
+          appears here as soon as they merge into a repository attributed to this one. */}
+      <Section heading="Contributors to its repositories" detail="alphabetical — authors of the changes above, in or out of the team">
         {detail.actors.length === 0 ? (
           <EmptyState
             message={`Nobody authored a reported merge in ${detail.team}’s repositories at this span.`}

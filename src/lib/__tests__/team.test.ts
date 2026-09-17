@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import { owners } from "@/lib/rows";
-import { holdings, type PracticeFigure, people, practiceFigures, unreported } from "@/lib/team";
+import { contributors, holdings, memberRole, members, type PracticeFigure, practiceFigures, unreported } from "@/lib/team";
 import type { TeamDetail, TeamPractice } from "@/lib/types";
 
 function team(detail: Partial<TeamDetail> = {}): TeamDetail {
@@ -54,13 +54,69 @@ describe("holdings", () => {
   });
 });
 
-describe("people", () => {
-  it("counts everyone who authored a reported merge in the team", () => {
-    expect(people(team())).toBe("2 contributors");
+describe("contributors", () => {
+  it("should count everyone who authored a reported merge in the team", () => {
+    expect(contributors(team())).toBe("2 contributors");
   });
 
-  it("counts nobody where the span holds no reported merge for the team", () => {
-    expect(people(team({ actors: [] }))).toBe("0 contributors");
+  it("should count nobody where the span holds no reported merge for the team", () => {
+    expect(contributors(team({ actors: [] }))).toBe("0 contributors");
+  });
+});
+
+/**
+ * The membership count, which is the other half of a distinction the header used to collapse.
+ *
+ * A team's contributors are the authors of changes in the repositories attributed to it, so somebody in no team
+ * at all is one of them the moment they merge into one. The two figures are counts of different sets and the
+ * header states both.
+ */
+describe("members", () => {
+  it("should count everyone GitHub says is in the team", () => {
+    expect(
+      members(
+        team({
+          members: [
+            { login: "alice", role: "MAINTAINER" },
+            { login: "carol", role: "MEMBER" }
+          ]
+        })
+      )
+    ).toBe("2 members");
+  });
+
+  it("should pluralise against its own noun", () => {
+    expect(members(team({ members: [{ login: "alice", role: "MEMBER" }] }))).toBe("1 member");
+  });
+
+  it("should state nothing at all when no membership was read, rather than claiming the team is empty", () => {
+    // Absent is unmeasured. `0 members` would be GitHub's answer, and GitHub was never asked — see
+    // `TeamDetail.members` for why a team with no stored row cannot be told from one nobody walked.
+    expect(members(team())).toBeUndefined();
+  });
+
+  it("should count a member who contributed nothing, and not count a contributor who is not a member", () => {
+    // The `linusnorton` case, in the shape the two functions see it: he authored merges in repositories
+    // `platform-operations` owns and is in none of its 56 memberships, while a member on leave all window is in
+    // the membership and authored nothing.
+    const detail = team({
+      members: [{ login: "onleave", role: "MEMBER" }],
+      actors: [{ login: "linusnorton", repositories: 6, contributions: 7 }]
+    });
+
+    expect(members(detail)).toBe("1 member");
+    expect(contributors(detail)).toBe("1 contributor");
+  });
+});
+
+describe("memberRole", () => {
+  it("should word GitHub's roles as a reader would", () => {
+    expect(memberRole({ login: "alice", role: "MAINTAINER" })).toBe("Maintainer");
+    expect(memberRole({ login: "bob", role: "MEMBER" })).toBe("Member");
+  });
+
+  it("should show a role it does not know verbatim rather than restating it as one it does", () => {
+    expect(memberRole({ login: "carol", role: "BILLING_MANAGER" })).toBe("BILLING_MANAGER");
   });
 });
 
@@ -210,7 +266,12 @@ describe("practiceFigures", () => {
 
 describe("the team guardrails", () => {
   it("offers no combined label, score or ordering of teams", () => {
-    const stated = [holdings(team()), people(team()), unreported(team({ unavailable: 1 }))].join(" ");
+    const stated = [
+      holdings(team()),
+      contributors(team()),
+      members(team({ members: [{ login: "alice", role: "MEMBER" }] })),
+      unreported(team({ unavailable: 1 }))
+    ].join(" ");
     expect(stated).not.toMatch(/score|verdict|rank|average|overall/i);
   });
 });

@@ -8,6 +8,7 @@ import {
   overviewSummary,
   repositoryEvidence,
   repositoryRows,
+  teamMemberRows,
   teamRows,
   windowOptions
 } from "@/evidence/report/repositories";
@@ -296,11 +297,21 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
   const ours = merges.filter((row) => held.has(row.repository));
   const pushes = directPushes.filter((row) => held.has(row.repository));
 
+  // TWO DIFFERENT QUESTIONS, ANSWERED FROM TWO DIFFERENT PLACES. `members` is what GitHub says about who is in the
+  // team, out of `org_team_memberships`; `actors` is who authored a merge or a direct push in the repositories
+  // attributed to it. Neither is the other's subset, and the page states which is which — see `TeamMemberRow`.
+  //
+  // Looked up in a map the estate already built rather than read per team, and folded because the report layer
+  // keys on the folded slug: a `configured` owner is a name somebody typed into `metrics.yaml`. Absent stays
+  // absent, so a team whose membership was never read renders as unmeasured instead of as empty.
+  const members = (await teamMemberRows(configured, weeks)).get(team.toLowerCase());
+
   return {
     ...found,
     repositories,
     merges: ours,
     direct_pushes: pushes,
+    ...(members === undefined ? {} : { members }),
     actors: teamActors(ours, pushes, await contributorNames(weeks))
   };
 }

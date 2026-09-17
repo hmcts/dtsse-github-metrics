@@ -778,6 +778,23 @@ export interface TeamActorRow extends Contributor {
 }
 
 /**
+ * One person GITHUB SAYS IS IN A TEAM, which is a different question from who contributed to its repositories.
+ *
+ * `TeamActorRow` above answers the second: it is folded from the merges and direct pushes in the repositories
+ * attributed to a team, so somebody in no team at all appears under one as soon as they merge into a repository it
+ * owns. A member and a contributor can be the same person and can be neither each other's subset — a member who
+ * did nothing this window is on this list and not that one, and somebody from another team who merged is on that
+ * one and not this.
+ *
+ * NO COUNTS, deliberately. Membership is not a measurement of anything somebody did, so there is no figure here to
+ * order people by and nothing that could be read as a contribution. `role` is GitHub's own word for the person's
+ * standing in the team — `MEMBER` or `MAINTAINER` — and is a fact rather than a grade.
+ */
+export interface TeamMemberRow extends Contributor {
+  role: string;
+}
+
+/**
  * One merged pull request, as the team page lists it.
  *
  * THE CHANGES THEMSELVES, under the counts that summarise them. The ways-of-working figures say "37 of 40
@@ -908,6 +925,16 @@ export interface TeamDetail {
   team: string;
   repositories: RepositoryRow[];
   actors: TeamActorRow[];
+  /**
+   * Who GitHub says is in this team, alphabetically by login.
+   *
+   * ABSENT MEANS NO MEMBERSHIP WAS READ, and never that the team is empty. The graph is not told which teams a
+   * collection walked in full, so a team with no stored row is indistinguishable from a team nobody walked — 15
+   * teams on this estate have none — and the section says so in words rather than drawing an empty table under a
+   * heading a reader would take for GitHub's answer. `unowned` is absent for the same reason, it being a reporting
+   * bucket rather than a GitHub team.
+   */
+  members?: TeamMemberRow[];
   unavailable: number;
   /** How this team works, which is what the team page carries and `/repositories` does not. */
   practice?: TeamPractice;

@@ -748,12 +748,13 @@ export async function recordRepositoryOwnership(
  * Each returns a stable order, for the reason `loadCachedPullRequestFacts` gives: two reports of the same
  * database must not differ.
  *
- * THREE OF THE SIX TABLES HAVE A READER HERE, and the other three are written without being read back:
- * `cohort.ts` reads the repositories and the resolved ownership, `people.ts` reads the members, and nothing
- * asks this module for a team, a membership or a team access edge. The team tables feed the OWNERSHIP LADDER
- * during `collect-org`, which walks its own facts in memory and stores the conclusion, so the rows are a
- * history a person can query rather than an input any page takes. A reader for one of them belongs here when
- * something reads it; `test/integration/org-graph.test.ts` holds the three it observes the write path with.
+ * FOUR OF THE SIX TABLES HAVE A READER HERE, and the other two are written without being read back:
+ * `cohort.ts` reads the repositories and the resolved ownership, and `people.ts` reads both the organisation's
+ * members and each team's, while nothing asks this module for a team or a team access edge. Those two feed the
+ * OWNERSHIP LADDER during `collect-org`, which walks its own facts in memory and stores the conclusion, so their
+ * rows are a history a person can query rather than an input any page takes. A reader for one of them belongs
+ * here when something reads it; `test/integration/org-graph.test.ts` holds the ones it observes the write path
+ * with.
  */
 
 /** Live repositories, in name order. The denominator every ownership figure is a share of. */
@@ -782,6 +783,32 @@ export async function liveOrgPeople(organization: string): Promise<LiveOrgPerson
       login: row.login,
       role: row.role,
       payload: row.payload,
+      observedAt: row.observedAt,
+      lastObservedAt: row.lastObservedAt
+    }));
+  } catch (error) {
+    throw new StorageError("could not read the organisation graph", error);
+  }
+}
+
+/**
+ * Live team memberships, in team-then-login order. Who the organisation says is in each team.
+ *
+ * EVERY LIVE ROW FOR THE ORGANISATION IN ONE READ, grouped by the caller rather than filtered by team here. A
+ * report is built for the whole estate at once — 154 teams — so a per-team query would be 154 round trips for
+ * the same 3,000 rows, and the table has no index to serve them with. See `teamMembers` in `org/people.ts`, which
+ * is the only caller and does the grouping.
+ */
+export async function liveOrgTeamMemberships(organization: string): Promise<LiveOrgTeamMembership[]> {
+  try {
+    const rows = await prisma.orgTeamMembership.findMany({
+      where: { organization, supersededAt: null },
+      orderBy: [{ teamSlug: "asc" }, { login: "asc" }]
+    });
+    return rows.map((row) => ({
+      teamSlug: row.teamSlug,
+      login: row.login,
+      role: row.role,
       observedAt: row.observedAt,
       lastObservedAt: row.lastObservedAt
     }));
@@ -836,6 +863,13 @@ export interface LiveOrgPerson extends LiveInterval {
   login: string;
   role: string;
   payload: unknown;
+}
+
+export interface LiveOrgTeamMembership extends LiveInterval {
+  teamSlug: string;
+  login: string;
+  /** `MEMBER` or `MAINTAINER`, as GitHub words it. */
+  role: string;
 }
 
 export interface LiveRepositoryOwnership extends LiveInterval {

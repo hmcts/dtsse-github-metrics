@@ -1,4 +1,4 @@
-import { liveOrgPeople } from "../store/org-graph.ts";
+import { liveOrgPeople, liveOrgTeamMemberships } from "../store/org-graph.ts";
 
 /**
  * What the organisation graph knows a person is CALLED, as opposed to what they log in as.
@@ -57,6 +57,52 @@ export async function storedDisplayNames(organization: string): Promise<Map<stri
     }
   }
   return names;
+}
+
+/** One person GitHub says is in a team, as the graph holds them. */
+export interface TeamMember {
+  /** GitHub's own spelling, kept for display and folded by the caller where it joins anything. */
+  login: string;
+  /** `MEMBER` or `MAINTAINER`, as GitHub words it. */
+  role: string;
+}
+
+/**
+ * Who GITHUB SAYS is in each team, keyed on the folded team slug.
+ *
+ * A DIFFERENT QUESTION FROM WHO CONTRIBUTED, and the reason this reader exists. A team page's contributor list is
+ * folded from the merges and direct pushes in the repositories attributed to that team, so somebody in no team at
+ * all appears under one the moment they merge into a repository it owns — on this estate `platform-operations`
+ * holds admin on 217 repositories through the `teams-api-admin` rung alone, so most of the organisation shows as
+ * a contributor to it. Membership answers "is this person in the team", contribution answers "did they work in
+ * its repositories", and neither can be derived from the other in either direction.
+ *
+ * READ FROM THE DATABASE AND NEVER FROM GITHUB, for `contributorNames`' reason: the web pod holds no GitHub
+ * credential, so `collect-org` must have walked the teams already.
+ *
+ * A TEAM WITH NO ROW IS ABSENT FROM THIS MAP, NEVER AN EMPTY LIST. `recordOrgTeamMemberships` is told which team
+ * slugs a run read in full and does not store that set, so the table cannot distinguish a team nobody walked from
+ * a team with nobody in it — and 15 teams on this estate have no membership row at all. Absent is therefore the
+ * only answer that cannot mislead: a caller reads it as unmeasured, which is what "the graph does not say" means,
+ * where an empty list would state that GitHub put nobody in the team.
+ *
+ * FOLDED ON THE TEAM SLUG, because the `configured` rung's owner is a name somebody typed into `metrics.yaml`
+ * while every other rung's is the slug GitHub served. A case difference between the two would leave an
+ * overridden team's page reporting its membership as unread.
+ *
+ * The reader's order is preserved rather than re-sorted here: the ordering a READER sees is the report layer's,
+ * which folds case so that a team's members and its contributors are alphabetised by the same rule.
+ */
+export async function teamMembers(organization: string): Promise<Map<string, TeamMember[]>> {
+  const memberships = await liveOrgTeamMemberships(organization);
+  const members = new Map<string, TeamMember[]>();
+  for (const membership of memberships) {
+    const slug = membership.teamSlug.toLowerCase();
+    const held = members.get(slug) ?? [];
+    held.push({ login: membership.login, role: membership.role });
+    members.set(slug, held);
+  }
+  return members;
 }
 
 /**

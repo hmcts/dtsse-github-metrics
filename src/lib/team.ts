@@ -9,19 +9,52 @@
  * The repository count is of CONFIGURED repositories, and the unreported count says how many of them
  * this span holds no evidence for, so a team whose collection is half missing reads as a team with
  * missing collection rather than as a small team.
+ *
+ * MEMBERSHIP AND CONTRIBUTION ARE TWO COUNTS AND NOT ONE. `members` is what GitHub says about who is in the team;
+ * `contributors` is who authored a change in the repositories attributed to it. Each is stated in its own words
+ * wherever it appears, because a single "people" figure is read as membership and is not.
  */
 
 import { count } from "@/lib/format";
-import type { TeamDetail, TeamPractice } from "@/lib/types";
+import type { TeamDetail, TeamMemberRow, TeamPractice } from "@/lib/types";
 
 /** What the team owns: every repository the configuration gives it, reported or not. */
 export function holdings(detail: TeamDetail): string {
   return count(detail.repositories.length, "repository", "repositories");
 }
 
-/** How many people authored a reported merge in this team's repositories at this span. */
-export function people(detail: TeamDetail): string {
+/**
+ * How many people GitHub says are in this team, or nothing to say where no membership was read.
+ *
+ * TWO COUNTS OF PEOPLE THAT ARE NOT THE SAME COUNT, and this is the half that answers "who is in the team".
+ * `contributors` below answers "who worked in its repositories", and the header states both so that neither
+ * figure can be read as the other — on this estate `platform-operations` has 56 members and several hundred
+ * contributors, because it holds admin on 328 repositories.
+ *
+ * Absent reads as NOTHING STATED rather than as `0 members`, which would claim GitHub puts nobody in the team.
+ * See `TeamDetail.members` for why the graph cannot tell those two apart.
+ */
+export function members(detail: TeamDetail): string | undefined {
+  return detail.members === undefined ? undefined : count(detail.members.length, "member", "members");
+}
+
+/** How many people authored a reported merge or direct push in this team's repositories at this span. */
+export function contributors(detail: TeamDetail): string {
   return count(detail.actors.length, "contributor", "contributors");
+}
+
+/**
+ * One member's standing in the team, in the reader's words rather than GitHub's.
+ *
+ * `MEMBER` and `MAINTAINER` are what the API answers and what the graph stores, and neither belongs on a page in
+ * capitals. Anything else GitHub grows here is shown VERBATIM rather than mapped to one of the two: a role this
+ * does not know is a fact it should not restate as a role it does.
+ */
+export function memberRole(member: TeamMemberRow): string {
+  if (member.role === "MAINTAINER") {
+    return "Maintainer";
+  }
+  return member.role === "MEMBER" ? "Member" : member.role;
 }
 
 /**
