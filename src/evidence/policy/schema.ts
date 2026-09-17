@@ -424,10 +424,12 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
   // A BLANK SONAR OVERRIDE IS REJECTED whatever was configured: it is a fact about the override itself.
   // Resolution treats an override as the answer that short-circuits every other rung, so a blank one would
   // silently mean "unresolved" while reading as a decision somebody made.
+  // Sorted only so the message reads the same twice, which is why this collates rather than comparing by code
+  // point, exactly as the repeated-repository message above does: nothing downstream decides anything from it.
   const blank = Object.entries(value.sonar_projects)
     .filter(([, project]) => project.trim() === "")
     .map(([repository]) => repository)
-    .sort();
+    .sort((left, right) => left.localeCompare(right));
   if (blank.length > 0) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sonar_projects"], message: `sonar project keys may not be empty: ${blank.join(", ")}` });
   }

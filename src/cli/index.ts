@@ -8,7 +8,7 @@ import { AvailabilityReason, CollectionStatus } from "../evidence/domain/availab
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
-import { isSonarObservation, SonarMappingOutcome, type SonarResolutionAttempt, type SonarState } from "../evidence/domain/sonar.ts";
+import { isSonarObservation, SonarMappingOutcome, type SonarResolutionAttempt, type SonarState, type StoredSonarMapping } from "../evidence/domain/sonar.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
 import { runSummaryLines } from "../evidence/github/summary.ts";
@@ -1165,10 +1165,7 @@ async function resolveListedProjects(
     position += 1;
     const known = stored.byProject(project.key);
     if (known !== undefined && alreadyAnswered(project.analysisAt, known)) {
-      progress.unchanged += 1;
-      if (known.repository !== undefined) {
-        progress.claims.set(known.repository, [...(progress.claims.get(known.repository) ?? []), known.projectKey]);
-      }
+      countUnchanged(progress, known);
       console.debug(`SKIP   ${project.key} (${position}/${projects.length}): nothing analysed since it was resolved`);
       continue;
     }
@@ -1188,19 +1185,39 @@ async function resolveListedProjects(
 
     countOutcome(progress, attempt);
     reportAttempt(attempt, position, projects.length);
-    if (isSonarObservation(attempt.outcome)) {
-      const written = await recordSonarMapping(sonarOrganization, {
-        projectKey: attempt.projectKey,
-        resolvedAt: reference,
-        ...(attempt.mapping === undefined ? {} : { mapping: attempt.mapping }),
-        ...(attempt.detail === undefined ? {} : { detail: attempt.detail })
-      });
-      if (!written) {
-        console.debug(`kept the stored mapping for ${attempt.projectKey}: it was resolved from a newer analysis`);
-      }
-    }
+    await storeAttempt(sonarOrganization, attempt, reference);
   }
   return progress;
+}
+
+/** Counts a project the map already answers for, keeping the repository it claims in the run's tally. */
+function countUnchanged(progress: MappingProgress, known: StoredSonarMapping): void {
+  progress.unchanged += 1;
+  if (known.repository !== undefined) {
+    progress.claims.set(known.repository, [...(progress.claims.get(known.repository) ?? []), known.projectKey]);
+  }
+}
+
+/**
+ * Stores one answered project, saying when a newer stored answer was left in place.
+ *
+ * ONLY AN ANSWER IS STORED, NEVER A FAILED CALL. `recordSonarMapping` refuses anything whose analysis does not
+ * supersede the stored row's, so a resolution taken from an older analysis — and every unresolved reason, which
+ * has no analysis instant at all — leaves an existing mapping alone rather than overwriting it with less.
+ */
+async function storeAttempt(sonarOrganization: string, attempt: SonarResolutionAttempt, resolvedAt: Date): Promise<void> {
+  if (!isSonarObservation(attempt.outcome)) {
+    return;
+  }
+  const written = await recordSonarMapping(sonarOrganization, {
+    projectKey: attempt.projectKey,
+    resolvedAt,
+    ...(attempt.mapping === undefined ? {} : { mapping: attempt.mapping }),
+    ...(attempt.detail === undefined ? {} : { detail: attempt.detail })
+  });
+  if (!written) {
+    console.debug(`kept the stored mapping for ${attempt.projectKey}: it was resolved from a newer analysis`);
+  }
 }
 
 /** Says what became of one project, as `doctor` says what became of one repository. */
