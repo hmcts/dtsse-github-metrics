@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import { Check } from "lucide-react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { Fragment, type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
@@ -230,7 +230,6 @@ export function RepositoriesTable({
    */
   action?: ReactNode;
 }) {
-  const router = useRouter();
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const [column, setColumn] = useState<Column | null>(null);
@@ -254,33 +253,46 @@ export function RepositoriesTable({
     setColumn(next);
   }
 
+  /**
+   * Puts one control's state in the URL, WITHOUT NAVIGATING.
+   *
+   * `history.replaceState` rather than `router.replace`, because none of these controls needs data the browser has
+   * not already got: `filterRepositories` and `sorted` run over the `rows` in props, and the hygiene columns read
+   * `hygieneSignals` off those same objects. A router navigation re-ran the server component and refetched the whole
+   * estate to answer a question already answered here — and against the deployed estate, 1,880 rows behind a
+   * `force-dynamic` page, that wait is what made Expand read as a button that did nothing.
+   *
+   * The URL stays the source of truth all the same. Next patches `replaceState` into its own router — see the
+   * "Native History API" section of `next/dist/docs/01-app/01-getting-started/04-linking-and-navigating.md` — so
+   * `useSearchParams` reports what is written here, in this component and in `RepositoriesExport` beside it.
+   *
+   * `replaceState` and not `pushState`, which is the behaviour `router.replace` had: a reader who has set four
+   * toggles should not have to press Back four times to leave the page.
+   *
+   * `window.location.search` rather than `searchParameters`, so each call reads the query the last one wrote — every
+   * control owns one parameter and has to carry the span, the term and the other three through untouched.
+   */
+  function writeParameter(parameter: string, value: string) {
+    window.history.replaceState(null, "", filterTarget(pathname, window.location.search, parameter, value));
+  }
+
   function toggleVisibility(visibility: Visibility) {
     // WRITTEN EXPLICITLY IN BOTH DIRECTIONS, unlike the production toggle whose off state is the parameter's
     // absence. Absence here has to keep meaning "the reader has said nothing", so it can fall back to public-only;
     // were off expressed as absence, turning public off would produce the same URL as never having touched it.
-    const chosen = visibilities.has(visibility) ? VISIBILITY_OFF : VISIBILITY_ON;
-    router.replace(filterTarget(pathname, window.location.search, visibilityParameter(visibility), chosen), {
-      scroll: false
-    });
+    writeParameter(visibilityParameter(visibility), visibilities.has(visibility) ? VISIBILITY_OFF : VISIBILITY_ON);
   }
 
   function toggleExpanded() {
-    // The Production toggle's navigation in this control's one value: on writes it, off drops the parameter rather
-    // than emptying it. `window.location.search` keeps the span, the term and every filter — this owns one
-    // parameter and touches nothing else.
-    router.replace(filterTarget(pathname, window.location.search, EXPANDED_PARAMETER, expanded ? "" : EXPANDED_VALUE), {
-      scroll: false
-    });
+    // The Production toggle's rule in this control's one value: on writes it, off drops the parameter rather than
+    // emptying it.
+    writeParameter(EXPANDED_PARAMETER, expanded ? "" : EXPANDED_VALUE);
   }
 
   function toggleProduction() {
-    // The same navigation the chips make, in the toggle's one value: on writes it, off is the
-    // parameter's absence rather than an empty value. `window.location.search` keeps the span, the
-    // term and every chip — this control owns one parameter and touches nothing else.
-    const chosen = production ? "" : PRODUCTION_VALUE;
-    router.replace(filterTarget(pathname, window.location.search, PRODUCTION_PARAMETER, chosen), {
-      scroll: false
-    });
+    // On writes the value, off is the parameter's ABSENCE rather than an empty one — which is what `filterTarget`
+    // does with a blank term, and what keeps `?production=` from reading back as a filter on the next render.
+    writeParameter(PRODUCTION_PARAMETER, production ? "" : PRODUCTION_VALUE);
   }
 
   return (

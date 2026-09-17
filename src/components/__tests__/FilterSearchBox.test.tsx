@@ -10,11 +10,15 @@
  * cleanup are all unreachable there. This file opts into jsdom for that alone, with the docblock
  * above; the default environment stays `node` for the rest of the suite.
  *
- * The router is stubbed rather than driven: `router.replace` in Next is a server render, and what is
- * worth asserting is WHEN it is called and WITH WHAT, not what it renders. `useSearchParams` returns
- * one stable object that the tests replace only when the URL is meant to have changed, because the
- * follow-the-URL effect keys on its identity — handing back a fresh instance per render would fire
- * it on every keystroke and hide the bug it exists to avoid.
+ * WHAT IS ASSERTED IS THE URL, not a spy: the box writes the term with `history.replaceState` and
+ * navigates nowhere, so `written()` is the address a reader could copy and the debounce is visible as
+ * the moment it changes. The router is stubbed all the same, for the one thing it can still catch — a
+ * `router.replace` put back here would refetch the window on every 300ms of typing, and `replaced`
+ * would stop being empty.
+ *
+ * `useSearchParams` returns one stable object that the tests replace only when the URL is meant to have
+ * changed, because the follow-the-URL effect keys on its identity — handing back a fresh instance per
+ * render would fire it on every keystroke and hide the bug it exists to avoid.
  */
 
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
@@ -33,10 +37,15 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => parameters
 }));
 
-/** Move the URL on as a navigation would, giving the effect a new object to notice. */
+/** Move the URL on as something outside this box would, giving the effect a new object to notice. */
 function url(query: string): void {
   parameters = new URLSearchParams(query);
   window.history.replaceState(null, "", query === "" ? "/repositories" : `/repositories?${query}`);
+}
+
+/** Where the box has left the browser, which is the whole of what it writes. */
+function written(): string {
+  return `${window.location.pathname}${window.location.search}`;
 }
 
 function box(): HTMLInputElement {
@@ -77,7 +86,7 @@ describe("FilterSearchBox", () => {
     expect(box().value).toBe("api");
   });
 
-  it("updates the input on every keystroke but navigates only once the typing stops", async () => {
+  it("updates the input on every keystroke but writes the URL only once the typing stops", async () => {
     mount();
 
     type("a");
@@ -85,20 +94,31 @@ describe("FilterSearchBox", () => {
     type("api");
     expect(box().value).toBe("api");
     await settle(FILTER_DEBOUNCE_MILLISECONDS - 1);
-    expect(replaced).toEqual([]);
+    expect(written()).toBe("/repositories");
 
     await settle(1);
-    expect(replaced).toEqual(["/repositories?repository=api"]);
+    expect(written()).toBe("/repositories?repository=api");
   });
 
-  it("carries the rest of the query through the navigation, above all the span", async () => {
+  it("writes the term without navigating, the table below it filtering in the browser", async () => {
+    // THE DEFECT THIS REPLACED: a `router.replace` per 300ms of typing, each one a `force-dynamic` render that
+    // refetched the window to answer a question `filterRepositories` answers over the rows already on the page.
+    mount();
+
+    type("api");
+    await settle();
+
+    expect(replaced).toEqual([]);
+  });
+
+  it("carries the rest of the query through, above all the span", async () => {
     url("weeks=26");
     mount();
 
     type("api");
     await settle();
 
-    expect(replaced).toEqual(["/repositories?weeks=26&repository=api"]);
+    expect(written()).toBe("/repositories?weeks=26&repository=api");
   });
 
   it("clears on the button, immediately and by dropping the parameter rather than emptying it", async () => {
@@ -109,7 +129,7 @@ describe("FilterSearchBox", () => {
 
     expect(box().value).toBe("");
     // No timer advanced: emptying the box is a decision, not a keystroke on the way to one.
-    expect(replaced).toEqual(["/repositories"]);
+    expect(written()).toBe("/repositories");
   });
 
   it("offers no clear button while the box is empty", () => {
@@ -118,14 +138,15 @@ describe("FilterSearchBox", () => {
     expect(screen.queryByLabelText("Clear filter")).toBeNull();
   });
 
-  it("drops a pending navigation when the term is cleared before the debounce fires", async () => {
+  it("drops a pending write when the term is cleared before the debounce fires", async () => {
     mount();
 
     type("api");
     fireEvent.click(screen.getByLabelText("Clear filter"));
     await settle();
 
-    expect(replaced).toEqual(["/repositories"]);
+    // The dropped timer is what this asserts: had it fired after the clear, the term would be back in the URL.
+    expect(written()).toBe("/repositories");
   });
 
   it("follows the URL when something else changes it, so the box matches the table", async () => {
@@ -140,24 +161,24 @@ describe("FilterSearchBox", () => {
     expect(box().value).toBe("");
   });
 
-  it("does not overwrite what has since been typed when its own navigation lands", async () => {
+  it("does not overwrite what has since been typed when its own write lands", async () => {
     const view = mount();
 
     type("api");
     await settle();
-    expect(replaced).toEqual(["/repositories?repository=api"]);
+    expect(written()).toBe("/repositories?repository=api");
 
-    // The reader carries on typing while that server render is still in flight.
+    // The reader carries on typing while that transition is still pending.
     type("apis");
 
-    // …and it arrives, bringing the term this box itself sent.
+    // …and it lands, bringing the term this box itself sent.
     url("repository=api");
     await act(async () => view.rerender(<FilterSearchBox parameter="repository" placeholder="Filter repositories" />));
 
     expect(box().value).toBe("apis");
   });
 
-  it("follows the URL again after skipping one of its own navigations", async () => {
+  it("follows the URL again after skipping one of its own writes", async () => {
     const view = mount();
 
     type("api");
@@ -172,14 +193,17 @@ describe("FilterSearchBox", () => {
     expect(box().value).toBe("");
   });
 
-  it("does not navigate after unmounting, which would replace the route the reader moved to", async () => {
+  it("does not write after unmounting, which would replace the route the reader moved to", async () => {
+    url("weeks=12");
     const view = mount();
 
     type("api");
     view.unmount();
     await settle();
 
-    expect(replaced).toEqual([]);
+    // Still the address the reader is on. A timer that survived the unmount would have put this page's pathname
+    // and this box's term over whatever they navigated to.
+    expect(written()).toBe("/repositories?weeks=12");
   });
 
   it("sizes itself from the class it is given, and to a readable default without one", () => {

@@ -6,8 +6,8 @@
  * query — above all `weeks`, which every page is read at — has to come through untouched.
  *
  * The caller passes the live `window.location.search` rather than Next's `useSearchParams`, which
- * only updates on a router navigation and would therefore drop a parameter another control wrote
- * with `replaceState`.
+ * catches up a React transition later — so a parameter the control beside it wrote a moment ago is
+ * already in `window.location` and not yet in the hook. Reading the hook here would silently drop it.
  */
 
 export function filterTarget(pathname: string, search: string, parameter: string, term: string): string {

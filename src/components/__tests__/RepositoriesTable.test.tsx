@@ -9,11 +9,17 @@
  * Neither is reachable through `react-dom/server`, which is why `tables.test.ts` leaves this
  * component out and tests its decidable half as pure functions in `lib/__tests__/rows.test.ts`
  * instead. The join between them — that a header click reaches the right column's reader, and that a
- * chip's × navigates rather than filtering in place — is only visible from a browser.
+ * toggle rewrites the query rather than filtering in place — is only visible from a browser.
  *
- * The `weeks` in the URL is asserted on every navigation. A filter that dropped the span would
- * silently re-render the page at the default window, showing a different window's figures under the
- * filter the reader just applied.
+ * EVERY CONTROL WRITES THE URL AND NONE OF THEM NAVIGATES, and both halves are asserted: `written()` is
+ * the query the click left in `window.location`, and `replaced` must stay empty. The router is stubbed
+ * for the second of those alone — nothing in this component calls it any more, and a `router.replace`
+ * put back would refetch the whole estate for state the browser is already holding. `replaced` is what
+ * would notice.
+ *
+ * The `weeks` in the URL is asserted on every write. A control that dropped the span would silently
+ * re-render the page at the default window, showing a different window's figures under the filter the
+ * reader just applied.
  */
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -36,6 +42,16 @@ vi.mock("next/navigation", () => ({
 function url(query: string): void {
   parameters = new URLSearchParams(query);
   window.history.replaceState(null, "", query === "" ? "/repositories" : `/repositories?${query}`);
+}
+
+/**
+ * Where the controls have left the browser, which is where their state now lives.
+ *
+ * Read off `window.location` rather than off a spy, so what is asserted is the address a reader would be
+ * able to copy — the same string the old `router.replace` assertions named, arrived at without a request.
+ */
+function written(): string {
+  return `${window.location.pathname}${window.location.search}`;
 }
 
 /**
@@ -740,7 +756,7 @@ describe("RepositoriesTable production toggle", () => {
 
     fireEvent.click(toggle());
 
-    expect(replaced).toEqual(["/repositories?weeks=26&repository=e&label=red&production=true"]);
+    expect(written()).toBe("/repositories?weeks=26&repository=e&label=red&production=true");
   });
 
   it("clears the parameter on the second click, dropping it rather than emptying it", () => {
@@ -749,7 +765,18 @@ describe("RepositoriesTable production toggle", () => {
 
     fireEvent.click(toggle());
 
-    expect(replaced).toEqual(["/repositories?weeks=26&repository=e&label=red"]);
+    expect(written()).toBe("/repositories?weeks=26&repository=e&label=red");
+  });
+
+  it("filters in the browser rather than asking the server for rows it already has", () => {
+    // THE DEFECT THIS REPLACED. `/repositories` is `force-dynamic`, so every `router.replace` re-ran the page and
+    // refetched the estate — for a filter `filterRepositories` applies to the rows already in props.
+    url("weeks=26");
+    mount();
+
+    fireEvent.click(toggle());
+
+    expect(replaced).toEqual([]);
   });
 });
 
@@ -848,7 +875,7 @@ describe("RepositoriesTable visibility toggles", () => {
     mount(MIXED);
 
     fireEvent.click(visibilityToggle("internal"));
-    expect(replaced).toEqual(["/repositories?weeks=26&repository=e&internal=true"]);
+    expect(written()).toBe("/repositories?weeks=26&repository=e&internal=true");
   });
 
   it("turns the default itself off rather than being unable to", () => {
@@ -857,7 +884,22 @@ describe("RepositoriesTable visibility toggles", () => {
 
     fireEvent.click(visibilityToggle("public"));
 
-    expect(replaced).toEqual(["/repositories?weeks=12&public=false"]);
+    expect(written()).toBe("/repositories?weeks=12&public=false");
+  });
+
+  it("keeps each toggle's parameter as the next one is written, having read the live query", () => {
+    // THE CASE THAT ONLY EXISTS NOW THE CONTROLS DO NOT NAVIGATE. `useSearchParams` catches up a transition
+    // later, so a second click reading the hook would write over what the first one left. `filterTarget` is
+    // handed `window.location.search` for exactly this, and three clicks in a row is what proves it.
+    url("weeks=12");
+    mount(MIXED);
+
+    fireEvent.click(visibilityToggle("internal"));
+    fireEvent.click(visibilityToggle("private"));
+    fireEvent.click(toggle());
+
+    expect(written()).toBe("/repositories?weeks=12&internal=true&private=true&production=true");
+    expect(replaced).toEqual([]);
   });
 
   it("says nothing matches when every visibility is off, rather than showing the estate", () => {
@@ -1037,7 +1079,7 @@ describe("RepositoriesTable hygiene expansion", () => {
 
     fireEvent.click(expander());
 
-    expect(replaced).toEqual(["/repositories?weeks=26&repository=e&production=true&hygiene=true"]);
+    expect(written()).toBe("/repositories?weeks=26&repository=e&production=true&hygiene=true");
   });
 
   it("should clear the parameter on the second click, dropping it rather than emptying it", () => {
@@ -1046,7 +1088,18 @@ describe("RepositoriesTable hygiene expansion", () => {
 
     fireEvent.click(expander());
 
-    expect(replaced).toEqual(["/repositories?weeks=26&repository=e"]);
+    expect(written()).toBe("/repositories?weeks=26&repository=e");
+  });
+
+  it("should ask the server for nothing: the four checks are already on the rows it was given", () => {
+    // THE REPORTED DEFECT. Every answer the checks print comes from `hygieneSignals(row)`, so expanding needed no
+    // request — and made one, against a `force-dynamic` page holding 1,880 repositories. The button looked dead.
+    url("weeks=26");
+    mount(SIGNALLED);
+
+    fireEvent.click(expander());
+
+    expect(replaced).toEqual([]);
   });
 
   it("should tick the toggle while it is on, so the state is not colour alone", () => {
