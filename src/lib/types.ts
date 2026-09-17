@@ -364,8 +364,17 @@ export interface ActorReadiness {
   repositories: ActorRepositoryReadiness[];
 }
 
-/** The single percentile a distribution is compared at, named as the field it reads. */
-export type Percentile = "median" | "percentile_75";
+/**
+ * The single percentile a distribution is compared at, named as the field it reads.
+ *
+ * ALL THREE THE OBSERVATION CARRIES, not only the two a metric declares today. `pull-request-size` is read at the
+ * 75th and everything else at the median, so `percentile_90` is currently unreached — but the percentile is a
+ * property of the METRIC and a metric declaring the 90th is a one-line change, which this union not naming made a
+ * compile error at the report layer's translation rather than something the UI could render. It was found by that
+ * error when the trend series was first wired, and the alternative was a translation that dropped the percentile
+ * and left a chart labelled with no percentile at all.
+ */
+export type Percentile = "median" | "percentile_75" | "percentile_90";
 
 /** What arithmetic a delta reports: a rate moves in points, a count and a percentile in per cent. */
 export type DeltaBasis = "percentage_points" | "percentage_change";

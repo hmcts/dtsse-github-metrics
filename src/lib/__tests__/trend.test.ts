@@ -103,12 +103,10 @@ describe("namedWindows", () => {
 
 describe("hasPeriods", () => {
   it("is false for a repository whose first whole period has not elapsed", () => {
+    // The section still draws for this one, carrying the reason: the periods are what it has no charts for, not
+    // what it has nothing to say about. A refused fetch is the page's own branch and never reaches this.
     expect(hasPeriods(series({ periods: [], baseline: undefined }))).toBe(false);
     expect(hasPeriods(series())).toBe(true);
-  });
-
-  it("is false for a series the endpoint refused, so the page drops the section and nothing else", () => {
-    expect(hasPeriods(null)).toBe(false);
   });
 });
 

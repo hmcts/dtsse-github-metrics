@@ -8,6 +8,7 @@ import {
   overviewSummary,
   repositoryEvidence,
   repositoryRows,
+  repositoryTrend,
   teamMemberRows,
   teamRows,
   windowOptions
@@ -139,23 +140,22 @@ async function repositoryContributors(configured: Configuration, repository: str
 }
 
 /**
- * One repository's series since enablement, which nothing assembles yet.
+ * One repository's series since enablement.
  *
- * `alert_observations` IS SENT AS AN EMPTY LIST, and it was omitted entirely until VIBE-568. The contract declares it
- * REQUIRED — a series either carries the alert history behind it or carries none — and the double cast below is what
- * let a refusal go out without the key at all. `lib/trend.ts` reads the field off the type without a guard, so the
- * only reason nothing threw is that no reader has reached it yet: `report/trend.ts` is unwired, both branches here
- * refuse, and `TrendSection` draws its own empty state from `detail`. An empty list is the honest answer on both —
- * the same answer `periods: []` gives, for the same reason.
+ * `periods` IS A CUT AND NOT A SPAN, which is the one place this getter's signature differs in spirit from the four
+ * above it: they take `weeks` and describe one window, and this takes how many WHOLE PERIODS of the series to
+ * return. There is no server-side default. An omitted count means every whole period since enablement, and a count
+ * above `WindowOptions.trend_periods` is REFUSED rather than truncated — a cut keeps the periods nearest
+ * enablement, so a request quietly reduced would be answered with the beginning of the history while the caller
+ * believed it had asked for all of it. `report/spans.ts` states the rule; the refusal is a `RangeError`, and the
+ * page's own `.catch` treats it the way it treats any other failure of this one section.
+ *
+ * A REPOSITORY WITH NO SERIES STILL GETS ONE, carrying the reason: no `enablement:` date, or a repository enabled
+ * too recently for a whole period to have elapsed. The two are told apart by whether the series carries an
+ * `enablement_at` as well as by their prose, so a reader does not have to parse a sentence to know which it is.
  */
-export async function getTrend(repository: string, periods: number): Promise<RepositoryTrend> {
-  const configured = await configuration();
-  if (!(repository in configured.enablement)) {
-    // No enablement date is not an error: a repository gets no series rather than a guessed anchor, and the page
-    // renders the reason.
-    return { repository, periods: [], alert_observations: [], detail: "no enablement date is configured for this repository" };
-  }
-  return { repository, periods: [], alert_observations: [], detail: `a series of at most ${periods} periods has not been built yet` };
+export async function getTrend(repository: string, periods?: number): Promise<RepositoryTrend> {
+  return await repositoryTrend(await configuration(), repository, periods);
 }
 
 export async function getActors(weeks: number): Promise<ActorRow[]> {

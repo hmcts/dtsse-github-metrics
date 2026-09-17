@@ -2,7 +2,7 @@ import { TrendChart } from "@/components/charts/TrendChart";
 import { EmptyState } from "@/components/EmptyState";
 import { Section } from "@/components/Section";
 import { count, day } from "@/lib/format";
-import { cutDetail, type MetricChart, metricCharts, periodSpan, ROUTE_HEX, throughputRows, windowReasons } from "@/lib/trend";
+import { cutDetail, hasPeriods, type MetricChart, metricCharts, periodSpan, ROUTE_HEX, throughputRows, windowReasons } from "@/lib/trend";
 import type { RepositoryTrend } from "@/lib/types";
 
 /**
@@ -19,8 +19,21 @@ import type { RepositoryTrend } from "@/lib/types";
  *
  * `cut` is the count the series was asked for, so the heading can say when it holds that many and is
  * therefore the first periods since enablement rather than every one of them.
+ *
+ * A SERIES WITH NO PERIODS SAYS WHY rather than leaving the section out. Two repositories reach that
+ * state for opposite reasons — one has been enabled for less than a period, the other has no
+ * enablement date configured at all — and the second is a gap in the policy document somebody can
+ * close. Drawing nothing made them indistinguishable from each other and from a repository whose
+ * series was simply never built, which is what this section did on every page until VIBE-592.
  */
 export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: number }) {
+  if (!hasPeriods(series)) {
+    return (
+      <Section heading="Trend">
+        <EmptyState message="No period of this repository's history has been compared with its baseline." detail={series.detail} />
+      </Section>
+    );
+  }
   const span = periodSpan(series);
   const reasons = windowReasons(series);
   const charts = metricCharts(series);

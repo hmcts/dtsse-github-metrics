@@ -111,6 +111,42 @@ describe("TrendSection", () => {
    * shorter sentence rather than as "of null days" or "since undefined" — a page that printed either
    * would be stating a fact the series does not carry.
    */
+  /**
+   * A series with no periods still draws the section, carrying its reason.
+   *
+   * Two repositories reach that state for opposite reasons and the second is a gap somebody can close:
+   * one has been enabled for less than a period, the other has no `enablement:` date at all. Drawing
+   * nothing made them indistinguishable from each other and from a series that was never built, which
+   * is what this section did on every repository page until VIBE-592.
+   */
+  it("says why a repository has no period rather than leaving the section out", () => {
+    const recent = markup({
+      repository: "cath-service",
+      enablement_at: "2026-09-01T00:00:00Z",
+      periods: [],
+      alert_observations: [],
+      detail: "no whole period of 28 days has elapsed since 2026-09-01T00:00:00.000Z"
+    });
+
+    expect(recent).toContain("Trend");
+    expect(recent).toContain("No period of this repository&#x27;s history has been compared with its baseline.");
+    expect(recent).toContain("no whole period of 28 days has elapsed");
+    // No chart is drawn for a series with nothing to plot, and no reason is invented for the windows it has none of.
+    expect(recent).not.toContain("Merges by route");
+  });
+
+  it("says the enablement date is unconfigured, which is a different state from being newly enabled", () => {
+    const unconfigured = markup({
+      repository: "cath-service",
+      periods: [],
+      alert_observations: [],
+      detail: "no enablement date is configured for this repository"
+    });
+
+    expect(unconfigured).toContain("no enablement date is configured for this repository");
+    expect(unconfigured).not.toContain("whole period");
+  });
+
   it("leaves out the period length and the enablement date where the series carries neither", () => {
     const partial = markup({
       ...SERIES,

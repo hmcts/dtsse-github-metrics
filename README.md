@@ -502,8 +502,13 @@ dashboard computes its own presentation figures. `evidence` therefore has one ou
 contract — and takes no `--format`: a flag with a single legal value that changes nothing is a promise the CLI
 cannot keep.
 
-Three layers are ported, complete and **reached by nothing**, and each says so at the head of its own module
+Two layers are ported, complete and **reached by nothing**, and each says so at the head of its own module
 rather than here: the SonarCloud resolution ladder and measures (`src/evidence/sonar/`, headed by
-`resolve.ts`), the trend report (`src/evidence/report/trend.ts`), and the CODEOWNERS and maintenance evidence
-(`src/evidence/domain/standards.ts`). Each comment names what would reach it. Whether to wire any of them up
-or drop it is an open decision; nothing in the configuration file or the CLI advertises them in the meantime.
+`resolve.ts`) and the CODEOWNERS and maintenance evidence (`src/evidence/domain/standards.ts`). Each comment
+names what would reach it. Whether to wire either up or drop it is an open decision; nothing in the
+configuration file or the CLI advertises them in the meantime.
+
+The trend report (`src/evidence/report/trend.ts`) was the third until VIBE-592 wired it: `getTrend` now builds
+one repository's series from `enablement:` and the cached facts, and the repository page draws it. There is
+still no `trend` CLI command — the series is a page, not a report anybody asked to print — and
+`alert_observations` still holds no rows, so a series carries an empty alert history and says so.
