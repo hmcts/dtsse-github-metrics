@@ -3,8 +3,9 @@
  *
  * Hand-rolled rather than taken from a dependency, because the whole of it is the function below and this
  * project's dependencies are pinned exact for a reason. What it must not do is the failure mode that makes a
- * hand-rolled writer a bad idea: a repository whose `detail` reads "No merge activity in this window, at this
- * span." shifting every column after it one to the right, silently, in a file somebody then reports from.
+ * hand-rolled writer a bad idea: a repository whose `detail` reads "nothing has been collected for this
+ * repository" — or any of the longer sentences the report layer joins with a comma — shifting every column after
+ * it one to the right, silently, in a file somebody then reports from.
  *
  * THE THREE RULES, from RFC 4180:
  *
@@ -64,9 +65,14 @@ export const CSV_BYTE_ORDER_MARK = "﻿";
 /**
  * What one export is called: what it is of, the span it reports, and the day it was taken.
  *
- * BOTH THE SPAN AND THE DAY, because either alone leaves two exports indistinguishable. A reader comparing this
- * week's estate against last week's has two files of the same span, and a reader checking whether four weeks
- * reads differently from twelve has two of the same day — so the name carries the two things that vary.
+ * BOTH THE SPAN AND THE DAY, because on the exports that can vary in either, one alone leaves two files
+ * indistinguishable: a reader comparing this week's estate against last week's has two of the same span, and a
+ * reader comparing four weeks against twelve has two of the same day.
+ *
+ * THE REPOSITORIES EXPORT NOW VARIES IN THE DAY ALONE, since `/repositories` states no window and pins its span —
+ * so that segment is a constant there rather than a discriminator, and it is kept for what it still does: the file
+ * records which window the two throughput figures on that page were counted over, so a spreadsheet opened months
+ * later says so on its own. A caller whose page does vary its span still gets both.
  *
  * The span is the window's own dates rather than the week count, so the file says what it covers rather than what
  * was asked for; `span` in `lib/format.ts` renders them, and the spaces in "to" are collapsed here because a file

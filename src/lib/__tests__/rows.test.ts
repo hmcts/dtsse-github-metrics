@@ -38,11 +38,14 @@ import {
   parseProduction,
   parseVisibilities,
   productionCount,
+  uncollectedCount,
+  uncollectedDetail,
   VISIBILITIES,
   visibilityParameter
 } from "@/lib/rows";
 import { sorted } from "@/lib/sort";
 import type { AssuranceHygieneSignals, RepositoryRow } from "@/lib/types";
+import { UNCOLLECTED_DETAIL } from "@/lib/types";
 
 function row(fields: Partial<RepositoryRow> & { repository: string }): RepositoryRow {
   return { team: "platform", ...fields };
@@ -154,6 +157,74 @@ describe("ownedByIndividual", () => {
     // row without it. Every such row was rendered as a team before, and 1,499 of the estate's 1,846 owned
     // repositories are team-owned — reading absence as a person would mark most of the estate as somebody's own.
     expect(ownedByIndividual(row({ repository: "hmcts/api", team: "platform" }))).toBe(false);
+  });
+});
+
+/**
+ * Which of the two kinds of `detail` the repositories list is allowed to print.
+ *
+ * A REASON IS ONLY WORTH PRINTING BESIDE THE FIGURES IT EXPLAINS. That page draws control state and no merge
+ * column, so the merge-source and merge-gate sentences explained an absence a reader could not see — and on the 870
+ * repositories whose private-and-internal walk the App installation does not cover (VIBE-590) that read as a fault
+ * in the row. The repository and team pages, which do draw the merge figures, still render `detail` whole.
+ */
+describe("uncollectedDetail", () => {
+  it("keeps the reason that explains every column the list draws", () => {
+    expect(uncollectedDetail(row({ repository: "hmcts/ghost", detail: UNCOLLECTED_DETAIL }))).toBe(UNCOLLECTED_DETAIL);
+  });
+
+  it("drops a reason about merge sources, which the list has no column for", () => {
+    const merges = "no merge history was read for this repository, so its merges are unmeasured rather than none";
+    expect(uncollectedDetail(row({ repository: "hmcts/walled", detail: merges }))).toBeUndefined();
+  });
+
+  it("drops a reason about the merge gate, which the list has no column for either", () => {
+    expect(uncollectedDetail(row({ repository: "hmcts/gated", detail: "the merge gate has not been collected" }))).toBeUndefined();
+  });
+
+  it("drops a joined pair of merge reasons rather than printing the half that matches nothing", () => {
+    // `unreportedDetail` joins its two sentences with "; ", so a stale repository carries both. Neither is about a
+    // column here, and an exact comparison is what keeps a joined string from matching on a prefix.
+    const joined = "no merge history was read for this repository, so its merges are unmeasured rather than none; the merge gate has not been collected";
+    expect(uncollectedDetail(row({ repository: "hmcts/stale", detail: joined }))).toBeUndefined();
+  });
+
+  it("has nothing to print for a row that gave no reason at all", () => {
+    expect(uncollectedDetail(row({ repository: "hmcts/api" }))).toBeUndefined();
+  });
+});
+
+/**
+ * The count that goes with it, which is NOT `OverviewSummary.unavailable`.
+ *
+ * `unavailable` counts every row carrying any `detail`, so it includes the merge-history gap the list no longer
+ * shows — which would leave the header announcing unreported repositories above a table where not one row gave a
+ * reason. Counted off the rows through the same predicate that decides whether to print one.
+ */
+describe("uncollectedCount", () => {
+  it("counts only the rows the list has a reason for", () => {
+    const rows = [
+      row({ repository: "hmcts/api" }),
+      row({ repository: "hmcts/ghost", detail: UNCOLLECTED_DETAIL }),
+      row({ repository: "hmcts/walled", detail: "no merge history was read for this repository, so its merges are unmeasured rather than none" })
+    ];
+
+    expect(uncollectedCount(rows)).toBe(1);
+  });
+
+  it("counts none where every repository was collected, whatever went unread in it", () => {
+    // The state the live estate is in: 1,890 active repositories and none without collected state, with the merge
+    // gap still present on many of them.
+    const rows = [
+      row({ repository: "hmcts/api" }),
+      row({ repository: "hmcts/walled", detail: "the merged pull requests were not read for this repository, so they are unmeasured rather than none" })
+    ];
+
+    expect(uncollectedCount(rows)).toBe(0);
+  });
+
+  it("counts an empty estate as none rather than failing on it", () => {
+    expect(uncollectedCount([])).toBe(0);
   });
 });
 

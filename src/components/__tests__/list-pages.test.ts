@@ -2,12 +2,17 @@
  * The three list routes' own wiring: which span they fetch at, and which span their links carry.
  *
  * The estate was one page until 2026-09-02 and is `/repositories`, `/contributors` and `/teams`
- * now, each resolving the span for itself and each handing it to its own table. That resolution is
- * the same three lines three times, and a page that fetched at `windows.default` while linking at
+ * now. `/contributors` and `/teams` each resolve the span for themselves and hand it to their own table. That
+ * resolution is the same three lines twice, and a page that fetched at `windows.default` while linking at
  * the resolved span — or the reverse — type-checks perfectly and reads as a window that changes
  * when a reader follows a link. Nothing below the page can see it: `resolveWeeks` is tested on its
  * own inputs and the tables are tested on the `weeks` they are handed, so the join between them is
  * only visible from here.
+ *
+ * `/repositories` RESOLVES NO SPAN AT ALL from 2026-09-17: it reports control state, pins `windows.default` to get
+ * a bundle, and links bare. Its join is the opposite one and is asserted just as closely — that no link it draws
+ * names a span — because a `weeks` parameter reintroduced there would be written into the reader's cookie by
+ * `proxy` and would silently reset a window they chose elsewhere.
  *
  * The pages are async server components reading cookies and the evidence code, so `next/headers` and
  * `@/lib/api` are stubbed and the awaited tree is handed to `renderToStaticMarkup`, exactly as
@@ -24,6 +29,7 @@ import ContributorsPage from "@/app/contributors/page";
 import RepositoriesPage from "@/app/repositories/page";
 import TeamsPage from "@/app/teams/page";
 import type { ActorRow, Contributor, OverviewSummary, RepositoryRow, TeamRow, WindowOptions } from "@/lib/types";
+import { UNCOLLECTED_DETAIL } from "@/lib/types";
 
 const WINDOWS: WindowOptions = {
   options: [4, 12, 26],
@@ -39,8 +45,11 @@ const OVERVIEW: OverviewSummary = {
   ends_at: "2026-08-31T00:00:00Z",
   built_at: "2026-08-31T01:00:00Z",
   collected_through: "2026-08-31T00:00:00Z",
-  repositories: 3,
-  unavailable: 1,
+  repositories: 4,
+  // BOTH ROWS THAT CARRY A `detail`, which is what the report layer counts and what the windowed pages state. The
+  // repositories page counts only the uncollected one of the two — see `uncollectedCount` — so this figure and the
+  // one that page prints deliberately disagree, and the tests below assert on the difference.
+  unavailable: 2,
   teams: 1,
   actors: 1,
   merged_pull_requests: 9,
@@ -51,10 +60,10 @@ const OVERVIEW: OverviewSummary = {
 };
 
 /**
- * Three repositories: one measured well, one measured badly, and one nothing could be read on.
+ * Four repositories: one measured well, one measured badly, and two carrying a reason of a different kind each.
  *
- * The third is what the donuts are counted against — no label and every field absent, so each of
- * the six bands it lands in is the ungraded one and every donut still totals three.
+ * The last two are the pair the repositories page has to tell apart — see the comment on them below — and they are
+ * also the rows with no label and every field absent, which is what the estate's label counts are taken over.
  */
 const CLEAR_ALERTS = {
   dependabot: { open: 0, by_severity: {} },
@@ -87,7 +96,15 @@ const REPOSITORIES: RepositoryRow[] = [
     sonar_security_rating: { value: 2 },
     sonar_security_issues: 3
   },
-  { repository: "batch", team: "platform", detail: "no window could be reported for this repository" }
+  // THE TWO KINDS OF `detail`, one row each, because the repositories page treats them differently. `batch` carries
+  // the merge-source sentence `unreportedDetail` produces, which explains figures that page draws no column for;
+  // `ghost` carries `UNCOLLECTED_DETAIL`, which explains every column it does draw.
+  {
+    repository: "batch",
+    team: "platform",
+    detail: "no merge history was read for this repository, so its merges are unmeasured rather than none"
+  },
+  { repository: "ghost", team: "platform", detail: UNCOLLECTED_DETAIL }
 ];
 
 const ACTORS: ActorRow[] = [{ login: "ada", repositories: 2, labels: ["green"] }];
@@ -169,16 +186,146 @@ afterEach(() => {
 });
 
 describe("the three list routes", () => {
-  it("fetches the repositories list at the span asked for, and links at the same one", async () => {
+  /**
+   * The repositories page pins the service's default span and asks the reader for none.
+   *
+   * THREE READS AND NOT TWO: the overview, the rows, and the owning teams' contributors that the export unpacks.
+   * All three at one span — an export scoped to a different window from the table above it would hand somebody a
+   * file that disagreed with the page they took it from — and that span is `windows.default` rather than anything
+   * off the URL, because the page reports no window and the default's bundle is the one already built.
+   */
+  it("reads the repositories list at the pinned default span, whatever the URL says", async () => {
     stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({ weeks: "26" }) }));
+    // A span in the URL is not even accepted by the page's signature now, so this is the stronger statement: the
+    // reader's client-side URL carries one and nothing on the page picks it up.
+    search = new URLSearchParams("weeks=26");
+    const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    // THREE READS AND NOT TWO from this change: the overview, the rows, and the owning teams' contributors that
-    // the export unpacks. All three at the span the reader asked for — an export scoped to a different window from
-    // the table above it would hand somebody a file that disagreed with the page they took it from.
-    expect(spans()).toEqual(["26", "26", "26"]);
-    expect(markup).toContain('href="/repositories/api?weeks=26"');
-    expect(markup).toContain('href="/teams/platform?weeks=26"');
+    expect(spans()).toEqual(["4", "4", "4"]);
+    expect(markup).toContain("api");
+  });
+
+  /**
+   * NO DRILL-THROUGH LINK CARRIES `weeks`, which is the regression this page must never reintroduce.
+   *
+   * `proxy` writes any span a URL names into the `weeks` cookie. So a link out of this page that named its pinned
+   * default would reset a reader who had chosen 26 weeks on the teams pages back to four — silently, on a click
+   * about a repository rather than about a window. Bare paths leave the destination to resolve the remembered
+   * preference. Asserted on the absence of the parameter and not just on the presence of the bare href, because
+   * `toContain` on `/repositories/api` matches `/repositories/api?weeks=4` too.
+   */
+  it("links to a repository and to a team without naming a span", async () => {
+    stubService();
+    search = new URLSearchParams("weeks=26");
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).toContain('href="/repositories/api"');
+    expect(markup).toContain('href="/teams/platform"');
+    expect(markup).not.toContain("weeks=");
+  });
+
+  /**
+   * The week selector is not on this page, and its absence is asserted rather than left to the eye.
+   *
+   * The control legitimately navigates — `weeks` is the only parameter read server-side — so one reintroduced here
+   * would work perfectly while changing figures the page states no window for. `NavWeekSelector` is untouched and
+   * still rendered by the two windowed lists, which the assertions above and below cover.
+   */
+  it("renders no window selector, having no window to select", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).not.toContain('aria-label="Reporting window"');
+    expect(markup).not.toContain("week window");
+  });
+
+  /**
+   * The header states provenance and no span, and names the import gap in words that do not imply one.
+   *
+   * "Not reported at this span" was never a statement about a span — `spanWindow` anchors every span at the same
+   * `collectedAnchor`, so the coverage comparison behind the figure returns the same answer at every one of them.
+   * With no span on the page those words would name a window nothing else here mentions.
+   */
+  it("states the collection and the build, with no span and no span-flavoured wording", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).toContain("Collected through");
+    expect(markup).toContain("Report built");
+    expect(markup).toContain("the last import did not reach");
+    expect(markup).not.toContain("not reported at this span");
+    // The window's own dates, which the header prints on the two windowed lists and must not print here.
+    expect(markup).not.toContain("2026-06-08 to 2026-08-31");
+  });
+
+  /**
+   * The two windowed cards name their window; the two cohort cards do not.
+   *
+   * `overview.actors`, `overview.merged_pull_requests` and `overview.direct_commits` are folds over the window's
+   * merge cohort, so they are the only figures here a different span would move. A page with no selector that
+   * showed them unlabelled would be reporting one window's throughput as though it were part of the snapshot.
+   * `Repositories` and `Teams` are counted off the cohort and the ownership graph, so a window label on either
+   * would be a claim about them that is not true.
+   */
+  it("labels the throughput cards with the window they cover, and the cohort cards not at all", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    // TWELVE AND NOT FOUR, which is the fixture's own mismatch put to work: the report says it covers 12 weeks
+    // while the span this page pins is `WINDOWS.default`, 4. So asserting on 12 proves the label is read off
+    // `overview.weeks` — what the bundle actually covers — rather than written from the number the page asked for.
+    expect(markup).toContain("Contributors (12 weeks)");
+    expect(markup).toContain("Merged pull requests (12 weeks)");
+    expect(markup).toContain("Repositories (excluding archived)");
+    expect(markup).not.toContain("Teams (12 weeks)");
+  });
+
+  /** And it tracks the report rather than being pinned to one number of its own. */
+  it("moves the window label when the report's own window moves", async () => {
+    stubService();
+    api.getOverview.mockResolvedValue({ ...OVERVIEW, weeks: 26 });
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).toContain("Merged pull requests (26 weeks)");
+    expect(markup).not.toContain("(12 weeks)");
+  });
+
+  /**
+   * Only the reason that explains a column this table draws is printed, and only it is counted.
+   *
+   * The fixture has one row of each kind. `batch`'s merge-source sentence explains merged-pull-request and
+   * direct-commit figures, neither of which is a column here, so printing it put a reason for an invisible
+   * absence under the name of every repository whose private-and-internal walk the App installation does not
+   * cover (VIBE-590). `ghost` has nothing collected at all, which is exactly what every column here shows.
+   *
+   * The count follows the same rule, which is why the header says one and `overview.unavailable` says two.
+   */
+  it("prints and counts only the uncollected reason, not the merge-history one", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).toContain(UNCOLLECTED_DETAIL);
+    expect(markup).not.toContain("no merge history was read");
+    // One, off the rows — not the overview's two, which counts `batch` as well.
+    expect(markup).toContain("1 repository the last import did not reach");
+    expect(markup).not.toContain("2 repositories the last import did not reach");
+  });
+
+  /**
+   * An estate whose every repository was collected says so, and does not report the merge gap as unreported.
+   *
+   * The case the live estate is actually in: 1,890 active repositories, none without collected state. Arranged by
+   * dropping the uncollected row rather than by emptying the list, so the merge-reason row is still present and
+   * still has to be ignored — the empty case must not be reached by hardcoding it.
+   */
+  it("reports every repository where only the merge history was unread", async () => {
+    stubService();
+    api.getRepositories.mockResolvedValue(REPOSITORIES.filter((row) => row.detail !== UNCOLLECTED_DETAIL));
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).toContain("all reported");
+    expect(markup).not.toContain("did not reach");
+    expect(markup).not.toContain("no merge history was read");
   });
 
   it("fetches the contributors list at the span asked for, and links at the same one", async () => {
@@ -215,18 +362,22 @@ describe("the three list routes", () => {
   });
 
   /**
-   * A page asked for no span falls back to the service's default, and links there too.
+   * A WINDOWED page asked for no span falls back to the service's default, and links there too.
    *
-   * This is the case a nav link arrives in: the links carry no parameter, so the span comes from the
-   * cookie and then from `/windows`. A page hard-coding a span, or one linking at the span it was
-   * last rendered at, reads identically until the default moves.
+   * This is the case a nav link arrives in: the links carry no parameter, so the span comes from the cookie and
+   * then from `/windows`. A page hard-coding a span, or one linking at the span it was last rendered at, reads
+   * identically until the default moves.
+   *
+   * Asserted on `/contributors` since 2026-09-17, `/repositories` having stopped resolving a span at all — its own
+   * pinned-span and bare-link tests are above. The invariant still needs holding for the two pages that do resolve
+   * one, and it is the join between fetching and linking that nothing below a page can see.
    */
   it("falls back to the service default where no span was asked for", async () => {
     stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    const markup = renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }));
 
-    expect(spans()).toEqual(["4", "4", "4"]);
-    expect(markup).toContain('href="/repositories/api?weeks=4"');
+    expect(spans()).toEqual(["4", "4"]);
+    expect(markup).toContain('href="/contributors/ada?weeks=4"');
   });
 
   /** A span off the list is not a span: `/windows` says what is on offer and the page keeps to it. */
@@ -265,7 +416,7 @@ describe("the three list routes", () => {
    */
   it("names what is missing per list, with the remedy that list has", async () => {
     stubEmptyService();
-    const repositories = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    const repositories = renderToStaticMarkup(await RepositoriesPage());
     const contributors = renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }));
 
     expect(repositories).toContain("No repository is configured for this organisation.");
@@ -277,24 +428,20 @@ describe("the three list routes", () => {
   });
 
   /**
-   * The repositories the span could not be reported for, stated on the card it qualifies.
+   * How many of the estate the last collection reached, stated on the card it qualifies.
    *
-   * `12 repositories` with two of them unreported is a different estate from twelve reported ones,
-   * and the detail under the count is the only place the page says which of the two it is.
+   * `4 repositories` with one of them uncollected is a different estate from four collected ones, and the detail
+   * under the count is the only place the page says which of the two it is. Counted off the rows rather than off
+   * `overview.unavailable` — the fixture's `unavailable` is 2 and the honest answer here is 1 — so this asserts
+   * `4 - 1` and not `4 - 2`. The "all reported" arm is the test above it, which drops the uncollected row.
    */
-  it("says how many repositories the span reported, where it could not report them all", async () => {
+  it("says how many repositories the collection reached, where it did not reach them all", async () => {
     stubService();
-    // The fixture estate is three repositories with one of them unreportable, which is the row the
-    // donuts are counted against.
-    const partial = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
-    expect(partial).toContain("2 reported");
+    const partial = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(partial).toContain("3 reported");
+    expect(partial).not.toContain("2 reported");
     expect(partial).not.toContain("all reported");
-
-    stubService();
-    api.getOverview.mockResolvedValue({ ...OVERVIEW, repositories: 12, unavailable: 0 });
-    const reported = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
-
-    expect(reported).toContain("all reported");
   });
 
   /**
@@ -308,7 +455,7 @@ describe("the three list routes", () => {
   it("says the estate is unarchived only, beside the list that excludes them", async () => {
     stubService();
 
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    const markup = renderToStaticMarkup(await RepositoriesPage());
 
     expect(markup).toContain("unarchived only");
   });
@@ -326,7 +473,7 @@ describe("the three list routes", () => {
    */
   it("draws no donut and no filter chip, the dimensions they carried having moved to /teams", async () => {
     stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    const markup = renderToStaticMarkup(await RepositoriesPage());
 
     for (const title of ["Readiness", "Peer review enforced", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"]) {
       expect(markup).not.toContain(`>${title}</h3>`);
@@ -341,18 +488,20 @@ describe("the three list routes", () => {
 
   it("ignores a stale donut parameter rather than filtering the estate on it", async () => {
     // Links shared before this change carry `?coverage=high`. The page must show the whole estate: the dimension
-    // no longer exists, so the honest reading is that the parameter means nothing.
-    search = new URLSearchParams("coverage=high&label=green");
+    // no longer exists, so the honest reading is that the parameter means nothing. `weeks=26` rides along as the
+    // other parameter an old bookmark carries, and is ignored on the same principle rather than redirected away.
+    search = new URLSearchParams("coverage=high&label=green&weeks=26");
     stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    expect(markup).toContain('href="/repositories/api?weeks=4"');
-    expect(markup).toContain('href="/repositories/web?weeks=4"');
+    expect(markup).toContain('href="/repositories/api"');
+    expect(markup).toContain('href="/repositories/web"');
+    expect(spans()).toEqual(["4", "4", "4"]);
   });
 
   it("keeps the term box and the four toggles, which are the controls that remain", async () => {
     stubService();
-    const markup = renderToStaticMarkup(await RepositoriesPage({ searchParams: Promise.resolve({}) }));
+    const markup = renderToStaticMarkup(await RepositoriesPage());
 
     expect(markup).toContain('aria-label="Repository filters"');
     expect(markup).toContain("Filter by repository or team…");

@@ -60,9 +60,17 @@ export function resolveWeeks(parameter: SearchValue, cookie: string | null | und
   return parseWeeks(parameter, options) ?? parseWeeks(cookie, options) ?? fallback;
 }
 
-/** Carry the current span onto a drill-through link, so no navigation silently changes the window. */
-export function withWeeks(path: string, weeks: number): string {
-  return carry(path, String(weeks));
+/**
+ * Carry the current span onto a drill-through link, so no navigation silently changes the window.
+ *
+ * `weeks` IS OPTIONAL BECAUSE A PAGE WITHOUT A SPAN HAS NONE TO CARRY, and `/repositories` is such a page from
+ * 2026-09-17. Naming the span it pins internally would be worse than saying nothing: `proxy` writes any span a URL
+ * names into the `weeks` cookie, so every link out of that list would reset a reader who had chosen 26 weeks on the
+ * teams pages down to the pinned default — silently, on a click that was about a repository and not about a window.
+ * A bare path leaves the destination to resolve the remembered preference, exactly as a navigation-bar link does.
+ */
+export function withWeeks(path: string, weeks?: number): string {
+  return weeks === undefined ? path : carry(path, String(weeks));
 }
 
 /** One path with one raw span on it, encoded — the one place the query string is spelled out. */

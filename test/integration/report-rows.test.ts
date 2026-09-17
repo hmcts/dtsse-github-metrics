@@ -20,6 +20,8 @@ import { startReportWarmer, warmEverySpan } from "../../src/evidence/report/warm
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 import { midnight } from "../../src/evidence/window/instant.ts";
+import { uncollectedCount } from "../../src/lib/rows.ts";
+import { UNCOLLECTED_DETAIL } from "../../src/lib/types.ts";
 
 /**
  * That making the report fast did not change what the report says.
@@ -651,6 +653,73 @@ describe("the merge figures a row states", () => {
     const summary = (await overviewSummary(CONFIGURATION, 26, REFERENCE)) as { repositories: number; unavailable: number };
 
     expect(summary).toMatchObject({ repositories: 2, unavailable: 1 });
+  });
+
+  /**
+   * The two kinds of `detail` are MUTUALLY EXCLUSIVE, which is what `uncollectedDetail` rests on.
+   *
+   * That predicate selects the repositories list's one printable reason by comparing the field against
+   * `UNCOLLECTED_DETAIL` exactly. Reading prose is only sound because `repositoryRow` sets that string on the
+   * branch where it never calls `unreportedDetail` — so no row can carry the constant joined to a merge sentence,
+   * and none can carry a merge sentence that happens to start with it. Asserted against a real estate through the
+   * real store rather than on the builder alone, because the branch is chosen by whether a `repository_state` row
+   * exists, which is a fact about the database.
+   */
+  it("should set the uncollected reason only where no state was collected, never joined to a merge one", async () => {
+    // Three of the four states an estate is actually in: walked, collected-but-refused, and never collected. The
+    // fourth — collected with no gate — is the stale case above, whose detail joins two merge sentences.
+    await collected("walked");
+    await collected("refused");
+    await walked("walked");
+    await graphRepository("ghost", new Date(Date.UTC(2026, 7, 20)));
+
+    const rows = await rowsByRepository();
+
+    expect(rows.get("ghost")?.detail).toBe(UNCOLLECTED_DETAIL);
+    // The refused row's reason is about merges, and does not contain the constant anywhere in it.
+    expect(rows.get("refused")?.detail).not.toContain(UNCOLLECTED_DETAIL);
+    expect(rows.get("walked")?.detail).toBeUndefined();
+    // Exactly one row of the three carries it, so the comparison is total rather than a happy case.
+    expect([...rows.values()].filter((row) => row.detail === UNCOLLECTED_DETAIL)).toHaveLength(1);
+  });
+
+  /**
+   * What the repositories page counts, against what the report counts, on one real estate.
+   *
+   * `overview.unavailable` counts every row carrying any `detail` and is unchanged — the windowed pages still read
+   * it. The repositories list counts only the rows it will print a reason for, so the two figures differ by the
+   * merge-history gap: two unavailable here, one uncollected. That difference is the whole point of
+   * `uncollectedCount`, and this is the only place both numbers are produced from the same database.
+   *
+   * IT ALSO CONFIRMS THE ZERO the estate is expected to report. Drop the never-collected repository and the page's
+   * count goes to none while `unavailable` stays at one — which is the live estate's shape: 1,890 active
+   * repositories, none without collected state, and the merge gap still on many of them (VIBE-590).
+   */
+  it("should count fewer unreported repositories on the list than the report's own unavailable", async () => {
+    await collected("walked");
+    await collected("refused");
+    await walked("walked");
+    await graphRepository("ghost", new Date(Date.UTC(2026, 7, 20)));
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as ReportedRow[];
+    const summary = (await overviewSummary(CONFIGURATION, 26, REFERENCE)) as { repositories: number; unavailable: number };
+
+    expect(summary).toMatchObject({ repositories: 3, unavailable: 2 });
+    expect(uncollectedCount(rows)).toBe(1);
+  });
+
+  it("should count no unreported repositories where every one of them was collected", async () => {
+    // The live estate's state, arranged by leaving the never-collected repository out: the merge gap is still here
+    // on `refused`, and the page has nothing to report about it.
+    await collected("walked");
+    await collected("refused");
+    await walked("walked");
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as ReportedRow[];
+    const summary = (await overviewSummary(CONFIGURATION, 26, REFERENCE)) as { unavailable: number };
+
+    expect(summary.unavailable).toBe(1);
+    expect(uncollectedCount(rows)).toBe(0);
   });
 
   it("should leave a repository last walked before the anchor out of its team's throughput", async () => {

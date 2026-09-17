@@ -68,6 +68,19 @@ describe("withWeeks", () => {
   it("carries the span onto a drill-through link", () => {
     expect(withWeeks("/repositories/cath-service", 8)).toBe("/repositories/cath-service?weeks=8");
   });
+
+  /**
+   * A page with no span to carry produces a bare path, which is what `/repositories` links with.
+   *
+   * NOT `?weeks=` WITH AN EMPTY VALUE and not the default written out. `proxy` writes any span a URL names into the
+   * `weeks` cookie, so naming one here would reset a reader who had chosen 26 weeks elsewhere on a click that was
+   * about a repository. A bare path leaves the destination to resolve the remembered preference.
+   */
+  it("leaves the path bare where the page states no window", () => {
+    expect(withWeeks("/repositories/cath-service")).toBe("/repositories/cath-service");
+    expect(withWeeks("/repositories/cath-service", undefined)).toBe("/repositories/cath-service");
+    expect(withWeeks("/teams/dtsse")).not.toContain("weeks");
+  });
 });
 
 describe("landingTarget", () => {

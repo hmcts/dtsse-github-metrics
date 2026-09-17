@@ -6,12 +6,19 @@
  * asserted against the word the table prints for the same row, and the two columns that are new here — the owning
  * team's contributors, and the dash that separates "there is no team" from "nobody contributed" — get their own
  * cases.
+ *
+ * THE END-TO-END QUOTING CASE IS THE CONTRIBUTORS CELL, not `Detail`, from 2026-09-17. It used to be `Detail`,
+ * whose sentence was the longest free text on a row and the likeliest to carry a comma. That column now carries
+ * `uncollectedDetail` — one known string with no comma in it, or nothing — so a comma test on it would be
+ * arranging a value the report layer cannot produce. A person's name is the free text that remains, and
+ * "Arah, Tam" is a real shape of one; `csv.test.ts` asserts on `csvField` itself besides.
  */
 
 import { describe, expect, it } from "vitest";
 import { csvDocument } from "@/lib/csv";
 import { CONTRIBUTOR_SEPARATOR, repositoryExportHeadings, repositoryExportRows } from "@/lib/export";
 import type { Contributor, RepositoryRow } from "@/lib/types";
+import { UNCOLLECTED_DETAIL } from "@/lib/types";
 
 const CONTRIBUTORS: Record<string, Contributor[]> = {
   dtsse: [{ login: "ef32", name: "Tam Arah" }, { login: "nameless" }],
@@ -64,12 +71,26 @@ const SIGNALLED: RepositoryRow = {
   }
 };
 
-/** A repository nothing was collected for: every window field absent, and a `detail` saying why. */
+/** A repository nothing was collected for: every window field absent, and the `detail` that says so. */
 const UNMEASURED: RepositoryRow = {
   repository: "quiet-service",
   team: "quiet",
   owner_kind: "team",
-  detail: "No merge activity in this window."
+  detail: UNCOLLECTED_DETAIL
+};
+
+/**
+ * A repository whose control state WAS collected and whose merge history was not.
+ *
+ * The row the `Detail` column stopped carrying: its reason is about merged pull requests and direct commits, and
+ * this file exports no column for either — so a reader opening the spreadsheet would meet an explanation for an
+ * absence they cannot see. See `uncollectedDetail`.
+ */
+const MERGES_UNREAD: RepositoryRow = {
+  repository: "walled-service",
+  team: "quiet",
+  owner_kind: "team",
+  detail: "no merge history was read for this repository, so its merges are unmeasured rather than none"
 };
 
 /**
@@ -230,20 +251,27 @@ describe("repositoryExportRows", () => {
     const rows = repositoryExportRows([MEASURED, UNMEASURED], CONTRIBUTORS);
 
     expect(cell(rows, "pcs-api", "Detail")).toBe("");
-    expect(cell(rows, "quiet-service", "Detail")).toBe("No merge activity in this window.");
+    expect(cell(rows, "quiet-service", "Detail")).toBe(UNCOLLECTED_DETAIL);
   });
 
-  it("should survive a detail carrying a comma once the writer has quoted it", () => {
-    // THE FAILURE A HAND-ROLLED WRITER IS FEARED FOR, asserted end to end rather than on the writer alone: the
-    // sentence is a real field on a real row, and an unquoted comma in it shifts every column after it.
-    const comma = { ...UNMEASURED, detail: "No merge activity in this window, at this span." };
-    const document = csvDocument(repositoryExportRows([comma], CONTRIBUTORS));
+  /**
+   * The merge reason is not exported, because no column here is about merges.
+   *
+   * THE FILE IS A COPY OF THE TABLE is the promise this module is built on, and the table stopped printing this
+   * sentence for the same reason: it explains merged-pull-request and direct-commit figures, and neither the page
+   * nor this file carries a column for one. An empty cell says "nothing to explain about what you are looking at",
+   * which is true; the sentence would say "something could not be measured" about a column that is not there.
+   */
+  it("should leave Detail empty where the only reason is about merges the file does not carry", () => {
+    const rows = repositoryExportRows([MERGES_UNREAD], CONTRIBUTORS);
 
-    expect(document).toContain('"No merge activity in this window, at this span."');
-    // One row of headings and one of data, and no third row from a comma read as a separator.
-    expect(document.split("\r\n")).toHaveLength(2);
+    expect(cell(rows, "walled-service", "Detail")).toBe("");
   });
 
+  /**
+   * THE FAILURE A HAND-ROLLED WRITER IS FEARED FOR, asserted end to end rather than on the writer alone: the value
+   * is a real field on a real row, and an unquoted comma in it shifts every column after it.
+   */
   it("should quote a contributors cell holding a name with a comma in it", () => {
     const document = csvDocument(repositoryExportRows([MEASURED], { dtsse: [{ login: "ef32", name: "Arah, Tam" }] }));
 
