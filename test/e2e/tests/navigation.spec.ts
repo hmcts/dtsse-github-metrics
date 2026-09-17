@@ -34,20 +34,30 @@ test.describe("navigation @regression", () => {
    */
   test("should carry the chosen span across a navigation @regression", async ({ page }) => {
     test.setTimeout(120_000);
-    await page.goto("/repositories?weeks=26");
-    await page.getByRole("link", { name: "Teams" }).first().click();
-    await expect(page).toHaveURL(/\/teams/);
-
+    await page.goto("/teams?weeks=26");
     await page.getByRole("link", { name: "Repositories" }).first().click();
+    await expect(page).toHaveURL(/\/repositories/);
+
+    // The span has to survive a page that does not offer one. The repositories list emits bare paths precisely so
+    // that a visit to it cannot rewrite the remembered window through `proxy`, and this is the assertion that
+    // holds it to that: a reader who chose 26 weeks still has 26 weeks after passing through.
+    await page.getByRole("link", { name: "Teams" }).first().click();
     await expect(page.getByRole("button", { name: "26 week window" })).toHaveAttribute("aria-pressed", "true");
   });
 
   test("should offer every configured span @regression", async ({ page }) => {
-    await page.goto("/repositories");
+    await page.goto("/teams");
 
     const selector = page.getByRole("group", { name: "Reporting window" });
     for (const weeks of [1, 4, 8, 12, 26]) {
       await expect(selector.getByRole("button", { name: `${weeks} week window` })).toBeVisible();
     }
+  });
+
+  test("should offer no span on the repositories list @regression", async ({ page }) => {
+    await page.goto("/repositories");
+
+    // The list reports the last import rather than a window, so a control that implies otherwise is the defect.
+    await expect(page.getByRole("group", { name: "Reporting window" })).toHaveCount(0);
   });
 });
