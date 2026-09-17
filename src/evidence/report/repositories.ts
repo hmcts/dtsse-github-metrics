@@ -902,16 +902,16 @@ export async function teamRows(configuration: Configuration, weeks: number, refe
         // rather than prettifying the slug, because a generated title would read as a name somebody chose.
         display_name: names.get(identifier) ?? identifier,
         repositories: owned.length,
-        // BOTH OF THESE WERE MISSING, and their absence made `/teams/<team>` throw for every team on the estate:
-        // `TeamDetail.actors` is typed as a list and `src/app/teams/[team]/page.tsx` calls `.length` on it, so an
-        // absent field was a TypeError caught as `notFound()` — a page reporting "no such team" for every team
-        // there is. `unavailable` is read by the readiness donut on the same page and by `lib/team.ts`.
+        // BOTH OF THESE ARE REQUIRED ON EVERY ROW. `src/app/teams/[team]/page.tsx` calls `.length` on
+        // `TeamDetail.actors`, so omitting it is a TypeError caught as `notFound()` — which renders as a page
+        // reporting "no such team" for a team that exists. `unavailable` is read by the readiness donut on the
+        // same page and by `lib/team.ts`.
         //
-        // A COUNT, from 2026-09-15. This emitted `[]` on the reasoning that the contract types `actors` as
-        // `TeamActorRow[]` — which `TeamDetail` does, and this is a `TeamRow`, where it is declared a NUMBER. Two
-        // interfaces of one name, and the double cast in `src/lib/api.ts` is what kept the compiler out of it.
-        // `TeamsList` prints the field through `count(...)`, a template literal, so an empty array stringified to
-        // nothing and all 154 cards read " contributors" with no figure in front of the word.
+        // `actors` IS A COUNT HERE, and a list one interface away: `TeamRow.actors` is a `number` while
+        // `TeamDetail.actors` is a `TeamActorRow[]`. Two interfaces, one field name, and the double cast in
+        // `src/lib/api.ts` means the compiler will not catch a confusion between them. `TeamsList` prints this
+        // through `count(...)`, a template literal, so a value of the wrong shape degrades silently to a card
+        // reading " contributors" with no figure — check the type this row declares, not the name.
         actors: contributors.size,
         unavailable: owned.filter((row) => row.detail !== undefined).length,
         practice: teamPractice(owned),

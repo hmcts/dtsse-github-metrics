@@ -138,7 +138,7 @@ because the graph tables are change-versioned, "what joined the cohort this week
 diff of a file nobody updated. **Review the policy, not the membership.**
 
 One consequence worth knowing: **`collect` now depends on `collect-org` having run.** The chart sequences them
-at 14:00 and 15:00, and on an empty database `collect` refuses and says no graph has been collected rather
+at 13:30 and 14:00, and on an empty database `collect` refuses and says no graph has been collected rather
 than reporting an estate of zero repositories. `doctor` is the exception — it reports an uncollected graph as
 a finding, because it is the command you run to find out why the others are refusing.
 
@@ -159,27 +159,62 @@ which rung, in a form that diffs against last week's.
 **Attribution is best effort and some of it is wrong.** GitHub has no field for "owner", so each repository is
 decided by the first of these that answers, and every stored row names the rung that decided it:
 
+The ladder is `RungOrder` in `src/evidence/org/graph.ts`, and that declaration is the authority — this table
+restates it and the arguments for each departure are in `OwnershipRung` beside the rung they justify.
+
 | Rung | What it reads |
 | --- | --- |
-| `configured` | a reviewed `metrics.yaml` entry, which short-circuits everything below |
+| `configured` | a reviewed `metrics.yaml` entry, which short-circuits every collected rung below |
+| `authoring-team` | a team with access whose OWN MEMBERS author the merges here — observed behaviour, not a declaration |
 | `teams-api-admin` | the teams holding `admin` — the closest thing to a declared owner the API has |
-| `codeowners-sole` | CODEOWNERS names exactly one team, so there is nothing to choose between |
 | `teams-api-write` | several teams hold write-or-better: most permissive wins, ties to the smallest team |
+| `direct-collaborator-admin` | a direct collaborator holding admin, once no team's access claims the repository |
+| `codeowners-sole` | CODEOWNERS names exactly one team, once no access rung has answered |
 | `codeowners-first` | CODEOWNERS names several teams: the one owning fewest wins, then alphabetically |
-| `codeowners-person` | a bare `@login`, once no team rung has answered — the individual-owner outlier |
-| `direct-collaborator-admin` | a direct collaborator holding admin, once CODEOWNERS names nobody |
-| `name-prefix` | the name shares a family prefix with repositories the rungs above agreed on |
+| `codeowners-person` | a bare `@login`, once no team the file names has answered — the individual-owner outlier |
+| `name-prefix` | the name shares a family prefix with repositories the evidenced rungs agreed on |
 | `unowned` | nothing answered. A normal outcome, stored as a row rather than left as a silence |
 
-A sole `admin` team outranks CODEOWNERS, but a sole CODEOWNERS team outranks any contested API claim: access
-says who *can* merge and CODEOWNERS says who is *expected* to review, and where the two disagree the less
-ambiguous is the better guess.
+**`authoring-team` sits above `teams-api-admin`, and it is the rung that fixed this ladder's largest error.**
+`teams-api-admin` names whoever holds `admin`, and at HMCTS `admin` is granted to an access administrator
+rather than to a delivery team. Measured on AAT before this rung existed, 1,346 of 1,846 attributed
+repositories were decided by `teams-api-admin`, and its largest owners were `platform-operations` (288),
+`cpp-development-admin` (178), `idam-admins` (139) and `bots` (44) — administrators, not the teams doing the
+work. What separates the two is not the team's name but whether its members merge code here, which
+`pull_request_facts` and `org_team_memberships` already say. It is deliberately not a name rule: a
+`-admin`/`-admins`/`-tl` suffix test misses `bots` and `platform-operations` and would strip any team
+legitimately named that way.
 
-That precedence decides which repositories are worth paying for. CODEOWNERS costs up to three requests each, so
-it is read only where **no rung above `codeowners-sole` has answered** — no reviewed override, and no `admin`
-team. Scoping it to "no claim at all" instead, as it first did, made the rung unreachable for the 270
-repositories that have several teams holding `push` and a CODEOWNERS naming exactly one: their file was never
-read and `teams-api-write` decided them, against the order documented here.
+Measured on AAT after the rung landed, the tally the ladder now produces is `teams-api-admin` 923,
+`authoring-team` 457 of 1,880 non-archived repositories, the three CODEOWNERS rungs 39 between them, and
+`unowned` 141 — see the measurements recorded in `ownership.ts` and `graph.ts` beside the code that produced
+them. Nearly a quarter of the estate is attributed by observed authorship rather than by any declaration,
+which is the single largest reason this table needs to be read in `RungOrder`'s order and not in a plausible
+one.
+
+**Every access rung outranks every CODEOWNERS rung.** Access says who *can* merge and CODEOWNERS says who is
+*expected* to review; the first is a live grant and the second is a committed file that nothing forces anyone
+to update, so a current claim beats a stated one. `name-prefix` stays below all three CODEOWNERS rungs for
+the mirror-image reason: an inferred name family is a guess this codebase makes, and a stale statement a human
+wrote about this repository still outranks it.
+
+That precedence decides which repositories are worth paying for, and the rule is mechanical: a rung that
+decides from data already in hand is free, so the expensive fetches are scoped to the repositories none of
+them answered — see `unresolvedRepositories` in `src/evidence/org/ownership.ts`. The free rungs are
+`configured`, `authoring-team`, `teams-api-admin` and `teams-api-write`: an override is in the file, and the
+other three read the team walk and the fact cache, both complete before the residue is taken. What is paid
+for is CODEOWNERS (up to three content requests) and the direct-collaborator listing (one more), so **a
+repository with any owning access claim is settled for free and its file is never fetched**. Measured on AAT,
+that residue is roughly 260 of the organisation's repositories.
+
+Because a rung's cost and its precedence are the same rule, the two must not be tuned apart: scoping the
+CODEOWNERS fetch more narrowly than the ladder's own order makes a rung unreachable, and scoping it more
+widely pays for files that cannot change an answer.
+
+A worked shape, measured on AAT: `platform-operations` alone is credited with 217 repositories at
+`teams-api-admin`, 76 at `authoring-team`, 17 at `teams-api-write`, 10 at `codeowners-sole` and 8 at
+`name-prefix`. One team, five rungs — which is why the rung is stored on every row rather than being
+inferred from the owner.
 
 Three filters keep a handle from being read as an owner, and each answers a question the others cannot:
 `excluded_teams` by **identity** (`all-org-members` is the organisation wearing a team's clothes),
@@ -209,8 +244,8 @@ it who was in a team last June. A run that sees a fact unchanged moves `last_obs
 The team, repository and people walks are about 250 GraphQL calls; the ownership ladder adds up to three
 CODEOWNERS requests per unresolved repository and one collaborator listing after that, bounded by
 `unresolved_repository_limit`. The whole run fits inside one hour of the installation's quota (15,000 core and
-12,500 GraphQL), so it runs as its own CronJob at 14:00, an hour ahead of `collect`, and each day's figures are
-read against the same day's ownership. A repository may have several owners.
+12,500 GraphQL), so it runs as its own CronJob at 13:30, half an hour ahead of `collect`, and each day's
+figures are read against the same day's ownership. A repository may have several owners.
 
 ### Only one collector runs at a time, and the database enforces it
 
@@ -235,10 +270,20 @@ same reason. A run that does not get it stands down and **exits 0**: on an estat
 schedule one of them loses every day, and a CronJob reporting Failed daily for correct behaviour is an alert
 nobody reads.
 
-This replaced suspending the CronJob on one cluster by hand. That worked, but the chart never sets `suspend`, so
-Helm does not manage the field — the decision lived only in the cluster, invisible to git and undone by anyone
-who re-enabled it, and it did not generalise: `collect-org` arrived enabled on both clusters with nothing to
-explain why its neighbour was not.
+**The platform already picks one cluster, and the lock is not a substitute for it.** The `job` chart emits
+`suspend: {{ not $activeCronCluster }}` on every CronJob it renders, and cnp-flux-config injects
+`global.activeCronCluster` into every HelmRelease from a value defined on `aat/00` alone. The effect is
+visible with `kubectl get cronjob -n dtsse`: on `cft-aat-00-aks` both metrics CronJobs report `SUSPEND=false`
+and on `cft-aat-01-aks` both report `true`. So which of the two AAT clusters collects is decided in git, by
+the platform, without this repo declaring anything — and it is `suspend` that decides it, a field Helm does
+manage.
+
+What the lock adds is the case that mechanism does not cover: **two releases in one cluster.** Every master
+build installs a throwaway `-staging` release into the same `dtsse` namespace as the persistent one, on the
+same `activeCronCluster`, so both sets of CronJobs are unsuspended together — which is how duplicate
+collectors were actually observed. The chart turns them off there (`values.aat.template.yaml`), but that is a
+value anybody can flip, in a release that exists for eight minutes. The lock is the backstop that does not
+depend on getting a value right: whichever release fires, exactly one writes.
 
 ### Where a run's calls went
 

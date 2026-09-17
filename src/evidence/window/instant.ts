@@ -44,12 +44,23 @@ export function midnight(reference: Date): Date {
 }
 
 /**
- * Formats an instant as GitHub expects it in a search qualifier: second precision, no fraction.
+ * Formats an instant as second-precision UTC with no fractional part: `2026-08-01T00:00:00Z`.
  *
- * `toISOString()` cannot be used. Python's `isoformat().replace("+00:00", "Z")` emits
- * `2026-08-01T00:00:00Z`, while `toISOString()` emits `2026-08-01T00:00:00.000Z` — and this text goes
- * into a `merged:a..b` range and into the hash that keys cached coverage, so the milliseconds would
- * change both what GitHub is asked and which cache rows answer it.
+ * WHERE IT GOES: the `since` and `until` variables of `commitHistoryQuery`, and nowhere else — see
+ * `collectDirectCommits`. Those bound the commit walk, and GitHub treats both bounds as INCLUSIVE, which is
+ * why membership is decided again against the half-open window after the nodes come back rather than being
+ * left to the query.
+ *
+ * WHAT IT IS NOT PART OF, because both have been assumed and neither is true: there is no `merged:a..b`
+ * search qualifier anywhere in this codebase — the merged-pull-request walk is cursor-paginated and ordered
+ * by `updatedAt`, with no date range in the query at all — and no cache key contains a timestamp.
+ * `querySignature` and `commitQuerySignature` hash the query DOCUMENTS, so changing this format cannot
+ * invalidate coverage rows.
+ *
+ * So the format is a compatibility choice rather than a correctness one: it reproduces what the Python
+ * implementation's `isoformat().replace("+00:00", "Z")` sent, where `toISOString()` would append `.000`.
+ * Keeping the request text identical is what let the port's results be compared against upstream's. It is
+ * pinned by `window.test.ts`; if that parity stops mattering, this function can go rather than being widened.
  */
 export function githubTimestamp(instant: Date): string {
   const pad = (value: number, width = 2) => String(value).padStart(width, "0");

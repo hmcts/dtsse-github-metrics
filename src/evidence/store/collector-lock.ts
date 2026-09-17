@@ -22,14 +22,22 @@ import { resolveDatabaseUrl } from "./database-url.ts";
  *   - `collection_state` is a single row. Both stamp it, last write wins, and `collected_at` can end up
  *     reporting the earlier run's completion so the staleness notice reads wrong.
  *
- * This was previously prevented by SUSPENDING the CronJob on one cluster by hand. That worked, but the chart
- * never sets `suspend`, so Helm does not manage the field and the decision lived only in the cluster — invisible
- * to git, unexplained, and undone by anyone who re-enabled it. Worse, it does not generalise: a new collector
- * (the organisation walk) arrives enabled on both clusters and nobody remembers why the old one was not.
+ * WHICH OF THE TWO CLUSTERS COLLECTS IS ALREADY DECIDED IN GIT, and this lock is not what decides it. The `job`
+ * chart emits `suspend: {{ not $activeCronCluster }}` on every CronJob it renders, and cnp-flux-config injects
+ * `global.activeCronCluster` into every HelmRelease from a value defined on `aat/00` alone. `kubectl get cronjob
+ * -n dtsse` shows the result: `SUSPEND=false` for both collectors on `cft-aat-00-aks`, `true` for both on
+ * `cft-aat-01-aks`. Helm does manage `suspend`, the platform sets it, and a new collector added to this chart
+ * inherits the same guarantee without declaring anything.
  *
- * So the constraint is enforced where it can be checked instead. `pg_try_advisory_lock` is the same mechanism
- * `migrate.ts` already uses for the same reason — several pods booting at once must not apply migrations
- * together — and it needs no per-cluster configuration to be correct.
+ * WHAT THAT MECHANISM DOES NOT COVER, and what this lock is for: TWO RELEASES IN ONE CLUSTER. Every master build
+ * installs a throwaway `-staging` release into the same `dtsse` namespace as the persistent one, on the same
+ * `activeCronCluster`, so both sets of CronJobs unsuspend together — which is how duplicate collectors were
+ * actually observed. `values.aat.template.yaml` disables them there, but that is a value anybody can flip in a
+ * release that lives for minutes, and these are the real credentials and the real database.
+ *
+ * So the constraint is also enforced where it can be checked, by the writer itself rather than by a value being
+ * right. `pg_try_advisory_lock` is the same mechanism `migrate.ts` already uses for the same reason — several
+ * pods booting at once must not apply migrations together — and it needs no per-cluster configuration.
  */
 
 /**

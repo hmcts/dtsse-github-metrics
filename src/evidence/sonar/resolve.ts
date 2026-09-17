@@ -16,8 +16,10 @@ import { type SonarClient, SonarError, searchableRevisions } from "./client.ts";
  * storing each answer in `sonar_project_map`, a `collect` pass reading `parseMeasures` for the repositories
  * that resolved, and `report/repositories.ts` emitting the result instead of the `"no SonarCloud project is
  * mapped for this repository"` detail it emits today. `lib/types.ts` already declares the contract fields —
- * `sonar_coverage`, `sonar_reported`, `sonar_security_rating`, `sonar_security_issues` — and
- * `lib/repository.ts` already renders them, so the missing piece is the assembly rather than the display.
+ * `sonar_coverage`, `sonar_reported`, `sonar_security_rating`, `sonar_security_issues` — and `lib/repository.ts`
+ * has the cards to render a project's measures, though it draws them from `SonarMeasures` (`coverage`,
+ * `security_rating`, `security_issues`) rather than from those row fields, so wiring this means populating the
+ * row fields AND pointing the row's cells at them. The measure-to-card work exists; the assembly does not.
  * The `sonar_organization:` and `sonar_projects:` policy keys were removed with this ticket for validating
  * without deciding anything; wiring the layer means restoring them.
  *
