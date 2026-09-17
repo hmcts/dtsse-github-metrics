@@ -209,10 +209,12 @@ export interface DirectCommitFactRow {
  * plain drop would not have left them. See `behaviour/collect.ts` for what each answer decides and
  * `domain/facts.ts` for why one is a number and the other a boolean.
  *
- * EXISTING ROWS KEEP THEIR BODIES UNTIL A COLLECTION REWRITES THEM. The reads are indifferent — a payload with
- * a `body` in it deserialises exactly as it did — so the estate narrows over one collection rather than needing
- * a data migration. An old row has no `bodyLength` and no `hasTicketReference`, and both metrics read that
- * absence as UNMEASURED rather than as zero or false.
+ * NEW ROWS CARRY NO BODY; EXISTING ROWS KEEP THEIRS. The reads are indifferent — a payload with a `body` in it
+ * deserialises exactly as it did — and no collection will rewrite one: `querySignature` hashes the query
+ * document text, which dropping these fields did not change, so every settled coverage interval stays valid and
+ * a run refetches only the mutable edge (`mutable_hours`, six by default). Shedding the stored bodies is a
+ * deliberate bulk update, not something collection converges on. An old row has no `bodyLength` and no
+ * `hasTicketReference`, and both metrics read that absence as UNMEASURED rather than as zero or false.
  *
  * IF ANYTHING IS EVER PROJECTED AWAY HERE AGAIN, WRITE IT INTO THE QUERY LITERALLY. The projection that lived
  * here was, from 2026-09-15, and the reason it had to be is worth keeping: it was first built as a `Prisma.Sql`
