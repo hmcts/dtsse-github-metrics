@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { builtReport, builtSpanCount, CACHEABLE_SPANS, forgetBuiltReports } from "./cache.ts";
+import { builtReport, builtSpanCount, forgetBuiltReports } from "./cache.ts";
+import { WEEK_OPTIONS } from "./spans.ts";
 
 /**
  * The decision logic behind which built report a reader is served.
@@ -93,11 +94,11 @@ describe("builtReport", () => {
   });
 
   it("should hold every offered span at once, so no reader meets a cold one", async () => {
-    for (const weeks of CACHEABLE_SPANS) {
+    for (const weeks of WEEK_OPTIONS) {
       await builtReport(ORGANIZATION, weeks, countingBuild());
     }
 
-    expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
+    expect(builtSpanCount()).toBe(WEEK_OPTIONS.length);
   });
 
   it("should rebuild once the revision moves, rather than serving the previous collection's figures", async () => {

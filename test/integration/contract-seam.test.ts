@@ -11,9 +11,10 @@ import {
   overviewSummary,
   repositoryEvidence,
   repositoryRows,
+  teamMemberRows,
   teamRows,
   windowOptions
-} from "../../src/evidence/report/repositories.ts";
+} from "../../src/evidence/report/reports.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 import type * as contract from "../../src/lib/types.ts";
 
@@ -238,6 +239,18 @@ const TEAM_PRACTICE: Shape<contract.TeamPractice> = {
 const ACTOR_ROW: Shape<contract.ActorRow> = {
   declared: { login: true, name: true, repositories: true, labels: true },
   required: { login: true, repositories: true }
+};
+
+/**
+ * The team-membership row, which had no shape here until VIBE-569 and so no compiler-checked field list.
+ *
+ * A DIFFERENT REPORT FROM THE CONTRIBUTOR ROW BESIDE IT, and that is why it needs its own: `TeamMemberRow` is who
+ * GitHub says is IN a team, `ActorRow` is who worked in its repositories, and neither can be derived from the other.
+ * It extends `Contributor`, so a field added to that base lands on this row as well and is caught here.
+ */
+const TEAM_MEMBER_ROW: Shape<contract.TeamMemberRow> = {
+  declared: { login: true, name: true, role: true },
+  required: { login: true, role: true }
 };
 
 const MERGE_ROW: Shape<contract.TeamMergeRow> = {
@@ -531,6 +544,36 @@ function collectedPayload() {
   };
 }
 
+/** One person GitHub says is in a team, as `collect-org`'s team walk stored them. */
+async function teamMember(teamSlug: string, login: string, role = "MEMBER"): Promise<void> {
+  await prisma.orgTeamMembership.create({
+    data: {
+      organization: ORGANIZATION,
+      teamSlug,
+      login,
+      role,
+      observedAt: new Date(Date.UTC(2026, 7, 15)),
+      lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+      digest: `${teamSlug}-${login}-digest`
+    }
+  });
+}
+
+/** One organisation member with a name resolved from the SSO identity mapping, which is the one naming seam. */
+async function namedPerson(login: string, displayName: string): Promise<void> {
+  await prisma.orgPerson.create({
+    data: {
+      organization: ORGANIZATION,
+      login,
+      role: "MEMBER",
+      payload: { displayName },
+      observedAt: new Date(Date.UTC(2026, 7, 15)),
+      lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+      digest: `${login}-digest`
+    }
+  });
+}
+
 /** The coverage a finished walk of both sources leaves, which is what says a repository was READ. */
 async function walked(repository: string): Promise<void> {
   await prisma.sourceCoverage.createMany({
@@ -626,6 +669,13 @@ async function seedEstate(): Promise<void> {
   await prisma.repositoryProduction.create({ data: { organization: ORGANIZATION, repository: "alpha", production: true } });
 
   await graphRepository("beta");
+
+  // A TEAM WITH TWO MEMBERS, ONE OF WHOM HAS A RESOLVED NAME, which is what makes the member row's optional `name`
+  // present on one row and absent on the other. Without both, the shape assertion below would be checking a row
+  // that could only ever have carried two of its three fields.
+  await teamMember("dtsse", "ada", "MAINTAINER");
+  await teamMember("dtsse", "ef32");
+  await namedPerson("ada", "Ada Lovelace");
 }
 
 async function clear(): Promise<void> {
@@ -636,6 +686,8 @@ async function clear(): Promise<void> {
   await prisma.orgRepository.deleteMany();
   await prisma.sourceCoverage.deleteMany();
   await prisma.repositoryProduction.deleteMany();
+  await prisma.orgTeamMembership.deleteMany();
+  await prisma.orgPerson.deleteMany();
 }
 
 beforeEach(async () => {
@@ -694,6 +746,25 @@ describe("the key set every report emits", () => {
     expect(typeof dtsse?.actors).toBe("number");
     expect(dtsse?.actors).toBe(2);
     expect(dtsse?.display_name).toBe("Developer Tools");
+  });
+
+  it("should emit only the fields TeamMemberRow declares, on a named member and an unnamed one", async () => {
+    const members = await teamMemberRows(CONFIGURATION, 26, REFERENCE);
+
+    const dtsse = members.get("dtsse");
+    expect(dtsse, "the fixture seeds two members of dtsse, so the map has a list to check").toBeDefined();
+    for (const member of dtsse ?? []) {
+      assertShape("TeamMemberRow", TEAM_MEMBER_ROW, member, `teamMemberRows[dtsse][${member.login}]`);
+    }
+    // BOTH BRANCHES OF THE OPTIONAL NAME are reached, so the shape assertion above is not passing over two rows
+    // that each carried the same two fields. The role is GitHub's own word and rides every row.
+    expect(dtsse).toEqual([
+      { login: "ada", name: "Ada Lovelace", role: "MAINTAINER" },
+      { login: "ef32", role: "MEMBER" }
+    ]);
+    // A team nobody walked is ABSENT from the map rather than present and empty, which is the one thing a shape
+    // assertion cannot see: an empty list would state that GitHub put nobody in the team.
+    expect(members.has("platform")).toBe(false);
   });
 
   it("should emit only the fields ActorRow declares", async () => {
@@ -792,7 +863,7 @@ describe("the key set every report emits", () => {
  * at a `?:`, so this is the one rule in the whole contract that only a report built against a database can prove.
  */
 describe("the absent-versus-null rule the reports emit under", () => {
-  it("should carry no null anywhere in any of the six estate reports", async () => {
+  it("should carry no null anywhere in any of the eight estate reports", async () => {
     const reports: [string, unknown][] = [
       ["repositoryRows", await repositoryRows(CONFIGURATION, 26, REFERENCE)],
       ["overviewSummary", await overviewSummary(CONFIGURATION, 26, REFERENCE)],
@@ -800,7 +871,10 @@ describe("the absent-versus-null rule the reports emit under", () => {
       ["actorRows", await actorRows(CONFIGURATION, 26, REFERENCE)],
       ["mergeRows", await mergeRows(CONFIGURATION, 26, REFERENCE)],
       ["directPushRows", await directPushRows(CONFIGURATION, 26, REFERENCE)],
-      ["windowOptions", await windowOptions(CONFIGURATION, REFERENCE)]
+      ["windowOptions", await windowOptions(CONFIGURATION, REFERENCE)],
+      // FLATTENED, because `findNulls` walks objects and arrays and a `Map` is neither — handed the map itself it
+      // would report nothing and this entry would assert nothing at all.
+      ["teamMemberRows", [...(await teamMemberRows(CONFIGURATION, 26, REFERENCE)).values()].flat()]
     ];
 
     for (const [name, report] of reports) {

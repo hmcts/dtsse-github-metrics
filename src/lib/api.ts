@@ -11,7 +11,7 @@ import {
   teamMemberRows,
   teamRows,
   windowOptions
-} from "@/evidence/report/repositories";
+} from "@/evidence/report/reports";
 import { RepositoryUnknownError } from "@/lib/not-found";
 import { ownedByIndividual, owners } from "@/lib/rows";
 import type {
