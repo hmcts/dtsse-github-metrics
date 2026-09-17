@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Configuration } from "../policy/schema.ts";
-import { CACHEABLE_SPANS } from "./cache.ts";
+import { WEEK_OPTIONS } from "./spans.ts";
 import { startReportWarmer, warmEverySpan } from "./warmer.ts";
 
 /**
@@ -23,7 +23,8 @@ const { collectionState, estateForEverySpan, repositoryRows } = vi.hoisted(() =>
 // See `./cache.test.ts` for why `server-only` is stubbed here rather than aliased in the config.
 vi.mock("server-only", () => ({}));
 vi.mock("../store/collection-state.ts", () => ({ collectionState }));
-vi.mock("./repositories.ts", () => ({ estateForEverySpan, repositoryRows }));
+vi.mock("./estate.ts", () => ({ estateForEverySpan }));
+vi.mock("./reports.ts", () => ({ repositoryRows }));
 
 /** Nothing here reads the configuration — it is passed through to the mocked builder. */
 const CONFIGURATION = { organization: "hmcts" } as unknown as Configuration;
@@ -67,7 +68,7 @@ describe("warmEverySpan", () => {
   it("should build every offered span, so the first reader of each pays for none of it", async () => {
     await warmEverySpan(CONFIGURATION);
 
-    expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+    expect(warmedSpans()).toEqual([...WEEK_OPTIONS]);
   });
 
   it("should build the spans one at a time, because the pod has one CPU to share with live readers", async () => {
@@ -100,7 +101,7 @@ describe("warmEverySpan", () => {
 
     await warmEverySpan(CONFIGURATION);
 
-    expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+    expect(warmedSpans()).toEqual([...WEEK_OPTIONS]);
   });
 
   it("should resolve rather than reject when a span fails, so a blip never crash-loops the pod", async () => {
@@ -136,7 +137,7 @@ describe("warmEverySpan", () => {
     await warmEverySpan(CONFIGURATION);
 
     expect(estateForEverySpan).toHaveBeenCalledTimes(1);
-    expect(repositoryRows.mock.calls).toHaveLength(CACHEABLE_SPANS.length);
+    expect(repositoryRows.mock.calls).toHaveLength(WEEK_OPTIONS.length);
     for (const call of repositoryRows.mock.calls) {
       expect(call[3]).toBe(ESTATE);
     }
@@ -160,7 +161,7 @@ describe("warmEverySpan", () => {
 
     await warmEverySpan(CONFIGURATION);
 
-    expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+    expect(warmedSpans()).toEqual([...WEEK_OPTIONS]);
     for (const call of repositoryRows.mock.calls) {
       expect(call[3]).toBeUndefined();
     }
@@ -189,7 +190,7 @@ describe("startReportWarmer", () => {
     try {
       await warmer.settled();
 
-      expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+      expect(warmedSpans()).toEqual([...WEEK_OPTIONS]);
     } finally {
       warmer.stop();
     }
@@ -207,7 +208,7 @@ describe("startReportWarmer", () => {
       await tick(1000);
       await warmer.settled();
 
-      expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+      expect(warmedSpans()).toEqual([...WEEK_OPTIONS]);
     } finally {
       warmer.stop();
     }
@@ -258,7 +259,7 @@ describe("startReportWarmer", () => {
       await tick(1000);
       await warmer.settled();
 
-      expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+      expect(warmedSpans()).toEqual([...WEEK_OPTIONS]);
     } finally {
       warmer.stop();
     }
@@ -277,7 +278,7 @@ describe("startReportWarmer", () => {
       await tick(1000);
       await warmer.settled();
 
-      expect(warmedSpans()).toEqual([...CACHEABLE_SPANS]);
+      expect(warmedSpans()).toEqual([...WEEK_OPTIONS]);
     } finally {
       warmer.stop();
     }

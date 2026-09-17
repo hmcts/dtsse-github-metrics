@@ -28,7 +28,14 @@ export default defineConfig({
         "src/instrumentation.ts",
         "src/app/**/layout.tsx",
         "src/evidence/store/**",
-        "src/evidence/report/repositories.ts",
+        // The two modules of `report/**` that read Postgres, and the only two left after VIBE-569 split the
+        // aggregation layer out of `report/repositories.ts`. `estate.ts` is the one read every span is derived
+        // from and `reports.ts` is the orchestration above it; everything else under `report/**` — `spans.ts`,
+        // `measured.ts`, `contract/**`, `rows/**`, `overview.ts`, `teams.ts`, `repository-evidence.ts` — is a pure
+        // function of what those two hand it, and is held at the bar below. `vitest.integration.config.mts` covers
+        // these two against a real database.
+        "src/evidence/report/estate.ts",
+        "src/evidence/report/reports.ts",
         "src/evidence/behaviour/fill.ts",
         "src/lib/api.ts"
       ],

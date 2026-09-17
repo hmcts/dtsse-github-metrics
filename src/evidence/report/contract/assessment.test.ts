@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { conditionGroups } from "../../lib/repository.ts";
-import type { ReadinessAssessment as ContractAssessment, ReadinessCondition as ContractCondition } from "../../lib/types.ts";
-import { readinessPolicy } from "../assessment/assessment.ts";
-import { type Merges, type PullRequestFact, ReviewState } from "../domain/facts.ts";
-import type { MergeGateReport } from "../domain/merge-gate.ts";
-import { parseConfiguration } from "../policy/load.ts";
+import { conditionGroups } from "../../../lib/repository.ts";
+import type { ReadinessAssessment as ContractAssessment, ReadinessCondition as ContractCondition } from "../../../lib/types.ts";
+import { readinessPolicy } from "../../assessment/assessment.ts";
+import { type Merges, type PullRequestFact, ReviewState } from "../../domain/facts.ts";
+import type { MergeGateReport } from "../../domain/merge-gate.ts";
+import { parseConfiguration } from "../../policy/load.ts";
 import { contractAssessment } from "./assessment.ts";
 
 /**

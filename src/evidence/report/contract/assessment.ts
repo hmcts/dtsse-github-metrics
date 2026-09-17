@@ -1,5 +1,5 @@
-import type * as contract from "../../lib/types.ts";
-import type { ReadinessAssessment, ReadinessCondition } from "../domain/readiness.ts";
+import type * as contract from "../../../lib/types.ts";
+import type { ReadinessAssessment, ReadinessCondition } from "../../domain/readiness.ts";
 
 /**
  * One repository's readiness verdict in the shape the UI declares, which today is the shape it is computed in.
@@ -18,12 +18,12 @@ import type { ReadinessAssessment, ReadinessCondition } from "../domain/readines
  * single statement of what the contract's assessment IS, and a rename on either side fails a case rather than
  * shipping. `contractObservation` states the same argument for rebuilding a rate whose three names already agree.
  *
- * IN ITS OWN MODULE for `./observation.ts`'s reason. `./repositories.ts` imports the store and so the Prisma client,
- * which no unit test can reach — it is excluded from the unit coverage config for that, and it is why translations
- * of exactly this kind have already shipped broken. Here the translation is a pure function of its argument and
- * `./assessment.test.ts` asserts its key set against the contract on every build.
+ * IN `report/contract/` for `./observation.ts`'s reason: the module that reads the estate imports the store and so
+ * the Prisma client, which no unit test can reach, and while these translations lived in it the coverage gate had to
+ * exempt them — which is why translations of exactly this kind have already shipped broken. Here it is a pure
+ * function of its argument and `./assessment.test.ts` asserts its key set against the contract on every build.
  *
- * NAMED FOR WHAT IT TRANSLATES, which repeats `../assessment/assessment.ts`. That module is the POLICY — it decides
+ * NAMED FOR WHAT IT TRANSLATES, which repeats `../../assessment/assessment.ts`. That module is the POLICY — it decides
  * a label from the merge cohort and the gate; this one only renames what the policy decided, and neither is a better
  * home for the other's job.
  */

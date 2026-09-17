@@ -1,5 +1,6 @@
 import "server-only";
 import { collectionState } from "../store/collection-state.ts";
+import { WEEK_OPTIONS } from "./spans.ts";
 
 /**
  * The built reports the dashboard is served from, and the one stamp that invalidates them.
@@ -23,9 +24,6 @@ import { collectionState } from "../store/collection-state.ts";
  * The MAP IS PRUNED to the current revision on every miss. Without that, a week of daily collections would
  * leave a week of superseded builds in a process that never restarts.
  */
-
-/** The spans the week selector offers, and so the only keys this cache will hold. */
-export const CACHEABLE_SPANS: readonly number[] = [1, 4, 8, 12, 26];
 
 interface Entry {
   revision: string;
@@ -62,8 +60,13 @@ const entries: Map<string, Entry> = globalForReports.builtReports;
  *
  * The key carried the estate and the span only until 2026-09-15, which was correct while `repositoryRows` was the
  * one thing built. A second report over the same span would have collided with it and been returned in its place.
+ *
+ * ONE MEMBER, because one entry holds every report a span produces. It named four while the rows, the contributors
+ * and the two activity tables were four builds; they are one `EstateReports` now, so three of the four kinds were
+ * spellings nothing could pass. The type stays because the key does: a second thing held per span has to name
+ * itself here before it can be stored, rather than silently sharing this one's entry.
  */
-export type ReportKind = "repositories" | "actors" | "merges" | "direct-pushes";
+export type ReportKind = "repositories";
 
 /** The key one build is held under, which names what it is as well as the estate and the span. */
 function keyOf(organization: string, kind: ReportKind, weeks: number): string {
@@ -93,7 +96,7 @@ export function builtSpanCount(): number {
  * span's answer for the life of the process, which on a pod that restarts only when Flux rolls it means until
  * somebody notices. The entry is dropped and the next reader builds again.
  *
- * A span outside `CACHEABLE_SPANS` is built and NOT held. The spans come off a query string, so caching every
+ * A span outside `WEEK_OPTIONS` is built and NOT held. The spans come off a query string, so caching every
  * value one could carry is an unbounded map keyed by whatever a reader types; refusing to hold it costs a
  * rebuild on a span no page links to and keeps the map the size of the selector.
  */
@@ -102,11 +105,10 @@ export async function builtReport<RowT>(organization: string, weeks: number, bui
   const key = keyOf(organization, kind, weeks);
   const held = entries.get(key);
   if (held !== undefined && held.revision === revision) {
-    // THE ONE CAST IN THIS FILE, and it is what a heterogeneous map costs. `entries` holds four different reports
-    // under four `ReportKind`s in one map, so the stored promise cannot be typed as the caller's row: what ties a
-    // key to a shape is `keyOf`, which every caller reaches through this function alone. A caller asking for a kind
-    // under the wrong type is the failure this cannot catch, and there are four call sites, all in
-    // `report/repositories.ts`, each passing its own literal.
+    // THE ONE CAST IN THIS FILE, and it is what a map keyed on `ReportKind` costs. The stored promise cannot be
+    // typed as the caller's row, because what ties a key to a shape is `keyOf` and every caller reaches it through
+    // this function alone. A caller asking for a kind under the wrong type is the failure this cannot catch; there
+    // is one kind and one call site today, in `report/reports.ts`.
     return (await held.built) as RowT[];
   }
 
@@ -115,7 +117,7 @@ export async function builtReport<RowT>(organization: string, weeks: number, bui
     throw error;
   });
 
-  if (!CACHEABLE_SPANS.includes(weeks)) {
+  if (!WEEK_OPTIONS.includes(weeks)) {
     return await built;
   }
 

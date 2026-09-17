@@ -1,8 +1,9 @@
 import "server-only";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
-import { CACHEABLE_SPANS } from "./cache.ts";
-import { type Estate, estateForEverySpan, repositoryRows } from "./repositories.ts";
+import { type Estate, estateForEverySpan } from "./estate.ts";
+import { repositoryRows } from "./reports.ts";
+import { WEEK_OPTIONS } from "./spans.ts";
 
 /**
  * Building every span before a reader asks for one, and again once a collection lands.
@@ -54,7 +55,7 @@ export interface Warmer {
 export async function warmEverySpan(configuration: Configuration): Promise<void> {
   const reference = new Date();
   const read = await estateOrNothing(configuration, reference);
-  for (const weeks of CACHEABLE_SPANS) {
+  for (const weeks of WEEK_OPTIONS) {
     const started = Date.now();
     try {
       const rows = await repositoryRows(configuration, weeks, reference, read);

@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { sample, summarise } from "../../lib/format.ts";
-import { percentile as p75Tail } from "../../lib/metrics.ts";
-import type { DistributionObservation as ContractDistribution, Observation as ContractObservation, RateObservation as ContractRate } from "../../lib/types.ts";
-import { mergeCycleTime, pullRequestSize, reviewDepth } from "../behaviour/metrics.ts";
-import { type DistributionObservation, type Merges, ObservationStatus, type PullRequestFact } from "../domain/facts.ts";
-import { contractObservation } from "./observation.ts";
+import { sample, summarise } from "../../../lib/format.ts";
+import { percentile as p75Tail } from "../../../lib/metrics.ts";
+import type {
+  DistributionObservation as ContractDistribution,
+  Observation as ContractObservation,
+  RateObservation as ContractRate
+} from "../../../lib/types.ts";
+import { mergeCycleTime, pullRequestSize, reviewDepth } from "../../behaviour/metrics.ts";
+import { type DistributionObservation, type Merges, ObservationStatus, type PullRequestFact } from "../../domain/facts.ts";
+import { contractObservation, medianOf } from "./observation.ts";
 
 /**
  * The seam between what a behaviour metric computes and what the UI declares.
@@ -157,5 +161,27 @@ describe("what a metric card renders from it", () => {
       expect(summarise(observation)).not.toContain("undefined");
       expect(sample(observation)).toBe("4 samples");
     }
+  });
+});
+
+describe("the median one row reports for a timing", () => {
+  it("should report the median when a distribution observed an eligible sample", () => {
+    expect(medianOf({ status: ObservationStatus.Observed, sampleSize: 3, unit: "hours", median: 2.5 })).toBe(2.5);
+  });
+
+  it("should report nothing when a distribution observed no eligible sample", () => {
+    // ABSENT AND NEVER ZERO: a repository whose pull requests were never reviewed has no wait to report, and
+    // `0 hours` would read on the page as instant review.
+    expect(medianOf({ status: ObservationStatus.NotApplicable, sampleSize: 0, unit: "hours" })).toBeUndefined();
+  });
+
+  it("should report nothing when an observed distribution placed no median", () => {
+    expect(medianOf({ status: ObservationStatus.Observed, sampleSize: 0, unit: "hours" })).toBeUndefined();
+  });
+
+  it("should report nothing when the observation is a rate rather than a distribution", () => {
+    // NARROWED RATHER THAN CAST. A metric later changed from a distribution to a rate reads as unmeasured here
+    // instead of putting `undefined` on the contract, which is what a cast would have done silently.
+    expect(medianOf({ status: ObservationStatus.Observed, numerator: 3, denominator: 4 })).toBeUndefined();
   });
 });

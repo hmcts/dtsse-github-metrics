@@ -3,7 +3,7 @@ import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
 import { findNulls } from "../../src/evidence/report/absent.ts";
-import { builtReport, builtSpanCount, CACHEABLE_SPANS } from "../../src/evidence/report/cache.ts";
+import { builtReport, builtSpanCount } from "../../src/evidence/report/cache.ts";
 import {
   actorRows,
   directPushRows,
@@ -14,7 +14,8 @@ import {
   repositoryRows,
   teamMemberRows,
   teamRows
-} from "../../src/evidence/report/repositories.ts";
+} from "../../src/evidence/report/reports.ts";
+import { WEEK_OPTIONS } from "../../src/evidence/report/spans.ts";
 import { startReportWarmer, warmEverySpan } from "../../src/evidence/report/warmer.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../../src/evidence/store/facts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
@@ -1220,16 +1221,16 @@ ${cohort}
     await directCommit("alpha", "aaa", new Date(anchor.getTime() - 86_400_000), { login: "fluxcdbot" });
 
     const alone = new Map<number, CountedRow | undefined>();
-    for (const weeks of CACHEABLE_SPANS) {
+    for (const weeks of WEEK_OPTIONS) {
       const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as CountedRow[];
       alone.set(weeks, rows[0]);
     }
-    expect([...alone.values()].map((row) => row?.merged_pull_requests)).toEqual(CACHEABLE_SPANS.map(() => 1));
+    expect([...alone.values()].map((row) => row?.merged_pull_requests)).toEqual(WEEK_OPTIONS.map(() => 1));
 
     forgetBuiltRows();
     await warmEverySpan(CONFIGURATION);
 
-    for (const weeks of CACHEABLE_SPANS) {
+    for (const weeks of WEEK_OPTIONS) {
       const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as CountedRow[];
       expect(rows[0]).toEqual(alone.get(weeks));
     }
@@ -1432,11 +1433,11 @@ describe("the held rows", () => {
     await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
     const reference = new Date(Date.UTC(2026, 8, 1));
 
-    for (const weeks of CACHEABLE_SPANS) {
+    for (const weeks of WEEK_OPTIONS) {
       await repositoryRows(CONFIGURATION, weeks, reference);
     }
 
-    expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
+    expect(builtSpanCount()).toBe(WEEK_OPTIONS.length);
   });
 
   it("should not hold a span no page offers, so a query string cannot grow the cache without bound", async () => {
@@ -1502,7 +1503,7 @@ describe("the warmer", () => {
 
     await warmEverySpan(CONFIGURATION);
 
-    expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
+    expect(builtSpanCount()).toBe(WEEK_OPTIONS.length);
   });
 
   it("should build each span from the shared read exactly as that span would have read for itself", async () => {
@@ -1528,7 +1529,7 @@ describe("the warmer", () => {
 
     // Read for itself, span by span, which is what a reader arriving on a cold span still does.
     const alone = new Map<number, number | undefined>();
-    for (const weeks of CACHEABLE_SPANS) {
+    for (const weeks of WEEK_OPTIONS) {
       const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as { merged_pull_requests?: number }[];
       alone.set(weeks, rows[0]?.merged_pull_requests);
     }
@@ -1538,7 +1539,7 @@ describe("the warmer", () => {
     forgetBuiltRows();
     await warmEverySpan(CONFIGURATION);
 
-    for (const weeks of CACHEABLE_SPANS) {
+    for (const weeks of WEEK_OPTIONS) {
       const rows = (await repositoryRows(CONFIGURATION, weeks, anchor)) as { merged_pull_requests?: number }[];
       expect(rows[0]?.merged_pull_requests).toBe(alone.get(weeks));
     }
@@ -1600,7 +1601,7 @@ describe("the warmer", () => {
       // cannot say this: five entries left over from the previous revision count five too. What separates the
       // two is what a read does to them — a stale set is pruned down to the one span just rebuilt.
       await repositoryRows(CONFIGURATION, 4, new Date(Date.UTC(2026, 8, 1)));
-      expect(builtSpanCount()).toBe(CACHEABLE_SPANS.length);
+      expect(builtSpanCount()).toBe(WEEK_OPTIONS.length);
     } finally {
       warmer.stop();
       await prisma.collectionState.deleteMany();

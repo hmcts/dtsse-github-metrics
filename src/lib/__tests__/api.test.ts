@@ -81,7 +81,7 @@ describe("api.ts", () => {
   it("should read ownership by the same fold the report layer counts it by", async () => {
     // The count on /teams and the list on /teams/<team> come from two files, and the only thing keeping them from
     // drifting is that both fold an absent `teams` to the primary owner rather than to "owned by nobody".
-    const report = await readFile("src/evidence/report/repositories.ts", "utf8");
+    const report = await readFile("src/evidence/report/teams.ts", "utf8");
     const rows = await readFile("src/lib/rows.ts", "utf8");
 
     expect(rows).toContain("row.teams ?? [row.team]");

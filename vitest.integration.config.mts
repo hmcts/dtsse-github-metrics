@@ -26,24 +26,34 @@ export default defineConfig({
       provider: "v8",
       reporter: ["lcov", "text"],
       reportsDirectory: "coverage-integration",
-      include: ["src/evidence/store/**", "src/evidence/report/repositories.ts", "src/evidence/behaviour/fill.ts"],
+      // The two modules of `report/**` that read Postgres, which after VIBE-569 is all that is left of
+      // `report/repositories.ts` needing a database: `estate.ts` is the one read every span is derived from and
+      // `reports.ts` is the orchestration above it. Everything else the split produced is a pure function of what
+      // those two hand it and is held at 95/90 by the unit config, which no longer exempts any of it.
+      include: ["src/evidence/store/**", "src/evidence/report/estate.ts", "src/evidence/report/reports.ts", "src/evidence/behaviour/fill.ts"],
       // `**/*.test.ts` because `src/evidence/store/**` matches the unit tests sitting beside the store, which
       // this run does not execute: they were being reported at 0% and pulling the aggregate down.
       exclude: ["src/evidence/store/generated/**", "src/evidence/store/prisma.ts", "**/*.test.ts"],
       // Set just below what the suite achieves today, so the numbers hold without being raised past what the
-      // code reaches: 79.43/79.38/69.86/82.84 overall, and 78.96/78.20/68.00/79.56 for `repositories.ts` — the
-      // one file whose only gate is this run, since the unit config exempts it.
+      // code reaches: 88.72/89.19/83.48/94.22 overall, `estate.ts` at 100/100/100/100 and `reports.ts` at
+      // 96.66/96.42/94.44/100 — the two files whose only gate is this run, since the unit config exempts them.
+      //
+      // THE AGGREGATE MOVED UP NINE POINTS WITHOUT A CASE BEING ADDED, which is what the decomposition bought:
+      // `report/repositories.ts` was measured here at 78.96/78.20/68.00/79.56 because two thirds of it was pure
+      // aggregation this run reaches only incidentally. That two thirds is now unit-tested at 95/90, and what is
+      // left is the reading, which these cases were always about.
       //
       // The branch floor has the most room of the four deliberately: `database-url.ts` takes a different arm
-      // depending on whether `DATABASE_URL` is set, so the aggregate is 69.86 on a laptop and 69.58 in the
-      // pipeline, which sets one.
+      // depending on whether `DATABASE_URL` is set, so the aggregate moves by about a third of a point between a
+      // laptop and the pipeline, which sets one.
       thresholds: {
         "src/evidence/store/coverage.ts": { statements: 85, lines: 85, branches: 90, functions: 95 },
-        "src/evidence/report/repositories.ts": { statements: 78, lines: 78, branches: 67, functions: 79 },
-        statements: 79,
-        lines: 79,
-        branches: 69,
-        functions: 82
+        "src/evidence/report/estate.ts": { statements: 98, lines: 98, branches: 95, functions: 100 },
+        "src/evidence/report/reports.ts": { statements: 95, lines: 95, branches: 90, functions: 100 },
+        statements: 88,
+        lines: 88,
+        branches: 82,
+        functions: 93
       }
     }
   }
