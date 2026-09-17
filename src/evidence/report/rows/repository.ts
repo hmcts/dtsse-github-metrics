@@ -1,4 +1,5 @@
 import type * as contract from "../../../lib/types.ts";
+import { UNCOLLECTED_DETAIL } from "../../../lib/types.ts";
 import type { ReadinessPolicy } from "../../assessment/assessment.ts";
 import type { Merges } from "../../domain/facts.ts";
 import { requiredApprovals, requiredContexts } from "../../domain/merge-gate.ts";
@@ -86,7 +87,9 @@ export function repositoryRow(
       teams: shared,
       ...facts,
       ...reportedRowProduction(undefined, production, repository),
-      detail: "nothing has been collected for this repository"
+      // The contract's own constant, not a literal: this is the one `detail` a page can print without also
+      // rendering merge figures, so `uncollectedDetail` selects on it and both sides must spell it identically.
+      detail: UNCOLLECTED_DETAIL
     };
   }
 

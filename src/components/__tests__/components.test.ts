@@ -311,6 +311,20 @@ describe("OwnerName", () => {
     expect(markup).toContain("civil-admins");
   });
 
+  /**
+   * A page with no window links bare, and must not name a span of its own.
+   *
+   * `/repositories` renders this component with no `weeks`. Naming its pinned default would be written into the
+   * reader's `weeks` cookie by `proxy`, resetting a window they had chosen on the teams pages — on a click that was
+   * about ownership rather than about a window. See `withWeeks`.
+   */
+  it("links the team without a span where the page states no window", () => {
+    const markup = renderToStaticMarkup(createElement(OwnerName, { row: { team: "civil-admins", owner_kind: "team" } }));
+
+    expect(markup).toContain('href="/teams/civil-admins"');
+    expect(markup).not.toContain("weeks");
+  });
+
   it("names one person without linking them, because there is no team page to link to", () => {
     const markup = ownerOf({ team: "a1i-hussain", owner_kind: "person" });
     expect(markup).toContain("a1i-hussain");
@@ -517,6 +531,59 @@ describe("OrganisationHeader", () => {
   it("says how many repositories the span could not report, and nothing when all could", () => {
     expect(header({ ...OVERVIEW, unavailable: 2 })).toContain("2 repositories not reported at this span");
     expect(header(OVERVIEW)).not.toContain("not reported at this span");
+  });
+
+  /** What `snapshot` renders instead: provenance, and no window at all. */
+  function snapshot(overview: OverviewSummary, unavailable?: number): string {
+    return renderToStaticMarkup(createElement(OrganisationHeader, { overview, snapshot: true, unavailable }));
+  }
+
+  /**
+   * A snapshot page states no span and no week count, because it has no window to state.
+   *
+   * `/repositories` is that page: every column it draws is control state. Printing a window there would invite the
+   * reader to take the whole page as covering it, which is the misreading the selector's removal was for.
+   */
+  it("states no window on a snapshot page, and still states its provenance", () => {
+    const markup = snapshot(OVERVIEW);
+
+    expect(markup).not.toContain("4 weeks");
+    expect(markup).not.toContain("2026-08-03 to 2026-08-31");
+    // Both provenance instants survive: they are true of the figures either way.
+    expect(markup).toContain("Collected through 2026-08-31");
+    expect(markup).toContain("Report built");
+  });
+
+  /**
+   * The unreported figure is reworded as the import fact it always was.
+   *
+   * `spanWindow` anchors every span at the same `collectedAnchor`, varying only `startsAt`, so the coverage
+   * comparison behind this figure returns the identical answer at every span. "At this span" was never true of a
+   * span, and on a page with no span it would name a window nothing else mentions.
+   */
+  it("names the import rather than a span for the repositories it could not report", () => {
+    const markup = snapshot({ ...OVERVIEW, unavailable: 2 });
+
+    expect(markup).toContain("2 repositories the last import did not reach");
+    expect(markup).not.toContain("at this span");
+  });
+
+  /**
+   * A page that counts unreported repositories differently says its own number.
+   *
+   * `/repositories` shows only the rows nothing was collected for, so it counts those rather than every row
+   * carrying any `detail` — otherwise the header announces repositories the table gives no reason for.
+   */
+  it("prefers the count the page passed to the overview's own", () => {
+    const markup = snapshot({ ...OVERVIEW, unavailable: 870 }, 3);
+
+    expect(markup).toContain("3 repositories the last import did not reach");
+    expect(markup).not.toContain("870");
+  });
+
+  it("says nothing about unreported repositories where the page counted none", () => {
+    // Zero passed explicitly, over an overview that counts 870: the page's answer wins, including when it is none.
+    expect(snapshot({ ...OVERVIEW, unavailable: 870 }, 0)).not.toContain("did not reach");
   });
 
   it("names no collection where nothing has been collected", () => {

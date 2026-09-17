@@ -581,6 +581,15 @@ export interface OverviewSummary {
 }
 
 /**
+ * The `RepositoryRow.detail` that means nothing whatever was collected for the repository.
+ *
+ * ON THE CONTRACT rather than spelled in the report layer alone, because both sides need the same string for
+ * different halves of one rule: `repositoryRow` emits it, and a page decides from it whether it has a reason worth
+ * printing. Kept as one exported constant so the two cannot drift into a comparison that silently stops matching.
+ */
+export const UNCOLLECTED_DETAIL = "nothing has been collected for this repository";
+
+/**
  * One repository in a list, whether this window could be reported for it or not.
  *
  * TWO KINDS OF FIELD, and the split is worth reading before adding a third. `pushed_at`, `visibility`,
@@ -704,6 +713,16 @@ export interface RepositoryRow {
   security?: SecurityAlertEvidence;
   sonar_security_rating?: SonarRating;
   sonar_security_issues?: number;
+  /**
+   * Why this row carries less than a full set of figures, joined where more than one reason applies.
+   *
+   * TWO KINDS OF REASON REACH THIS ONE FIELD, and a reader of it has to know which it is holding, because a page
+   * shows a reason only where it shows the figures the reason is about. `UNCOLLECTED_DETAIL` says nothing at all was
+   * collected, which leaves every column on every page empty; every other value comes from `unreportedDetail` and is
+   * about the MERGE sources or the merge gate, which only the repository and team pages render. The two are mutually
+   * exclusive — `repositoryRow` sets the first on the branch where it never calls the second — so comparing against
+   * the constant is an exact test rather than a prefix match on prose. See `uncollectedDetail` in `lib/rows.ts`.
+   */
   detail?: string;
   /**
    * Whether this repository is treated as a production service, by any of the three sources that say so.

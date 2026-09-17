@@ -29,7 +29,19 @@ import { withWeeks } from "@/lib/weeks";
  * page's header — because the rule that a person is unlinked is the whole point, and two copies of it
  * is how one of them ends up linked again.
  */
-export function OwnerName({ row, weeks }: { row: Pick<RepositoryRow, "team" | "owner_kind">; weeks: number }) {
+export function OwnerName({
+  row,
+  weeks
+}: {
+  row: Pick<RepositoryRow, "team" | "owner_kind">;
+  /**
+   * The span to carry to the team page, or nothing from a page that states no window.
+   *
+   * Absent from `/repositories`, whose links are deliberately bare — see `withWeeks` for why naming a span there
+   * would reset the reader's remembered preference.
+   */
+  weeks?: number;
+}) {
   if (ownedByIndividual(row)) {
     return (
       <span className="inline-flex flex-wrap items-center gap-1.5">

@@ -25,6 +25,7 @@ import type {
   RepositoryRow,
   Visibility
 } from "@/lib/types";
+import { UNCOLLECTED_DETAIL } from "@/lib/types";
 
 /**
  * Every team that owns the row, which is not always the one name its team cell prints.
@@ -64,6 +65,37 @@ export const INDIVIDUAL_LABEL = "Individual";
  */
 export function ownedByIndividual(row: Pick<RepositoryRow, "owner_kind">): boolean {
   return row.owner_kind === "person";
+}
+
+/**
+ * The row's reason where it is one this list can honestly print, and nothing where it is not.
+ *
+ * A REASON IS ONLY WORTH PRINTING BESIDE THE FIGURES IT EXPLAINS, which is what this selects on. `detail` carries two
+ * unrelated kinds of sentence — see `RepositoryRow.detail` — and `/repositories` renders CONTROL STATE only: no
+ * merged-pull-request column, no direct-commit column, no merge gate. So "no merge history was read for this
+ * repository, so its merges are unmeasured rather than none" explained nothing a reader of this page could see, and
+ * printed under the name of every repository whose private-and-internal walk the App installation does not cover
+ * (VIBE-590) it read as a fault in the row rather than in a column that is not there.
+ *
+ * `UNCOLLECTED_DETAIL` is the one that stays, because nothing collected means every column this table draws is
+ * empty — which is exactly what the sentence says. The repository and team pages keep rendering `detail` whole:
+ * they show the merge figures, so there the merge reasons are the load-bearing half of the answer.
+ */
+export function uncollectedDetail(row: Pick<RepositoryRow, "detail">): string | undefined {
+  return row.detail === UNCOLLECTED_DETAIL ? row.detail : undefined;
+}
+
+/**
+ * How many of these rows this list has a reason for, which is how many it could report nothing about.
+ *
+ * COUNTED OFF THE ROWS AND NOT READ OFF `OverviewSummary.unavailable`, because the two answer different questions
+ * now. `unavailable` counts every row carrying any `detail`, so it includes the merge-history gap this page no
+ * longer shows — leaving the header able to announce 870 unreported repositories above a table where not one row
+ * gave a reason. The other list pages still read `unavailable`, and correctly: they state a window, and the figure
+ * is about what that window could report.
+ */
+export function uncollectedCount(rows: readonly Pick<RepositoryRow, "detail">[]): number {
+  return rows.filter((row) => uncollectedDetail(row) !== undefined).length;
 }
 
 /**

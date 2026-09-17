@@ -31,7 +31,8 @@ import {
   hygieneSignals,
   metOutcome,
   ownedByIndividual,
-  SECRETS_CRITERION
+  SECRETS_CRITERION,
+  uncollectedDetail
 } from "@/lib/rows";
 import type { Contributor, RepositoryRow } from "@/lib/types";
 
@@ -77,16 +78,21 @@ export function repositoryExportHeadings(expanded = false): string[] {
 /**
  * One repository's cells, in the headings' order.
  *
- * `detail` is its own column here where the table draws it under the repository name. It is the sentence that says
- * why a row has no figures — "No merge activity in this window." — and it is also the field most likely to carry a
- * comma, which is what the writer's quoting is for.
+ * `Detail` is its own column here where the table draws it under the repository name, and it carries THE SAME
+ * NARROWED REASON — `uncollectedDetail`, "nothing has been collected for this repository" — rather than the row's
+ * whole `detail`. "The file is a copy of the table" is the promise this module is built on, so a column that
+ * explained merge figures the file does not export would break it in the direction nobody checks.
+ *
+ * It was also the field most likely to carry a comma, and is no longer: the narrowed value is one known sentence
+ * without one, or nothing. A contributor's name is the free text that can still force the writer to quote — see
+ * `teamContributorCell`.
  */
 function repositoryExportRow(row: RepositoryRow, contributors: readonly Contributor[] | undefined, expanded: boolean): string[] {
   return [
     row.team,
     teamContributorCell(row, contributors),
     row.repository,
-    row.detail ?? "",
+    uncollectedDetail(row) ?? "",
     day(row.pushed_at),
     row.visibility ?? ABSENT,
     ...ASSURANCE_CRITERIA.flatMap((criterion) =>

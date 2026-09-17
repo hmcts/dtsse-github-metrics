@@ -28,6 +28,7 @@ import { RepositoriesTable } from "@/components/RepositoriesTable";
 import { PRODUCTION_SOURCE_HINT, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
 import { EXPAND_LABEL, INDIVIDUAL_LABEL } from "@/lib/rows";
 import type { RepositoryRow } from "@/lib/types";
+import { UNCOLLECTED_DETAIL } from "@/lib/types";
 
 let replaced: string[] = [];
 
@@ -105,11 +106,12 @@ const ROWS: RepositoryRow[] = [
       oldest_severe_alert_days: 120
     }
   },
+  // The row nothing was collected for, carrying the one `detail` this table prints — see `uncollectedDetail`.
   {
     repository: "api",
     team: "platform",
     visibility: "public",
-    detail: "No merge activity in this window."
+    detail: UNCOLLECTED_DETAIL
   },
   {
     repository: "docs",
@@ -143,7 +145,7 @@ function order(): string[] {
     .getAllByRole("row")
     .slice(1)
     .map((row) => within(row).getAllByRole("cell")[1]?.textContent ?? "")
-    .map((cell) => cell.replace("No merge activity in this window.", ""));
+    .map((cell) => cell.replace(UNCOLLECTED_DETAIL, ""));
 }
 
 /**
@@ -584,6 +586,25 @@ describe("RepositoriesTable owner cell", () => {
     expect(ownerCell("ours")?.textContent).toBe("civil-admins");
   });
 
+  /**
+   * A table handed no span links bare, to the team and to the repository both.
+   *
+   * `/repositories` renders it that way from 2026-09-17. `proxy` writes any span a URL names into the `weeks`
+   * cookie, so a link carrying that page's pinned default would reset a reader who had chosen 26 weeks on the teams
+   * pages — silently, on a click about a repository. The team page still passes its own span, which the case above
+   * covers, so both directions are held.
+   */
+  it("links to a team and a repository without a span where it was handed none", () => {
+    render(<RepositoriesTable rows={OWNERS} />);
+
+    expect(
+      within(ownerCell("ours") as HTMLElement)
+        .getByRole("link")
+        .getAttribute("href")
+    ).toBe("/teams/civil-admins");
+    expect(screen.getByRole("link", { name: "ours" }).getAttribute("href")).toBe("/repositories/ours");
+  });
+
   it("marks one person and links nothing, there being no team page for them", () => {
     // THE LINK THIS CHANGE HAD TO NOT LEAVE BEHIND. `/teams` lists teams only, so `/teams/a1i-hussain` is the
     // not-found page — and 206 repositories of this estate are owned by one person.
@@ -632,6 +653,38 @@ describe("RepositoriesTable owner cell", () => {
  * create one of those filters, so a chip a reader could dismiss but never apply was a half-wired control. What is
  * left is the term and the four toggles, each of which has its own affordance.
  */
+/**
+ * The reason under a repository's name, which is one of the two kinds `detail` carries.
+ *
+ * This table draws control state and no merge column, so a reason about merged pull requests or the merge gate
+ * explained an absence the reader could not see — and it appeared on the 870 repositories whose private-and-internal
+ * walk the App installation does not cover (VIBE-590), reading as a fault in each of them. The repository and team
+ * pages, which do draw the merge figures, still render `detail` whole.
+ */
+describe("RepositoriesTable row detail", () => {
+  const MERGE_REASON = "no merge history was read for this repository, so its merges are unmeasured rather than none";
+
+  it("prints the reason that explains the columns it draws", () => {
+    mount([{ repository: "ghost", team: "platform", detail: UNCOLLECTED_DETAIL }]);
+
+    expect(screen.getByText(UNCOLLECTED_DETAIL)).toBeTruthy();
+  });
+
+  it("prints nothing where the only reason is about merges it has no column for", () => {
+    mount([{ repository: "walled", team: "platform", detail: MERGE_REASON }]);
+
+    expect(screen.queryByText(MERGE_REASON)).toBeNull();
+    // The row itself stays, and its name with it: dropping the row would make the list read as the whole estate.
+    expect(screen.getByRole("link", { name: "walled" })).toBeTruthy();
+  });
+
+  it("prints nothing at all for a row that gave no reason", () => {
+    mount([{ repository: "api", team: "platform" }]);
+
+    expect(screen.queryByText(UNCOLLECTED_DETAIL)).toBeNull();
+  });
+});
+
 describe("RepositoriesTable filtering", () => {
   it("shows no chip at all, there being no dimension left to chip", () => {
     mount();
