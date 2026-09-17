@@ -148,7 +148,7 @@ const REPOSITORY_ROW: Shape<contract.RepositoryRow> = {
 };
 
 const ASSURANCE_REPORT: Shape<contract.AssuranceReport> = {
-  declared: { grade: true, criteria: true, oldest_severe_alert_days: true },
+  declared: { grade: true, criteria: true, hygiene: true, oldest_severe_alert_days: true },
   required: { grade: true, criteria: true }
 };
 

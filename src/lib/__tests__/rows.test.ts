@@ -18,7 +18,13 @@ import {
   answerOrder,
   assuranceOrder,
   criterionResult,
+  EXPAND_LABEL,
+  EXPANDED_PARAMETER,
+  EXPANDED_VALUE,
   filterRepositories,
+  HYGIENE_CHECKS,
+  HYGIENE_CRITERION,
+  hygieneSignals,
   INDIVIDUAL_LABEL,
   matchesRepository,
   matchesVisibility,
@@ -28,6 +34,7 @@ import {
   owners,
   PRODUCTION_PARAMETER,
   PRODUCTION_VALUE,
+  parseExpanded,
   parseProduction,
   parseVisibilities,
   productionCount,
@@ -35,7 +42,7 @@ import {
   visibilityParameter
 } from "@/lib/rows";
 import { sorted } from "@/lib/sort";
-import type { RepositoryRow } from "@/lib/types";
+import type { AssuranceHygieneSignals, RepositoryRow } from "@/lib/types";
 
 function row(fields: Partial<RepositoryRow> & { repository: string }): RepositoryRow {
   return { team: "platform", ...fields };
@@ -571,5 +578,116 @@ describe("answerOrder", () => {
 
   it("leaves an unreadable answer undefined, the value `sorted` holds back from both ends", () => {
     expect(answerOrder(undefined)).toBeUndefined();
+  });
+});
+
+describe("parseExpanded", () => {
+  it("should name a parameter of its own when read beside the four filters", () => {
+    // Expanding a column and narrowing the rows are different questions, and a control reading another's
+    // parameter would answer one of them by accident.
+    expect(EXPANDED_PARAMETER).toBe("hygiene");
+    expect(VISIBILITIES.map(visibilityParameter)).not.toContain(EXPANDED_PARAMETER);
+    expect(EXPANDED_PARAMETER).not.toBe(PRODUCTION_PARAMETER);
+  });
+
+  it("should read the value the toggle writes as expanded and everything else as collapsed", () => {
+    // One spelling rather than truthiness, as the Production toggle reads: `?hygiene=0` is not an odd way of
+    // saying yes.
+    expect(parseExpanded(() => EXPANDED_VALUE)).toBe(true);
+    expect(parseExpanded(() => null)).toBe(false);
+    expect(parseExpanded(() => "")).toBe(false);
+    expect(parseExpanded(() => "0")).toBe(false);
+  });
+
+  it("should read its own parameter and no other when another control carries the same value", () => {
+    const query: Record<string, string> = { [PRODUCTION_PARAMETER]: EXPANDED_VALUE };
+    expect(parseExpanded((parameter) => query[parameter] ?? null)).toBe(false);
+    query[EXPANDED_PARAMETER] = EXPANDED_VALUE;
+    expect(parseExpanded((parameter) => query[parameter] ?? null)).toBe(true);
+  });
+
+  it("should name the control after what it shows rather than after the click", () => {
+    expect(EXPAND_LABEL).toBe("Hygiene checks");
+  });
+});
+
+describe("HYGIENE_CHECKS", () => {
+  /** One check's answer, found by the label its column carries rather than by position. */
+  function answer(label: string, signals: AssuranceHygieneSignals): boolean | undefined {
+    return HYGIENE_CHECKS.find((check) => check.label === label)?.read(signals);
+  }
+
+  it("should expand the hygiene criterion and no other, that being the only aggregate", () => {
+    // `Assurance` sums the four graded criteria and each is already a column, so expanding it would draw them
+    // twice; `patching` is one number and the other three are one signal apiece. This is the only column whose
+    // "No" leaves a reader unable to say which control is missing.
+    expect(HYGIENE_CRITERION).toBe("automated-hygiene");
+    expect(ASSURANCE_CRITERIA).toContain(HYGIENE_CRITERION);
+  });
+
+  it("should draw four checks over five signals when the aggregate is expanded", () => {
+    // FOUR AND NOT FIVE, because the two update signals are one requirement between them — which is the whole
+    // reason the criterion is judged as a composite.
+    expect(HYGIENE_CHECKS.map((check) => check.label)).toEqual(["Secret scanning", "Push protection", "Vulnerability alerts", "Dependency updates"]);
+    for (const check of HYGIENE_CHECKS) {
+      expect(check.hint.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("should read each single-signal check off its own signal when the report carries one", () => {
+    // Crossed over, so a check wired to its neighbour's signal answers the other way round and fails.
+    const signals: AssuranceHygieneSignals = { secret_scanning: true, push_protection: false, vulnerability_alerts: true };
+
+    expect(answer("Secret scanning", signals)).toBe(true);
+    expect(answer("Push protection", signals)).toBe(false);
+    expect(answer("Vulnerability alerts", signals)).toBe(true);
+  });
+
+  it("should leave a check unread when the signal behind it is absent", () => {
+    // ABSENT IS NOT FALSE: `hygieneFromMetadata` leaves every signal absent for a body it could not read, because
+    // an unreadable response is not evidence that scanning is off.
+    for (const check of HYGIENE_CHECKS) {
+      expect(check.read({})).toBeUndefined();
+      expect(check.read(undefined)).toBeUndefined();
+    }
+  });
+
+  it("should meet the update requirement when either tool answers yes", () => {
+    // THE BUG THE FOLD FIXED. Renovate does not turn GitHub's Dependabot setting on, so requiring both marked
+    // down 244 repositories that keep their dependencies perfectly current. One tool doing the job is the
+    // requirement met, whatever the other says — including where the other was never read.
+    expect(answer("Dependency updates", { dependabot_security_updates: false, update_configuration: true })).toBe(true);
+    expect(answer("Dependency updates", { dependabot_security_updates: true, update_configuration: false })).toBe(true);
+    expect(answer("Dependency updates", { dependabot_security_updates: true, update_configuration: true })).toBe(true);
+    expect(answer("Dependency updates", { update_configuration: true })).toBe(true);
+  });
+
+  it("should fail the update requirement only when both signals were read and both are off", () => {
+    expect(answer("Dependency updates", { dependabot_security_updates: false, update_configuration: false })).toBe(false);
+  });
+
+  it("should leave the update requirement unread when one signal is off and the other was not read", () => {
+    // The case that must not read as a finding: a repository whose Dependabot state is plainly off and whose
+    // default branch could not be listed has not been shown to lack dependency updates.
+    expect(answer("Dependency updates", { dependabot_security_updates: false })).toBeUndefined();
+    expect(answer("Dependency updates", { update_configuration: false })).toBeUndefined();
+  });
+});
+
+describe("hygieneSignals", () => {
+  it("should find the signals a row's report carries", () => {
+    const assured = row({
+      repository: "hmcts/api",
+      assurance: { grade: "partial", criteria: [], hygiene: { secret_scanning: true, push_protection: false } }
+    });
+
+    expect(hygieneSignals(assured)).toEqual({ secret_scanning: true, push_protection: false });
+  });
+
+  it("should find nothing when the row carries no assurance block, or one without signals", () => {
+    // A repository nothing was collected for, and a row served by a build older than the field: both are unread
+    // rather than a repository with its controls switched off.
+    expect(hygieneSignals(row({ repository: "hmcts/old" }))).toBeUndefined();
+    expect(hygieneSignals(row({ repository: "hmcts/older", assurance: { grade: "unknown", criteria: [] } }))).toBeUndefined();
   });
 });

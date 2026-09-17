@@ -20,7 +20,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { RepositoriesTable } from "@/components/RepositoriesTable";
 import { PRODUCTION_SOURCE_HINT, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE } from "@/lib/production";
-import { INDIVIDUAL_LABEL } from "@/lib/rows";
+import { EXPAND_LABEL, INDIVIDUAL_LABEL } from "@/lib/rows";
 import type { RepositoryRow } from "@/lib/types";
 
 let replaced: string[] = [];
@@ -924,7 +924,10 @@ describe("RepositoriesTable action slot", () => {
     const filters = screen.getByRole("group", { name: "Repository filters" });
     const action = screen.getByRole("button", { name: "Export CSV" });
 
-    expect(filters.parentElement).toBe(action.parentElement);
+    // ONE LEVEL DOWN FROM THE FILTERS, from the expand toggle: the two controls that are about the COLUMNS rather
+    // than about which rows are shown are clustered at the end of the row, so the toggle sits beside the button
+    // whose file it changes. Still the same row as the filters, which is what this case exists to hold.
+    expect(filters.parentElement).toBe(action.parentElement?.parentElement);
     // `compareDocumentPosition` rather than an index, so this states "after the toggles" and not "in slot two".
     expect(filters.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -943,5 +946,208 @@ describe("RepositoriesTable action slot", () => {
 
     expect(screen.queryByRole("button", { name: "Export CSV" })).toBeNull();
     expect(within(screen.getByRole("group", { name: "Repository filters" })).getAllByRole("button")).toHaveLength(4);
+  });
+});
+
+/**
+ * The expand toggle, and the four columns it breaks the Hygiene aggregate into.
+ *
+ * ITS OWN ROWS, on the visibility toggles' precedent: these carry the hygiene SIGNALS, which no other case in this
+ * file asserts and which would otherwise have to be spread across `ROWS` where every ordering assertion counts.
+ *
+ * The state is in the URL rather than in the component, so a click is asserted as a NAVIGATION and what the columns
+ * do is asserted by mounting at each URL. That is the same shape as the four filter toggles and deliberately not the
+ * shape of the sort: expanding changes what the table reports, and `RepositoriesExport` can only see the query
+ * string.
+ */
+describe("RepositoriesTable hygiene expansion", () => {
+  /**
+   * Three rows that separate all three answers and both halves of the update requirement.
+   *
+   * `scanned` has scanning on, push protection off, alerts UNDISCLOSED and the two update signals disagreeing —
+   * so the folded column has to read Yes off the Renovate half alone. `bare` was collected and disclosed neither
+   * update signal, and `nothing` carries no assurance block at all.
+   */
+  const SIGNALLED: RepositoryRow[] = [
+    {
+      repository: "scanned",
+      team: "platform",
+      visibility: "public",
+      pushed_at: "2026-09-10T00:00:00Z",
+      assurance: {
+        grade: "partial",
+        criteria: [{ criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: push protection" }],
+        hygiene: { secret_scanning: true, push_protection: false, dependabot_security_updates: false, update_configuration: true }
+      }
+    },
+    {
+      repository: "bare",
+      team: "platform",
+      visibility: "public",
+      pushed_at: "2026-09-09T00:00:00Z",
+      assurance: { grade: "unknown", criteria: [], hygiene: { secret_scanning: false } }
+    },
+    { repository: "nothing", team: "platform", visibility: "public", pushed_at: "2026-09-08T00:00:00Z" }
+  ];
+
+  const CHECKS = ["Secret scanning", "Push protection", "Vulnerability alerts", "Dependency updates"];
+
+  /** The expand toggle, found the way a reader does: by the word on it. */
+  function expander(): HTMLElement {
+    return screen.getByRole("button", { name: EXPAND_LABEL });
+  }
+
+  it("should draw no check when the URL says nothing, the aggregate being the default", () => {
+    mount(SIGNALLED);
+
+    for (const label of CHECKS) {
+      expect(headerNames()).not.toContain(label);
+    }
+    expect(expander().getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("should draw the four checks between the aggregate and Secrets when the URL says expanded", () => {
+    // BETWEEN, not appended: the checks are the parts of the column beside them, and a reader scanning rightwards
+    // has to meet the verdict and then its evidence.
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+
+    expect(headerNames().slice(headerNames().indexOf("Hygiene"), headerNames().indexOf("Secrets") + 1)).toEqual(["Hygiene", ...CHECKS, "Secrets"]);
+    expect(expander().getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("should hide the checks again when the parameter is dropped", () => {
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+    expect(headerNames()).toContain("Push protection");
+
+    cleanup();
+    url("weeks=12");
+    mount(SIGNALLED);
+
+    expect(headerNames()).not.toContain("Push protection");
+    // The aggregate never goes anywhere: it is the graded criterion, and the grade beside it would otherwise have
+    // no column explaining it.
+    expect(headerNames()).toContain("Hygiene");
+  });
+
+  it("should write its parameter on the click, keeping the span, the term and the filters", () => {
+    url("weeks=26&repository=e&production=true");
+    mount(SIGNALLED);
+
+    fireEvent.click(expander());
+
+    expect(replaced).toEqual(["/repositories?weeks=26&repository=e&production=true&hygiene=true"]);
+  });
+
+  it("should clear the parameter on the second click, dropping it rather than emptying it", () => {
+    url("weeks=26&repository=e&hygiene=true");
+    mount(SIGNALLED);
+
+    fireEvent.click(expander());
+
+    expect(replaced).toEqual(["/repositories?weeks=26&repository=e"]);
+  });
+
+  it("should tick the toggle while it is on, so the state is not colour alone", () => {
+    // The four filter toggles' own affordance, and here for their reason: a reader who cannot separate two dark
+    // fills would have no way to tell whether the control is on. The tick is `aria-hidden` because `aria-pressed`
+    // already says it.
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+
+    expect(expander().querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
+
+    cleanup();
+    url("weeks=12");
+    mount(SIGNALLED);
+
+    expect(expander().querySelector("svg")).toBeNull();
+  });
+
+  it("should sit outside the filters group, which is still the four toggles alone", () => {
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+    const filters = screen.getByRole("group", { name: "Repository filters" });
+
+    expect(within(filters).queryByRole("button", { name: EXPAND_LABEL })).toBeNull();
+    expect(within(filters).getAllByRole("button")).toHaveLength(4);
+    // In the filter row all the same, and after the toggles: it is a control over the table, not over the page.
+    expect(filters.compareDocumentPosition(expander()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(filters.parentElement).toBe(expander().parentElement?.parentElement);
+  });
+
+  it("should print Yes for a signal that is on and No for one that is off", () => {
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+
+    expect(cellOf("scanned", "Secret scanning")?.textContent).toBe("Yes");
+    expect(cellOf("scanned", "Push protection")?.textContent).toBe("No");
+    expect(cellOf("bare", "Secret scanning")?.textContent).toBe("No");
+    // The aggregate is the report's judgement and not a fold over the cells beside it.
+    expect(cellOf("scanned", "Hygiene")?.textContent).toBe("No");
+  });
+
+  it("should print a dash for a signal nobody read, and never invert one", () => {
+    // GitHub disclosed nothing about vulnerability alerts on `scanned`, and nothing at all was collected for
+    // `nothing`. Neither has been shown to have a control switched off. The inversion the `Secrets` column makes
+    // is that column's alone: a signal that is on reads Yes here.
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+
+    expect(cellOf("scanned", "Vulnerability alerts")?.textContent).toBe("-");
+    for (const label of CHECKS) {
+      expect(cellOf("nothing", label)?.textContent).toBe("-");
+    }
+  });
+
+  it("should leave an unread signal slate rather than colouring it warm", () => {
+    // `rag.ts`'s rule, which this column is exactly the case for: a half-read question coloured amber makes a
+    // permission the token lacks read as a control the team turned off.
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+
+    expect(cellOf("scanned", "Vulnerability alerts")?.outerHTML).toContain("text-slate-500");
+    expect(cellOf("scanned", "Vulnerability alerts")?.outerHTML).not.toMatch(/amber|rose|rag-/);
+    expect(cellOf("scanned", "Secret scanning")?.outerHTML).toContain("text-rag-green");
+    expect(cellOf("scanned", "Push protection")?.outerHTML).toContain("text-rag-amber");
+  });
+
+  it("should draw the two update signals as one column met by either tool", () => {
+    // Dependabot security updates off and a Renovate configuration present is 244 repositories of this estate.
+    // Two independent columns would put a No against every one of them, which is the bug the `either` merge fixed.
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+
+    expect(headerNames().filter((label) => label?.includes("epend"))).toEqual(["Dependency updates"]);
+    expect(cellOf("scanned", "Dependency updates")?.textContent).toBe("Yes");
+    // Neither signal was read for `bare`, which is unread rather than a repository nothing updates.
+    expect(cellOf("bare", "Dependency updates")?.textContent).toBe("-");
+  });
+
+  it("should sort a check on its own signal, holding an unread one back from both ends", () => {
+    url("weeks=12&hygiene=true");
+    mount(SIGNALLED);
+
+    // Ascending opens on the repositories MISSING the control, which is what a reader sorting a hygiene check is
+    // looking for. `nothing`, which nobody read, is last either way round.
+    expect(sortBy("Push protection")).toEqual(["scanned", "bare", "nothing"]);
+    expect(sortBy("Secret scanning")).toEqual(["bare", "scanned", "nothing"]);
+    expect(sortBy("Secret scanning").at(-1)).toBe("nothing");
+  });
+
+  it("should keep the column a reader sorted by when the aggregate is expanded", () => {
+    // THE REASON THE EXPANDED COLUMNS ARE BUILT ONCE. The sort holds the column as an OBJECT and compares it by
+    // identity, so rebuilding the list per render would silently forget what the table was ordered by the moment
+    // the reader expanded it.
+    const view = mount(SIGNALLED);
+    sortBy("Repository");
+    expect(announced("Repository")).toBe("ascending");
+
+    url("weeks=12&hygiene=true");
+    view.rerender(<RepositoriesTable rows={SIGNALLED} weeks={12} />);
+
+    expect(announced("Repository")).toBe("ascending");
+    expect(order()).toEqual(["bare", "nothing", "scanned"]);
   });
 });

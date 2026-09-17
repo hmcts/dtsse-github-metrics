@@ -17,7 +17,7 @@ import {
 import { deserialise, loadCachedMerges } from "../behaviour/fill.ts";
 import { behaviourMetrics, mergeCycleTime, timeToFirstReview } from "../behaviour/metrics.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
-import { type AssuranceEvidence, assuranceGrade, judgeAssurance } from "../domain/assurance.ts";
+import { type AssuranceEvidence, assuranceGrade, type HygieneSignals, judgeAssurance } from "../domain/assurance.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
 import {
   type DirectCommitFact,
@@ -473,7 +473,33 @@ function reportedAssurance(entry: CohortEntry, payload: unknown): contract.Assur
     criteria: judgements.map((judgement) => ({ criterion: judgement.criterion, outcome: judgement.outcome, detail: judgement.detail })),
     // Lifted out of the criteria beside it so a column can print the number and a threshold can one day compare
     // it without either having to find the right judgement and parse its sentence.
-    oldest_severe_alert_days: stored?.oldestSevereAlertDays
+    oldest_severe_alert_days: stored?.oldestSevereAlertDays,
+    hygiene: reportedHygieneSignals(stored?.hygiene)
+  };
+}
+
+/**
+ * The hygiene signals on the contract's spelling, for the columns the Hygiene aggregate expands into.
+ *
+ * EMITTED BESIDE THE JUDGEMENT AND NOT INSIDE IT, for the reason `oldest_severe_alert_days` is: the judgement's
+ * `detail` names the missing control in a sentence, and a column expanding the criterion needs the five values
+ * themselves. Nothing here re-judges anything — `hygieneJudgement` is still the one place the four checks are
+ * graded.
+ *
+ * Every key is passed through as it was collected, `undefined` included, so `stripAbsent` drops an undisclosed
+ * signal rather than sending a `false` that would read as a control switched off. The whole block is absent for a
+ * repository nothing has been collected for.
+ */
+function reportedHygieneSignals(signals: HygieneSignals | undefined): Record<string, unknown> | undefined {
+  if (signals === undefined) {
+    return undefined;
+  }
+  return {
+    secret_scanning: signals.secretScanning,
+    push_protection: signals.pushProtection,
+    vulnerability_alerts: signals.vulnerabilityAlerts,
+    dependabot_security_updates: signals.dependabotSecurityUpdates,
+    update_configuration: signals.updateConfiguration
   };
 }
 

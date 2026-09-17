@@ -219,4 +219,31 @@ describe("RepositoriesExport", () => {
 
     expect(control().hasAttribute("disabled")).toBe(false);
   });
+
+  it("should carry the hygiene checks when the reader has expanded the aggregate", () => {
+    // THE COLUMNS FOLLOW THE TOGGLE, which is only possible because it is URL state. The file is a copy of the
+    // table, so a reader looking at the four checks has to be handed them.
+    url("weeks=12&hygiene=true");
+    mount();
+    fireEvent.click(control());
+
+    const [headings] = (downloaded?.content ?? "").split("\r\n");
+    for (const label of ["Secret scanning", "Push protection", "Vulnerability alerts", "Dependency updates"]) {
+      expect(headings).toContain(label);
+    }
+    // The aggregate stays beside them, as it does on the page.
+    expect(headings).toContain("Hygiene");
+  });
+
+  it("should carry no hygiene check when the aggregate is collapsed", () => {
+    // The other half of the same promise: four columns nobody can see on the page would be the file drifting from
+    // it just as surely as four missing ones would.
+    mount();
+    fireEvent.click(control());
+
+    const [headings] = (downloaded?.content ?? "").split("\r\n");
+    for (const label of ["Secret scanning", "Push protection", "Vulnerability alerts", "Dependency updates"]) {
+      expect(headings).not.toContain(label);
+    }
+  });
 });

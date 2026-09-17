@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { CSV_BYTE_ORDER_MARK, csvDocument, csvFilename } from "@/lib/csv";
 import { repositoryExportRows } from "@/lib/export";
 import { day } from "@/lib/format";
-import { filterRepositories, orderRepositories, parseProduction, parseVisibilities, TERM_PARAMETER } from "@/lib/rows";
+import { filterRepositories, orderRepositories, parseExpanded, parseProduction, parseVisibilities, TERM_PARAMETER } from "@/lib/rows";
 import type { Contributor, RepositoryRow } from "@/lib/types";
 
 /**
@@ -24,7 +24,11 @@ import type { Contributor, RepositoryRow } from "@/lib/types";
  * toggle and the three visibility toggles all live in the URL, so this reads them through the same `useSearchParams`
  * and the same `filterRepositories` the table does. It cannot read the table's SORT, which is component state one
  * level away — so the file is ordered by `orderRepositories`, the order the table opens on and the one it is in
- * unless the reader has clicked a header. Rows and columns match either way; only their sequence can differ.
+ * unless the reader has clicked a header. Only the SEQUENCE can differ.
+ *
+ * THE COLUMNS FOLLOW THE EXPAND TOGGLE for that same reason read the other way. Expanding the Hygiene column into
+ * its four checks is URL state, so this control can see it and the file carries the same columns as the page — where
+ * a component-state toggle would have left the file unable to tell an expanded table from a collapsed one.
  *
  * NAMED BY ITS VISIBLE WORDS and nothing else, so the accessible name and the label a sighted reader reads are the
  * same string. The icon is decoration and is `aria-hidden`, as every other icon on the site is.
@@ -48,9 +52,12 @@ export function RepositoriesExport({
       parseVisibilities((parameter) => searchParameters.get(parameter))
     )
   );
+  // The same parameter through the same parser the table reads it with, as every filter here is: two readings of one
+  // parameter is how a file comes to disagree with the page it was exported from.
+  const expanded = parseExpanded((parameter) => searchParameters.get(parameter));
 
   function download() {
-    const content = CSV_BYTE_ORDER_MARK + csvDocument(repositoryExportRows(shown, teamContributors));
+    const content = CSV_BYTE_ORDER_MARK + csvDocument(repositoryExportRows(shown, teamContributors, expanded));
     // An object URL rather than a `data:` URL: an estate of 1,880 rows is a few hundred kilobytes, and percent
     // encoding it into an href would push it past the length some browsers will follow for a download.
     const url = URL.createObjectURL(new Blob([content], { type: "text/csv;charset=utf-8" }));

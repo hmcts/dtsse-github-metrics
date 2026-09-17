@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { sourceSignature } from "../../src/evidence/behaviour/queries.ts";
 import { EvidenceSource } from "../../src/evidence/domain/coverage.ts";
 import { parseConfiguration } from "../../src/evidence/policy/load.ts";
+import { findNulls } from "../../src/evidence/report/absent.ts";
 import { builtReport, builtSpanCount, CACHEABLE_SPANS } from "../../src/evidence/report/cache.ts";
 import {
   actorRows,
@@ -478,6 +479,54 @@ describe("repositoryRows", () => {
     const counts = new Map(rows.map((row) => [row.repository, row.merged_pull_requests]));
     expect(counts.get("alpha")).toBe(2);
     expect(counts.get("beta")).toBe(1);
+  });
+
+  it("should carry the collected hygiene signals, dropping the ones nothing disclosed", async () => {
+    // THE SEAM NO COMPONENT TEST CAN SEE. The estate table's Hygiene column expands into the four checks behind
+    // it, and the criterion's own judgement carries only a SENTENCE naming what is missing — so the signals have
+    // to survive the jsonb round trip on the row itself, under the contract's snake_case spelling.
+    //
+    // `vulnerabilityAlerts` is deliberately not stored: an undisclosed signal must reach the UI as an ABSENT key
+    // rather than as `false`, which would report a permission the token lacks as a control the team switched off.
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+    await prisma.repositoryState.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "alpha",
+        fetchedAt: new Date(),
+        payload: {
+          defaultBranch: "main",
+          assurance: {
+            hygiene: { secretScanning: true, pushProtection: false, dependabotSecurityUpdates: false, updateConfiguration: true },
+            severeAlertsRead: true,
+            secretsRead: true
+          }
+        }
+      }
+    });
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, new Date(Date.UTC(2026, 8, 1)))) as {
+      repository: string;
+      assurance?: { hygiene?: Record<string, boolean> };
+    }[];
+
+    expect(rows[0]?.assurance?.hygiene).toEqual({
+      secret_scanning: true,
+      push_protection: false,
+      dependabot_security_updates: false,
+      update_configuration: true
+    });
+    expect(findNulls(rows)).toEqual([]);
+  });
+
+  it("should carry no hygiene block for a repository nothing has been collected for", async () => {
+    // A row with no evidence still answers on ownership and maintenance, and must not carry an empty signal block
+    // suggesting a collection ran and disclosed nothing.
+    await graphRepository("beta", new Date(Date.UTC(2026, 7, 20)));
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, new Date(Date.UTC(2026, 8, 1)))) as { assurance?: { hygiene?: unknown } }[];
+
+    expect(rows[0]?.assurance?.hygiene).toBeUndefined();
   });
 
   it("should stamp coverage as used, so a window a report reads is not pruned", async () => {

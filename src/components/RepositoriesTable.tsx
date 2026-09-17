@@ -4,7 +4,7 @@ import clsx from "clsx";
 import { Check } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { type ReactNode, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
 import { type Align, SortHeader } from "@/components/SortHeader";
@@ -23,14 +23,21 @@ import {
   answerWord,
   assuranceOrder,
   criterionResult,
+  EXPAND_LABEL,
+  EXPANDED_PARAMETER,
+  EXPANDED_VALUE,
   filterRepositories,
   findingOrder,
   foundOutcome,
+  HYGIENE_CHECKS,
+  HYGIENE_CRITERION,
+  hygieneSignals,
   metOutcome,
   orderRepositories,
   outcomeOrder,
   PRODUCTION_PARAMETER,
   PRODUCTION_VALUE,
+  parseExpanded,
   parseProduction,
   parseVisibilities,
   productionCount,
@@ -56,11 +63,17 @@ import { withWeeks } from "@/lib/weeks";
  * Sorting stays in component state: it is how one reader is looking at the list right now, not a fact about the
  * window worth sending to somebody.
  *
- * THE BAR IS FOUR TOGGLES AND NOTHING ELSE, from 2026-09-14. It used to hold the Production toggle followed by a
- * dismissible chip per filtered donut dimension — the donuts above the table were the controls and the chips
- * showed what they had been set to. The donuts are gone, so the chips went with them: a filter a reader can
- * dismiss but has no way to apply is worse than no filter. What is left is Production and the three visibility
- * toggles, each with its own affordance and none with an × on it, which is the shape Production always had.
+ * THE EXPAND TOGGLE IS IN THE URL AND THE SORT IS NOT, which is the same rule rather than an exception to it.
+ * Expanding the Hygiene column changes WHAT the table reports — four more answers per row — where a header click
+ * changes only the order it reports it in. It has to be shareable for a second reason besides: `RepositoriesExport`
+ * reads the URL and cannot see component state, and the file's columns follow the toggle.
+ *
+ * THE FILTERS GROUP IS FOUR TOGGLES AND NOTHING ELSE, from 2026-09-14. It used to hold the Production toggle
+ * followed by a dismissible chip per filtered donut dimension — the donuts above the table were the controls and
+ * the chips showed what they had been set to. The donuts are gone, so the chips went with them: a filter a reader
+ * can dismiss but has no way to apply is worse than no filter. What is left is Production and the three visibility
+ * toggles, each with its own affordance and none with an × on it, which is the shape Production always had. The
+ * expand toggle is a control over the COLUMNS rather than over which rows are shown, so it sits outside the group.
  */
 
 // Re-exported rather than declared here, so this component and the export control beside it read one definition.
@@ -158,6 +171,39 @@ const COLUMNS: readonly Column[] = [
 ];
 
 /**
+ * The four checks the Hygiene column expands into, each a column of its own.
+ *
+ * ONE COLUMN PER CHECK AND NOT PER SIGNAL, which is `HYGIENE_CHECKS`' own rule: the last of the four is two
+ * signals satisfying one requirement, and drawing them as two columns would put a "No" against every repository
+ * that keeps its dependencies current with Renovate.
+ *
+ * Sorted by `answerOrder`, the same reader the Production column uses, so one click ascending opens on the
+ * repositories MISSING the control — which is what a reader sorting a hygiene check is looking for. A signal nobody
+ * could read is held back from both ends rather than sorting as a control switched off.
+ */
+const HYGIENE_COLUMNS: readonly Column[] = HYGIENE_CHECKS.map((check) => ({
+  key: check.key,
+  label: check.label,
+  hint: check.hint,
+  align: "center" as Align,
+  read: (row: RepositoryRow) => answerOrder(check.read(hygieneSignals(row)))
+}));
+
+/**
+ * The columns with the hygiene checks drawn in, immediately after the aggregate they are the parts of.
+ *
+ * THE AGGREGATE STAYS. It is the graded criterion — `Assurance` counts it, not the four checks — so removing it
+ * while its components are showing would leave the grade beside no column that explains it, and its `detail` is
+ * still the only cell that names a missing control in words.
+ *
+ * BUILT ONCE AT MODULE LOAD AND NOT PER RENDER, because the sort holds the column a reader clicked as an OBJECT and
+ * compares it by identity. Rebuilding the array would make every entry a new object, so expanding the table would
+ * silently forget which column it was ordered by. Both arrays share the same `Column` instances, which is what lets
+ * a sort survive the toggle.
+ */
+const EXPANDED_COLUMNS: readonly Column[] = COLUMNS.flatMap((entry) => (entry.key === HYGIENE_CRITERION ? [entry, ...HYGIENE_COLUMNS] : [entry]));
+
+/**
  * The column the table opens ordered by, so its header can say so.
  *
  * `column` stays `null` until a reader clicks, because the opening order is `orderRepositories` rather than
@@ -194,6 +240,8 @@ export function RepositoriesTable({
   const term = searchParameters.get(TERM_PARAMETER) ?? "";
   const production = parseProduction((parameter) => searchParameters.get(parameter));
   const visibilities = parseVisibilities((parameter) => searchParameters.get(parameter));
+  const expanded = parseExpanded((parameter) => searchParameters.get(parameter));
+  const columns = expanded ? EXPANDED_COLUMNS : COLUMNS;
   const found = filterRepositories(rows, term, production, visibilities);
   const ordered = column === null ? orderRepositories(found) : sorted(found, column.read, direction);
   const produced = productionCount(rows, term, visibilities);
@@ -212,6 +260,15 @@ export function RepositoriesTable({
     // were off expressed as absence, turning public off would produce the same URL as never having touched it.
     const chosen = visibilities.has(visibility) ? VISIBILITY_OFF : VISIBILITY_ON;
     router.replace(filterTarget(pathname, window.location.search, visibilityParameter(visibility), chosen), {
+      scroll: false
+    });
+  }
+
+  function toggleExpanded() {
+    // The Production toggle's navigation in this control's one value: on writes it, off drops the parameter rather
+    // than emptying it. `window.location.search` keeps the span, the term and every filter — this owns one
+    // parameter and touches nothing else.
+    router.replace(filterTarget(pathname, window.location.search, EXPANDED_PARAMETER, expanded ? "" : EXPANDED_VALUE), {
       scroll: false
     });
   }
@@ -275,7 +332,29 @@ export function RepositoriesTable({
             </button>
           ))}
         </div>
-        {action}
+        {/* The controls that are ABOUT THE COLUMNS rather than about which rows are shown, drawn as one cluster at
+            the end of the row: the expand toggle and, where a page passes one, the export beside it. Outside the
+            filters group deliberately — what a screen reader hears announced as "Repository filters" is still the
+            four toggles — and clustered rather than spread, so the toggle sits beside the button whose file it
+            changes rather than floating between the two. */}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={toggleExpanded}
+            aria-pressed={expanded}
+            className={clsx(
+              "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
+              "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
+              expanded ? "bg-slate-700 text-slate-100" : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
+            )}
+          >
+            {EXPAND_LABEL}
+            {/* The filter toggles' own affordance, and here for their reason: a fill colour cannot be the only
+                thing saying a control is on. */}
+            <ToggleTick on={expanded} />
+          </button>
+          {action}
+        </div>
       </div>
 
       {ordered.length === 0 ? (
@@ -292,7 +371,7 @@ export function RepositoriesTable({
           <table className="w-full text-xs">
             <thead className="text-slate-400 border-b border-slate-800">
               <tr>
-                {COLUMNS.map((entry, index) => (
+                {columns.map((entry, index) => (
                   <SortHeader
                     key={entry.key}
                     label={entry.label}
@@ -336,6 +415,14 @@ export function RepositoriesTable({
                       </td>
                     ) : criterion === SECRETS_CRITERION ? (
                       <Finding key={criterion} result={criterionResult(row, criterion)} />
+                    ) : criterion === HYGIENE_CRITERION ? (
+                      // The aggregate, then the checks behind it where the reader has asked for them. The
+                      // criterion's own cell keeps its place either way: it is the graded answer and the only one
+                      // whose hover names the missing control in words.
+                      <Fragment key={criterion}>
+                        <Outcome result={criterionResult(row, criterion)} />
+                        {expanded ? HYGIENE_CHECKS.map((check) => <Signal key={check.key} value={check.read(hygieneSignals(row))} />) : null}
+                      </Fragment>
                     ) : (
                       <Outcome key={criterion} result={criterionResult(row, criterion)} />
                     )
@@ -446,6 +533,33 @@ function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: str
         )}
       >
         {answerWord(metOutcome(outcome))}
+      </span>
+    </td>
+  );
+}
+
+/**
+ * One hygiene signal, as the three-valued answer the criterion above it is judged on.
+ *
+ * NOT `Outcome`, though the tone is deliberately the same one: there is no judgement and no per-row sentence behind
+ * a signal — it is a switch that is on, off, or that GitHub would not disclose — so it carries no `title` offering a
+ * detail nobody wrote.
+ *
+ * ABSENT IS THE DASH AND NEVER "No", which is the rule `hygieneFromMetadata` collects by: an unparseable or missing
+ * `security_and_analysis` block leaves every signal absent rather than false, because absence is not evidence that
+ * scanning is off. And absent is SLATE rather than amber, on `rag.ts`'s rule — a half-read question must not be
+ * coloured warm, or a permission the token lacks reads as a control the team turned off.
+ *
+ * The word is the information and the colour supports it, as everywhere else on this page: `answerWord` is the same
+ * three words the criteria, the production attribute and the export all print.
+ */
+function Signal({ value }: { value?: boolean }) {
+  return (
+    <td className="py-2 pr-3 text-center">
+      <span
+        className={clsx(value === true ? "text-rag-green" : null, value === false ? "text-rag-amber" : null, value === undefined ? "text-slate-500" : null)}
+      >
+        {answerWord(value)}
       </span>
     </td>
   );

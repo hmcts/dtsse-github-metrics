@@ -16,7 +16,15 @@ import { matches } from "@/lib/filter";
 import { ABSENT } from "@/lib/format";
 import type { RAGState } from "@/lib/rag";
 import { compare, type SortValue } from "@/lib/sort";
-import type { AssuranceCriterion, AssuranceCriterionResult, AssuranceGrade, AssuranceOutcome, RepositoryRow, Visibility } from "@/lib/types";
+import type {
+  AssuranceCriterion,
+  AssuranceCriterionResult,
+  AssuranceGrade,
+  AssuranceHygieneSignals,
+  AssuranceOutcome,
+  RepositoryRow,
+  Visibility
+} from "@/lib/types";
 
 /**
  * Every team that owns the row, which is not always the one name its team cell prints.
@@ -300,7 +308,7 @@ export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
   "named-owner":
     "Yes when the repository has an owner at all — a GitHub team, including one named by a CODEOWNERS file, or a named individual. No when nothing owns it, so there is nobody to ask about it.",
   "automated-hygiene":
-    "Yes when every readable signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — which either Renovate or Dependabot satisfies. Hover a cell to see which are missing.",
+    "Yes when every readable signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — which either Renovate or Dependabot satisfies. Hover a cell to see which are missing, or expand the column into a check apiece.",
   // Reads as the FINDING and not the verdict — see `findingOrder` and the `Finding` cell for the one column whose
   // Yes is the bad answer.
   "no-committed-secrets": "Yes if potential secrets have been found by the secret scanner.",
@@ -309,6 +317,116 @@ export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
   maintained:
     "Yes when the repository is archived, or has been pushed to within the last year. No means it is unarchived and has had no commit for over a year, so it should probably be archived."
 };
+
+/**
+ * The one criterion that is an AGGREGATE, and so the only column that expands.
+ *
+ * The other five are not aggregates and are deliberately left alone. `Assurance` sums the four graded criteria and
+ * each of those is already a column, so expanding it would draw them twice; `patching` is one number; the remaining
+ * three are one signal apiece. Hygiene is four checks over five signals, which is the only column where a reader
+ * seeing "No" cannot tell from the page which control is missing.
+ */
+export const HYGIENE_CRITERION: AssuranceCriterion = "automated-hygiene";
+
+/**
+ * The expand toggle's parameter, beside the four filters' rather than in the component.
+ *
+ * IN THE URL, WHICH SORT DELIBERATELY IS NOT. The rule this page keeps is that a fact about the window worth
+ * sending to somebody goes in the URL and how one reader is looking at the list stays in state — and expansion
+ * changes WHAT the table reports where sort changes only the order it reports it in. The consequence is the reason
+ * it had to go here: `RepositoriesExport` can read the URL and cannot read component state, so a file whose columns
+ * follow the toggle is only possible with the toggle in the query string.
+ *
+ * Its VALUE is written on and dropped off, exactly as the Production toggle's is: absence needs no meaning here
+ * beyond "not expanded", so there is no default for an empty parameter to have to be told apart from.
+ */
+export const EXPANDED_PARAMETER = "hygiene";
+
+export const EXPANDED_VALUE = "true";
+
+/** Whether the hygiene column is expanded, read off the URL by both the table and the export. */
+export function parseExpanded(read: (parameter: string) => string | null): boolean {
+  return read(EXPANDED_PARAMETER) === EXPANDED_VALUE;
+}
+
+/**
+ * The word on the expand toggle: WHAT IT SHOWS rather than what it does.
+ *
+ * "Hygiene checks" on the visibility toggles' precedent, which are named `public` and `internal` for the rows they
+ * bring in rather than "Show public". Beside the parameter it writes, so the control and the state it carries are
+ * one decision.
+ */
+export const EXPAND_LABEL = "Hygiene checks";
+
+/**
+ * Whether one of two signals answers yes, for a requirement either tool satisfies.
+ *
+ * `domain/assurance.ts`'s `either` restated, for `ASSURANCE_CRITERIA`'s reason: `src/lib/**` is the UI half of the
+ * contract and imports nothing from `src/evidence/**`. The rule has to be the same one, because the column a reader
+ * sees and the criterion the grade is built from must agree — `true` beats everything, since one tool doing the job
+ * is the requirement met; `false` needs both known and neither doing it; anything else is UNREAD, because a
+ * repository whose Dependabot state is off and whose default branch could not be listed has not been shown to lack
+ * dependency updates.
+ */
+function eitherSignal(left: boolean | undefined, right: boolean | undefined): boolean | undefined {
+  if (left === true || right === true) {
+    return true;
+  }
+  return left === false && right === false ? false : undefined;
+}
+
+/** One check behind the hygiene criterion: its column's heading, what it answers, and the signals it reads. */
+export interface HygieneCheck {
+  key: string;
+  label: string;
+  hint: string;
+  /** The check's three-valued answer. `undefined` where the signals it needs were not read. */
+  read: (signals: AssuranceHygieneSignals | undefined) => boolean | undefined;
+}
+
+/**
+ * The FOUR CHECKS over FIVE SIGNALS the hygiene criterion is graded on, in `hygieneJudgement`'s own order.
+ *
+ * THE LAST ONE IS TWO SIGNALS SATISFYING ONE REQUIREMENT, and it is one column for that reason. Rendering
+ * Dependabot security updates and the presence of an update configuration as two independent columns would draw
+ * the bug the `either` merge fixed: Renovate does not turn GitHub's Dependabot setting on, so a reader would meet a
+ * "No" against 244 repositories that keep their dependencies perfectly current. The requirement is that SOMETHING
+ * updates them.
+ *
+ * Beside the criteria's labels and hints rather than in the component, so the table's columns and the export's
+ * cannot drift: one definition heads both and reads both.
+ */
+export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
+  {
+    key: "secret-scanning",
+    label: "Secret scanning",
+    hint: "Whether GitHub's secret scanning is switched on. A dash means GitHub did not disclose it, which is not the same as it being off.",
+    read: (signals) => signals?.secret_scanning
+  },
+  {
+    key: "push-protection",
+    label: "Push protection",
+    hint: "Whether secret-scanning push protection is on, which refuses a credential at the push rather than reporting it once it is committed.",
+    read: (signals) => signals?.push_protection
+  },
+  {
+    key: "vulnerability-alerts",
+    label: "Vulnerability alerts",
+    hint: "Whether Dependabot vulnerability alerts are enabled, which is what raises the alerts the patching column ages.",
+    read: (signals) => signals?.vulnerability_alerts
+  },
+  {
+    key: "dependency-updates",
+    label: "Dependency updates",
+    hint: "Yes when something keeps the dependencies current: Dependabot security updates, or a Renovate or Dependabot configuration on the default branch. Either tool satisfies it, so No means both were read and neither is doing it.",
+    read: (signals) => eitherSignal(signals?.dependabot_security_updates, signals?.update_configuration)
+  }
+];
+
+/** The hygiene signals off a row, or nothing where the report collected none for it. */
+export function hygieneSignals(row: RepositoryRow): AssuranceHygieneSignals | undefined {
+  return row.assurance?.hygiene;
+}
 
 /**
  * The four grades, IN THE ORDER A READER MEANS BY "sort by assurance", which every map below is total over.
