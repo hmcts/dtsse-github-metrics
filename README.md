@@ -14,10 +14,11 @@ One Next.js application and one image, with two entry points:
 | `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
 | `node dist/cli/run.js collect` | a daily CronJob | contacts GitHub, caches facts, stamps the collection |
 | `node dist/cli/run.js collect-org` | a second daily CronJob | walks the organisation's teams, people and repository ownership |
-| `node dist/cli/run.js map-sonar` | a weekly CronJob | resolves each SonarCloud project to the repository it analyses |
+| `node dist/cli/run.js collect-cve` | a daily CronJob at 13:00 | reads the CVE reports the Jenkins security stage publishes to Cosmos |
+| `node dist/cli/run.js map-sonar` | a weekly CronJob, Mondays 09:00 | resolves each SonarCloud project to the repository it analyses |
 
-The web pod holds **no GitHub credential**. It never contacts GitHub, which is what makes the serving path
-read-only and the credential the collector's alone.
+The web pod holds **no GitHub credential** and no Cosmos credential. It never contacts anything but Postgres,
+which is what makes the serving path read-only and both credentials the collectors' alone.
 
 `src/lib/api.ts` is the seam between the two halves: the pages call it, and it calls the ported evidence code
 in-process. Upstream reached a FastAPI service over loopback; there is no HTTP hop here.
@@ -452,6 +453,51 @@ curl -H "authorization: Bearer $JWT" https://api.github.com/app | jq .permission
 curl -H "authorization: Bearer $JWT" https://api.github.com/app/installations/$GH_APP_INSTALLATION_ID | jq .permissions
 ```
 
+## Published CVE reports
+
+The CNP pipeline's security stage publishes a CVE report per build to the `pipeline-metrics` CosmosDB account, and
+`collect-cve` reads it. Three facts about that data shape everything here:
+
+**Only three builders publish.** `CVEPublisher.publishCVEReport` in `cnp-jenkins-library` is reached from
+`YarnBuilder` (`node`), `GradleBuilder` (`java`) and `PythonBuilder` (`python`) and from nothing else. Measured
+2026-09-18, **361 repositories** have a `master` report against an estate of about 1,890 — so **a repository with
+no report is UNMEASURED, and one whose scan found nothing is ZERO**. Those are stored as different things:
+`cve_scans` records that a scan happened and `cve_findings` records what it found, so a scan row with no findings
+is the honest zero and no row at all is the honest absence. A column that read absence as zero would report four
+repositories in five as free of known vulnerabilities when nothing has ever looked at them.
+
+**Both databases have to be read.** `CosmosDbTargetResolver` picks the database from the repository's GitHub
+topics: `jenkins-sds` routes to `sds-jenkins` and everything else defaults to `jenkins`. The 361 repositories
+divide **316 in `jenkins`, 55 in `sds-jenkins` and 10 in both** — the ten being repositories that gained the
+`jenkins-sds` topic, so their history is in one container and their present in the other. Reading only `jenkins`
+reports **45 repositories** as never scanned while looking like a complete run. The stored key does not include
+the database, so one repository is one answer and the newest report wins whichever container it came from.
+
+**Severity is sometimes absent, and absent is not `low`.** `uv audit` states no severity at all; `yarn audit`
+calls the middle band `moderate`, which is folded to `medium`. dependency-check grades in upper case, and its
+entries carry a `severity` field of their own that is present on every one of the 208,384 live findings and on
+**none** of the 2,499,605 suppressed ones — so severity is read off `cvssv3.baseSeverity ?? cvssv2.severity`,
+which is the only grading the live and suppressed sides both carry. Findings with no severity are counted in an
+`unknown` band; the `severity` column is NULL for them and a CHECK constraint stops `unknown` ever becoming a
+stored value.
+
+One trap worth knowing before touching the node parser: **51,359 live yarn-audit entries carry `severity: null`,
+and every one of them has all nine fields null.** It is a placeholder `YarnBuilder` emits about once per report,
+not an ungraded finding — it names no CVE and no package — so it is dropped rather than counted. Counting it
+would put one phantom CVE on every node repository on the estate.
+
+```bash
+export CVE_COSMOS_ACCOUNT=pipeline-metrics
+export CVE_COSMOS_KEY=...                       # the read-only key; never a write key
+yarn cli collect-cve --config metrics.yaml
+```
+
+The read is incremental. `MAX(reported_at)` per `source_database` is the watermark — derived from the rows rather
+than stored beside them, so it cannot advance past a write that failed — and the predicate is `>=` rather than
+`>`, because Cosmos `_ts` is second-granular and a strict comparison would skip a document written in the same
+second for ever. Re-reading a second's documents is harmless: the write is keyed on the repository and its
+language, and an older report cannot overwrite a newer one.
+
 ## Deployed credentials
 
 The `dtsse-aat` Key Vault lives in
@@ -473,6 +519,12 @@ az keyvault secret set --vault-name dtsse-aat --name github-app-private-key --fi
 `github-token` is in the same vault but is **deliberately not mounted on the CronJob**. Credential resolution
 prefers the App, so a PAT beside it would quietly take over if the App key were ever rotated badly — reporting
 the whole estate's merge gates and alerts as unavailable instead of failing loudly.
+
+`cve-cosmos-account` and `cve-cosmos-readonly-key` are mounted on **`collect-cve` and nowhere else** — not on the
+web pod, which contacts no external service, and not on the two GitHub CronJobs, which do not need them. The key
+is read-only. It is also account-wide, which is wider than this needs: a Cosmos data-plane RBAC role on the
+`dtsse` workload identity would be tighter and remove the stored secret altogether, but it needs a role
+assignment on a production account and so is a platform ask rather than a change here.
 
 ## Signing in
 

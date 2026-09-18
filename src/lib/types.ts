@@ -215,6 +215,58 @@ export interface SecurityAlertReport {
   detail?: string;
 }
 
+/**
+ * The severity bands a published CVE report is counted in.
+ *
+ * `unknown` IS A BAND AND NOT A MISSING VALUE. uv audit states no severity at all, and a handful of
+ * dependency-check findings carry neither a CVSS v3 nor a CVSS v2 block — so these findings have to be counted
+ * somewhere, and counting them as `low` would be a claim nobody made. It is never a stored severity; see
+ * `prisma/schema.prisma`.
+ */
+export type CveSeverity = "critical" | "high" | "medium" | "low" | "unknown";
+
+/**
+ * How many CVEs one side of the split holds, and how they break down.
+ *
+ * `total` IS REQUIRED HERE, unlike `OpenAlertCount.open`, and the difference is where each answers the
+ * measurement question. An alert family carries its own readability, so `open` is what goes absent; a CVE count
+ * exists only inside a `CveReport` that has a scan behind it, so by the time a reader holds one the measurement
+ * has already happened and `0` is a measured nothing. A band with nothing in it is absent from `by_severity`.
+ */
+export interface CveCount {
+  total: number;
+  by_severity: Partial<Record<CveSeverity, number>>;
+}
+
+/**
+ * Live and suppressed CVEs kept apart.
+ *
+ * SUPPRESSED IS NOT PART OF `live`, in either direction. A suppressed finding is one somebody reviewed and
+ * accepted, so it belongs in neither the live figure nor a total that hides it — showing the pair is what makes
+ * "we have accepted 25,533 of these" visible instead of absent.
+ */
+export interface CveEvidence {
+  live: CveCount;
+  suppressed: CveCount;
+}
+
+/**
+ * One repository's CVE position, or the reason it has none.
+ *
+ * EXACTLY ONE OF `cves` AND `detail` ARRIVES. A repository with no published report carries `detail` and no
+ * figures — it is UNMEASURED, not clean — and one whose scan ran carries `cves`, whose totals may be `0`. Only
+ * three CNP builders publish a report at all, so the unmeasured case is the majority of the estate and not an
+ * edge: 361 repositories of roughly 1,890 have one.
+ */
+export interface CveReport {
+  /** When the report these counts came from was published, as an ISO-8601 string. */
+  scanned_at?: string;
+  /** Which `codebase_type` reports were folded in — `java`, `node`, `python`. A figure covers only these. */
+  codebase_types?: string[];
+  cves?: CveEvidence;
+  detail?: string;
+}
+
 export interface CodeownersFile {
   path: string;
   size_bytes: number;
@@ -730,6 +782,19 @@ export interface RepositoryRow {
   sonar_coverage?: number;
   sonar_reported?: boolean;
   security?: SecurityAlertEvidence;
+  /**
+   * What the Jenkins security stage last found, or the statement that it has never looked.
+   *
+   * ALWAYS PRESENT ON A ROW THIS SERVICE BUILDS, on `owner_kind`'s precedent: the unmeasured answer is a
+   * `detail`, which is a value, so there is no repository for which the right thing to send is no key. An absent
+   * `cves` therefore means a deployment older than this field and nothing about the repository.
+   *
+   * DISTINCT FROM `security`, and the pair is deliberate. `security` is what GitHub reports about the repository
+   * — Dependabot, code scanning, secret scanning — and this is what the build pipeline's own dependency scan
+   * found, including the findings somebody has suppressed. The two disagree routinely and neither is the other's
+   * check: this one exists for repositories whose pipeline scans them and whose GitHub alerts nobody reads.
+   */
+  cves?: CveReport;
   sonar_security_rating?: SonarRating;
   sonar_security_issues?: number;
   /**

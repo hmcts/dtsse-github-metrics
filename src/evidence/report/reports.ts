@@ -317,10 +317,22 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
   // sources a collection reached, so it is settled once for the estate rather than asked per row or per span.
   const rows = stripAbsent(
     read.cohort.map((entry) =>
-      repositoryRow(policy, entry, read.states.get(entry.repository), facts.get(entry.repository) ?? NO_MERGES, production, {
-        pullRequests: read.measured.pullRequests.has(entry.repository),
-        directCommits: read.measured.directCommits.has(entry.repository)
-      })
+      repositoryRow(
+        policy,
+        entry,
+        read.states.get(entry.repository),
+        facts.get(entry.repository) ?? NO_MERGES,
+        production,
+        {
+          pullRequests: read.measured.pullRequests.has(entry.repository),
+          directCommits: read.measured.directCommits.has(entry.repository)
+        },
+        // FOLDED, because the stored key is casefolded and the cohort's spelling is whatever the graph answered
+        // — the same correction `reportedProduction` makes, and for the same reason: the name here was parsed
+        // out of a git URL that spells the owner `HMCTS`. Without the fold a repository the graph spells
+        // `PCS-API` would read as never scanned.
+        read.cves.get(entry.repository.toLowerCase())
+      )
     )
   );
   // The graph's names, read once per span build and held with the reports rather than per page. It is 778 rows on

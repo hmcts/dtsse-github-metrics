@@ -39,6 +39,7 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@azure/cosmos": "4.5.1",
     "@hmcts-cft/cloud-native-platform": "2.0.0",
     "@prisma/adapter-pg": "7.8.0",
     "@prisma/client": "7.8.0",

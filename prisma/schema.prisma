@@ -6,8 +6,8 @@
 //
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
-// `alert_observations`, `sonar_project_map`, the six organisation-graph tables, or
-// `repository_production`. That is enforced by
+// `alert_observations`, `sonar_project_map`, the six organisation-graph tables,
+// `repository_production`, or `cve_scans` and `cve_findings`. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
 //
 // Facts are stored as `jsonb` payloads beside the few queryable columns, exactly as upstream stored
@@ -198,6 +198,103 @@ model RepositoryProduction {
 
   @@id([organization, repository])
   @@map("repository_production")
+}
+
+/// That a CVE scan was PUBLISHED for one repository in one language, which is the fact the counts are
+/// meaningless without.
+///
+/// THIS TABLE IS WHAT SEPARATES ZERO FROM UNMEASURED, and that is the whole reason it is a table rather
+/// than a derived `COUNT(*) > 0` over `cve_findings`. Only three CNP builders publish a CVE report —
+/// `YarnBuilder`, `GradleBuilder` and `PythonBuilder` — so 361 repositories have one against an estate of
+/// about 1,890. A row here with no findings beside it is a scan that ran and found nothing; NO ROW is a
+/// repository the security stage has never scanned. Counting findings alone cannot tell those apart, and
+/// collapsing them would report four repositories in five as clean.
+///
+/// ONE ROW PER `(organization, repository, codebase_type)` and not per build. The container holds 762,779
+/// documents describing those 361 repositories, one per build; what a dashboard reports is the current
+/// position, so a newer report REPLACES this row and its findings rather than appending. A repository
+/// publishing both a `java` and a `node` report has two rows, because neither supersedes the other.
+///
+/// `reported_at` IS THE DOCUMENT'S OWN `_ts` AND NOT WHEN IT WAS READ. It is what makes the write
+/// idempotent — an older report cannot overwrite a newer one — and `MAX(reported_at)` per
+/// `source_database` is the incremental watermark, which is why the collection needs no table of its own
+/// to remember where it got to. A watermark stored apart from the rows can advance without them.
+///
+/// `source_database` records WHICH of the two Cosmos databases answered, because
+/// `CosmosDbTargetResolver` routes by GitHub topic and the watermarks are therefore per database. IT IS NOT
+/// PART OF THE KEY, and that is deliberate: 10 repository-language pairs have reports in BOTH containers,
+/// having gained the `jenkins-sds` topic partway through their life, so keying by database would give one
+/// repository two answers and let a stale history outrank its own present. One repository is one answer and
+/// the newest report wins. The consequence is that a row can change hands, which can move a watermark
+/// backwards — harmless, because re-reading a document folds to the same scan.
+///
+/// DURABLE, and for a reason unlike the other durable tables'. Cosmos still holds the documents, so this
+/// is refetchable in principle — but deleting a row makes a repository that has not built since read
+/// UNMEASURED when it was measured, which is the one answer this feature exists to get right. `prune` may
+/// not touch it, asserted by test/integration/prune-never-touches-durable.test.ts.
+///
+/// Both key columns are CASEFOLDED by CHECK constraint, as `repository_production`'s are and for the same
+/// reason twice over: GitHub names are case-insensitive, and the only name available here is parsed out of
+/// `build.git_url`, which spells the owner `HMCTS` on every single document.
+model CveScan {
+  organization   String
+  repository     String
+  /// `java`, `node` or `python` — `build.codebase_type`, which is which builder published the report.
+  codebaseType   String   @map("codebase_type")
+  /// `jenkins` or `sds-jenkins`. Also the watermark key: the two databases are read independently.
+  sourceDatabase String   @map("source_database")
+  reportedAt     DateTime @map("reported_at") @db.Timestamptz(6)
+  /// Jenkins' own `build_tag`, so a figure can be traced to the build that produced it.
+  buildTag       String?  @map("build_tag")
+  /// When the collection read it, which is not when the scan ran. Both, because a stale report and a
+  /// stale collection are different problems and only the pair tells them apart.
+  collectedAt    DateTime @map("collected_at") @db.Timestamptz(6)
+  /// Declared so Prisma emits the foreign key rather than leaving it hand-written: a finding with no scan
+  /// row would be a count for a repository that reads as never scanned, which is the one inconsistency
+  /// that makes the absent-versus-zero rule unenforceable. `Cascade` is what lets a writer replace a
+  /// repository's findings by replacing its scan row.
+  findings       CveFinding[]
+
+  @@id([organization, repository, codebaseType])
+  @@index([sourceDatabase, reportedAt])
+  @@map("cve_scans")
+}
+
+/// One CVE against one package, as the latest scan of one repository found it.
+///
+/// THE GRAIN IS FINE ON PURPOSE. Counting by severity is then a query rather than a stored aggregate that
+/// goes stale the moment the severity vocabulary or the suppressed/live split is reported differently.
+///
+/// `severity` IS NULLABLE AND NULL IS NOT `low`. uv audit states no severity for any finding, and yarn
+/// audit leaves it null on 51,359 of 462,521 live `master` findings — so a default would silently grade
+/// an eighth of the node estate and the whole of the Python estate as the least serious band. The report
+/// layer counts these in an `unknown` bucket, which is a bucket and never a column value.
+///
+/// `suppressed` IS PART OF THE PRIMARY KEY, not a column beside it, which is what makes "suppressed does
+/// not inflate the live figure" structural: the two are different rows, so no count can accidentally
+/// include both. dependency-check moves a suppressed finding out of `vulnerabilities` into
+/// `suppressedVulnerabilities`, so in practice one CVE is one or the other and never both.
+///
+/// `package` IS IN THE KEY because one CVE affects several packages in one report, and the same CVE
+/// against two different jars is two findings a reader would expect to see counted twice.
+model CveFinding {
+  organization String
+  repository   String
+  codebaseType String   @map("codebase_type")
+  /// `CVE-2025-7962`, a GHSA identifier, or the advisory URL for an advisory with no CVE assigned.
+  identifier   String
+  /// The artefact or module the finding is against, in the scanner's own spelling.
+  packageName  String   @map("package")
+  suppressed   Boolean
+  /// NULL where the report stated no severity. Absent stays absent.
+  severity     String?
+  /// The CVSS base score where the report carried one. Stored because it is free; read by nothing yet.
+  score        Float?
+  scan         CveScan  @relation(fields: [organization, repository, codebaseType], references: [organization, repository, codebaseType], onDelete: Cascade)
+
+  @@id([organization, repository, codebaseType, identifier, packageName, suppressed])
+  @@index([organization, repository])
+  @@map("cve_findings")
 }
 
 // ─── Durable: the organisation graph, never pruned ───────────────────────────────────────────────

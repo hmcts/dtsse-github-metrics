@@ -3,6 +3,8 @@ import { botAccounts, excludedAuthors, reportedCohort } from "../evidence/behavi
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge, referencePatterns } from "../evidence/behaviour/collect.ts";
 import { deserialiseMerges, directCommitCacheWriter, fillCachedSource, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestCountQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
+import { CVE_DATABASES, cveFolder, readFrom } from "../evidence/cve/collect.ts";
+import { CVE_ACCOUNT_VARIABLE, CVE_KEY_VARIABLE, cveCredentials, readCveDocuments } from "../evidence/cve/cosmos.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { AvailabilityReason, CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
@@ -57,6 +59,7 @@ import { resolveRepositoryProject } from "../evidence/sonar/resolve.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
+import { cveWatermarks, recordCveScans } from "../evidence/store/cve.ts";
 import { censusOfDescriptions, DEFAULT_BATCH_SIZE, type DescriptionCensus, reduceStoredDescriptions } from "../evidence/store/descriptions.ts";
 import { authorshipForOrganisation, loadCachedFactsForOrganisation, storedRepositoryStates } from "../evidence/store/facts.ts";
 import { migrate } from "../evidence/store/migrate.ts";
@@ -577,6 +580,95 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   if (status === CollectionStatus.Partial && argv.toleratePartial) {
     console.info("some repositories refused, which a scheduled run reports as success; see collector.exit_status");
   }
+  return collectionStatus(status, argv.toleratePartial);
+}
+
+/**
+ * Reading the CVE reports the Jenkins security stage publishes, out of both Cosmos databases.
+ *
+ * A COMMAND OF ITS OWN, on `collect-org`'s precedent and for the two reasons stated there. Its unit of failure is
+ * a DATABASE and not a repository — a database that refuses leaves every repository routed to it unmeasured, which
+ * must not read as complete — and a read that finishes in minutes has no business queueing behind a six-hour
+ * repository walk. Two CronJobs also mean two histories to look at when one of them stops working.
+ *
+ * NO GITHUB CREDENTIAL IS USED, which is why this does not take the collector lock the two GitHub collectors
+ * share. There is no rate-limit budget to compete for, and the writes are per repository and idempotent, so a
+ * concurrent run costs a little duplicated reading and cannot corrupt anything. Standing down would be the wrong
+ * answer for a hand-run collection, as `reduce-descriptions` records.
+ *
+ * NOTHING COLLECTED IS A FAILURE AND NOT A CLEAN ESTATE. A missing credential or a refused database exits
+ * non-zero and writes nothing, so every repository reads exactly as it did — which for most of the estate is
+ * unmeasured. What must not happen is a run that reports success having read nothing, because the rows it left
+ * behind would then be the answer for the next reader.
+ */
+async function runCveCollection(configuration: Configuration, argv: Arguments): Promise<number> {
+  const credentials = cveCredentials();
+  if (credentials === undefined) {
+    progress(`no Cosmos credential: set ${CVE_ACCOUNT_VARIABLE} and ${CVE_KEY_VARIABLE}, which the collector's keyVaults block mounts`);
+    return runStatus(CollectionStatus.Failed);
+  }
+
+  const collectedAt = new Date();
+  const watermarks = await cveWatermarks(configuration.organization);
+  let read = 0;
+  let written = 0;
+  let superseded = 0;
+  let findings = 0;
+  let refused = 0;
+
+  for (const database of CVE_DATABASES) {
+    const watermark = watermarks.get(database);
+    // FOLDED AS THE DOCUMENTS ARRIVE AND NOT AFTER THEY ALL HAVE. The report body is what the findings are parsed
+    // out of, so it cannot be projected away, and one database's 107,010 `master` documents are the whole scan
+    // output of the estate: buffering them reached 3.7 GB of RSS on a real run before the first database finished,
+    // against a CronJob limit of 1Gi. Folding on arrival holds one page plus the 362 scans that survive.
+    //
+    // PER DATABASE, so a second database refusing does not discard the first one's work.
+    const folder = cveFolder();
+    let documents = 0;
+    try {
+      for await (const document of readCveDocuments(credentials, database, readFrom(watermark))) {
+        documents += 1;
+        folder.add(document);
+      }
+    } catch (error) {
+      // NAMED, COUNTED AND NOT FATAL. The other database's repositories are still collectable, and a partial
+      // collection that says which half it got is more use than no collection at all.
+      progress(`could not read ${database}: ${error instanceof Error ? error.message : String(error)}`);
+      refused += 1;
+      continue;
+    }
+    read += documents;
+    const { scans, skipped } = folder.fold();
+    const outcome = await recordCveScans(scans, collectedAt);
+    written += outcome.written;
+    superseded += outcome.superseded;
+    findings += outcome.findings;
+    progress(
+      `${database}: ${documents} reports read since ${watermark?.toISOString() ?? "the beginning"}, ${scans.length} scans folded, ${outcome.written} written, ${outcome.superseded} already current`
+    );
+    if (skipped.unattributable > 0) {
+      progress(`${database}: ${skipped.unattributable} reports name no GitHub repository in build.git_url, so nothing could be attributed`);
+    }
+    if (skipped.unreadable > 0) {
+      // A NEW PUBLISHING BUILDER IS A FINDING AND NOT NOISE. Those repositories stay unmeasured until somebody
+      // writes the parser, which is the right answer and one nobody would notice without this line.
+      progress(
+        `${database}: ${skipped.unreadable} reports use a codebase_type with no parser (${skipped.unreadableTypes.join(", ")}), so those repositories stay unmeasured`
+      );
+    }
+  }
+
+  if (refused === CVE_DATABASES.length) {
+    return runStatus(CollectionStatus.Failed);
+  }
+  // THE COLLECTION STAMP IS WHAT PUTS THE NEW FIGURES ON A PAGE. Reports are held per
+  // `collection_state.revision` and invalidated by nothing else, so a run that writes rows and does not stamp
+  // has collected evidence no reader will see until tomorrow's `collect`.
+  await stampCollection(collectedAt);
+  console.info(`read ${read} published reports; wrote ${written} scans and ${findings} findings, ${superseded} already current`);
+
+  const status = refused === 0 ? CollectionStatus.Complete : CollectionStatus.Partial;
   return collectionStatus(status, argv.toleratePartial);
 }
 
@@ -1499,6 +1591,10 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // which is slower than one run and writes the same rows twice.
       case "map-sonar":
         return await onlyCollector(parsed.command, () => runMapSonar(configuration, parsed));
+      // NOT under the collector lock, for the reason `runCveCollection` states: it makes no GitHub call, so
+      // there is no rate-limit budget to compete for, and its writes are idempotent per repository.
+      case "collect-cve":
+        return await runCveCollection(configuration, parsed);
       case "doctor":
         return await runDoctor(configuration, parsed);
       case "prune":

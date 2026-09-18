@@ -4,12 +4,14 @@ import { botAccounts, excludedAuthors, inCohort, reportedDirectCommit } from "..
 import { deserialise } from "../behaviour/fill.ts";
 import { sourceSignature } from "../behaviour/queries.ts";
 import { EvidenceSource } from "../domain/coverage.ts";
+import type { CveEvidence } from "../domain/cves.ts";
 import type { DirectCommitFact, Merges, PullRequestFact } from "../domain/facts.ts";
 import { type CohortEntry, servedCohort } from "../org/cohort.ts";
 import type { TeamMember } from "../org/people.ts";
 import { teamMembers } from "../org/people.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { cachedCoverageEdges, prevailingCachedCoverage } from "../store/coverage.ts";
+import { storedCveEvidence } from "../store/cve.ts";
 import { loadCachedFactsForOrganisation, storedRepositoryStates } from "../store/facts.ts";
 import { productionOverrides } from "../store/production-override.ts";
 import type { ReportingWindow } from "../window/window.ts";
@@ -91,13 +93,25 @@ export interface Estate {
    * — see `teamMembers`, which is where the distinction is made and why it cannot be made any later.
    */
   memberships: ReadonlyMap<string, readonly TeamMember[]>;
+  /**
+   * What the Jenkins security stage last found for each SCANNED repository, keyed on the casefolded name.
+   *
+   * ON THE ESTATE READ for the production flags' reason — it is a fact about a repository rather than about a
+   * window, so one read answers for every offered span.
+   *
+   * A REPOSITORY ABSENT FROM THIS MAP HAS NEVER HAD A REPORT PUBLISHED, which is the majority of the estate:
+   * only `YarnBuilder`, `GradleBuilder` and `PythonBuilder` publish one, so 361 repositories of roughly 1,890
+   * appear here. That absence must reach the row as "unmeasured" and never as zero — see `cveReport`, which is
+   * where the distinction is made and the only place it can be.
+   */
+  cves: ReadonlyMap<string, CveEvidence>;
 }
 
 /**
  * The estate over one window: the cohort, the collected states, the coverage edges, the hand-set production flags,
- * each team's membership, and the window's facts deserialised ONCE.
+ * each team's membership, the published CVE reports, and the window's facts deserialised ONCE.
  *
- * The six reads go together because none of them needs another's answer, and because the five that are not the
+ * The seven reads go together because none of them needs another's answer, and because the six that are not the
  * fact cache are the ones a per-span build was paying for five times over: `servedCohort` is two queries against
  * the change-versioned graph and `storedRepositoryStates` is 1,891 rows of `jsonb`.
  *
@@ -118,13 +132,14 @@ export async function readEstate(configuration: Configuration, window: Reporting
   const signatures = { pullRequests: sourceSignature(EvidenceSource.PullRequests), directCommits: sourceSignature(EvidenceSource.DirectCommits) };
   const excluded = excludedAuthors(configuration.cohort.excluded_authors);
   const bots = botAccounts(configuration.cohort.bot_accounts);
-  const [cohort, states, stored, edges, production, memberships] = await Promise.all([
+  const [cohort, states, stored, edges, production, memberships, cves] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryStates(organization),
     loadCachedFactsForOrganisation(organization, signatures, window.startsAt, window.endsAt),
     cachedCoverageEdges(organization, signatures),
     productionOverrides(organization),
-    teamMembers(organization)
+    teamMembers(organization),
+    storedCveEvidence(organization)
   ]);
 
   return {
@@ -134,6 +149,7 @@ export async function readEstate(configuration: Configuration, window: Reporting
     states,
     production,
     memberships,
+    cves,
     measured: measuredSources(edges, window.endsAt, cohort, configuration.cohort.no_direct_pushes),
     facts: new Map(
       [...stored].map(([repository, cached]) => [

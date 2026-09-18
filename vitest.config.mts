@@ -36,6 +36,11 @@ export default defineConfig({
         // these two against a real database.
         "src/evidence/report/estate.ts",
         "src/evidence/report/reports.ts",
+        // The Cosmos reader, excluded for `store/**`'s reason: it is a driver call against a production account,
+        // and a test of `readCveDocuments` is a test of `@azure/cosmos`. Everything that decides what a published
+        // report MEANS is in `cve/reports.ts` and `cve/collect.ts`, which are pure and held at the bar below;
+        // `cveCredentials` is the one decision in this file and `cve/cosmos.test.ts` covers it regardless.
+        "src/evidence/cve/cosmos.ts",
         "src/evidence/behaviour/fill.ts",
         "src/lib/api.ts"
       ],
@@ -48,6 +53,10 @@ export default defineConfig({
         "src/evidence/assessment/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         "src/evidence/window/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         "src/evidence/report/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
+        // The published-CVE parsers, held at the same bar rather than falling to the global floor. They are what
+        // decides whether a repository reads unmeasured or clean, which is the one mistake in this feature that a
+        // reader cannot detect from the page.
+        "src/evidence/cve/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         // Where the grading decisions live, so held to the same bar as the rest of `evidence` rather than
         // falling to the global floor. Measured 99.20/99.14/96.55/100 for `domain` and 99.02/98.97/91.02/100
         // for `org`.
