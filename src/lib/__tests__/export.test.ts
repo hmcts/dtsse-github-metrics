@@ -17,6 +17,7 @@
 import { describe, expect, it } from "vitest";
 import { csvDocument } from "@/lib/csv";
 import { CONTRIBUTOR_SEPARATOR, repositoryExportHeadings, repositoryExportRows } from "@/lib/export";
+import { ABSENT } from "@/lib/format";
 import type { Contributor, RepositoryRow } from "@/lib/types";
 import { UNCOLLECTED_DETAIL } from "@/lib/types";
 
@@ -37,7 +38,7 @@ const MEASURED: RepositoryRow = {
   repository: "pcs-api",
   team: "dtsse",
   owner_kind: "team",
-  pushed_at: "2026-09-10T09:30:00Z",
+  default_branch_committed_at: "2026-09-10T09:30:00Z",
   visibility: "public",
   production: true,
   assurance: {
@@ -114,7 +115,7 @@ describe("repositoryExportRows", () => {
       "Team contributors",
       "Repository",
       "Detail",
-      "Last pushed",
+      "Default branch pushed",
       "Visibility",
       "Code owner",
       "Hygiene",
@@ -148,11 +149,26 @@ describe("repositoryExportRows", () => {
     expect(rows[2]?.[repositoryExportHeadings().indexOf("Repository")]).toBe("pcs-api");
   });
 
-  it("should print the last push as the UTC day the page prints, not the instant", () => {
+  it("should print the default-branch date as the UTC day the page prints, not the instant", () => {
     // A second rendering of one window is two claims about it. The page reads `2026-09-10`, so the file must too.
     const rows = repositoryExportRows([MEASURED], CONTRIBUTORS);
 
-    expect(cell(rows, "pcs-api", "Last pushed")).toBe("2026-09-10");
+    expect(cell(rows, "pcs-api", "Default branch pushed")).toBe("2026-09-10");
+  });
+
+  it("should name the branch in the date heading, which a file read away from the page has no hover to explain", () => {
+    // The figure is routinely OLDER than the date GitHub's own repository page shows, so a bare "Last pushed" in a
+    // spreadsheet reads as wrong rather than as a different question.
+    expect(repositoryExportHeadings()).toContain("Default branch pushed");
+    expect(repositoryExportHeadings()).not.toContain("Last pushed");
+  });
+
+  it("should print the dash where no default-branch date was collected, never an empty cell", () => {
+    // An empty cell is read as a zero — or worse, as today — by whatever spreadsheet this is opened in. `UNMEASURED`
+    // carries no date at all, which is what an empty repository and a pre-migration row both look like.
+    const rows = repositoryExportRows([UNMEASURED], CONTRIBUTORS);
+
+    expect(cell(rows, "quiet-service", "Default branch pushed")).toBe(ABSENT);
   });
 
   it("should print each criterion as the Yes, No or dash its column prints", () => {
@@ -298,7 +314,7 @@ describe("repositoryExportRows with the hygiene aggregate expanded", () => {
       "Team contributors",
       "Repository",
       "Detail",
-      "Last pushed",
+      "Default branch pushed",
       "Visibility",
       "Code owner",
       "Hygiene",

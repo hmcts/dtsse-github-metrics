@@ -96,7 +96,26 @@ export interface CohortEntry {
   ownerKind: OwnerKind;
   archived: boolean;
   visibility: string;
+  /**
+   * When the repository was last pushed to ON ANY REF.
+   *
+   * WHAT THIS RUN DECIDES FROM, and nothing a page prints. `behaviourCollectable` and `unmaintained` below are
+   * both functions of it, on purpose: "is anybody working in here" is the any-branch question, and a repository
+   * with live pull requests against a stale default branch is exactly the one whose merge evidence this tool
+   * exists to measure. The date the repositories list PRINTS is `defaultBranchCommittedAt`.
+   */
   pushedAt?: Date;
+  /**
+   * When the tip of the DEFAULT BRANCH was last committed to.
+   *
+   * REPORTED AND NOT DECIDED FROM. It answers "how current is the code this repository releases", which is the
+   * question a reader scanning the list is asking; `pushedAt` answers "is anybody pushing", which is what selects
+   * the work. Nothing in this module reads it — it is carried through `selectCohort` so `repositoryRow` can put
+   * it on the row.
+   *
+   * Absent where GitHub named no default branch ref, and absent renders as unmeasured rather than as never.
+   */
+  defaultBranchCommittedAt?: Date;
   /**
    * Whether this run should walk the repository's merge history.
    *
@@ -269,9 +288,14 @@ export function selectCohort(
       ownerKind: owned.kind,
       archived: repository.archived,
       visibility: repository.visibility,
+      // BOTH READ `pushedAt` AND NOT THE DEFAULT BRANCH'S DATE. Narrowing the collection window to the default
+      // branch would drop a repository with active pull requests and a stale default branch, whose merge evidence
+      // is the whole measurement; and flagging one as unmaintained on the same date would move grades across the
+      // estate on a judgement nobody has made. See `CohortEntry.pushedAt`.
       behaviourCollectable: policy.activeWithinDays === undefined || pushedWithin(repository.pushedAt, policy.activeWithinDays, reference),
       unmaintained: unmaintainedSince(repository.pushedAt, policy.unmaintainedAfterDays, reference),
-      ...(repository.pushedAt === undefined ? {} : { pushedAt: repository.pushedAt })
+      ...(repository.pushedAt === undefined ? {} : { pushedAt: repository.pushedAt }),
+      ...(repository.defaultBranchCommittedAt === undefined ? {} : { defaultBranchCommittedAt: repository.defaultBranchCommittedAt })
     };
   });
 

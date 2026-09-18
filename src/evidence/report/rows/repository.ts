@@ -60,16 +60,22 @@ export function repositoryRow(
   const shared = teams.length > 1 ? teams : undefined;
 
   // WHAT A REPOSITORY IS, rather than what happened in the window, so these are on BOTH branches — the rule
-  // `owner_kind` already follows. `pushed_at` is the table's default sort and `visibility` its default filter,
-  // so a row missing either would sort and filter as unmeasured on a fact the graph knows perfectly well.
+  // `owner_kind` already follows. `default_branch_committed_at` is the table's default sort and `visibility` its
+  // default filter, so a row missing either would sort and filter as unmeasured on a fact the graph knows
+  // perfectly well.
   //
-  // `pushed_at` is an ISO STRING and never a `Date`. `stripAbsent` passes a `Date` through untouched and
-  // `SortValue` has no `Date` case, so a raw one would fall to `String(...).localeCompare(...)` and sort
-  // alphabetically by weekday name — plausible-looking and wrong. Every other instant on the contract is a
-  // string for the same reason; `builtOverviewSummary` in `../overview.ts` is the pattern.
+  // `default_branch_committed_at` IS THE DEFAULT BRANCH'S DATE AND NOT `entry.pushedAt`, which moves on a push to
+  // any ref and made a repository with one busy feature branch read as pushed to today. The any-branch date is
+  // still what the cohort decides from — it is deliberately not on the row, because a contract carrying two dates
+  // a page cannot tell apart is how the confusion came back. See `CohortEntry.pushedAt`.
+  //
+  // It is an ISO STRING and never a `Date`. `stripAbsent` passes a `Date` through untouched and `SortValue` has no
+  // `Date` case, so a raw one would fall to `String(...).localeCompare(...)` and sort alphabetically by weekday
+  // name — plausible-looking and wrong. Every other instant on the contract is a string for the same reason;
+  // `builtOverviewSummary` in `../overview.ts` is the pattern.
   const facts = {
     owner_kind: ownerKind,
-    pushed_at: entry.pushedAt?.toISOString(),
+    default_branch_committed_at: entry.defaultBranchCommittedAt?.toISOString(),
     visibility: reportedVisibility(entry.visibility),
     archived: entry.archived,
     unmaintained: entry.unmaintained,

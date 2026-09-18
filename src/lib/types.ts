@@ -697,10 +697,10 @@ export const UNCOLLECTED_DETAIL = "nothing has been collected for this repositor
 /**
  * One repository in a list, whether this window could be reported for it or not.
  *
- * TWO KINDS OF FIELD, and the split is worth reading before adding a third. `pushed_at`, `visibility`,
- * `archived`, `unmaintained`, `owner_kind` and `assurance` are facts about WHAT THE REPOSITORY IS, so
- * the report sends them on every row including the one it could collect nothing for — when a repository
- * was last pushed to is not a fact about a reporting window. Everything else is a fact about the WINDOW
+ * TWO KINDS OF FIELD, and the split is worth reading before adding a third. `default_branch_committed_at`,
+ * `visibility`, `archived`, `unmaintained`, `owner_kind` and `assurance` are facts about WHAT THE REPOSITORY IS,
+ * so the report sends them on every row including the one it could collect nothing for — when a repository's
+ * default branch last moved is not a fact about a reporting window. Everything else is a fact about the WINDOW
  * and is absent on that row.
  *
  * Each is UNMEASURED WHEN ABSENT: the two gate figures where there is no gate to read or its rules were
@@ -763,18 +763,30 @@ export interface RepositoryRow {
    */
   owner_kind?: OwnerKind;
   /**
-   * When the repository was last pushed to, as an ISO-8601 string.
+   * When the tip of the repository's DEFAULT BRANCH was last committed to, as an ISO-8601 string.
+   *
+   * NOT GITHUB'S REPOSITORY-LEVEL LAST PUSH, and the name says so because the two were one field and the
+   * difference is material. `pushedAt` moves on a push to ANY ref, so a repository with one busy feature branch
+   * reported as pushed to today while its default branch had not moved in a month — measured on
+   * `pip-account-management` at 66 branches, `pushedAt` 2026-09-18 against a `master` tip of 2026-08-26. This
+   * field answers "how current is the code this repository releases", which is the question the column asks.
+   *
+   * THE ANY-BRANCH DATE IS DELIBERATELY NOT ON THIS CONTRACT. It still exists and is still decided from — the
+   * cohort's collection window and the `maintained` criterion both read it, in `evidence/org/cohort.ts` — but
+   * nothing a page renders needs it, and two near-identical dates on one row is how the conflation would return.
+   * Do not add `pushed_at` back beside this without a reader that genuinely needs the other question answered.
    *
    * AN INSTANT AS TEXT, like every other instant on this contract, and here that is load-bearing rather than
    * consistent: this is the table's default sort key, and `SortValue` in `lib/sort.ts` has no `Date` case — a
    * `Date` would fall through to `String(...).localeCompare(...)` and order the estate alphabetically by weekday
    * name, which looks plausible and is wrong.
    *
-   * ABSENT IS MEANINGFUL AND IS NOT AN OLD PUSH. GitHub omits it for a repository never pushed to, so it must not
-   * be defaulted to the epoch or to now — `sorted` holds an absent value back from both ends of the order, which
-   * is exactly right here: "which repositories are stalest" is a question about the ones with a last push.
+   * ABSENT IS MEANINGFUL AND IS NOT AN OLD COMMIT. GitHub omits the default branch ref for an empty repository,
+   * and a row collected before the column existed carries nothing either — so it must not be defaulted to the
+   * epoch or to now. `sorted` holds an absent value back from both ends of the order, which is exactly right
+   * here: "which repositories are stalest" is a question about the ones with a default branch to date.
    */
-  pushed_at?: string;
+  default_branch_committed_at?: string;
   /** Which visibility, folded to lower case. The table's default filter selects on it. */
   visibility?: Visibility;
   /** Whether GitHub has the repository archived, which the maintained criterion reads as handled. */
@@ -784,6 +796,10 @@ export interface RepositoryRow {
    *
    * Distinct from `archived`, and the pair is the finding: an archived repository is handled and an unarchived
    * one nobody has pushed to in years is the risk the criterion is about.
+   *
+   * MEASURED FROM THE ANY-BRANCH PUSH DATE, not from `default_branch_committed_at`. It is therefore NOT derivable
+   * from the date beside it on this row, and a reader finding the two disagree has found a repository whose
+   * branches are alive and whose default branch is not.
    */
   unmaintained?: boolean;
   /** How the repository reads against the assurance criteria. See `AssuranceGrade` for why it is not readiness. */

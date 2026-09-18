@@ -61,7 +61,7 @@ const ROWS: RepositoryRow[] = [
     repository: "pcs-api",
     team: "dtsse",
     visibility: "public",
-    pushed_at: "2026-09-10T00:00:00Z",
+    default_branch_committed_at: "2026-09-10T00:00:00Z",
     production: true,
     assurance: {
       grade: "partial",
@@ -73,7 +73,7 @@ const ROWS: RepositoryRow[] = [
     repository: "pcs-frontend",
     team: "dtsse",
     visibility: "public",
-    pushed_at: "2026-09-09T00:00:00Z",
+    default_branch_committed_at: "2026-09-09T00:00:00Z",
     assurance: { grade: "unknown", criteria: [], hygiene: { secret_scanning: false } }
   }
 ];

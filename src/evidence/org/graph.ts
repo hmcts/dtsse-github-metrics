@@ -181,7 +181,27 @@ export interface RepositoryFact {
   visibility: string;
   isFork: boolean;
   defaultBranch?: string;
+  /**
+   * When the repository was last pushed to ON ANY REF, as GitHub's `pushedAt` answers it.
+   *
+   * THE BUSY-BRANCH DATE, and the one to reach for when the question is "is anybody working in here". A push to
+   * a feature branch moves it, so it is NOT an answer to "how current is the default branch" —
+   * `defaultBranchCommittedAt` is. The two are separate fields for exactly that reason and neither is the other's
+   * fallback.
+   */
   pushedAt?: Date;
+  /**
+   * When the tip of the DEFAULT BRANCH was last committed to.
+   *
+   * "How current is the code this repository releases", which is the question the repositories list's date column
+   * asks. Absent where GitHub named no default branch ref — an empty repository has none — and absent is
+   * unmeasured rather than "never": it must not be defaulted in either direction.
+   *
+   * THE SAME NOTION AS `CommitRecencyEvidence.lastCommitAt` in `domain/standards.ts`, reached a cheaper way. That
+   * one comes off a per-repository commit walk and so exists only for repositories the cohort admits; this comes
+   * free on the organisation walk and so exists for the whole estate, which is what the list needs.
+   */
+  defaultBranchCommittedAt?: Date;
 }
 
 /**

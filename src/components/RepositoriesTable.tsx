@@ -129,9 +129,9 @@ function cveColumn(column: CveColumn): Column {
  * answers — so it moves to `/teams`, where the ways-of-working material belongs, and to a repository's own page.
  * It is not deleted and its thresholds are untouched.
  *
- * `Last pushed` and `Visibility` are the "basic info" the page still carries, and both are load-bearing rather
- * than decoration: the first is the default sort and the second the default filter, so a reader can see what
- * they are being ordered and narrowed by.
+ * `Default branch pushed` and `Visibility` are the "basic info" the page still carries, and both are load-bearing
+ * rather than decoration: the first is the default sort and the second the default filter, so a reader can see
+ * what they are being ordered and narrowed by.
  */
 const COLUMNS: readonly Column[] = [
   {
@@ -142,9 +142,18 @@ const COLUMNS: readonly Column[] = [
   },
   { key: "repository", label: "Repository", read: (row) => row.repository, hint: "The repository name on GitHub. Links to its own evidence page." },
   // The default sort's own column, so what the table opens on is visible rather than implicit. Sorts on the ISO
-  // string, which orders lexicographically in instant order — see `RepositoryRow.pushed_at` for why the contract
-  // carries it as text and not as a `Date`.
-  { key: "pushed", label: "Last pushed", read: (row) => row.pushed_at, hint: "The UTC day of the most recent push. The table's default order, newest first." },
+  // string, which orders lexicographically in instant order — see `RepositoryRow.default_branch_committed_at` for
+  // why the contract carries it as text and not as a `Date`.
+  //
+  // THE HEADING NAMES THE BRANCH because the figure is routinely older than the date GitHub's own repository page
+  // shows, and an unqualified "Last pushed" disagreeing with GitHub by three weeks reads as a bug rather than as a
+  // different question. The hint says which question, in both directions.
+  {
+    key: "pushed",
+    label: "Default branch pushed",
+    read: (row) => row.default_branch_committed_at,
+    hint: "The UTC day of the most recent commit on the default branch. Deliberately not GitHub's repository-level last push, which any branch moves — a repository with a busy feature branch reads as older here, and that is the point. The table's default order, newest first."
+  },
   {
     key: "visibility",
     label: "Visibility",
@@ -472,8 +481,10 @@ export function RepositoriesTable({
                     </Link>
                   </td>
                   {/* The UTC day rather than the instant: a table of 1,880 rows is scanned for how long ago,
-                      and `day` is the same formatter every other date on the site reads through. */}
-                  <td className="py-2 pr-3 tabular-nums text-slate-300">{day(row.pushed_at)}</td>
+                      and `day` is the same formatter every other date on the site reads through. An absent value
+                      is `day`'s dash — an empty repository has no default branch, and a row collected before the
+                      column existed has no answer either. Neither is today. */}
+                  <td className="py-2 pr-3 tabular-nums text-slate-300">{day(row.default_branch_committed_at)}</td>
                   <td className="py-2 pr-3 capitalize text-slate-400">{row.visibility ?? ABSENT}</td>
                   {ASSURANCE_CRITERIA.map((criterion) =>
                     criterion === "patching" ? (

@@ -59,9 +59,10 @@ function written(): string {
  * Three rows that separate every column: no two share a value on any of them, and `api` carries no
  * figures at all so the unmeasured-sorts-last rule is exercised.
  *
- * THE `pushed_at` VALUES CROSS THE ALPHABETICAL AND THE TEAM ORDER, which is what makes the default-sort case
- * able to fail. Under the old `(team, repository)` rule these read docs, web, api; by last push they read web,
- * docs, api. A fixture where the two agreed would assert the new default while the old one still passed.
+ * THE `default_branch_committed_at` VALUES CROSS THE ALPHABETICAL AND THE TEAM ORDER, which is what makes the
+ * default-sort case able to fail. Under the old `(team, repository)` rule these read docs, web, api; by the
+ * default branch's date they read web, docs, api. A fixture where the two agreed would assert the new default
+ * while the old one still passed.
  *
  * Each row also states its own assurance outcomes, crossed over between rows so a column wired to the wrong
  * criterion sorts the rows the other way and fails rather than agreeing by coincidence.
@@ -75,7 +76,7 @@ const ROWS: RepositoryRow[] = [
   {
     repository: "web",
     team: "delivery",
-    pushed_at: "2026-09-10T00:00:00Z",
+    default_branch_committed_at: "2026-09-10T00:00:00Z",
     visibility: "public",
     // Still on the row though no longer a COLUMN here: the readiness donut above the table filters on it, and
     // the label moved to /teams rather than being deleted.
@@ -116,7 +117,7 @@ const ROWS: RepositoryRow[] = [
   {
     repository: "docs",
     team: "content",
-    pushed_at: "2026-08-01T00:00:00Z",
+    default_branch_committed_at: "2026-08-01T00:00:00Z",
     visibility: "public",
     readiness: "green",
     merged_pull_requests: 8,
@@ -225,17 +226,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("RepositoriesTable sorting", () => {
-  it("opens on the most recently pushed, and says so on that column", () => {
+  it("should open on the newest default-branch commit and announce it on that column", () => {
     // THE DEFAULT THIS REPLACED put these rows docs, web, api — by team, `content` before `delivery` before
     // `platform`. The fixture's instants cross that order, so this case cannot pass under the old rule.
     //
-    // `Last pushed` ANNOUNCES ITSELF, from 2026-09-15. The opening order is still `orderRepositories` rather than
+    // THE COLUMN ANNOUNCES ITSELF, from 2026-09-15. The opening order is still `orderRepositories` rather than
     // a click's `sorted` — it tie-breaks equal instants on the name — but leaving every header `none` made the
     // order the table was in unstateable, so a reader had no way to tell it from an arbitrary one.
     mount();
 
     expect(order()).toEqual(["web", "docs", "api"]);
-    expect(announced("Last pushed")).toBe("descending");
+    expect(announced("Default branch pushed")).toBe("descending");
     for (const label of ["Team", "Repository", "Assurance"]) {
       expect(announced(label)).toBe("none");
     }
@@ -249,8 +250,8 @@ describe("RepositoriesTable sorting", () => {
     // By team: content, then delivery, then platform.
     expect(sortBy("Team")).toEqual(["docs", "web", "api"]);
     expect(sortBy("Repository")).toEqual(["api", "docs", "web"]);
-    // Oldest push first, and `api` — which has none — last rather than read as the oldest.
-    expect(sortBy("Last pushed")).toEqual(["docs", "web", "api"]);
+    // Oldest default-branch commit first, and `api` — which has none — last rather than read as the oldest.
+    expect(sortBy("Default branch pushed")).toEqual(["docs", "web", "api"]);
     // Every fixture row is public — see the fixture's own note — so this asserts only that the header is wired
     // and that equal values keep their order. What the column DOES is asserted in the visibility describe below,
     // where the rows differ; a fixture that differed here would be hidden by the public-only default instead.
@@ -305,14 +306,14 @@ describe("RepositoriesTable sorting", () => {
     expect(announced("Code owner")).toBe("none");
   });
 
-  it("keeps a repository with no last push last in both directions", () => {
-    // `api` has no `pushed_at`. It is not the answer to "pushed longest ago" any more than to "pushed most
-    // recently", which is what `sorted` holding `undefined` back from both ends buys.
+  it("should keep a repository with no default-branch date last in both directions", () => {
+    // `api` has no `default_branch_committed_at`. It is not the answer to "stalest default branch" any more than to
+    // "freshest", which is what `sorted` holding `undefined` back from both ends buys.
     mount();
 
-    expect(sortBy("Last pushed").at(-1)).toBe("api");
-    expect(sortBy("Last pushed").at(-1)).toBe("api");
-    expect(announced("Last pushed")).toBe("descending");
+    expect(sortBy("Default branch pushed").at(-1)).toBe("api");
+    expect(sortBy("Default branch pushed").at(-1)).toBe("api");
+    expect(announced("Default branch pushed")).toBe("descending");
   });
 
   it("sorts without navigating: how one reader is looking at the list is not in the URL", () => {
@@ -339,7 +340,7 @@ describe("RepositoriesTable columns", () => {
     expect(headerNames()).toEqual([
       "Team",
       "Repository",
-      "Last pushed",
+      "Default branch pushed",
       "Visibility",
       "Code owner",
       "Hygiene",
@@ -400,11 +401,13 @@ describe("RepositoriesTable columns", () => {
     expect(cellOf("web", "Patching cycle")?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
   });
 
-  it("prints the last push as a day and the visibility as a word", () => {
+  it("should print the default-branch date as a day and the visibility as a word", () => {
     mount();
 
-    expect(cellOf("web", "Last pushed")?.textContent).toBe("2026-09-10");
-    expect(cellOf("api", "Last pushed")?.textContent).toBe("-");
+    expect(cellOf("web", "Default branch pushed")?.textContent).toBe("2026-09-10");
+    // ABSENT IS THE DASH AND NEVER A DATE: `api` has no default branch ref, and a row collected before the column
+    // existed carries nothing either. Neither is today.
+    expect(cellOf("api", "Default branch pushed")?.textContent).toBe("-");
     expect(cellOf("api", "Visibility")?.textContent).toBe("public");
   });
 
@@ -442,8 +445,8 @@ describe("RepositoriesTable columns", () => {
       ]
     });
     mount([
-      { repository: "read", team: "delivery", visibility: "public", pushed_at: "2026-09-10T00:00:00Z", assurance: criteria("met") },
-      { repository: "unread", team: "delivery", visibility: "public", pushed_at: "2026-09-09T00:00:00Z", assurance: criteria("unknown") }
+      { repository: "read", team: "delivery", visibility: "public", default_branch_committed_at: "2026-09-10T00:00:00Z", assurance: criteria("met") },
+      { repository: "unread", team: "delivery", visibility: "public", default_branch_committed_at: "2026-09-09T00:00:00Z", assurance: criteria("unknown") }
     ]);
 
     expect(cellOf("read", "Assurance")?.textContent).toBe("Meets criteria");
@@ -487,12 +490,12 @@ describe("RepositoriesTable columns", () => {
   // would slip past an assertion that only looked at the cell element.
   it("tones neither identity column, which state facts rather than grades", () => {
     // The old table's rule, kept where it still holds. Every cell there was untoned because none was a grade;
-    // now four of them ARE the grade — see the case above — and these two are not. When a repository was last
-    // pushed to and whether it is public are facts about the estate's shape, neither better nor worse, which is
-    // the same argument `production.ts` makes for its own attribute.
+    // now four of them ARE the grade — see the case above — and these two are not. When a repository's default
+    // branch last moved and whether it is public are facts about the estate's shape, neither better nor worse,
+    // which is the same argument `production.ts` makes for its own attribute.
     mount();
 
-    for (const label of ["Last pushed", "Visibility"]) {
+    for (const label of ["Default branch pushed", "Visibility"]) {
       for (const repository of ["web", "api", "docs"]) {
         expect(cellOf(repository, label)?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
       }
@@ -845,9 +848,9 @@ describe("RepositoriesTable production toggle", () => {
  */
 describe("RepositoriesTable visibility toggles", () => {
   const MIXED: RepositoryRow[] = [
-    { repository: "open", team: "platform", visibility: "public", pushed_at: "2026-09-03T00:00:00Z" },
-    { repository: "inner", team: "platform", visibility: "internal", pushed_at: "2026-09-02T00:00:00Z" },
-    { repository: "closed", team: "platform", visibility: "private", pushed_at: "2026-09-01T00:00:00Z" }
+    { repository: "open", team: "platform", visibility: "public", default_branch_committed_at: "2026-09-03T00:00:00Z" },
+    { repository: "inner", team: "platform", visibility: "internal", default_branch_committed_at: "2026-09-02T00:00:00Z" },
+    { repository: "closed", team: "platform", visibility: "private", default_branch_committed_at: "2026-09-01T00:00:00Z" }
   ];
 
   /** One visibility's toggle, found by the word on it as a reader would. */
@@ -1071,7 +1074,7 @@ describe("RepositoriesTable hygiene expansion", () => {
       repository: "scanned",
       team: "platform",
       visibility: "public",
-      pushed_at: "2026-09-10T00:00:00Z",
+      default_branch_committed_at: "2026-09-10T00:00:00Z",
       assurance: {
         grade: "partial",
         criteria: [{ criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: push protection" }],
@@ -1082,10 +1085,10 @@ describe("RepositoriesTable hygiene expansion", () => {
       repository: "bare",
       team: "platform",
       visibility: "public",
-      pushed_at: "2026-09-09T00:00:00Z",
+      default_branch_committed_at: "2026-09-09T00:00:00Z",
       assurance: { grade: "unknown", criteria: [], hygiene: { secret_scanning: false } }
     },
-    { repository: "nothing", team: "platform", visibility: "public", pushed_at: "2026-09-08T00:00:00Z" }
+    { repository: "nothing", team: "platform", visibility: "public", default_branch_committed_at: "2026-09-08T00:00:00Z" }
   ];
 
   const CHECKS = ["Secret scanning", "Push protection", "Vulnerability alerts", "Dependency updates"];
@@ -1285,7 +1288,7 @@ describe("RepositoriesTable CVE columns", () => {
       repository: "scanned",
       team: "platform",
       visibility: "public",
-      pushed_at: "2026-09-10T00:00:00Z",
+      default_branch_committed_at: "2026-09-10T00:00:00Z",
       cves: {
         scanned_at: "2026-09-17T02:00:00Z",
         cves: {
@@ -1300,7 +1303,7 @@ describe("RepositoriesTable CVE columns", () => {
       repository: "clean",
       team: "platform",
       visibility: "public",
-      pushed_at: "2026-09-09T00:00:00Z",
+      default_branch_committed_at: "2026-09-09T00:00:00Z",
       cves: {
         scanned_at: "2026-09-17T02:00:00Z",
         cves: { all: { total: 0, by_severity: {} }, live: { total: 0, by_severity: {} }, suppressed: { total: 0, by_severity: {} }, occurrences: 0 }
@@ -1310,7 +1313,7 @@ describe("RepositoriesTable CVE columns", () => {
       repository: "unscanned",
       team: "platform",
       visibility: "public",
-      pushed_at: "2026-09-08T00:00:00Z",
+      default_branch_committed_at: "2026-09-08T00:00:00Z",
       cves: { detail: "no CVE report has been published for this repository" }
     }
   ];

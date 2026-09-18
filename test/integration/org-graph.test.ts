@@ -555,6 +555,55 @@ describe("recordOrgRepositories", () => {
     expect((await liveOrgRepositories(ORGANIZATION))[0]?.pushedAt).toBeUndefined();
   });
 
+  it("should store default_branch_committed_at, which is what the repositories list reports", async () => {
+    // BOTH DATES, AND THEY DISAGREE — the `pip-account-management` shape. A reader mapping one column onto the
+    // other would pass a single-date fixture and report the wrong month on the estate.
+    const pushed = new Date(Date.UTC(2026, 8, 18, 14, 7));
+    const committed = new Date(Date.UTC(2026, 7, 26, 15, 49));
+
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("pip-account-management", { pushedAt: pushed, defaultBranchCommittedAt: committed })], true);
+
+    const [live] = await liveOrgRepositories(ORGANIZATION);
+    expect(live?.pushedAt?.toISOString()).toBe(pushed.toISOString());
+    expect(live?.defaultBranchCommittedAt?.toISOString()).toBe(committed.toISOString());
+  });
+
+  it("should leave default_branch_committed_at absent where GitHub named no default branch", async () => {
+    // An empty repository has no default branch ref, and every row collected before the column existed holds NULL.
+    // Both must round-trip as ABSENT rather than as the push date beside them, which the page would print as a
+    // confident answer to a question nothing measured.
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("empty-repo", { pushedAt: FIRST })], true);
+
+    const [live] = await liveOrgRepositories(ORGANIZATION);
+    expect(live?.pushedAt?.toISOString()).toBe(FIRST.toISOString());
+    expect(live?.defaultBranchCommittedAt).toBeUndefined();
+  });
+
+  it("should move default_branch_committed_at in place, on pushed_at's rule and in the same statement", async () => {
+    // It moves on every merge to the default branch, so versioning it would supersede and re-insert the whole
+    // active estate weekly — the same argument `pushedAt` carries, which is why both are outside the digest.
+    const first = new Date(Date.UTC(2026, 4, 20));
+    const later = new Date(Date.UTC(2026, 5, 20));
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("cath-service", { defaultBranchCommittedAt: first })], true);
+
+    const summary = await recordOrgRepositories(ORGANIZATION, SECOND, [repository("cath-service", { defaultBranchCommittedAt: later })], true);
+
+    expect(summary).toMatchObject({ inserted: 0, changed: 0, unchanged: 1, superseded: 0 });
+    const live = await liveOrgRepositories(ORGANIZATION);
+    expect(live[0]?.defaultBranchCommittedAt?.toISOString()).toBe(later.toISOString());
+    expect(live[0]?.observedAt.toISOString()).toBe(FIRST.toISOString());
+  });
+
+  it("should clear default_branch_committed_at where a later run no longer names one", async () => {
+    // A default branch can be deleted, and the honest answer then is unmeasured rather than the date it last held.
+    // The bulk statement writes NULL for that, which is what stops a stale date outliving the branch.
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("cath-service", { defaultBranchCommittedAt: FIRST })], true);
+
+    await recordOrgRepositories(ORGANIZATION, SECOND, [repository("cath-service")], true);
+
+    expect((await liveOrgRepositories(ORGANIZATION))[0]?.defaultBranchCommittedAt).toBeUndefined();
+  });
+
   it("should move pushed_at WITHOUT superseding the row, which is the whole reason it is not in the digest", async () => {
     // THE LOAD-BEARING CASE. `pushedAt` moves on every push, so if it were versioned every active repository in
     // the estate would supersede and re-insert on every run — turning a change history into a weekly snapshot.
@@ -582,7 +631,7 @@ describe("recordOrgRepositories", () => {
   });
 
   it("should not version a repository whose only movement was a push", async () => {
-    // `pushedAt` moves on every push and is deliberately not stored. Versioning on it would supersede and
+    // `pushedAt` moves on every push and is deliberately not digested. Versioning on it would supersede and
     // re-insert the whole active estate weekly, for a value `repository_state` already holds as current.
     await recordOrgRepositories(ORGANIZATION, FIRST, [repository("cath-service", { pushedAt: FIRST })], true);
 

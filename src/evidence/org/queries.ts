@@ -144,9 +144,21 @@ export function teamRepositoriesQuery(): string {
  * scalar rather than paging `contexts` per commit — the topics and the blobs are fetched by whatever needs
  * them, for the repositories that need them, and not by the walk that must cover everything.
  *
- * `pushedAt` and `defaultBranchRef { name }` are scalars on the node and cost nothing extra; both are read
- * because the graph reports what a repository IS as well as who owns it, and "nobody has pushed to it since
- * 2019" is most of the answer to "does this ownership matter".
+ * `pushedAt` and `defaultBranchRef` are scalars on the node and cost nothing extra; both are read because the
+ * graph reports what a repository IS as well as who owns it, and "nobody has pushed to it since 2019" is most
+ * of the answer to "does this ownership matter".
+ *
+ * TWO DATES, ANSWERING TWO DIFFERENT QUESTIONS, and the pair is why `defaultBranchRef` now reaches its commit.
+ * `pushedAt` moves on a push to ANY ref, so one busy feature branch makes a repository whose default branch has
+ * not moved in a month read as pushed to today — measured on `pip-account-management`, whose `pushedAt` was
+ * 2026-09-18 against a `master` tip of 2026-08-26 across 66 branches. `defaultBranchRef.target.committedDate`
+ * is the tip of the default branch, which is what "how current is this repository's released code" means.
+ * Neither replaces the other: see `CohortEntry.behaviourCollectable` for why the collection window stays on
+ * `pushedAt`, and `RepositoryRow.default_branch_committed_at` for what the list reports.
+ *
+ * `target` is a `GitObject`, so the date needs the `... on Commit` narrowing — a default branch can only point
+ * at a commit in practice, but the schema's union does not say so. It is ONE NODE and not a connection, which
+ * is what keeps it inside the budget this query's flat shape earns.
  */
 export function orgRepositoriesQuery(): string {
   return `
@@ -155,7 +167,14 @@ export function orgRepositoriesQuery(): string {
             repositories(first: 100, after: $cursor, orderBy: { field: NAME, direction: ASC }) {
               totalCount
               ${pageInfoSelection()}
-              nodes { name isArchived isFork visibility pushedAt defaultBranchRef { name } }
+              nodes {
+                name
+                isArchived
+                isFork
+                visibility
+                pushedAt
+                defaultBranchRef { name target { ... on Commit { committedDate } } }
+              }
             }
           }
           rateLimit { cost limit remaining resetAt }
