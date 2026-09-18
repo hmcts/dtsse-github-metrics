@@ -130,6 +130,7 @@ const REPOSITORY_ROW: Shape<contract.RepositoryRow> = {
     archived: true,
     unmaintained: true,
     assurance: true,
+    cves: true,
     readiness: true,
     merged_pull_requests: true,
     direct_commits: true,

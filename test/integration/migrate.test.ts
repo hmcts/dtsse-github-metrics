@@ -65,6 +65,8 @@ describe("migrate", () => {
       "_prisma_migrations",
       "alert_observations",
       "collection_state",
+      "cve_findings",
+      "cve_scans",
       "direct_commit_facts",
       "org_people",
       "org_repositories",

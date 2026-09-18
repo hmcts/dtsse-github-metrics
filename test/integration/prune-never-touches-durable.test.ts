@@ -57,6 +57,9 @@ async function wipe(): Promise<void> {
   await prisma.orgPerson.deleteMany();
   await prisma.repositoryOwnership.deleteMany();
   await prisma.repositoryProduction.deleteMany();
+  // Findings first: the foreign key would refuse the scans otherwise, which is the point of having it.
+  await prisma.cveFinding.deleteMany();
+  await prisma.cveScan.deleteMany();
 }
 
 beforeEach(wipe);
@@ -95,6 +98,35 @@ describe("pruneCache", () => {
     await pruneCache(FUTURE);
 
     expect(await prisma.sonarProjectMap.count()).toBe(2);
+  });
+
+  it("should never delete a clean CVE scan, because deleting it turns a measured zero into unmeasured", async () => {
+    // The scan row with no findings beside it IS the measurement. Prune it and a repository whose security
+    // stage found nothing becomes indistinguishable from the four in five that have never been scanned — and
+    // it stays that way until the repository next builds, which for a quiet repository could be months.
+    await prisma.cveScan.createMany({
+      data: [
+        { organization: "hmcts", repository: "pcs-api", codebaseType: "java", sourceDatabase: "jenkins", reportedAt: OBSERVED, collectedAt: OBSERVED },
+        // A clean scan: a row here, and deliberately no findings below.
+        { organization: "hmcts", repository: "appreg-api", codebaseType: "java", sourceDatabase: "sds-jenkins", reportedAt: OBSERVED, collectedAt: OBSERVED }
+      ]
+    });
+    await prisma.cveFinding.create({
+      data: {
+        organization: "hmcts",
+        repository: "pcs-api",
+        codebaseType: "java",
+        identifier: "CVE-2025-7962",
+        packageName: "angus-activation-2.0.3.jar",
+        suppressed: false,
+        severity: "high"
+      }
+    });
+
+    await pruneCache(FUTURE);
+
+    expect(await prisma.cveScan.count()).toBe(2);
+    expect(await prisma.cveFinding.count()).toBe(1);
   });
 
   it("should never delete teams, which GitHub cannot be asked for again", async () => {

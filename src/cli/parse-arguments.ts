@@ -1,7 +1,7 @@
 import { parseArgs } from "node:util";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-export const COMMANDS = ["doctor", "collect", "collect-org", "map-sonar", "prune", "evidence", "migrate", "reduce-descriptions"] as const;
+export const COMMANDS = ["doctor", "collect", "collect-org", "collect-cve", "map-sonar", "prune", "evidence", "migrate", "reduce-descriptions"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
@@ -154,6 +154,8 @@ commands:
   doctor      validate configuration and GitHub access
   collect     collect repository inventory and behaviour evidence
   collect-org collect the organisation's teams, people and repository ownership
+  collect-cve collect the CVE reports the Jenkins security stage publishes, from both
+              the jenkins and sds-jenkins Cosmos databases
   map-sonar   resolve each SonarCloud project to the repository it analyses
   prune       delete cached intervals that have not been used recently
   evidence    explain cached behaviour evidence without GitHub access

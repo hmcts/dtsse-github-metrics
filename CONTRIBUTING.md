@@ -57,6 +57,26 @@ avoid a conflict.
 
 Do not add a dependency to this repository without a reason that survives being written down in the PR.
 
+## Never a bare `.sort()`
+
+**Always pass a comparator.** `Array.prototype.sort` with no argument coerces every element to a string and
+compares UTF-16 code units, so `[10, 9]` sorts to `[10, 9]` and a locale-sensitive reader cannot tell which
+collation applied. SonarCloud raises it as a CRITICAL bug and it has pinned this repository's reliability
+rating to D twice now, on separate pull requests — so it is cheaper to make it a habit than to keep re-fixing it.
+
+- For strings, `byCodePoint` in [`src/evidence/org/graph.ts`](src/evidence/org/graph.ts) is the house comparator.
+  It is deliberately **not** `localeCompare`: a locale collation reorders or ignores the hyphen, so `sscs-api` and
+  `sscsapi` sort differently under the two rules — and code-point order is what makes two runs over unchanged
+  evidence produce byte-identical output, which is what lets a stored digest say "nothing changed" rather than
+  "the order changed".
+- For numbers, `(left, right) => left - right`. Sorting numbers as strings is the failure this rule is named for.
+- For anything reported to a reader, sort on the field you mean and say which. `report/rows/actors.ts` records
+  what a bare `.sort()` did to readiness labels: it ordered them `amber, cannot_assess, green, red`, which is
+  alphabetical and looks deliberate.
+
+There are older bare calls still in the tree. They are not a precedent — fix one when you are already changing
+the line, not as unrelated churn.
+
 ## Comments
 
 The house style is long and explanatory, and that is deliberate. A comment should say **why**, and where a

@@ -1,12 +1,14 @@
 import type * as contract from "../../../lib/types.ts";
 import { UNCOLLECTED_DETAIL } from "../../../lib/types.ts";
 import type { ReadinessPolicy } from "../../assessment/assessment.ts";
+import type { CveEvidence } from "../../domain/cves.ts";
 import type { Merges } from "../../domain/facts.ts";
 import { requiredApprovals, requiredContexts } from "../../domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../../domain/security-alerts.ts";
 import type { CohortEntry } from "../../org/cohort.ts";
 import { type ProductionLayers, reportedProduction } from "../../store/production-override.ts";
 import { reportedAssurance } from "../contract/assurance.ts";
+import { cveReport } from "../contract/cve.ts";
 import { storedGate } from "../contract/merge-gate.ts";
 import { reportedAlerts } from "../contract/security.ts";
 import type { MeasuredRow } from "../measured.ts";
@@ -46,7 +48,8 @@ export function repositoryRow(
   state: { fetchedAt: Date; payload: unknown } | undefined,
   merges: Merges,
   production: ProductionLayers,
-  measured: MeasuredRow
+  measured: MeasuredRow,
+  cves: CveEvidence | undefined
 ): contract.RepositoryRow {
   const teams = entry.owners;
   const ownerKind = entry.ownerKind;
@@ -70,7 +73,13 @@ export function repositoryRow(
     visibility: reportedVisibility(entry.visibility),
     archived: entry.archived,
     unmaintained: entry.unmaintained,
-    assurance: reportedAssurance(entry, state?.payload)
+    assurance: reportedAssurance(entry, state?.payload),
+    // ON BOTH BRANCHES OF MEASURED-NESS, and not because the answer is cheap: a published CVE report is a fact
+    // about the repository that came from the Jenkins pipeline, so whether THIS tool walked the repository's
+    // merge history has no bearing on it. Withholding the figures from an uncollected row would report a
+    // repository whose scan found four critical CVEs as having no CVE information, on the strength of an
+    // unrelated collection having failed.
+    cves: cveReport(cves)
   };
 
   if (state === undefined) {

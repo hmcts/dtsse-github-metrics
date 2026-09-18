@@ -36,6 +36,12 @@ export default defineConfig({
         // these two against a real database.
         "src/evidence/report/estate.ts",
         "src/evidence/report/reports.ts",
+        // The Cosmos driver call, excluded for `store/**`'s reason: a test of it is a test of `@azure/cosmos`.
+        // IT HOLDS NOTHING ELSE, and that is the point of how small it is — `cve/credentials.ts` resolves the
+        // account, `cve/documents.ts` holds the query and the per-document guard, `cve/reports.ts` parses a report
+        // and `cve/collect.ts` folds the stream. All four are tested at the bar below. What is exempt here is
+        // `new CosmosClient(...)` and the loop that pumps its pages, and nothing that decides anything.
+        "src/evidence/cve/cosmos.ts",
         "src/evidence/behaviour/fill.ts",
         "src/lib/api.ts"
       ],
@@ -48,6 +54,10 @@ export default defineConfig({
         "src/evidence/assessment/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         "src/evidence/window/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         "src/evidence/report/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
+        // The published-CVE parsers, held at the same bar rather than falling to the global floor. They are what
+        // decides whether a repository reads unmeasured or clean, which is the one mistake in this feature that a
+        // reader cannot detect from the page.
+        "src/evidence/cve/**": { statements: 95, lines: 95, branches: 90, functions: 95 },
         // Where the grading decisions live, so held to the same bar as the rest of `evidence` rather than
         // falling to the global floor. Measured 99.20/99.14/96.55/100 for `domain` and 99.02/98.97/91.02/100
         // for `org`.
