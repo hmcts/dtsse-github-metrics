@@ -657,31 +657,31 @@ describe("RepositoriesTable owner cell", () => {
  * left is the term and the four toggles, each of which has its own affordance.
  */
 /**
- * The reason under a repository's name, which is one of the two kinds `detail` carries.
+ * The list prints NO reason under a repository's name, whatever `detail` carries.
  *
- * This table draws control state and no merge column, so a reason about merged pull requests or the merge gate
- * explained an absence the reader could not see — and it appeared on the 870 repositories whose private-and-internal
- * walk the App installation does not cover (VIBE-590), reading as a fault in each of them. The repository and team
- * pages, which do draw the merge figures, still render `detail` whole.
+ * A sentence under one name in a table of 1,890 rows reads as a fault in that repository rather than as the absence
+ * of a reading, and the dash in every column already says the same thing without the prose. `/repositories/<name>`
+ * and the team pages, which draw the figures a reason is about, still render `detail` whole.
  */
 describe("RepositoriesTable row detail", () => {
   const MERGE_REASON = "no merge history was read for this repository, so its merges are unmeasured rather than none";
 
-  it("prints the reason that explains the columns it draws", () => {
+  it("should print no reason when nothing was collected for the repository", () => {
     mount([{ repository: "ghost", team: "platform", detail: UNCOLLECTED_DETAIL }]);
 
-    expect(screen.getByText(UNCOLLECTED_DETAIL)).toBeTruthy();
+    expect(screen.queryByText(UNCOLLECTED_DETAIL)).toBeNull();
+    // The row itself stays, and its name with it: dropping the row would make the list read as the whole estate.
+    expect(screen.getByRole("link", { name: "ghost" })).toBeTruthy();
   });
 
-  it("prints nothing where the only reason is about merges it has no column for", () => {
+  it("should print no reason when the reason is about merges it has no column for", () => {
     mount([{ repository: "walled", team: "platform", detail: MERGE_REASON }]);
 
     expect(screen.queryByText(MERGE_REASON)).toBeNull();
-    // The row itself stays, and its name with it: dropping the row would make the list read as the whole estate.
     expect(screen.getByRole("link", { name: "walled" })).toBeTruthy();
   });
 
-  it("prints nothing at all for a row that gave no reason", () => {
+  it("should print no reason when the row gave none", () => {
     mount([{ repository: "api", team: "platform" }]);
 
     expect(screen.queryByText(UNCOLLECTED_DETAIL)).toBeNull();

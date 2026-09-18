@@ -291,20 +291,20 @@ describe("the three list routes", () => {
   });
 
   /**
-   * Only the reason that explains a column this table draws is printed, and only it is counted.
+   * NO ROW CARRIES A REASON, and the header still states how many rows had nothing collected.
    *
-   * The fixture has one row of each kind. `batch`'s merge-source sentence explains merged-pull-request and
-   * direct-commit figures, neither of which is a column here, so printing it put a reason for an invisible
-   * absence under the name of every repository whose private-and-internal walk the App installation does not
-   * cover (VIBE-590). `ghost` has nothing collected at all, which is exactly what every column here shows.
+   * The fixture has one row of each kind. Neither sentence belongs under a name here: this table draws control
+   * state, so the merge-source reason explains figures it has no column for, and the uncollected reason repeats
+   * what the row's dashes already say. A paragraph under one name in a list of 1,890 reads as a fault in that
+   * repository, so the count in the header carries the fact and the rows stay clean.
    *
-   * The count follows the same rule, which is why the header says one and `overview.unavailable` says two.
+   * The count still follows the narrower rule, which is why the header says one and `overview.unavailable` says two.
    */
-  it("prints and counts only the uncollected reason, not the merge-history one", async () => {
+  it("should print no per-row reason while still counting the uncollected rows", async () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    expect(markup).toContain(UNCOLLECTED_DETAIL);
+    expect(markup).not.toContain(UNCOLLECTED_DETAIL);
     expect(markup).not.toContain("no merge history was read");
     // One, off the rows — not the overview's two, which counts `batch` as well.
     expect(markup).toContain("1 repository the last import did not reach");

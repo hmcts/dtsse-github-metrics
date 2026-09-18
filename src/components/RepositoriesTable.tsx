@@ -49,7 +49,6 @@ import {
   productionCount,
   SECRETS_CRITERION,
   TERM_PARAMETER,
-  uncollectedDetail,
   VISIBILITIES,
   VISIBILITY_OFF,
   VISIBILITY_ON,
@@ -62,13 +61,11 @@ import { withWeeks } from "@/lib/weeks";
 /**
  * Every configured repository in one table: what the collection found about it, and what it did not.
  *
- * A repository nothing was collected for keeps its row and states that under the name, with dashes in place of
- * every answer. Dropping it would make the list read as the whole estate when it is the collected part of it, and
- * filling answers in would claim controls were read and found off.
- *
- * IT STATES ONLY THAT ONE REASON, from 2026-09-17 — see `RowDetail`. The row's `detail` can also carry a sentence
- * about the merge sources or the merge gate, and this table draws a column for neither, so such a sentence
- * explained an absence the reader could not see anywhere on the page.
+ * A repository nothing was collected for keeps its row, with dashes in place of every answer. Dropping it would
+ * make the list read as the whole estate when it is the collected part of it, and filling answers in would claim
+ * controls were read and found off. THE DASH IS THE WHOLE STATEMENT: the row carries no sentence explaining
+ * itself, because a paragraph under one name in a table of 1,890 reads as a fault in that repository rather than
+ * as the absence of a reading. `/repositories/<name>` is where a reason belongs.
  *
  * Every control's state lives in the URL, so a filtered table is a thing that can be reloaded and shared.
  * Sorting stays in component state: it is how one reader is looking at the list right now, not a fact about the
@@ -473,7 +470,6 @@ export function RepositoriesTable({
                     >
                       {row.repository}
                     </Link>
-                    <RowDetail row={row} />
                   </td>
                   {/* The UTC day rather than the instant: a table of 1,880 rows is scanned for how long ago,
                       and `day` is the same formatter every other date on the site reads through. */}
@@ -572,21 +568,6 @@ function Answer({ value, source }: { value?: boolean; source?: ProductionSource 
       {answerWord(value)}
     </td>
   );
-}
-
-/**
- * The reason under a repository's name, printed only where it is about what this table shows.
- *
- * ONE REASON OF THE TWO `detail` CARRIES, which `uncollectedDetail` picks. The merge-source sentence — "no merge
- * history was read for this repository, so its merges are unmeasured rather than none" — was appearing here on the
- * 870 repositories whose private-and-internal walk the App installation does not cover (VIBE-590), under a table
- * that draws no merge column at all. A reason for a figure that is not on the page reads as a fault in the
- * repository, so this page stopped printing it; `/repositories/<name>` and the team pages, which do draw the merge
- * figures, still print `detail` whole.
- */
-function RowDetail({ row }: { row: RepositoryRow }) {
-  const detail = uncollectedDetail(row);
-  return detail ? <p className="text-slate-500 mt-0.5">{detail}</p> : null;
 }
 
 /**
