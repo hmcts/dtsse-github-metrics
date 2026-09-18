@@ -1,6 +1,7 @@
 import type { AssuranceEvidence } from "../domain/assurance.ts";
 import type { MergeGateReport } from "../domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../domain/security-alerts.ts";
+import type { SonarState } from "../domain/sonar.ts";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
@@ -38,6 +39,16 @@ export interface RepositoryStatePayload {
    * as unmeasured rather than as a repository with its tooling switched off.
    */
   assurance?: AssuranceEvidence;
+  /**
+   * What this collection established about the repository's SonarCloud project, added 2026-09-17.
+   *
+   * NEEDS NO MIGRATION, for the reason `assurance` did not: nothing selects on it, so it earns no column.
+   *
+   * ABSENT MEANS NOBODY LOOKED, which is a state no `SonarState` can express and the one the report has to be
+   * able to say — a row written before this field existed is not a repository without a project. See
+   * `report/contract/sonar.ts`, which turns the absence into those words.
+   */
+  sonar?: SonarState;
 }
 
 /** Records what a collection observed, replacing whatever the last one recorded. */

@@ -451,6 +451,35 @@ const SONAR_REPORT: Shape<contract.SonarReport> = {
   required: {}
 };
 
+const SONAR_MAPPING: Shape<contract.SonarProjectMapping> = {
+  declared: { project_key: true, repository: true, method: true, analysis_at: true, revision: true },
+  required: { project_key: true, repository: true, method: true }
+};
+
+const SONAR_MEASURES: Shape<contract.SonarMeasures> = {
+  declared: {
+    project_key: true,
+    analysis_at: true,
+    gate: true,
+    coverage: true,
+    duplicated_lines_density: true,
+    lines_of_code: true,
+    violations: true,
+    reliability_issues: true,
+    maintainability_issues: true,
+    security_issues: true,
+    reliability_rating: true,
+    maintainability_rating: true,
+    security_rating: true
+  },
+  required: { project_key: true }
+};
+
+const SONAR_GATE_CONDITION: Shape<contract.SonarQualityGateCondition> = {
+  declared: { metric: true, comparator: true, threshold: true, actual: true, level: true },
+  required: { metric: true, comparator: true, level: true }
+};
+
 const OPEN_PULL_REQUEST_REPORT: Shape<contract.OpenPullRequestReport> = {
   declared: { fetched_at: true, starts_at: true, ends_at: true, summary: true, detail: true },
   required: {}
@@ -612,6 +641,35 @@ function collectedPayload() {
       securityPolicy: true,
       oldestSevereAlertDays: 41,
       secrets: { open: 0, oldestOpenDays: undefined }
+    },
+    // A MAPPED AND MEASURED PROJECT, whose every field is spelled differently on the two sides of this seam —
+    // `duplicatedLinesDensity` against `duplicated_lines_density`, and both interfaces called `SonarMeasures`. A
+    // translation that let one camelCase key through would type-check and render a dash for a figure the
+    // collection holds, which is exactly the class of fault this file exists to catch.
+    sonar: {
+      mapping: {
+        projectKey: "hmcts.alpha",
+        repository: "alpha",
+        method: "analysis_revision",
+        analysisAt: new Date(Date.UTC(2026, 8, 16)).toISOString(),
+        revision: "671d77770bda9760854fcf0bc5e086eed92bfb3a",
+        resolvedAt: new Date(Date.UTC(2026, 8, 17)).toISOString()
+      },
+      measures: {
+        projectKey: "hmcts.alpha",
+        analysisAt: new Date(Date.UTC(2026, 8, 16)).toISOString(),
+        gate: { level: "ERROR", conditions: [{ metric: "coverage", level: "ERROR", comparator: "LT", errorThreshold: "80", actual: "62.1" }] },
+        coverage: 62.1,
+        duplicatedLinesDensity: 3.4,
+        linesOfCode: 12_345,
+        violations: 17,
+        reliabilityIssues: 2,
+        maintainabilityIssues: 40,
+        securityIssues: 0,
+        reliabilityRating: { value: 1 },
+        maintainabilityRating: { value: 2 },
+        securityRating: { value: 5 }
+      }
     }
   };
 }
@@ -988,6 +1046,13 @@ enablement:
     assertShape("CodeownersReport", CODEOWNERS_REPORT, evidence.codeowners, "repositoryEvidence.codeowners");
     assertShape("MaintenanceReport", MAINTENANCE_REPORT, evidence.maintenance, "repositoryEvidence.maintenance");
     assertShape("SonarReport", SONAR_REPORT, evidence.sonar, "repositoryEvidence.sonar");
+    // The nested blocks, because the section's whole value is in them: a `SonarReport` naming only declared keys
+    // can still carry a measures object spelled the way the collection stored it.
+    assertShape("SonarProjectMapping", SONAR_MAPPING, evidence.sonar.mapping, "repositoryEvidence.sonar.mapping");
+    assertShape("SonarMeasures", SONAR_MEASURES, evidence.sonar.measures, "repositoryEvidence.sonar.measures");
+    for (const [index, condition] of (evidence.sonar.measures?.gate?.conditions ?? []).entries()) {
+      assertShape("SonarQualityGateCondition", SONAR_GATE_CONDITION, condition, `repositoryEvidence.sonar.measures.gate.conditions[${index}]`);
+    }
     assertShape("OpenPullRequestReport", OPEN_PULL_REQUEST_REPORT, evidence.open_pull_requests, "repositoryEvidence.open_pull_requests");
 
     expect(evidence.metrics.length).toBeGreaterThan(0);

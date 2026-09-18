@@ -97,3 +97,15 @@ export function enablementInstants(configuration: Configuration, repositories: r
 export function teamDisplayNames(configuration: Configuration): Map<string, string> {
   return new Map(configuration.teams.map((team) => [team.identifier, team.display_name]));
 }
+
+/**
+ * The SonarCloud organisation to read, falling back to the GitHub organisation.
+ *
+ * `sonar_organization` is left absent rather than defaulted to the same text, so the common case is not
+ * restated in every configuration file. The two are kept apart wherever both are in hand: SonarCloud is listed
+ * and the map is keyed under this one, while the commit search that resolves a project is qualified by the
+ * GitHub organisation. They are the same string at HMCTS and need not be anywhere else.
+ */
+export function sonarOrganizationName(configuration: Configuration): string {
+  return configuration.sonar_organization?.trim() || configuration.organization;
+}

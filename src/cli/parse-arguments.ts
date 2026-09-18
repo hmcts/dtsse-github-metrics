@@ -1,16 +1,17 @@
 import { parseArgs } from "node:util";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-export const COMMANDS = ["doctor", "collect", "collect-org", "prune", "evidence", "migrate", "reduce-descriptions"] as const;
+export const COMMANDS = ["doctor", "collect", "collect-org", "map-sonar", "prune", "evidence", "migrate", "reduce-descriptions"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
 /**
  * The commands whose subject is the cohort, and which therefore refuse an empty `teams:`.
  *
- * `collect-org` is deliberately NOT one of them, for the reason `prune` is not: the organisation graph is not
- * about any repository a team owns — it is what establishes who owns them — so obliging a team file to be
- * layered in would make the answer depend on the question.
+ * `collect-org` is deliberately NOT one of them, for the reason `map-sonar` and `prune` are not: the
+ * organisation graph is not about any repository a team owns — it is what establishes who owns them — so
+ * obliging a team file to be layered in would make the answer depend on the question. `map-sonar` walks the
+ * projects a SonarCloud organisation lists, which is a question about SonarCloud rather than about the cohort.
  */
 export const COHORT_COMMANDS: ReadonlySet<Command> = new Set(["collect", "evidence"]);
 
@@ -153,6 +154,7 @@ commands:
   doctor      validate configuration and GitHub access
   collect     collect repository inventory and behaviour evidence
   collect-org collect the organisation's teams, people and repository ownership
+  map-sonar   resolve each SonarCloud project to the repository it analyses
   prune       delete cached intervals that have not been used recently
   evidence    explain cached behaviour evidence without GitHub access
   migrate     apply any pending database migrations (takes no --config)
@@ -166,7 +168,8 @@ options:
   --to <instant>        end of the window, exclusive
   --days <n>            span this many days, ending at the most recent UTC midnight
   --repository <name>   limit results to one configured repository
-  --tolerate-partial    exit 0 when some repositories refused, for a scheduled run (collect)
+  --tolerate-partial    exit 0 when some repositories or projects refused, for a scheduled run
+                        (collect, map-sonar)
   --propose-teams       print a reviewable teams: block instead of writing the graph (collect-org)
   --unresolved-limit <n>  cap the repositories one run reads CODEOWNERS for (collect-org)
   --all                 read every cohort repository rather than a sample of them (doctor)

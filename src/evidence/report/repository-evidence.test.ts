@@ -4,15 +4,17 @@ import { ReviewState } from "../domain/facts.ts";
 import type { CohortEntry } from "../org/cohort.ts";
 import { OwnerKind } from "../org/graph.ts";
 import { parseConfiguration } from "../policy/load.ts";
+import { SONAR_UNATTEMPTED_DETAIL } from "./contract/sonar.ts";
 import type { MeasuredRow } from "./measured.ts";
 import { builtRepositoryEvidence, type RepositoryEvidenceInput } from "./repository-evidence.ts";
 
 /**
  * One repository's evidence block, section by section.
  *
- * FOUR SECTIONS CAN ONLY STATE AN ABSENCE and say so in their own `detail`: open pull requests, CODEOWNERS,
- * maintenance and Sonar are not collected at all, and reporting them as empty would be indistinguishable from a
- * repository that genuinely has no CODEOWNERS file — which is the one confusion this contract exists to prevent.
+ * THREE SECTIONS CAN ONLY STATE AN ABSENCE and say so in their own `detail`: open pull requests, CODEOWNERS and
+ * maintenance are not collected at all, and reporting them as empty would be indistinguishable from a repository
+ * that genuinely has no CODEOWNERS file — which is the one confusion this contract exists to prevent. The Sonar
+ * section left that group on 2026-09-17, and the two cases about its wording are what replaced it.
  */
 
 const CONFIGURATION = parseConfiguration(`
@@ -28,6 +30,7 @@ cohort:
 `);
 
 const WINDOW = { startsAt: new Date(Date.UTC(2026, 7, 20)), endsAt: new Date(Date.UTC(2026, 8, 17)) };
+const FETCHED = new Date(Date.UTC(2026, 7, 25));
 const BOTH: MeasuredRow = { pullRequests: true, directCommits: true };
 
 const ENTRY: CohortEntry = {
@@ -83,7 +86,7 @@ function input(overrides: Partial<RepositoryEvidenceInput> = {}): RepositoryEvid
   return {
     repository: "alpha",
     entry: ENTRY,
-    state: { fetchedAt: new Date(Date.UTC(2026, 7, 25)), payload: { defaultBranch: "main", mergeGate: { gate: GATE } } },
+    state: { fetchedAt: FETCHED, payload: { defaultBranch: "main", mergeGate: { gate: GATE } } },
     walked,
     window: WINDOW,
     measured: BOTH,
@@ -113,7 +116,7 @@ describe("one repository's evidence block", () => {
     expect(builtRepositoryEvidence(CONFIGURATION, input()).provenance).toEqual({ offline: true, intervals_fetched: 0 });
   });
 
-  it("should say in each section's own words that four of them are not collected", () => {
+  it("should say in each section's own words that three of them are not collected", () => {
     // An empty section here would read as a repository with nothing to report, so each names the thing that would
     // have collected it.
     const evidence = builtRepositoryEvidence(CONFIGURATION, input());
@@ -121,7 +124,40 @@ describe("one repository's evidence block", () => {
     expect(evidence.open_pull_requests.detail).toBe("open pull-request state is not collected");
     expect(evidence.codeowners.detail).toContain("the CODEOWNERS file is not read for this report");
     expect(evidence.maintenance).toEqual({ windows: [], detail: "maintenance windows are not collected" });
-    expect(evidence.sonar.detail).toBe("no SonarCloud project is mapped for this repository");
+  });
+
+  it("should distinguish a repository nothing has looked at from one with no SonarCloud project", () => {
+    // The wording every repository in the estate used to carry claimed the second while the truth was the first.
+    const unattempted = builtRepositoryEvidence(CONFIGURATION, input());
+    const looked = builtRepositoryEvidence(
+      CONFIGURATION,
+      input({ state: { fetchedAt: FETCHED, payload: { sonar: { detail: "no SonarCloud project in hmcts analyses this repository" } } } })
+    );
+
+    expect(unattempted.sonar).toEqual({ detail: SONAR_UNATTEMPTED_DETAIL });
+    expect(looked.sonar.detail).toBe("no SonarCloud project in hmcts analyses this repository");
+  });
+
+  it("should carry a mapped project's measures through to the section that renders them", () => {
+    const evidence = builtRepositoryEvidence(
+      CONFIGURATION,
+      input({
+        state: {
+          fetchedAt: FETCHED,
+          payload: {
+            sonar: {
+              mapping: { projectKey: "hmcts.cath", repository: "cath-service", method: "analysis_revision" },
+              measures: { projectKey: "hmcts.cath", coverage: 92.5, duplicatedLinesDensity: 1.2, securityRating: { value: 1 } }
+            }
+          }
+        }
+      })
+    );
+
+    expect(evidence.sonar.mapping).toEqual({ project_key: "hmcts.cath", repository: "cath-service", method: "analysis_revision" });
+    expect(evidence.sonar.measures?.coverage).toBe(92.5);
+    // The rename that would silently render a dash for a figure the collection holds.
+    expect(evidence.sonar.measures?.duplicated_lines_density).toBe(1.2);
   });
 
   it("should report an empty findings list, which nothing produces and nothing configures", () => {

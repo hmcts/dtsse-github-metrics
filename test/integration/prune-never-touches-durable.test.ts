@@ -24,9 +24,10 @@ import { pruneCache } from "../../src/evidence/store/prune.ts";
  * the wrong thing, and nothing can recover that but their memory — so a pruned row is not a hole in a history,
  * it is a badge that quietly went out or came on.
  *
- * The last case here is not about `prune` at all. It asserts the partial unique index that makes every
- * `WHERE superseded_at IS NULL` read unambiguous — a guarantee Postgres gives and TypeScript cannot, so it
- * is proved against a real database rather than in the unit suite.
+ * The last cases here are not about `prune` at all. They assert the partial unique index that makes every
+ * `WHERE superseded_at IS NULL` read unambiguous, and the two CHECK constraints that make a remembered negative
+ * mean something in `sonar_project_map` and `repository_ownership` — guarantees Postgres gives and TypeScript
+ * cannot, so they are proved against a real database rather than in the unit suite.
  */
 
 const COVERAGE: SourceCoverage = {
@@ -549,6 +550,20 @@ describe("the live unique index on a change-versioned table", () => {
     });
 
     await expect(closedAtOnce).rejects.toThrow();
+  });
+
+  it.each([
+    ["neither a repository nor a reason", {}],
+    ["both a repository and a reason", { repository: "cath-service", detail: "no commit matched" }]
+  ])("should refuse a sonar mapping that names %s", async (_what, columns) => {
+    // The CHECK is what makes a remembered negative MEAN something. A row with neither would be skipped by the
+    // next run's watermark exactly as an answered one is, costing the map a project for ever; a row with both
+    // would be an attribution and a reason not to have one.
+    const halfWritten = prisma.sonarProjectMap.create({
+      data: { sonarOrganization: "hmcts", projectKey: "hmcts.half", resolvedAt: OBSERVED, ...columns }
+    });
+
+    await expect(halfWritten).rejects.toThrow();
   });
 
   it("should refuse ownership that is both a remembered negative and names an owner", async () => {

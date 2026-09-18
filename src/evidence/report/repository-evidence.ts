@@ -12,6 +12,7 @@ import { contractAssessment } from "./contract/assessment.ts";
 import { contractGate, storedGate } from "./contract/merge-gate.ts";
 import { contractObservation } from "./contract/observation.ts";
 import { securityReport } from "./contract/security.ts";
+import { storedSonar } from "./contract/sonar.ts";
 import type { MeasuredRow } from "./measured.ts";
 
 /** Everything one repository's page is assembled from, all of it read by the caller. See `repositoryEvidence`. */
@@ -33,11 +34,12 @@ export interface RepositoryEvidenceInput {
  * The page for a repository has been rendering "this span holds no evidence" since the port landed, not because
  * nothing was collected but because nothing assembled this. Every section below it was already written.
  *
- * FOUR SECTIONS CAN ONLY STATE AN ABSENCE, and they say so in their own `detail` rather than being omitted:
- * open pull requests, CODEOWNERS, maintenance and Sonar are not collected by `collect` at all — no call is made
- * for any of them. Reporting them as empty would be indistinguishable from a repository that has no CODEOWNERS
- * file and no open pull requests, which is the one confusion this contract exists to prevent. What IS collected —
- * the merge gate, the three alert families, the merge facts — feeds the sections that carry real answers.
+ * THREE SECTIONS CAN ONLY STATE AN ABSENCE, and they say so in their own `detail` rather than being omitted:
+ * open pull requests, CODEOWNERS and maintenance are not collected by `collect` at all — no call is made for any
+ * of them. Reporting them as empty would be indistinguishable from a repository that has no CODEOWNERS file and
+ * no open pull requests, which is the one confusion this contract exists to prevent. What IS collected — the
+ * merge gate, the three alert families, the merge facts, and since 2026-09-17 the SonarCloud project and its
+ * measures — feeds the sections that carry real answers.
  *
  * `measured` IS HANDED IN AND NOT READ HERE, exactly as `repositoryRow` is handed its own. `src/lib/api.ts` holds
  * this repository's estate row by the time it calls this, and that row's two counts are absent precisely where a
@@ -77,7 +79,10 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
     open_pull_requests: { detail: "open pull-request state is not collected" },
     codeowners: { detail: "the CODEOWNERS file is not read for this report; ownership is attributed from the organisation graph" },
     maintenance: { windows: [], detail: "maintenance windows are not collected" },
-    sonar: { detail: "no SonarCloud project is mapped for this repository" },
+    // COLLECTED SINCE 2026-09-17, and read out of the same stored payload the merge gate is. `storedSonar` is
+    // where "nobody looked" is told apart from "there is no project", which the constant this replaced could not
+    // do: it said the second on every page of the estate while the truth was the first.
+    sonar: storedSonar(input.state.payload, fetched),
     // PER-ACTOR RULE BREACHES, WHICH NOTHING COMPUTES AND NOTHING NOW CONFIGURES. There is no producer: no
     // module in `src/evidence/` evaluates a practice rule, and the `practices:` policy block that declared
     // them was removed for validating without deciding anything. `FindingsTable` and `TeamPractice` are wired

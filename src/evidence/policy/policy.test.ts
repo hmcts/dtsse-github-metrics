@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ConfigurationError, loadConfiguration, parseConfiguration } from "./load.ts";
-import { configuredOwners, configuredTeamSlugs, enablementInstants, teamDisplayNames } from "./repositories.ts";
+import { configuredOwners, configuredTeamSlugs, enablementInstants, sonarOrganizationName, teamDisplayNames } from "./repositories.ts";
 import { PRODUCTION_LIST_URL } from "./schema.ts";
 
 // Ported from tests/test_config.py. Upstream wrote each case to a temp file; these parse the same text
@@ -200,6 +200,22 @@ describe("parseConfiguration", () => {
 
   it("should carry no enablement dates by default", () => {
     expect(parseConfiguration(VALID).enablement).toEqual({});
+  });
+
+  it("should reject a blank sonar project override, which would silently mean unresolved", () => {
+    // Resolution treats an override as the answer that short-circuits every other rung, so a blank one reads as a
+    // decision somebody made while deciding nothing.
+    const document = `${VALID}\nsonar_projects:\n  civil-service: " "\n  cath-service: hmcts.cath\n`;
+
+    expect(() => parseConfiguration(document)).toThrow(/sonar project keys may not be empty: civil-service/);
+  });
+
+  it("should accept a sonar override for a repository no team overrides the owner of", () => {
+    // The cross-check that used to sit here required every key to name a repository `teams:` listed. `teams:` no
+    // longer lists the estate, so that check rejected the ordinary case.
+    const configuration = parseConfiguration(`${VALID}\nsonar_projects:\n  cath-service: hmcts.cath\n`);
+
+    expect(configuration.sonar_projects).toEqual({ "cath-service": "hmcts.cath" });
   });
 
   it.each([
@@ -444,6 +460,20 @@ describe("teamDisplayNames", () => {
       ["divorce", "Divorce"]
     ]);
     expect(names.get("civil")).toBeUndefined();
+  });
+});
+
+describe("sonarOrganizationName", () => {
+  it("should fall back to the GitHub organisation, so the common case is not restated in every file", () => {
+    expect(sonarOrganizationName(parseConfiguration(VALID))).toBe("hmcts");
+  });
+
+  it("should read the configured SonarCloud organisation where the two names differ", () => {
+    expect(sonarOrganizationName(parseConfiguration(`${VALID}\nsonar_organization: hmcts-sonar\n`))).toBe("hmcts-sonar");
+  });
+
+  it("should read a blank one as absent rather than as an organisation named nothing", () => {
+    expect(sonarOrganizationName(parseConfiguration(`${VALID}\nsonar_organization: "  "\n`))).toBe("hmcts");
   });
 });
 

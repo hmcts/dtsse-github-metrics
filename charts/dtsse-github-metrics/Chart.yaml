@@ -6,7 +6,7 @@ home: https://github.com/hmcts/dtsse-github-metrics
 # BUMP THIS IN ANY COMMIT THAT TOUCHES `values.yaml`. Flux resolves this release's chart by version string, so
 # a values change published under a version AAT already has is silently discarded. See the note at the top of
 # `values.yaml` for the whole path from this directory to a running CronJob.
-version: 0.0.11
+version: 0.0.12
 dependencies:
   - name: nodejs
     version: 3.2.1
@@ -30,6 +30,15 @@ dependencies:
     version: 2.2.1
     repository: "oci://hmctsprod.azurecr.io/helm"
     condition: orgJob.enabled
+  # A THIRD CronJob for the SonarCloud map, on a WEEKLY schedule the other two have no reason to share. It is
+  # separated on cost rather than on completeness: it spends one commit search per project against a quota of 30 a
+  # minute, which is 10 to 30 minutes, and it only has an answer to change when SonarCloud's project list does. As
+  # a step inside `collect` it would lengthen the daily walk by a third for a map that had not moved.
+  - name: job
+    alias: sonarJob
+    version: 2.2.1
+    repository: "oci://hmctsprod.azurecr.io/helm"
+    condition: sonarJob.enabled
   - name: postgresql
     version: 1.1.1
     repository: "oci://hmctsprod.azurecr.io/helm"
