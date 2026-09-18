@@ -35,8 +35,9 @@ export default defineConfig({
       // this run does not execute: they were being reported at 0% and pulling the aggregate down.
       exclude: ["src/evidence/store/generated/**", "src/evidence/store/prisma.ts", "**/*.test.ts"],
       // Set just below what the suite achieves today, so the numbers hold without being raised past what the
-      // code reaches: 88.72/89.19/83.48/94.22 overall, `estate.ts` at 100/100/100/100 and `reports.ts` at
-      // 96.66/96.42/94.44/100 — the two files whose only gate is this run, since the unit config exempts them.
+      // code reaches: 89.11/89.60/84.71/94.24 overall, `estate.ts` at 100/100/100/100 and `reports.ts` at
+      // 97.67/97.56/95.65/100 — the two files whose only gate is this run, since the unit config exempts them.
+      // Re-measured with `repositoryTrend` in `reports.ts` (VIBE-592); the four floors below were already met.
       //
       // THE AGGREGATE MOVED UP NINE POINTS WITHOUT A CASE BEING ADDED, which is what the decomposition bought:
       // `report/repositories.ts` was measured here at 78.96/78.20/68.00/79.56 because two thirds of it was pure

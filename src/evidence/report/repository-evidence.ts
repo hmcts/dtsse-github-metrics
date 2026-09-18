@@ -111,8 +111,12 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
  * the cohort the assessment below still grades, which is computed from every fact in the cache whether the window
  * reports its counts or not. Where nothing was read there is nothing to drop and it is empty, and
  * `lib/repository.cohortCards` reads the absent counts — not the empty map — as the signal that nobody looked.
+ *
+ * EXPORTED FOR `./trend.ts`, which reports the same split per period. A series and the block above it describe
+ * the same repository, so the cards on one and the columns on the other have to be one derivation: a second copy
+ * would eventually disagree about which merges a window held.
  */
-function cohortSummary(walked: Merges, reported: ReportedCohort, measured: MeasuredRow): contract.CohortSummary {
+export function cohortSummary(walked: Merges, reported: ReportedCohort, measured: MeasuredRow): contract.CohortSummary {
   return {
     ...(measured.pullRequests ? { merged: walked.pullRequests.length, reported: reported.merges.pullRequests.length } : {}),
     excluded_authors: reported.excluded,

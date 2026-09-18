@@ -27,7 +27,6 @@ import {
   sonarGateCard,
   sonarRows
 } from "@/lib/repository";
-import { hasPeriods } from "@/lib/trend";
 import type { RepositoryDetail, SonarReport } from "@/lib/types";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
@@ -196,7 +195,10 @@ export default async function RepositoryPage({
         <ValueCards values={[sonarGateCard(evidence.sonar), ...sonarMeasures(evidence.sonar)]} />
       </Section>
 
-      {hasPeriods(series) ? <TrendSection series={series} cut={windows.trend_periods} /> : null}
+      {/* Drawn whenever a series ARRIVED, periods or not: `TrendSection` says why a repository has none,
+          which distinguishes one enabled too recently from one with no enablement date configured. A
+          refused fetch is the one case that draws nothing, because then there is no reason to give. */}
+      {series === null ? null : <TrendSection series={series} cut={windows.trend_periods} />}
 
       <Section heading="Findings" detail="by rule, then alphabetical by contributor">
         {findings.length === 0 ? (

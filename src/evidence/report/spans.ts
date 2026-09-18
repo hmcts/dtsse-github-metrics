@@ -27,6 +27,42 @@ export const DEFAULT_WEEKS = 4;
 /** The most periods one trend request may ask for. The UI reads the cut from here rather than assuming one. */
 export const MAXIMUM_TREND_PERIODS = 13;
 
+/**
+ * How long one trend period runs.
+ *
+ * FOUR WHOLE WEEKS AND NOT A CALENDAR MONTH, so every period holds the same number of each weekday. Throughput
+ * onto a default branch is not flat across a week — almost nothing merges at a weekend — so periods of 30 and 31
+ * days would carry four or five Mondays depending on where they happened to fall, and a series would move for
+ * that reason alone. It is not configurable because it is the unit the periods are counted in rather than a
+ * threshold anybody argues with: changing it renumbers every period a reader has already seen.
+ */
+export const TREND_PERIOD_DAYS = 28;
+
+/**
+ * The cut one trend request named, or `undefined` for every whole period since enablement.
+ *
+ * REFUSED ABOVE THE MAXIMUM RATHER THAN TRUNCATED TO IT, which is the upstream service's rule and matters
+ * because of which end a cut keeps. `periodWindows` drops the RECENT periods, so a request silently reduced from
+ * 40 to 13 would be answered with the first 13 periods after enablement while the caller believed it had asked
+ * for everything — a series that is not what was requested, presented as though it were. Refusing says so.
+ *
+ * AN OMITTED CUT IS NOT A DEFAULT, and there is deliberately none: it means every whole period since enablement,
+ * however many that is. The UI never omits it — it asks for `WindowOptions.trend_periods`, which is
+ * `MAXIMUM_TREND_PERIODS` — so the unbounded series is reachable only by a caller that has chosen it.
+ */
+export function requestedTrendPeriods(periods: number | undefined): number | undefined {
+  if (periods === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(periods) || periods < 1) {
+    throw new RangeError(`a trend must ask for a whole number of periods, at least one, not ${periods}`);
+  }
+  if (periods > MAXIMUM_TREND_PERIODS) {
+    throw new RangeError(`a trend may ask for at most ${MAXIMUM_TREND_PERIODS} periods, not ${periods}`);
+  }
+  return periods;
+}
+
 /** The widest span on offer, and so the one window a read has to cover to answer for all of them. */
 export const WIDEST_SPAN = Math.max(...WEEK_OPTIONS);
 

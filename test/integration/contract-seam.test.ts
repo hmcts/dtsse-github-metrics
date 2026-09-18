@@ -11,10 +11,12 @@ import {
   overviewSummary,
   repositoryEvidence,
   repositoryRows,
+  repositoryTrend,
   teamMemberRows,
   teamRows,
   windowOptions
 } from "../../src/evidence/report/reports.ts";
+import { MAXIMUM_TREND_PERIODS } from "../../src/evidence/report/spans.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 import type * as contract from "../../src/lib/types.ts";
 
@@ -57,6 +59,9 @@ const DIRECT_COMMITS = sourceSignature(EvidenceSource.DirectCommits);
  * `production_repositories`, so the production pair is answered; `dtsse` carries a `display_name`, so the team card's
  * one is not the slug falling back to itself; and `minimum_merges: 1` lets the policy grade a six-merge cohort, which
  * is what makes the substantial counts and both timing medians present.
+ *
+ * `enablement:` NAMES `alpha` AND NOT `beta`, which is what gives the trend case both of its answers off one estate:
+ * a series with periods, and the refusal a repository with no configured date gets.
  */
 const CONFIGURATION = parseConfiguration(`
 version: 1
@@ -69,6 +74,8 @@ assessment:
   minimum_merges: 1
 production_repositories:
   - alpha
+enablement:
+  alpha: 2026-01-01
 teams:
   - identifier: dtsse
     display_name: Developer Tools
@@ -268,6 +275,46 @@ const WINDOW_OPTIONS: Shape<contract.WindowOptions> = {
   required: { options: true, default: true, trend_periods: true, collection_stale: true }
 };
 
+/**
+ * The trend series, which had no shape here until VIBE-592 and so no compiler-checked field list.
+ *
+ * WHY IT NEEDED ONE MOST OF THE TWENTY-SIX. `getTrend` was a stub returning `periods: []` through an
+ * `as unknown as RepositoryTrend`, and the double cast is precisely what let it typecheck as a working function:
+ * the object it returned carried a `detail` and the contract was never asked whether it declares one. `required`
+ * below is what would have caught the same class of omission a second time — `alert_observations` is REQUIRED and
+ * the refusal went out without it at all.
+ */
+const REPOSITORY_TREND: Shape<contract.RepositoryTrend> = {
+  declared: { repository: true, enablement_at: true, baseline: true, periods: true, alert_observations: true, detail: true, delta_detail: true },
+  required: { repository: true, periods: true, alert_observations: true }
+};
+
+const TREND_PERIOD: Shape<contract.TrendPeriod> = {
+  declared: { starts_at: true, ends_at: true, provenance: true, cohort: true, throughput: true, metrics: true, detail: true, index: true, deltas: true },
+  required: { starts_at: true, ends_at: true, metrics: true, index: true, deltas: true }
+};
+
+/** The baseline, which is a `TrendWindow` and carries neither of the two fields a period adds. */
+const TREND_WINDOW: Shape<contract.TrendWindow> = {
+  declared: { starts_at: true, ends_at: true, provenance: true, cohort: true, throughput: true, metrics: true, detail: true },
+  required: { starts_at: true, ends_at: true, metrics: true }
+};
+
+const TREND_THROUGHPUT: Shape<contract.TrendThroughput> = {
+  declared: { merges: true, merged_pull_requests: true, direct_commits: true, active_contributors: true },
+  required: { merges: true, merged_pull_requests: true, direct_commits: true, active_contributors: true }
+};
+
+const TREND_METRIC: Shape<contract.TrendMetric> = {
+  declared: { metric: true, summary: true, value: true, percentile: true },
+  required: { metric: true, summary: true }
+};
+
+const TREND_DELTA: Shape<contract.TrendDelta> = {
+  declared: { measure: true, basis: true, baseline: true, period: true, change: true, unit: true, percentile: true, detail: true },
+  required: { measure: true, basis: true, baseline: true, period: true }
+};
+
 const PRACTICE_EVIDENCE: Shape<contract.RepositoryPracticeEvidence> = {
   declared: {
     repository: true,
@@ -451,6 +498,31 @@ function assertAlerts(value: unknown, path: string): void {
   }
 }
 
+/**
+ * One window of a series, and the three nested blocks a window carries.
+ *
+ * Takes the shape as an argument because a baseline and a period are DIFFERENT shapes — a period adds `index` and
+ * `deltas` — and asserting a baseline against the period's list would let the two required fields go missing.
+ */
+function assertTrendWindow<T extends contract.TrendWindow>(name: string, shape: Shape<T>, window: contract.TrendWindow, path: string): void {
+  assertShape(name, shape, window, path);
+  if (window.cohort !== undefined) {
+    assertShape("CohortSummary", COHORT_SUMMARY, window.cohort, `${path}.cohort`);
+  }
+  if (window.provenance !== undefined) {
+    assertShape("WindowProvenance", PROVENANCE, window.provenance, `${path}.provenance`);
+  }
+  if (window.throughput !== undefined) {
+    assertShape("TrendThroughput", TREND_THROUGHPUT, window.throughput, `${path}.throughput`);
+  }
+  for (const [index, metric] of window.metrics.entries()) {
+    assertShape("TrendMetric", TREND_METRIC, metric, `${path}.metrics[${index}]`);
+    // The same renaming translation the evidence block's metric cards needed: the domain holds `sampleSize` and
+    // the contract declares `sample_size`, and both files call the interface `DistributionObservation`.
+    assertObservation(metric.summary, `${path}.metrics[${index}].summary`);
+  }
+}
+
 function assertRepositoryRow(row: contract.RepositoryRow, path: string): void {
   assertShape("RepositoryRow", REPOSITORY_ROW, row, path);
   if (row.assurance !== undefined) {
@@ -574,7 +646,13 @@ async function namedPerson(login: string, displayName: string): Promise<void> {
   });
 }
 
-/** The coverage a finished walk of both sources leaves, which is what says a repository was READ. */
+/**
+ * The coverage a finished walk of both sources leaves, which is what says a repository was READ.
+ *
+ * REACHING BACK BEFORE THE ENABLEMENT DATE, so the trend's BASELINE window is covered too. A baseline nothing
+ * walked compares no period at all — the series says so and every `deltas` list is empty — which would leave the
+ * `TrendDelta` shape below asserting nothing.
+ */
 async function walked(repository: string): Promise<void> {
   await prisma.sourceCoverage.createMany({
     data: [EvidenceSource.PullRequests, EvidenceSource.DirectCommits].map((source) => ({
@@ -582,7 +660,7 @@ async function walked(repository: string): Promise<void> {
       repository,
       source,
       queryHash: source === EvidenceSource.PullRequests ? PULL_REQUESTS : DIRECT_COMMITS,
-      startsAt: new Date(Date.UTC(2026, 0, 1)),
+      startsAt: new Date(Date.UTC(2025, 10, 1)),
       endsAt: ANCHOR,
       accessedAt: new Date()
     }))
@@ -795,6 +873,77 @@ describe("the key set every report emits", () => {
 
     assertShape("WindowOptions", WINDOW_OPTIONS, options, "windowOptions");
     expect(options.options).toEqual([1, 4, 8, 12, 26]);
+  });
+
+  it("should emit only the fields RepositoryTrend declares, window by window", async () => {
+    // THE SHAPE THE DOUBLE CAST HID. `getTrend` returned `{ periods: [], detail }` through an
+    // `as unknown as RepositoryTrend` and nothing checked whether the contract declares `detail` — so a stub
+    // typechecked as a working function and the section rendered its empty state on every repository for months.
+    const built = await repositoryTrend(CONFIGURATION, "alpha", MAXIMUM_TREND_PERIODS, REFERENCE);
+
+    assertShape("RepositoryTrend", REPOSITORY_TREND, built, "repositoryTrend");
+    expect(built.baseline, "the fixture covers the window before enablement, so the series has a baseline").toBeDefined();
+    if (built.baseline !== undefined) {
+      assertTrendWindow("TrendWindow", TREND_WINDOW, built.baseline, "repositoryTrend.baseline");
+    }
+    // Eight whole 28-day periods sit between the enablement date and the anchor, and the merges land in the last
+    // of them — so the series reaches both a window that observed a cohort and windows that observed none.
+    expect(built.periods).toHaveLength(8);
+    for (const period of built.periods) {
+      assertTrendWindow("TrendPeriod", TREND_PERIOD, period, `repositoryTrend.periods[P${period.index}]`);
+      for (const [index, computed] of period.deltas.entries()) {
+        assertShape("TrendDelta", TREND_DELTA, computed, `repositoryTrend.periods[P${period.index}].deltas[${index}]`);
+      }
+    }
+    // The populated window, without which every assertion above would be passing over eight empty ones.
+    const observed = built.periods.find((period) => (period.throughput?.merges ?? 0) > 0);
+    expect(observed?.throughput).toEqual({ merges: 7, merged_pull_requests: 6, direct_commits: 1, active_contributors: 2 });
+    expect(observed?.metrics.length).toBeGreaterThan(0);
+    expect(observed?.deltas.map((computed) => computed.measure).slice(0, 3)).toEqual(["merged pull requests", "direct commits", "merges"]);
+    expect(findNulls(built), "a series carries a null, which the contract says is a missing key").toEqual([]);
+  });
+
+  it("should answer a repository with no enablement date with a reason rather than a fault", async () => {
+    // A REAL STATE OF A REAL SERIES. `beta` is a configured repository nobody has stated an enablement date for,
+    // which is distinguishable from being enabled too recently by the absent `enablement_at` and not only by prose.
+    const built = await repositoryTrend(CONFIGURATION, "beta", MAXIMUM_TREND_PERIODS, REFERENCE);
+
+    assertShape("RepositoryTrend", REPOSITORY_TREND, built, "repositoryTrend[beta]");
+    expect(built.periods).toEqual([]);
+    expect("enablement_at" in built).toBe(false);
+    expect(built.detail).toBe("no enablement date is configured for this repository");
+  });
+
+  it("should answer a repository enabled too recently with a reason rather than an empty series", async () => {
+    // A PARTIAL PERIOD IS NOT REPORTED: it is not comparable with a whole one, and drawing it would show every
+    // newly enabled repository dipping at its right-hand edge for arithmetic alone. Twelve days have elapsed here.
+    const recent = parseConfiguration(`
+version: 1
+organization: hmcts
+enablement:
+  alpha: 2026-08-20
+`);
+
+    const built = await repositoryTrend(recent, "alpha", MAXIMUM_TREND_PERIODS, REFERENCE);
+
+    assertShape("RepositoryTrend", REPOSITORY_TREND, built, "repositoryTrend[recent]");
+    expect(built.periods).toEqual([]);
+    // The enablement instant IS carried, which is what tells this state from an unconfigured date.
+    expect(built.enablement_at).toBe("2026-08-20T00:00:00.000Z");
+    expect(built.detail).toMatch(/no whole period of 28 days has elapsed since 2026-08-20/);
+  });
+
+  it("should refuse a cut above the count the window options publish rather than truncating it", async () => {
+    // A cut keeps the periods NEAREST enablement, so a request silently reduced would be answered with the
+    // beginning of the history while the caller believed it had asked for all of it.
+    await expect(repositoryTrend(CONFIGURATION, "alpha", MAXIMUM_TREND_PERIODS + 1, REFERENCE)).rejects.toThrow(RangeError);
+  });
+
+  it("should return every whole period since enablement when the request names no cut", async () => {
+    // There is no server-side default, so an omitted count is unbounded rather than quietly becoming the maximum.
+    const built = await repositoryTrend(CONFIGURATION, "alpha", undefined, REFERENCE);
+
+    expect(built.periods.map((period) => period.index)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 
   it("should emit only the fields RepositoryPracticeEvidence declares, section by section", async () => {

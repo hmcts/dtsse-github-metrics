@@ -51,7 +51,8 @@ export type MetricChart = {
 
 export const PERCENTILE_LABEL: Record<Percentile, string> = {
   median: "median",
-  percentile_75: "75th percentile"
+  percentile_75: "75th percentile",
+  percentile_90: "90th percentile"
 };
 
 export const BASIS_LABEL: Record<DeltaBasis, string> = {
@@ -89,12 +90,13 @@ export function resolvedWindows(series: RepositoryTrend): TrendWindow[] {
 /**
  * Whether there is a series to draw at all: a repository with no whole period has none.
  *
- * `null` is accepted and answers false, so a page whose trend fetch was refused takes the same
- * branch as one whose series is empty — in both cases there is nothing to draw, and the rest of the
- * page is unaffected either way.
+ * A REFUSED FETCH IS NO LONGER THE SAME BRANCH, which is why this takes a series rather than
+ * `RepositoryTrend | null`. A series that arrived with no periods carries the REASON it has none —
+ * enabled too recently, or no enablement date configured — and the section prints it; a fetch that
+ * failed has no reason to print, so the page leaves the section out before reaching this at all.
  */
-export function hasPeriods(series: RepositoryTrend | null): series is RepositoryTrend {
-  return series !== null && series.periods.length > 0;
+export function hasPeriods(series: RepositoryTrend): boolean {
+  return series.periods.length > 0;
 }
 
 /**

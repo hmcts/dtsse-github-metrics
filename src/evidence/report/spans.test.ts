@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_WEEKS, MAXIMUM_TREND_PERIODS, reportedWindowOptions, spanStartsAt, spanWindow, WEEK_OPTIONS, WIDEST_SPAN } from "./spans.ts";
+import {
+  DEFAULT_WEEKS,
+  MAXIMUM_TREND_PERIODS,
+  reportedWindowOptions,
+  requestedTrendPeriods,
+  spanStartsAt,
+  spanWindow,
+  TREND_PERIOD_DAYS,
+  WEEK_OPTIONS,
+  WIDEST_SPAN
+} from "./spans.ts";
 
 /**
  * Which spans the selector offers, and where each of them starts.
@@ -119,5 +129,37 @@ describe("the window options the selector reads", () => {
 
     expect(options.collection_stale).toBe(true);
     expect("collected_through" in options).toBe(false);
+  });
+});
+
+describe("the cut a trend request names", () => {
+  it("should carry a count through when it is at or below the maximum", () => {
+    expect(requestedTrendPeriods(1)).toBe(1);
+    expect(requestedTrendPeriods(MAXIMUM_TREND_PERIODS)).toBe(MAXIMUM_TREND_PERIODS);
+  });
+
+  it("should refuse a count above the maximum rather than truncating it to one", () => {
+    // A cut keeps the periods NEAREST ENABLEMENT, so a request quietly reduced from 40 to 13 would be answered
+    // with the beginning of the history while the caller believed it had asked for all of it.
+    expect(() => requestedTrendPeriods(MAXIMUM_TREND_PERIODS + 1)).toThrow(RangeError);
+    expect(() => requestedTrendPeriods(40)).toThrow(`at most ${MAXIMUM_TREND_PERIODS} periods, not 40`);
+  });
+
+  it("should mean every whole period since enablement when no count is named", () => {
+    // There is no server-side default: an omitted cut is unbounded rather than silently becoming the maximum.
+    expect(requestedTrendPeriods(undefined)).toBeUndefined();
+  });
+
+  it("should refuse a count that is not a whole number of periods, or is fewer than one", () => {
+    expect(() => requestedTrendPeriods(0)).toThrow(RangeError);
+    expect(() => requestedTrendPeriods(-2)).toThrow("at least one, not -2");
+    expect(() => requestedTrendPeriods(2.5)).toThrow("a whole number of periods");
+  });
+
+  it("should state a period length of four whole weeks, so every period holds the same weekdays", () => {
+    // Throughput onto a default branch is not flat across a week, so periods of 30 and 31 days would carry four
+    // or five Mondays depending on where they fell and a series would move for that reason alone.
+    expect(TREND_PERIOD_DAYS).toBe(28);
+    expect(TREND_PERIOD_DAYS % 7).toBe(0);
   });
 });

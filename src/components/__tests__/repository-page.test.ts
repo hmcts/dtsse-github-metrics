@@ -543,13 +543,14 @@ describe("the repository page’s absences and lists", () => {
   });
 
   /**
-   * The trend section, which appears only where the series the service answered with holds periods.
+   * The trend section, which appears wherever a series ARRIVED — with periods or with the reason it has none.
    *
-   * The section is the one part of this page whose fetch is allowed to fail, and an empty series is
-   * the same as a refused one as far as the page is concerned: there is nothing to plot, and a chart
-   * of a single baseline window would read as a period that was measured.
+   * The section is the one part of this page whose fetch is allowed to fail, and a REFUSED series is the only
+   * case that draws nothing: an empty one still says whether the repository was enabled too recently or has no
+   * enablement date configured, which is a gap in the policy document somebody can close. Charts are drawn only
+   * where there are periods, because a chart of a single baseline window would read as a period that was measured.
    */
-  it("draws the trend where the series holds periods, and nothing where it does not", async () => {
+  it("draws the trend where the series holds periods, and its reason where it does not", async () => {
     const window: TrendWindow = {
       starts_at: "2026-06-01T00:00:00Z",
       ends_at: "2026-06-29T00:00:00Z",
@@ -578,9 +579,14 @@ describe("the repository page’s absences and lists", () => {
     // Cut to the count `/windows` publishes, so a long-enabled repository is served a bounded series.
     expect(drawn).toContain("Merges by route");
 
-    const empty = await renderDetail(detail, { ...series, periods: [] });
+    const empty = await renderDetail(detail, { ...series, periods: [], detail: "no enablement date is configured for this repository" });
     expect(empty).not.toContain("Merges by route");
-    // And the section is absent for a series the endpoint refused outright, which `render` stubs.
-    expect(await render()).not.toContain("Merges by route");
+    expect(empty).toContain("no enablement date is configured for this repository");
+
+    // And the section is absent altogether for a series the endpoint refused outright, which `render` stubs:
+    // there is no reason to print, and inventing one would state something the service did not say.
+    const refused = await render();
+    expect(refused).not.toContain("Merges by route");
+    expect(refused).not.toContain("has been compared with its baseline");
   });
 });

@@ -3,13 +3,16 @@ import type * as contract from "../../lib/types.ts";
 import { readinessPolicy } from "../assessment/assessment.ts";
 import { botAccounts } from "../behaviour/analysis.ts";
 import { loadCachedMerges } from "../behaviour/fill.ts";
+import { sourceSignature } from "../behaviour/queries.ts";
+import { EvidenceSource } from "../domain/coverage.ts";
 import { type CohortEntry, cohortTeams, servedCohort } from "../org/cohort.ts";
 import { contributorNames } from "../org/people.ts";
-import { teamDisplayNames } from "../policy/repositories.ts";
+import { enablementInstants, teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
+import { getSourceCoverage } from "../store/coverage.ts";
 import { declaredProduction, type ProductionLayers } from "../store/production-override.ts";
 import { storedRepositoryState } from "../store/repository-state.ts";
-import type { ReportingWindow } from "../window/window.ts";
+import { baselineWindow, days, periodWindows, type ReportingWindow, reportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
 import { builtReport, forgetBuiltReports } from "./cache.ts";
 import { covers, type Estate, mergesSince, NO_MERGES, readEstate, resolveReportWindow } from "./estate.ts";
@@ -20,8 +23,9 @@ import { builtActorRows } from "./rows/actors.ts";
 import { builtDirectPushRows, builtMergeRows } from "./rows/changes.ts";
 import { builtTeamMemberRows } from "./rows/members.ts";
 import { repositoryRow } from "./rows/repository.ts";
-import { spanStartsAt } from "./spans.ts";
+import { requestedTrendPeriods, spanStartsAt, TREND_PERIOD_DAYS } from "./spans.ts";
 import { builtTeamRows } from "./teams.ts";
+import { builtRepositoryTrend, trendWithoutEnablement, trendWithoutWholePeriod } from "./trend.ts";
 
 /**
  * Assembling what the dashboard reads. Ported from `metrics.evidence` and the report-building half of
@@ -207,6 +211,63 @@ export async function repositoryEvidence(
   }
 
   return builtRepositoryEvidence(configuration, { repository, entry, state, walked, window, measured });
+}
+
+/**
+ * One repository's trend series since its `enablement:` date.
+ *
+ * NOT CACHED, for the reason `repositoryEvidence` above is not: a series is keyed by repository as well as by the
+ * cut it was asked for, so holding one would be a map the size of the estate, evicted by nothing. It costs the
+ * same shape of read as the evidence block beside it on the same page — two fact queries and two coverage reads,
+ * all four for a page a reader asked for by name — and ONE fact query per source rather than one per window,
+ * which is what `TrendSeriesInput.walked` exists to make possible.
+ *
+ * THE CUT COMES FROM THE REQUEST AND HAS NO SERVER-SIDE DEFAULT. `requestedTrendPeriods` refuses a count above
+ * `WindowOptions.trend_periods` rather than truncating it, and an omitted count means every whole period since
+ * enablement. See `./spans.ts` for why refusing is the honest answer when the cut drops the recent end.
+ *
+ * TWO ANSWERS SHORT OF A SERIES, both real states rather than errors: a repository with no enablement date and one
+ * enabled too recently for a whole period to have elapsed. `./trend.ts` builds each, and they are told apart by
+ * whether the series carries an `enablement_at` and not only by their prose.
+ */
+export async function repositoryTrend(
+  configuration: Configuration,
+  repository: string,
+  periods?: number,
+  reference = new Date()
+): Promise<contract.RepositoryTrend> {
+  const cut = requestedTrendPeriods(periods);
+  // Through `enablementInstants`, which is the one reader of `enablement:` in the codebase. The schema
+  // deliberately does NOT check an enablement key against the cohort — it cannot know the cohort without a
+  // database — so this is where a key that matches no repository surfaces, as the reason a series has no periods.
+  const enablement = enablementInstants(configuration, [repository]).get(repository);
+  if (enablement === undefined) {
+    return trendWithoutEnablement(repository);
+  }
+  const span = days(TREND_PERIOD_DAYS);
+  const windows = periodWindows(enablement, span, cut, reference);
+  const last = windows[windows.length - 1];
+  if (last === undefined) {
+    return trendWithoutWholePeriod(repository, enablement, TREND_PERIOD_DAYS);
+  }
+  const baseline = baselineWindow(enablement, span);
+  const organization = configuration.organization;
+  const [walked, pullRequests, directCommits] = await Promise.all([
+    // ONE READ SPANNING THE BASELINE AND EVERY PERIOD, sliced per window by `builtRepositoryTrend`.
+    loadCachedMerges(organization, repository, reportingWindow(baseline.startsAt, last.endsAt)),
+    getSourceCoverage({ organization, repository, source: EvidenceSource.PullRequests, queryHash: sourceSignature(EvidenceSource.PullRequests) }),
+    getSourceCoverage({ organization, repository, source: EvidenceSource.DirectCommits, queryHash: sourceSignature(EvidenceSource.DirectCommits) })
+  ]);
+  // The coverage INTERVALS rather than the front edge `measuredSources` reads, for the reason `covers` in
+  // `./trend.ts` gives: a window this series reaches may sit entirely behind what any collection filled.
+  return builtRepositoryTrend(configuration, {
+    repository,
+    enablement,
+    baseline,
+    periods: windows,
+    walked,
+    coverage: { pullRequests, directCommits }
+  });
 }
 
 /**
