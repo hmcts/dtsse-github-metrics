@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CVE_ACCOUNT_VARIABLE, CVE_KEY_VARIABLE, cveCredentials } from "./cosmos.ts";
+import { CVE_ACCOUNT_VARIABLE, CVE_KEY_VARIABLE, cveCredentials } from "./credentials.ts";
 
 /**
  * Whether this process was given a Cosmos account to read.
  *
- * THE ONLY TESTABLE PART OF THE READER. Everything below `cveCredentials` is a driver call against a production
- * account, so the module is excluded from coverage for `store/**`'s reason; this function is where a
- * misconfiguration is either caught or turned into a silent no-op, so it is tested here.
+ * WHERE A MISCONFIGURATION IS CAUGHT OR TURNED INTO A SILENT NO-OP, which is why it is a module of its own. It
+ * used to live inside `./cosmos.ts`, excluded from coverage because that file is a driver call — so the one
+ * decision in it that a test can reach was hidden along with the part that cannot be.
  */
 
 describe("resolving the Cosmos credential", () => {

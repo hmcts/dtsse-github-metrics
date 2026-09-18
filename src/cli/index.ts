@@ -4,7 +4,8 @@ import { collectDirectCommits, collectMergedPullRequests, mutableEdge, reference
 import { deserialiseMerges, directCommitCacheWriter, fillCachedSource, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestCountQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
 import { CVE_DATABASES, cveFolder, readFrom } from "../evidence/cve/collect.ts";
-import { CVE_ACCOUNT_VARIABLE, CVE_KEY_VARIABLE, cveCredentials, readCveDocuments } from "../evidence/cve/cosmos.ts";
+import { readCveDocuments } from "../evidence/cve/cosmos.ts";
+import { CVE_ACCOUNT_VARIABLE, CVE_KEY_VARIABLE, cveCredentials } from "../evidence/cve/credentials.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { AvailabilityReason, CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";

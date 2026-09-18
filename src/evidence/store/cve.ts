@@ -1,5 +1,6 @@
 import type { CveScan } from "../cve/collect.ts";
 import { type CveEvidence, type CveOccurrence, countedCves, cveSeverity } from "../domain/cves.ts";
+import { byCodePoint } from "../org/graph.ts";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
@@ -179,7 +180,12 @@ export async function storedCveEvidence(organization: string): Promise<Map<strin
       }
       // A repository scanned in two languages carries both names and the NEWER instant, because that is what
       // "as at" means for a figure that covers both.
-      existing.codebaseTypes = [...existing.codebaseTypes, scan.codebaseType].sort();
+      //
+      // `byCodePoint` AND NOT A BARE `.sort()`, which is this repository's stated convention — see `CONTRIBUTING.md`.
+      // It matters more here than in a log line: this list goes on the wire as `codebase_types` and into a report
+      // held per `collection_state.revision`, so a collation that reordered it would make two builds of unchanged
+      // evidence differ.
+      existing.codebaseTypes = [...existing.codebaseTypes, scan.codebaseType].sort(byCodePoint);
       existing.scannedAt = scan.reportedAt > existing.scannedAt ? scan.reportedAt : existing.scannedAt;
     }
 

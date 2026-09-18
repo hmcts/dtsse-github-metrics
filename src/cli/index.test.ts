@@ -24,6 +24,16 @@ const prevailingCachedCoverage = vi.hoisted(() => vi.fn(async (): Promise<Date |
 // wraps actually run — which is the only way to see what the collector was handed.
 const fillCachedSource = vi.hoisted(() => vi.fn(async (..._unused: unknown[]) => []));
 const collectionState = vi.hoisted(() => vi.fn());
+// Named rather than an anonymous `vi.fn()` in the mock factory, so a case can assert that a collection was
+// STAMPED. Reports are held per `collection_state.revision` and invalidated by nothing else, so a run that writes
+// rows without stamping has collected evidence no reader sees until the next day's `collect`.
+const stampCollection = vi.hoisted(() => vi.fn());
+// The CVE collection's Cosmos seam. `undefined` credentials by default is not a convenience: it is the shape a
+// pod with no secret mounted has, and the case that asserts nothing is written depends on it.
+const cveCredentials = vi.hoisted(() => vi.fn<() => { endpoint: string; key: string } | undefined>(() => undefined));
+const readCveDocuments = vi.hoisted(() => vi.fn());
+const cveWatermarks = vi.hoisted(() => vi.fn(async () => new Map<string, Date>()));
+const recordCveScans = vi.hoisted(() => vi.fn(async (_scans: { findings: unknown[] }[]) => ({ written: 0, superseded: 0, findings: 0 })));
 const resolveCredentials = vi.hoisted(() => vi.fn());
 const createGitHubClient = vi.hoisted(() => vi.fn());
 const stampRevision = vi.hoisted(() => vi.fn());
@@ -133,7 +143,15 @@ vi.mock("../evidence/behaviour/fill.ts", async () => ({
   pullRequestCacheWriter: () => undefined,
   directCommitCacheWriter: () => undefined
 }));
-vi.mock("../evidence/store/collection-state.ts", () => ({ collectionState, stampCollection: vi.fn(), stampRevision }));
+vi.mock("../evidence/store/collection-state.ts", () => ({ collectionState, stampCollection, stampRevision }));
+// The CVE collection's two seams: what Cosmos answered, and what was written. `cve/collect.ts` is deliberately
+// NOT mocked — the fold is pure, so these cases exercise the real one and say what the command does with it.
+vi.mock("../evidence/cve/cosmos.ts", () => ({ readCveDocuments }));
+vi.mock("../evidence/cve/credentials.ts", async () => ({
+  ...(await vi.importActual<typeof import("../evidence/cve/credentials.ts")>("../evidence/cve/credentials.ts")),
+  cveCredentials
+}));
+vi.mock("../evidence/store/cve.ts", () => ({ cveWatermarks, recordCveScans }));
 vi.mock("../evidence/github/credentials.ts", () => ({ resolveCredentials }));
 vi.mock("../evidence/github/client.ts", () => ({ createGitHubClient }));
 // The walks and the writers are the two seams `collect-org` is tested at: the walks say what the organisation
@@ -206,6 +224,10 @@ beforeEach(() => {
   recordSonarMapping.mockResolvedValue(true);
   censusOfDescriptions.mockResolvedValue({ rows: 24_249, carryingDescription: 23_854, derived: 395, unmeasurable: 0 });
   reduceStoredDescriptions.mockResolvedValue({ scanned: 23_854, changed: 23_854 });
+  // Put back for the reason above: `clearAllMocks` keeps the implementations, but several CVE cases replace these.
+  cveCredentials.mockReturnValue(undefined);
+  cveWatermarks.mockResolvedValue(new Map());
+  recordCveScans.mockResolvedValue({ written: 0, superseded: 0, findings: 0 });
   vi.spyOn(console, "info").mockImplementation(() => undefined);
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
   // `map-sonar` reports a project it could not put the question for at error level, which is the level a refusal
@@ -1632,5 +1654,180 @@ describe("reduce-descriptions", () => {
 
     expect(asSoleCollector).not.toHaveBeenCalled();
     expect(reduceStoredDescriptions).toHaveBeenCalledOnce();
+  });
+});
+
+describe("collect-cve", () => {
+  const CONFIG = { organization: "hmcts", lookback: { operational_days: 90 }, teams: [] };
+  const CREDENTIALS = { endpoint: "https://pipeline-metrics.documents.azure.com:443/", key: "a-key" };
+
+  /** One published report, as `readCveDocuments` yields it. `java`, whose parser is the one with suppressions. */
+  function document(overrides: Record<string, unknown> = {}) {
+    return {
+      database: "jenkins",
+      ts: 1_789_726_965,
+      gitUrl: "https://github.com/HMCTS/pcs-api.git",
+      codebaseType: "java",
+      buildTag: "jenkins-HMCTS-pcs-api-master-1",
+      report: { dependencies: [] },
+      ...overrides
+    };
+  }
+
+  /** Makes the reader answer per database, so a case can let one refuse and the other succeed. */
+  function reading(perDatabase: Record<string, unknown[] | Error>) {
+    readCveDocuments.mockImplementation((_credentials: unknown, database: string) => {
+      const answer = perDatabase[database] ?? [];
+      // ONE GENERATOR FOR BOTH ANSWERS, throwing on first pull rather than when constructed, which is where a
+      // refused container actually fails: the query is issued lazily, so `readCveDocuments` returns fine and the
+      // rejection arrives inside the caller's `for await`.
+      return (async function* () {
+        if (answer instanceof Error) {
+          throw answer;
+        }
+        for (const entry of answer) {
+          yield entry;
+        }
+      })();
+    });
+  }
+
+  beforeEach(() => {
+    loadConfiguration.mockResolvedValue(CONFIG);
+    cveCredentials.mockReturnValue(CREDENTIALS);
+    reading({});
+  });
+
+  it("should collect nothing and fail when no Cosmos credential is mounted", async () => {
+    // A missing secret must not be able to look like a clean estate. Nothing read, nothing written, so every
+    // repository reads exactly as it did — which for most of the estate is unmeasured.
+    cveCredentials.mockReturnValue(undefined);
+
+    expect(await main(["collect-cve", "--config", "m.yaml"])).toBe(EXIT_FAILED);
+    expect(readCveDocuments).not.toHaveBeenCalled();
+    expect(recordCveScans).not.toHaveBeenCalled();
+    expect(stampCollection).not.toHaveBeenCalled();
+  });
+
+  it("should name the two variables a pod is missing when it has no credential", async () => {
+    cveCredentials.mockReturnValue(undefined);
+
+    await main(["collect-cve", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("CVE_COSMOS_ACCOUNT"));
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("CVE_COSMOS_KEY"));
+  });
+
+  it("should read BOTH databases, because reading one reports the other's estate as unmeasured", async () => {
+    // `CosmosDbTargetResolver` routes by GitHub topic, and 45 repositories exist only in `sds-jenkins`.
+    expect(await main(["collect-cve", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+
+    expect(readCveDocuments).toHaveBeenCalledTimes(2);
+    expect(readCveDocuments).toHaveBeenCalledWith(CREDENTIALS, "jenkins", undefined);
+    expect(readCveDocuments).toHaveBeenCalledWith(CREDENTIALS, "sds-jenkins", undefined);
+  });
+
+  it("should fold the documents it read and write the scans they describe", async () => {
+    reading({ jenkins: [document()] });
+
+    expect(await main(["collect-cve", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+
+    expect(recordCveScans).toHaveBeenCalledWith(
+      [expect.objectContaining({ organization: "hmcts", repository: "pcs-api", codebaseType: "java", sourceDatabase: "jenkins" })],
+      expect.any(Date)
+    );
+  });
+
+  it("should start each database where its own watermark left off, because the two fill independently", async () => {
+    const watermark = new Date(Date.UTC(2026, 8, 18, 10, 59, 33));
+    cveWatermarks.mockResolvedValue(new Map([["jenkins", watermark]]));
+
+    await main(["collect-cve", "--config", "m.yaml"]);
+
+    // Seconds, and the watermark's own second re-read: `_ts` is second-granular, so `>` would skip a document
+    // written in the boundary second for ever.
+    expect(readCveDocuments).toHaveBeenCalledWith(CREDENTIALS, "jenkins", Math.floor(watermark.getTime() / 1000));
+    expect(readCveDocuments).toHaveBeenCalledWith(CREDENTIALS, "sds-jenkins", undefined);
+  });
+
+  it("should stamp the collection, or the figures it wrote reach no reader until tomorrow", async () => {
+    reading({ jenkins: [document()] });
+
+    await main(["collect-cve", "--config", "m.yaml"]);
+
+    expect(stampCollection).toHaveBeenCalledOnce();
+  });
+
+  it("should keep the first database's work and report partial when the second refuses", async () => {
+    reading({ jenkins: [document()], "sds-jenkins": new Error("Cosmos refused: 403 Forbidden") });
+
+    expect(await main(["collect-cve", "--config", "m.yaml"])).toBe(EXIT_INCOMPLETE);
+    expect(recordCveScans).toHaveBeenCalledOnce();
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("403 Forbidden"));
+  });
+
+  it("should report a partial run as success when a scheduled run asked it to tolerate one", async () => {
+    reading({ jenkins: [document()], "sds-jenkins": new Error("Cosmos refused") });
+
+    expect(await main(["collect-cve", "--config", "m.yaml", "--tolerate-partial"])).toBe(EXIT_COMPLETE);
+  });
+
+  it("should fail and stamp nothing when BOTH databases refuse", async () => {
+    // Nothing was read, so nothing is known — and a run that stamped here would invalidate every held report to
+    // replace it with the same figures, claiming a collection that did not happen.
+    reading({ jenkins: new Error("refused"), "sds-jenkins": new Error("refused") });
+
+    expect(await main(["collect-cve", "--config", "m.yaml", "--tolerate-partial"])).toBe(EXIT_FAILED);
+    expect(stampCollection).not.toHaveBeenCalled();
+  });
+
+  it("should say how many reports it could not attribute to a repository", async () => {
+    reading({ jenkins: [document({ gitUrl: "https://gitlab.com/hmcts/pcs-api.git" })] });
+
+    await main(["collect-cve", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("no GitHub repository"));
+    expect(recordCveScans).toHaveBeenCalledWith([], expect.any(Date));
+  });
+
+  it("should name a codebase type it has no parser for, so a new publishing builder is noticed", async () => {
+    // Those repositories stay UNMEASURED until somebody writes the parser, which is the right answer and one
+    // nobody would find out about without this line.
+    reading({ jenkins: [document({ codebaseType: "dotnet" })] });
+
+    await main(["collect-cve", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("dotnet"));
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("unmeasured"));
+  });
+
+  it("should report what it wrote, counting scans and findings separately", async () => {
+    reading({
+      jenkins: [document({ report: { dependencies: [{ fileName: "a.jar", vulnerabilities: [{ name: "CVE-1" }], suppressedVulnerabilities: [] }] } })]
+    });
+    // Answering from what it was handed rather than a fixed pair, because the totals are ACCUMULATED across the
+    // two databases — a constant would make the case pass whether or not the run added them up.
+    recordCveScans.mockImplementation(async (scans: { findings: unknown[] }[]) => ({
+      written: scans.length,
+      superseded: 0,
+      findings: scans.reduce((total, scan) => total + scan.findings.length, 0)
+    }));
+
+    await main(["collect-cve", "--config", "m.yaml"]);
+
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("wrote 1 scans and 1 findings"));
+  });
+
+  it("should not take the collector lock, because it makes no GitHub call to compete for", async () => {
+    await main(["collect-cve", "--config", "m.yaml"]);
+
+    expect(asSoleCollector).not.toHaveBeenCalled();
+  });
+
+  it("should not require the cohort to have been collected, because its subject is not the cohort", async () => {
+    // The published reports describe whatever the pipeline built, which does not depend on the organisation graph.
+    readCohort.mockRejectedValue(new CohortUncollectedError("the organisation graph is empty"));
+
+    expect(await main(["collect-cve", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
   });
 });

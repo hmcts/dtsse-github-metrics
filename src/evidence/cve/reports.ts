@@ -65,42 +65,52 @@ export function cveFindings(codebaseType: unknown, report: unknown): CveFinding[
  * one that was not scanned.
  */
 function dependencyCheckFindings(report: Record<string, unknown>): CveFinding[] {
-  const findings: CveFinding[] = [];
-  for (const dependency of asArray(report.dependencies)) {
-    if (!isRecord(dependency)) {
-      continue;
-    }
-    const artefact = asString(dependency.fileName);
-    for (const [key, suppressed] of [
-      ["vulnerabilities", false],
-      ["suppressedVulnerabilities", true]
-    ] as const) {
-      for (const entry of asArray(dependency[key])) {
-        if (!isRecord(entry)) {
-          continue;
-        }
-        const identifier = asString(entry.name);
-        if (identifier === undefined || artefact === undefined) {
-          continue;
-        }
-        const cvssv3 = isRecord(entry.cvssv3) ? entry.cvssv3 : {};
-        const cvssv2 = isRecord(entry.cvssv2) ? entry.cvssv2 : {};
-        findings.push({
-          identifier,
-          package: artefact,
-          suppressed,
-          ...optionalSeverity(cveSeverity(cvssv3.baseSeverity) ?? cveSeverity(cvssv2.severity)),
-          ...optionalScore(asNumber(cvssv3.baseScore) ?? asNumber(cvssv2.score)),
-          // THE JUSTIFICATION, AND ONLY WHERE IT WAS SUPPRESSED. Live entries carry `notes: ""` — measured on
-          // `pcs-api`, every one of them — so reading it on both sides would store a blank for a finding that has
-          // nothing to justify. `asString` treats blank as absent, which is what makes "accepted with no reason
-          // given" distinguishable from "nothing to give a reason for".
-          ...(suppressed ? optionalNotes(asString(entry.notes)) : {})
-        });
-      }
-    }
+  return asArray(report.dependencies).flatMap((dependency) => (isRecord(dependency) ? artefactFindings(dependency) : []));
+}
+
+/**
+ * One dependency's findings, live and suppressed.
+ *
+ * THE WHOLE DEPENDENCY GOES IF IT NAMES NO ARTEFACT, rather than each of its entries being dropped one at a time.
+ * `fileName` is a property of the dependency, so it cannot be present for one of its vulnerabilities and absent
+ * for another — and a finding with no package cannot be keyed or reported against anything.
+ */
+function artefactFindings(dependency: Record<string, unknown>): CveFinding[] {
+  const artefact = asString(dependency.fileName);
+  if (artefact === undefined) {
+    return [];
   }
-  return findings;
+  return [...entryFindings(dependency.vulnerabilities, artefact, false), ...entryFindings(dependency.suppressedVulnerabilities, artefact, true)];
+}
+
+/** One side of one dependency — its live list or its suppressed list. */
+function entryFindings(entries: unknown, artefact: string, suppressed: boolean): CveFinding[] {
+  return asArray(entries).flatMap((entry) => {
+    const finding = isRecord(entry) ? dependencyCheckFinding(entry, artefact, suppressed) : undefined;
+    return finding === undefined ? [] : [finding];
+  });
+}
+
+/** One dependency-check entry, or nothing where it names no CVE and so cannot be keyed. */
+function dependencyCheckFinding(entry: Record<string, unknown>, artefact: string, suppressed: boolean): CveFinding | undefined {
+  const identifier = asString(entry.name);
+  if (identifier === undefined) {
+    return undefined;
+  }
+  const cvssv3 = isRecord(entry.cvssv3) ? entry.cvssv3 : {};
+  const cvssv2 = isRecord(entry.cvssv2) ? entry.cvssv2 : {};
+  return {
+    identifier,
+    package: artefact,
+    suppressed,
+    ...optionalSeverity(cveSeverity(cvssv3.baseSeverity) ?? cveSeverity(cvssv2.severity)),
+    ...optionalScore(asNumber(cvssv3.baseScore) ?? asNumber(cvssv2.score)),
+    // THE JUSTIFICATION, AND ONLY WHERE IT WAS SUPPRESSED. Live entries carry `notes: ""` — measured on
+    // `pcs-api`, every one of them — so reading it on both sides would store a blank for a finding that has
+    // nothing to justify. `asString` treats blank as absent, which is what makes "accepted with no reason
+    // given" distinguishable from "nothing to give a reason for".
+    ...(suppressed ? optionalNotes(asString(entry.notes)) : {})
+  };
 }
 
 /**

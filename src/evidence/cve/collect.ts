@@ -1,4 +1,5 @@
 import type { CveFinding } from "../domain/cves.ts";
+import { byCodePoint } from "../org/graph.ts";
 import { repositoryFromGitUrl } from "./identity.ts";
 import { cveFindings, distinctFindings } from "./reports.ts";
 
@@ -130,7 +131,10 @@ export function cveFolder(): CveFolder {
       });
     },
     fold(): CveFold {
-      return { scans: [...scans.values()], skipped: { unattributable, unreadable, unreadableTypes: [...unreadableTypes].sort() } };
+      // `byCodePoint` AND NOT A BARE `.sort()`, which is this repository's stated convention — see its own
+      // comment, and `CONTRIBUTING.md`. The order only has to be stable so a run's summary line reads the same
+      // way twice, and a comparator says that rather than leaving a reader to wonder which collation applied.
+      return { scans: [...scans.values()], skipped: { unattributable, unreadable, unreadableTypes: [...unreadableTypes].sort(byCodePoint) } };
     }
   };
 }

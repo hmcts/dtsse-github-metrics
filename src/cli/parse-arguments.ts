@@ -1,17 +1,7 @@
 import { parseArgs } from "node:util";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-export const COMMANDS = [
-  "doctor",
-  "collect",
-  "collect-org",
-  "collect-cve",
-  "map-sonar",
-  "prune",
-  "evidence",
-  "migrate",
-  "reduce-descriptions"
-] as const;
+export const COMMANDS = ["doctor", "collect", "collect-org", "collect-cve", "map-sonar", "prune", "evidence", "migrate", "reduce-descriptions"] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
