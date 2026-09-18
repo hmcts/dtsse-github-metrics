@@ -16,7 +16,7 @@
  * lists them, which a spreadsheet cannot follow. So the contributors are unpacked into the row beside it.
  */
 
-import { ABSENT, day } from "@/lib/format";
+import { ABSENT, day, quantity } from "@/lib/format";
 import { contributorEntry } from "@/lib/person";
 import {
   ASSURANCE_CRITERIA,
@@ -24,7 +24,10 @@ import {
   ASSURANCE_LABEL,
   alertAge,
   answerWord,
+  CVE_AGGREGATE,
+  CVE_COLUMNS,
   criterionResult,
+  cveCount,
   foundOutcome,
   HYGIENE_CHECKS,
   HYGIENE_CRITERION,
@@ -50,14 +53,15 @@ export const CONTRIBUTOR_SEPARATOR = "; ";
  *
  * The criteria's headings are `ASSURANCE_LABEL`'s rather than restated, so a criterion added to the domain reaches
  * the file under the same name it reaches the table under — and cannot appear in one and be missing from the other,
- * which is the reason the table generates its own criterion columns instead of listing them. The hygiene checks
- * read `HYGIENE_CHECKS`' labels on that same rule, and sit where the table draws them: after the aggregate.
+ * which is the reason the table generates its own criterion columns instead of listing them. The hygiene checks read
+ * `HYGIENE_CHECKS`' labels and the CVE figures `CVE_COLUMNS`' on that same rule, and each sits where the table draws
+ * it: after the aggregate it breaks down.
  *
  * THE COLUMNS FOLLOW THE TOGGLE, which is what keeps this file and the page one document. The alternative — always
- * carrying the checks — was considered and rejected: a reader who has not expanded the column would be handed four
- * columns they cannot see on the page, and "the file is a copy of the table" is the promise this module is built on.
- * The toggle lives in the URL precisely so this control can read it; a column set that could not follow it would be
- * the drift the module's own note warns about.
+ * carrying the parts — was considered and rejected: a reader who has not expanded the aggregates would be handed
+ * nine columns they cannot see on the page, and "the file is a copy of the table" is the promise this module is
+ * built on. The toggle lives in the URL precisely so this control can read it; a column set that could not follow it
+ * would be the drift the module's own note warns about.
  */
 export function repositoryExportHeadings(expanded = false): string[] {
   return [
@@ -70,6 +74,8 @@ export function repositoryExportHeadings(expanded = false): string[] {
     ...ASSURANCE_CRITERIA.flatMap((criterion) =>
       criterion === HYGIENE_CRITERION && expanded ? [ASSURANCE_LABEL[criterion], ...HYGIENE_CHECKS.map((check) => check.label)] : [ASSURANCE_LABEL[criterion]]
     ),
+    CVE_AGGREGATE.label,
+    ...(expanded ? CVE_COLUMNS.map((column) => column.label) : []),
     "Production",
     "Assurance"
   ];
@@ -102,6 +108,12 @@ function repositoryExportRow(row: RepositoryRow, contributors: readonly Contribu
           [criterionCell(row, criterion), ...HYGIENE_CHECKS.map((check) => answerWord(check.read(hygieneSignals(row))))]
         : [criterionCell(row, criterion)]
     ),
+    // THE DASH IS THIS FILE'S OWN WAY OF SAYING UNMEASURED, and `quantity` prints the same one the page does: a
+    // repository no scan has run against reads `-` here where one scanned and found nothing reads `0`. An empty cell
+    // would be read as a zero by the spreadsheet somebody opens this in, which is the claim that must not be made
+    // about the roughly 1,529 repositories nobody has scanned.
+    quantity(cveCount(row, CVE_AGGREGATE)),
+    ...(expanded ? CVE_COLUMNS.map((column) => quantity(cveCount(row, column))) : []),
     answerWord(row.production),
     ASSURANCE_GRADE_LABEL[row.assurance?.grade ?? "unknown"]
   ];
@@ -154,7 +166,7 @@ function teamContributorCell(row: RepositoryRow, contributors: readonly Contribu
 export function repositoryExportRows(
   rows: readonly RepositoryRow[],
   teamContributors: Readonly<Record<string, Contributor[]>>,
-  /** Whether the reader has expanded the hygiene aggregate, read off the URL by the control that calls this. */
+  /** Whether the reader has expanded the aggregate columns, read off the URL by the control that calls this. */
   expanded = false
 ): string[][] {
   return [repositoryExportHeadings(expanded), ...rows.map((row) => repositoryExportRow(row, teamContributors[row.team], expanded))];

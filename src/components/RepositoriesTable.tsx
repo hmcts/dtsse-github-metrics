@@ -9,7 +9,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
 import { type Align, SortHeader } from "@/components/SortHeader";
 import { filterTarget } from "@/lib/filter";
-import { ABSENT, day } from "@/lib/format";
+import { ABSENT, day, quantity } from "@/lib/format";
 import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE, productionHint } from "@/lib/production";
 import { RAG_BADGE, RAG_BORDER } from "@/lib/rag";
 import {
@@ -22,7 +22,13 @@ import {
   answerOrder,
   answerWord,
   assuranceOrder,
+  CVE_AGGREGATE,
+  CVE_COLUMNS,
+  type CveColumn,
   criterionResult,
+  cveCount,
+  cveDetail,
+  cveOrder,
   EXPAND_LABEL,
   EXPANDED_PARAMETER,
   EXPANDED_VALUE,
@@ -69,9 +75,10 @@ import { withWeeks } from "@/lib/weeks";
  * window worth sending to somebody.
  *
  * THE EXPAND TOGGLE IS IN THE URL AND THE SORT IS NOT, which is the same rule rather than an exception to it.
- * Expanding the Hygiene column changes WHAT the table reports — four more answers per row — where a header click
- * changes only the order it reports it in. It has to be shareable for a second reason besides: `RepositoriesExport`
- * reads the URL and cannot see component state, and the file's columns follow the toggle.
+ * Expanding the aggregates changes WHAT the table reports — nine more figures per row, four hygiene checks and five
+ * CVE counts — where a header click changes only the order it reports it in. It has to be shareable for a second
+ * reason besides: `RepositoriesExport` reads the URL and cannot see component state, and the file's columns follow
+ * the toggle.
  *
  * THE FILTERS GROUP IS FOUR TOGGLES AND NOTHING ELSE, from 2026-09-14. It used to hold the Production toggle
  * followed by a dismissible chip per filtered donut dimension — the donuts above the table were the controls and
@@ -92,6 +99,23 @@ interface Column {
   read: (row: RepositoryRow) => SortValue;
   /** What the column answers, shown beside its heading. The criteria read theirs from `ASSURANCE_HINT`. */
   hint?: string;
+}
+
+/**
+ * One CVE count as a sortable column.
+ *
+ * RIGHT-ALIGNED AND SORTED THROUGH `cveOrder`, which is the pair that makes these columns readable: the figures line
+ * up as figures, and one ascending click opens on the repositories carrying the MOST live findings rather than on the
+ * scanned repositories that are clean. A repository nobody scanned is held back from both ends — see `cveOrder`.
+ */
+function cveColumn(column: CveColumn): Column {
+  return {
+    key: column.key,
+    label: column.label,
+    hint: column.hint,
+    align: "right",
+    read: (row: RepositoryRow) => cveOrder(cveCount(row, column))
+  };
 }
 
 /**
@@ -149,6 +173,11 @@ const COLUMNS: readonly Column[] = [
           ? (row: RepositoryRow) => findingOrder(criterionResult(row, criterion)?.outcome)
           : (row: RepositoryRow) => outcomeOrder(criterionResult(row, criterion)?.outcome)
   })),
+  // AFTER THE CRITERIA AND BEFORE THE ATTRIBUTES, because it is evidence of the same kind and none of the grade.
+  // `judgeAssurance` does not read it — the pipeline's own dependency scan is not one of the six criteria — so
+  // drawing it among them would put a figure the Assurance column ignores inside the run of columns that explain
+  // it. It reads beside `Patching cycle` all the same, which is the criterion it is nearest in subject.
+  cveColumn(CVE_AGGREGATE),
   // Kept from the old table, and the only one of the eight that was both populated and not ways-of-working:
   // whether a repository deploys to production qualifies every assurance answer beside it.
   //
@@ -195,18 +224,38 @@ const HYGIENE_COLUMNS: readonly Column[] = HYGIENE_CHECKS.map((check) => ({
 }));
 
 /**
- * The columns with the hygiene checks drawn in, immediately after the aggregate they are the parts of.
+ * The five figures the live-critical CVE count expands into, each a column of its own.
  *
- * THE AGGREGATE STAYS. It is the graded criterion — `Assurance` counts it, not the four checks — so removing it
- * while its components are showing would leave the grade beside no column that explains it, and its `detail` is
- * still the only cell that names a missing control in words.
+ * `Crit` REPEATS THE AGGREGATE, exactly as `Hygiene` stands beside the four checks it is judged on, and for the
+ * same reason: the aggregate keeps its place and the parts are drawn beside it. It is not a duplicate to be tidied
+ * away — removing it would leave Total, High and Other with nothing to add up to, and removing the aggregate would
+ * take the column a reader collapsed the table back to.
+ */
+const CVE_BREAKDOWN_COLUMNS: readonly Column[] = CVE_COLUMNS.map(cveColumn);
+
+/**
+ * The columns with the aggregates' parts drawn in, each immediately after the aggregate it belongs to.
+ *
+ * ONE TOGGLE OPENS BOTH, which is the reader's own reading of the control: asking for the detail behind one
+ * aggregate is asking to see the table in detail. A second control would have to be named for its column, and the
+ * column's heading is already on the page.
+ *
+ * THE AGGREGATES STAY. `Hygiene` is the graded criterion — `Assurance` counts it, not the four checks — so removing
+ * it while its components are showing would leave the grade beside no column that explains it, and its `detail` is
+ * still the only cell that names a missing control in words. The CVE aggregate stays on the second half of that
+ * rule: its heading is the only place the page says which of the five figures it leads with.
  *
  * BUILT ONCE AT MODULE LOAD AND NOT PER RENDER, because the sort holds the column a reader clicked as an OBJECT and
  * compares it by identity. Rebuilding the array would make every entry a new object, so expanding the table would
  * silently forget which column it was ordered by. Both arrays share the same `Column` instances, which is what lets
  * a sort survive the toggle.
  */
-const EXPANDED_COLUMNS: readonly Column[] = COLUMNS.flatMap((entry) => (entry.key === HYGIENE_CRITERION ? [entry, ...HYGIENE_COLUMNS] : [entry]));
+const EXPANDED_COLUMNS: readonly Column[] = COLUMNS.flatMap((entry) => {
+  if (entry.key === HYGIENE_CRITERION) {
+    return [entry, ...HYGIENE_COLUMNS];
+  }
+  return entry.key === CVE_AGGREGATE.key ? [entry, ...CVE_BREAKDOWN_COLUMNS] : [entry];
+});
 
 /**
  * The column the table opens ordered by, so its header can say so.
@@ -451,6 +500,10 @@ export function RepositoriesTable({
                       <Outcome key={criterion} result={criterionResult(row, criterion)} />
                     )
                   )}
+                  {/* The live critical count, then the whole position where the reader has asked for it. The
+                      aggregate's own cell keeps its place either way, on the Hygiene column's rule. */}
+                  <Cve row={row} column={CVE_AGGREGATE} />
+                  {expanded ? CVE_COLUMNS.map((column) => <Cve key={column.key} row={row} column={column} />) : null}
                   {/* Yes/No/dash like every other governance answer on this row, rather than the badge the
                       entity headers carry: in a column of columns, a lone badge reads as decoration and its
                       absence reads as an empty cell rather than as "no". The dash keeps "not in the list" apart
@@ -573,6 +626,30 @@ function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: str
       >
         {answerWord(metOutcome(outcome))}
       </span>
+    </td>
+  );
+}
+
+/**
+ * One CVE count, as a figure with a dash where no scan has ever run.
+ *
+ * THE DASH AND THE ZERO ARE DIFFERENT ANSWERS, and this is the column where confusing them would do the most
+ * damage: only three CNP builders publish a report, so roughly 1,529 repositories of 1,890 have never been scanned.
+ * Rendering their absence as `0` would tell a reader that four fifths of the estate carries no critical CVEs when
+ * nothing has looked. `quantity` prints the dash; `cveCount` is what decides which of the two this row is.
+ *
+ * THE `title` IS THE REPORT'S OWN REASON for the dash, on the criteria cells' precedent — "no CVE report has been
+ * published for this repository" rather than a bare mark the reader has to guess at. It is absent exactly where the
+ * figures are present, so a counted cell hovers nothing.
+ *
+ * UNCOLOURED, like the patching age: "measurement first", so the number is the finding and the reader is the judge.
+ * A tone here would publish a threshold nobody agreed on — and a warm one over an unscanned dash would blame a team
+ * for a pipeline that does not publish.
+ */
+function Cve({ row, column }: { row: RepositoryRow; column: CveColumn }) {
+  return (
+    <td className="py-2 pr-3 text-right tabular-nums text-slate-300" title={cveDetail(row)}>
+      {quantity(cveCount(row, column))}
     </td>
   );
 }

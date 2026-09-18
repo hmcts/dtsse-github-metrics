@@ -122,6 +122,7 @@ describe("repositoryExportRows", () => {
       "Security contact",
       "Patching cycle",
       "Maintained",
+      "Unsuppressed Crit CVEs",
       "Production",
       "Assurance"
     ]);
@@ -309,6 +310,14 @@ describe("repositoryExportRows with the hygiene aggregate expanded", () => {
       "Security contact",
       "Patching cycle",
       "Maintained",
+      // ONE TOGGLE OPENS BOTH AGGREGATES, so a file the hygiene checks reached carries the CVE breakdown too — and
+      // each set sits immediately after the aggregate it belongs to, which is where the table draws it.
+      "Unsuppressed Crit CVEs",
+      "Total",
+      "Crit",
+      "High",
+      "Other",
+      "Suppressed",
       "Production",
       "Assurance"
     ]);
@@ -373,5 +382,116 @@ describe("repositoryExportRows with the hygiene aggregate expanded", () => {
     expect(cell(rows, "hygiene-service", "Dependency updates")).toBe("No");
     // One read and off, one never read: not a finding, and the dash says so.
     expect(cell(rows, "half-read", "Dependency updates")).toBe("-");
+  });
+});
+
+/**
+ * The CVE columns in the file, which have to agree with the page including on the dash.
+ *
+ * A COLUMN OF ZEROES WHERE THE PAGE SHOWS DASHES IS THE FAILURE THIS FILE IS MOST EXPOSED TO. Roughly 1,529
+ * repositories of 1,890 have no published scan, and a spreadsheet is where a reader would sum the column, sort it,
+ * and conclude the estate is clean. The dash is what stops that, and it is the same mark `alertAge` and the criteria
+ * cells already use here.
+ */
+describe("repositoryExportRows with the CVE counts", () => {
+  /** A repository whose scan ran, every band separated so a column reading its neighbour fails. */
+  const SCANNED: RepositoryRow = {
+    ...MEASURED,
+    repository: "scanned-service",
+    cves: {
+      scanned_at: "2026-09-17T02:00:00Z",
+      cves: {
+        all: { total: 11, by_severity: { critical: 2, high: 3, medium: 1, low: 4, unknown: 1 } },
+        live: { total: 7, by_severity: { critical: 2, high: 3, medium: 1, unknown: 1 } },
+        suppressed: { total: 4, by_severity: { low: 4 } },
+        occurrences: 96
+      }
+    }
+  };
+
+  /** A repository a scan ran against and found nothing in: the earned zero. */
+  const CLEAN: RepositoryRow = {
+    ...MEASURED,
+    repository: "clean-service",
+    cves: {
+      scanned_at: "2026-09-17T02:00:00Z",
+      cves: { all: { total: 0, by_severity: {} }, live: { total: 0, by_severity: {} }, suppressed: { total: 0, by_severity: {} }, occurrences: 0 }
+    }
+  };
+
+  /** A repository nobody has scanned, carrying the reason instead of the figures. */
+  const UNSCANNED: RepositoryRow = {
+    ...MEASURED,
+    repository: "unscanned-service",
+    cves: { detail: "no CVE report has been published for this repository" }
+  };
+
+  it("should carry the aggregate whether or not the reader expanded it", () => {
+    expect(repositoryExportHeadings()).toContain("Unsuppressed Crit CVEs");
+    expect(repositoryExportHeadings(true)).toContain("Unsuppressed Crit CVEs");
+  });
+
+  it("should carry the five figures only where the reader has expanded them", () => {
+    // The file follows the toggle, which is what keeps it a copy of the table rather than a second document.
+    for (const heading of ["Total", "Crit", "High", "Other", "Suppressed"]) {
+      expect(repositoryExportHeadings()).not.toContain(heading);
+      expect(repositoryExportHeadings(true)).toContain(heading);
+    }
+  });
+
+  it("should print the live critical count for a repository whose scan ran", () => {
+    const rows = repositoryExportRows([SCANNED], CONTRIBUTORS);
+
+    expect(cell(rows, "scanned-service", "Unsuppressed Crit CVEs")).toBe("2");
+  });
+
+  it("should print a ZERO where a scan ran and found nothing, and a DASH where none has run", () => {
+    // THE DISTINCTION THE WHOLE COLUMN RESTS ON, asserted on one document so the two cells can be compared. An empty
+    // cell would be read as a zero by the spreadsheet somebody opens this in, which is why the dash is written.
+    const rows = repositoryExportRows([CLEAN, UNSCANNED], CONTRIBUTORS);
+
+    expect(cell(rows, "clean-service", "Unsuppressed Crit CVEs")).toBe("0");
+    expect(cell(rows, "unscanned-service", "Unsuppressed Crit CVEs")).toBe("-");
+  });
+
+  it("should print a dash in every figure of the breakdown for an unscanned repository", () => {
+    const rows = repositoryExportRows([UNSCANNED, CLEAN], CONTRIBUTORS, true);
+
+    for (const heading of ["Total", "Crit", "High", "Other", "Suppressed"]) {
+      expect(cell(rows, "unscanned-service", heading)).toBe("-");
+      expect(cell(rows, "clean-service", heading)).toBe("0");
+    }
+  });
+
+  it("should break the count into the unsuppressed bands, the suppressed ones counted beside them", () => {
+    // `Total` is the live total, so Crit, High and Other sum to it: 2 + 3 + 2 = 7. The four suppressed lows are in
+    // `Suppressed` alone, and a reader adding the first four figures is not double-counting them.
+    const rows = repositoryExportRows([SCANNED], CONTRIBUTORS, true);
+
+    expect(["Total", "Crit", "High", "Other", "Suppressed"].map((heading) => cell(rows, "scanned-service", heading))).toEqual(["7", "2", "3", "2", "4"]);
+  });
+
+  it("should print the same figure in Crit as in the aggregate beside it", () => {
+    // Deliberate, on the Hygiene column's rule: the aggregate keeps its place and its parts are drawn beside it.
+    const rows = repositoryExportRows([SCANNED], CONTRIBUTORS, true);
+
+    expect(cell(rows, "scanned-service", "Crit")).toBe(cell(rows, "scanned-service", "Unsuppressed Crit CVEs"));
+  });
+
+  it("should keep every row the width of the header when the figures are drawn", () => {
+    const rows = repositoryExportRows([SCANNED, UNSCANNED, UNMEASURED], CONTRIBUTORS, true);
+
+    for (const row of rows) {
+      expect(row).toHaveLength(repositoryExportHeadings(true).length);
+    }
+  });
+
+  it("should print a dash for a row served by a deployment older than the field", () => {
+    // An absent `cves` says the report layer predates it and nothing about the repository, so it takes the same
+    // fallback as a published reason: unmeasured.
+    const rows = repositoryExportRows([MEASURED], CONTRIBUTORS, true);
+
+    expect(cell(rows, "pcs-api", "Unsuppressed Crit CVEs")).toBe("-");
+    expect(cell(rows, "pcs-api", "Total")).toBe("-");
   });
 });
