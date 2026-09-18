@@ -90,7 +90,12 @@ function dependencyCheckFindings(report: Record<string, unknown>): CveFinding[] 
           package: artefact,
           suppressed,
           ...optionalSeverity(cveSeverity(cvssv3.baseSeverity) ?? cveSeverity(cvssv2.severity)),
-          ...optionalScore(asNumber(cvssv3.baseScore) ?? asNumber(cvssv2.score))
+          ...optionalScore(asNumber(cvssv3.baseScore) ?? asNumber(cvssv2.score)),
+          // THE JUSTIFICATION, AND ONLY WHERE IT WAS SUPPRESSED. Live entries carry `notes: ""` — measured on
+          // `pcs-api`, every one of them — so reading it on both sides would store a blank for a finding that has
+          // nothing to justify. `asString` treats blank as absent, which is what makes "accepted with no reason
+          // given" distinguishable from "nothing to give a reason for".
+          ...(suppressed ? optionalNotes(asString(entry.notes)) : {})
         });
       }
     }
@@ -185,17 +190,24 @@ function uvAuditFindings(report: Record<string, unknown>): CveFinding[] {
  * paths — and an insert of both would be rejected on the primary key. Keeping the worse of two gradings is the
  * direction that cannot understate a finding.
  *
- * LIVE AND SUPPRESSED ARE NEVER MERGED. `suppressed` is part of the key, so a CVE that is somehow both is
- * recorded as both, which is the answer that keeps the suppressed figure out of the live one.
+ * LIVE AND SUPPRESSED ARE NEVER MERGED HERE. `suppressed` is part of the key, so an occurrence of each is kept
+ * separately; whether the CVE as a whole reads live is `distinctCves`' decision in `domain/cves.ts` and not this
+ * one's.
  */
 export function distinctFindings(findings: readonly CveFinding[]): CveFinding[] {
   const kept = new Map<string, CveFinding>();
   for (const finding of findings) {
     const key = `${finding.identifier} ${finding.package} ${finding.suppressed}`;
     const existing = kept.get(key);
-    if (existing === undefined || worseThan(finding, existing)) {
+    if (existing === undefined) {
       kept.set(key, finding);
+      continue;
     }
+    // A JUSTIFICATION SURVIVES THE MERGE even when the other listing is the worse-graded one. Two listings of one
+    // suppression carry the same note in practice, but losing one would report a documented suppression as
+    // undocumented, and that is a claim about a team rather than a rounding of a number.
+    const worse = worseThan(finding, existing) ? finding : existing;
+    kept.set(key, { ...worse, ...optionalNotes(existing.notes ?? finding.notes) });
   }
   return [...kept.values()];
 }
@@ -213,6 +225,10 @@ function optionalSeverity(severity: CveFinding["severity"]): Pick<CveFinding, "s
 
 function optionalScore(score: number | undefined): Pick<CveFinding, "score"> {
   return score === undefined ? {} : { score };
+}
+
+function optionalNotes(notes: string | undefined): Pick<CveFinding, "notes"> {
+  return notes === undefined ? {} : { notes };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

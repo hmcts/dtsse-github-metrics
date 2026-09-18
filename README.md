@@ -466,6 +466,19 @@ no report is UNMEASURED, and one whose scan found nothing is ZERO**. Those are s
 is the honest zero and no row at all is the honest absence. A column that read absence as zero would report four
 repositories in five as free of known vulnerabilities when nothing has ever looked at them.
 
+**A repository is reported in DISTINCT CVEs, and suppressed is a subset of the total.** The question a reader has
+is "how many CVEs does this repository have, and how many of those have been accepted" — one number and a part of
+it, never two numbers to add up. The store keeps the fine grain, one row per **(package, CVE)**, because that is
+the evidence; but one CVE routinely spans many packages, so the two figures differ by about an order of magnitude.
+`pcs-api`'s newest java scan holds **262 occurrences of 26 distinct CVEs**, with three CVEs reaching 13 packages
+each. The reported figures are distinct CVEs; `occurrences` carries the finer number so nobody meeting it
+elsewhere thinks one of them is wrong.
+
+**A CVE suppressed against one package and open against another counts as LIVE.** Something unsuppressed is still
+exposed, and the other rule would let a team retire a live vulnerability from the figures by accepting it
+somewhere else. It is a stated decision in `distinctCves`, with a test, rather than whatever a `GROUP BY` happened
+to produce.
+
 **Both databases have to be read.** `CosmosDbTargetResolver` picks the database from the repository's GitHub
 topics: `jenkins-sds` routes to `sds-jenkins` and everything else defaults to `jenkins`. The 361 repositories
 divide **316 in `jenkins`, 55 in `sds-jenkins` and 10 in both** — the ten being repositories that gained the
@@ -485,6 +498,28 @@ One trap worth knowing before touching the node parser: **51,359 live yarn-audit
 and every one of them has all nine fields null.** It is a placeholder `YarnBuilder` emits about once per report,
 not an ungraded finding — it names no CVE and no package — so it is dropped rather than counted. Counting it
 would put one phantom CVE on every node repository on the estate.
+
+**A suppression's justification is the most useful thing here, and only java has one.** dependency-check
+suppression entries carry a `notes` field, and HMCTS practice fills it with a ticket and a rationale:
+
+> HDPI-8150: temporary. CVE-2026-53914 against kotlin-stdlib; no fixed release published upstream yet. … The risk
+> vector (build-cache deserialization) is irrelevant to PCS's runtime — PCS ships kotlin-stdlib as a transitive
+> runtime jar but does not run the Kotlin compiler.
+
+That is sound engineering with a ticket behind it. A suppression with nothing is a silent risk acceptance, and
+telling the two apart is the difference between a figure that helps a team and one that only shames it — so
+`documented_suppressions` and `undocumented_suppressions` are reported per repository.
+
+yarn audit's suppression list has **no such field at all** — no `notes`, `justification`, `reason` or `comment` on
+any node document in either database. So both figures are **absent** for a repository whose suppressions are all
+node's, rather than reporting `0` documented, which would read as a team that never explains anything. Absent means
+the question cannot be put here; it is the same absent-is-not-zero rule one level down.
+
+**These suppressions are present vulnerabilities, not stale leftovers.** dependency-check reports
+`suppressedVulnerabilities` only for what it found in that scan and then suppressed — a suppression-file entry
+matching nothing produces no report entry. Verified structurally on `pcs-api`: all 262 suppressed entries carry a
+CVSS block and a `vulnerableSoftware` CPE with `vulnerabilityIdMatched: "true"`, under a dependency with a `sha1`.
+A rule matching nothing could not produce a CPE match against a real artefact.
 
 ```bash
 export CVE_COSMOS_ACCOUNT=pipeline-metrics

@@ -21,6 +21,7 @@ CREATE TABLE "cve_findings" (
     "suppressed" BOOLEAN NOT NULL,
     "severity" TEXT,
     "score" DOUBLE PRECISION,
+    "notes" TEXT,
 
     CONSTRAINT "cve_findings_pkey" PRIMARY KEY ("organization","repository","codebase_type","identifier","package","suppressed")
 );
@@ -59,6 +60,18 @@ ALTER TABLE "cve_findings"
 -- said a word we did not recognise" — and both would then be one step from being read as `low`.
 ALTER TABLE "cve_findings"
     ADD CONSTRAINT "cve_findings_severity_vocabulary" CHECK ("severity" IS NULL OR "severity" IN ('critical', 'high', 'medium', 'low'));
+
+-- A BLANK JUSTIFICATION IS NOT A JUSTIFICATION. dependency-check emits `notes: ""` on every live finding, and a
+-- writer that stored that would make "accepted with no reason given" indistinguishable from "explained", since
+-- both would be a non-NULL column. The parser folds blank to absent; this refuses the blank outright, because the
+-- figure this column feeds is a statement about whether a team documented a risk acceptance.
+ALTER TABLE "cve_findings"
+    ADD CONSTRAINT "cve_findings_notes_not_blank" CHECK ("notes" IS NULL OR btrim("notes") <> '');
+
+-- ONLY A SUPPRESSION CAN BE JUSTIFIED. A note on a live finding has nothing to explain — the vulnerability is
+-- open — and allowing one would let the documentation figures count a row that is not a risk acceptance at all.
+ALTER TABLE "cve_findings"
+    ADD CONSTRAINT "cve_findings_notes_only_when_suppressed" CHECK ("notes" IS NULL OR "suppressed");
 
 -- AddForeignKey
 -- A FINDING BELONGS TO A SCAN. Without this, a write could leave findings with no scan row — counts for a

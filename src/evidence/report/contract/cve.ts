@@ -19,9 +19,13 @@ export const UNSCANNED_DETAIL = "the Jenkins security stage has published no CVE
  * One repository's counts, or the detail saying nobody scanned it.
  *
  * `cves` PRESENT AND `detail` PRESENT ARE MUTUALLY EXCLUSIVE, which is what lets a component branch on one key.
- * Where `cves` is present both its figures are measured — including a `total` of `0`, which is the measured
- * nothing — so nothing inside it is ever absent for want of measurement. The measurement question is settled
- * one level up by which of the two keys arrived, exactly as `securityReport` settles it.
+ * Where `cves` is present the three counts are measured — including a `total` of `0`, which is the measured
+ * nothing — so none of them is ever absent for want of measurement. The measurement question is settled one level
+ * up by which of the two keys arrived, exactly as `securityReport` settles it.
+ *
+ * THE ONE EXCEPTION IS THE SUPPRESSION-DOCUMENTATION PAIR, and it is absent for the same reason the whole block
+ * can be: only dependency-check records a justification, so a repository whose suppressions all came from yarn
+ * audit has nothing to assess and reports neither figure rather than a zero that reads as a finding.
  */
 export function cveReport(evidence: CveEvidence | undefined): contract.CveReport {
   if (evidence === undefined) {
@@ -31,8 +35,14 @@ export function cveReport(evidence: CveEvidence | undefined): contract.CveReport
     scanned_at: evidence.scannedAt.toISOString(),
     codebase_types: evidence.codebaseTypes,
     cves: {
+      all: { total: totalCount(evidence.all), by_severity: evidence.all },
       live: { total: totalCount(evidence.live), by_severity: evidence.live },
-      suppressed: { total: totalCount(evidence.suppressed), by_severity: evidence.suppressed }
+      suppressed: { total: totalCount(evidence.suppressed), by_severity: evidence.suppressed },
+      occurrences: evidence.occurrences,
+      // Spread rather than conditionally named, because the pair is absent or present together and `stripAbsent`
+      // drops an `undefined` on the way out. Absent means "no suppression here could have carried a reason".
+      ...(evidence.documentedSuppressions === undefined ? {} : { documented_suppressions: evidence.documentedSuppressions }),
+      ...(evidence.undocumentedSuppressions === undefined ? {} : { undocumented_suppressions: evidence.undocumentedSuppressions })
     }
   };
 }

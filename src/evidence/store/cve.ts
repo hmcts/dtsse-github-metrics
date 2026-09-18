@@ -1,10 +1,10 @@
 import type { CveScan } from "../cve/collect.ts";
-import { type CveEvidence, type CveSeverityBucket, cveSeverity, UNKNOWN_SEVERITY } from "../domain/cves.ts";
+import { type CveEvidence, type CveOccurrence, countedCves, cveSeverity } from "../domain/cves.ts";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
 /**
- * Where the published CVE reports are kept, and the two questions asked of them.
+ * Where the published CVE reports are kept, and the three questions asked of them.
  *
  * THE ABSENT-VERSUS-ZERO RULE IS STRUCTURAL HERE AND NOT A CONVENTION TO REMEMBER. `cve_scans` records that a
  * scan was published and `cve_findings` records what it found, so a repository with a scan row and no findings is
@@ -109,7 +109,10 @@ export async function recordCveScans(scans: readonly CveScan[], collectedAt: Dat
             // NULL and never the string `unknown`: the column's vocabulary is four words, and the bucket a
             // severity-less finding is counted in is the report layer's business. See the migration's CHECK.
             severity: finding.severity ?? null,
-            score: finding.score ?? null
+            score: finding.score ?? null,
+            // NULL where nobody wrote a reason, AND where the format has nowhere to write one. The two are told
+            // apart on read by `codebase_type` rather than stored apart — see `recordsSuppressionNotes`.
+            notes: finding.notes ?? null
           }))
         });
         return scan.findings.length + 1;
@@ -134,51 +137,83 @@ export async function recordCveScans(scans: readonly CveScan[], collectedAt: Dat
  * report layer reads a missing key as unmeasured and a present entry with empty count maps as a measured zero,
  * and neither answer can be manufactured from the other.
  *
- * TWO AGGREGATED QUERIES FOR THE WHOLE ESTATE, on `storedRepositoryStates`' precedent. The findings are grouped
- * in the database rather than fetched and counted here: 362 scans hold about 30,500 findings between them, and
- * moving all of them into the estate read to fold them in JavaScript would be the largest thing on it for figures
- * that are counts. Counting in SQL is also what keeps the stored grain fine — see `CveFinding`'s note.
+ * THREE READS FOR THE WHOLE ESTATE, on `storedRepositoryStates`' precedent: the scans, the DISTINCT occurrence
+ * tuples, and the occurrence count per repository.
  *
- * SCANS ARE READ EVEN WHERE A REPOSITORY HAS NO FINDINGS, which is the reason this is two queries and not one
- * grouped join: a clean scan produces no finding rows at all, so a join would drop exactly the repositories whose
- * measured zero is the point.
+ * `DISTINCT` AND NOT `GROUP BY` BECAUSE THE UNIT REPORTED IS A CVE AND NOT AN OCCURRENCE. The store keeps one row
+ * per (package, CVE) — that is the evidence, and aggregating it away would lose which packages are affected — but
+ * one CVE routinely spans many packages: `pcs-api`'s newest java scan holds 262 occurrences of 26 distinct CVEs.
+ * Counting occurrences would put every figure about an order of magnitude above the number of things wrong. So the
+ * package dimension is collapsed on the way out, taking 29,632 rows to a few thousand, and the ROLLUP RULES — live
+ * anywhere wins, worst grading wins, documented if any suppression explains it — live in `countedCves`, which is
+ * pure and held at the unit bar. Putting them in SQL would put the one judgement in this feature somewhere no test
+ * of the rule can reach.
+ *
+ * SCANS ARE READ SEPARATELY, which is what makes a clean scan reportable: a repository whose scan found nothing
+ * has no occurrence rows at all, so any join would drop exactly the repositories whose measured zero is the point.
  */
 export async function storedCveEvidence(organization: string): Promise<Map<string, CveEvidence>> {
   const folded = organization.toLowerCase();
   try {
-    const [scans, counts] = await Promise.all([
+    const [scans, tuples, occurrences] = await Promise.all([
       prisma.cveScan.findMany({ where: { organization: folded }, select: { repository: true, codebaseType: true, reportedAt: true } }),
-      prisma.cveFinding.groupBy({
-        by: ["repository", "suppressed", "severity"],
-        where: { organization: folded },
-        _count: { _all: true }
-      })
+      // RAW, FOR THE `notes IS NOT NULL`. What the rollup needs is WHETHER a suppression was explained, not the
+      // paragraph explaining it — and the difference is not only bytes. Selecting the text would put it in the
+      // `DISTINCT` key, so two packages whose notes are worded differently would produce two tuples for one CVE
+      // instead of one; reducing it to a boolean in the database collapses them and leaves the justification
+      // where it belongs, which is in the table for whoever asks why.
+      prisma.$queryRaw<{ repository: string; codebase_type: string; identifier: string; suppressed: boolean; severity: string | null; documented: boolean }[]>`
+        SELECT DISTINCT repository, codebase_type, identifier, suppressed, severity, notes IS NOT NULL AS documented
+        FROM cve_findings
+        WHERE organization = ${folded}
+      `,
+      prisma.cveFinding.groupBy({ by: ["repository"], where: { organization: folded }, _count: { _all: true } })
     ]);
 
-    const evidence = new Map<string, CveEvidence>();
+    const scanned = new Map<string, { scannedAt: Date; codebaseTypes: string[] }>();
     for (const scan of scans) {
-      const existing = evidence.get(scan.repository);
+      const existing = scanned.get(scan.repository);
       if (existing === undefined) {
-        evidence.set(scan.repository, { scannedAt: scan.reportedAt, codebaseTypes: [scan.codebaseType], live: {}, suppressed: {} });
+        scanned.set(scan.repository, { scannedAt: scan.reportedAt, codebaseTypes: [scan.codebaseType] });
         continue;
       }
       // A repository scanned in two languages carries both names and the NEWER instant, because that is what
-      // "as at" means for a figure that sums the two.
+      // "as at" means for a figure that covers both.
       existing.codebaseTypes = [...existing.codebaseTypes, scan.codebaseType].sort();
       existing.scannedAt = scan.reportedAt > existing.scannedAt ? scan.reportedAt : existing.scannedAt;
     }
 
-    for (const row of counts) {
-      const entry = evidence.get(row.repository);
-      if (entry === undefined) {
-        // Unreachable while the foreign key holds: a finding cannot exist without its scan. Skipped rather
+    const perRepository = new Map<string, CveOccurrence[]>();
+    for (const row of tuples) {
+      if (!scanned.has(row.repository)) {
+        // Unreachable while the foreign key holds: an occurrence cannot exist without its scan. Skipped rather
         // than counted, because a count with no scan behind it is the one thing that would let an unmeasured
         // repository report a figure.
         continue;
       }
-      const counted = row.suppressed ? entry.suppressed : entry.live;
-      const bucket: CveSeverityBucket = cveSeverity(row.severity) ?? UNKNOWN_SEVERITY;
-      counted[bucket] = (counted[bucket] ?? 0) + row._count._all;
+      const severity = cveSeverity(row.severity);
+      const list = perRepository.get(row.repository) ?? [];
+      // The package is not selected at all: it has already done its work by making these rows distinct, and
+      // `CveOccurrence` is narrower than a finding for exactly that reason.
+      list.push({
+        identifier: row.identifier,
+        codebaseType: row.codebase_type,
+        suppressed: row.suppressed,
+        documented: row.documented,
+        ...(severity === undefined ? {} : { severity })
+      });
+      perRepository.set(row.repository, list);
+    }
+
+    const counted = new Map(occurrences.map((row) => [row.repository, row._count._all]));
+    const evidence = new Map<string, CveEvidence>();
+    for (const [repository, scan] of scanned) {
+      evidence.set(repository, {
+        ...scan,
+        ...countedCves(perRepository.get(repository) ?? []),
+        // The stored grain, not the number of distinct tuples that survived the `DISTINCT` above.
+        occurrences: counted.get(repository) ?? 0
+      });
     }
     return evidence;
   } catch (error) {

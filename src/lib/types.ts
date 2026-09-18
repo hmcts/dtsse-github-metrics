@@ -226,7 +226,12 @@ export interface SecurityAlertReport {
 export type CveSeverity = "critical" | "high" | "medium" | "low" | "unknown";
 
 /**
- * How many CVEs one side of the split holds, and how they break down.
+ * How many DISTINCT CVEs one part of the split holds, and how they break down.
+ *
+ * DISTINCT CVEs AND NOT (package, CVE) OCCURRENCES. One CVE routinely affects many packages — `pcs-api`'s newest
+ * java scan holds 262 occurrences of 26 distinct CVEs, three of them reaching 13 packages each — so an occurrence
+ * count reads about an order of magnitude above the number of things actually wrong. `CveEvidence.occurrences`
+ * carries the finer figure for anyone who meets it elsewhere.
  *
  * `total` IS REQUIRED HERE, unlike `OpenAlertCount.open`, and the difference is where each answers the
  * measurement question. An alert family carries its own readability, so `open` is what goes absent; a CVE count
@@ -239,15 +244,45 @@ export interface CveCount {
 }
 
 /**
- * Live and suppressed CVEs kept apart.
+ * What a repository's CVE position is: **X CVEs, of which Y are suppressed.**
  *
- * SUPPRESSED IS NOT PART OF `live`, in either direction. A suppressed finding is one somebody reviewed and
- * accepted, so it belongs in neither the live figure nor a total that hides it — showing the pair is what makes
- * "we have accepted 25,533 of these" visible instead of absent.
+ * `suppressed` IS A SUBSET OF `all`, NOT A SECOND TOTAL BESIDE IT. `all.total === live.total + suppressed.total`
+ * always, because `live` and `suppressed` partition the distinct CVEs. Reading the two as unrelated totals is the
+ * mistake this shape exists to prevent — a reader who adds them double-counts the estate.
+ *
+ * A CVE SUPPRESSED IN ONE PACKAGE AND OPEN IN ANOTHER IS COUNTED LIVE. Something unsuppressed is still exposed;
+ * see `distinctCves` for why that direction and not the other.
  */
 export interface CveEvidence {
+  /** Every distinct CVE the scan found, suppressed or not. */
+  all: CveCount;
+  /** Those not suppressed everywhere they appear. */
   live: CveCount;
+  /** Those suppressed everywhere they appear — reviewed and accepted. */
   suppressed: CveCount;
+  /**
+   * The (package, CVE) occurrences the counts were folded from, which is the grain the evidence is stored at.
+   *
+   * SENT SO THE RELATIONSHIP IS VISIBLE RATHER THAN SURPRISING. It is roughly ten times `all.total`, and a reader
+   * who meets the finer figure in a database or another tool can see why the two differ instead of assuming one
+   * is wrong.
+   */
+  occurrences: number;
+  /**
+   * Of the suppressed CVEs, how many carry a written justification and how many do not.
+   *
+   * THE MOST USEFUL PAIR HERE. A suppression with a ticket and a rationale behind it is sound engineering; one
+   * with nothing is a silent risk acceptance, and only the second is a finding about a team.
+   *
+   * BOTH ABSENT TOGETHER where no suppression could have carried a reason. Only dependency-check has a `notes`
+   * field — yarn audit's suppression list has nowhere to put one — so a node-only repository reports neither
+   * figure rather than `0` documented, which would read as a team that never explains anything.
+   *
+   * THEY NEED NOT SUM TO `suppressed.total`, because a repository publishing both a java and a node report has
+   * suppressions of both kinds and the node ones are in neither figure.
+   */
+  documented_suppressions?: number;
+  undocumented_suppressions?: number;
 }
 
 /**

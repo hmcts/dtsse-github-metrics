@@ -290,6 +290,23 @@ model CveFinding {
   severity     String?
   /// The CVSS base score where the report carried one. Stored because it is free; read by nothing yet.
   score        Float?
+  /// Why the suppression was accepted, where whoever wrote it said.
+  ///
+  /// THE MOST USEFUL COLUMN HERE, and the reason is what it lets a reader distinguish. A suppression with
+  /// "HDPI-8150: temporary. … no fixed release published upstream yet. The risk vector (build-cache
+  /// deserialization) is irrelevant to PCS's runtime" is sound engineering with a ticket behind it; one with
+  /// nothing is a silent risk acceptance. Being able to tell them apart is the difference between a figure that
+  /// helps a team and one that only shames it.
+  ///
+  /// NULL IS TWO DIFFERENT ANSWERS and `codebase_type` is what separates them. Only dependency-check has a
+  /// `notes` field at all: no node document in either database carries `notes`, `justification`, `reason` or
+  /// `comment` on a suppression, so NULL on a `node` row means the builder cannot record one, while NULL on a
+  /// `java` row means nobody did. `recordsSuppressionNotes` in `domain/cves.ts` holds that rule, and the report
+  /// layer leaves both documentation figures ABSENT rather than reporting zero where nothing could be assessed.
+  ///
+  /// Blank is stored as NULL. dependency-check emits `notes: ""` on every LIVE finding, and a blank string that
+  /// justifies nothing should not be distinguishable from no string at all.
+  notes        String?
   scan         CveScan  @relation(fields: [organization, repository, codebaseType], references: [organization, repository, codebaseType], onDelete: Cascade)
 
   @@id([organization, repository, codebaseType, identifier, packageName, suppressed])

@@ -151,23 +151,31 @@ describe("what a row says about the repository itself", () => {
     const row = repositoryRow(POLICY, entry(), undefined, NO_MERGES, NO_PRODUCTION, BOTH, {
       scannedAt: new Date(Date.UTC(2026, 8, 18)),
       codebaseTypes: ["java"],
+      all: { critical: 4 },
       live: { critical: 4 },
-      suppressed: {}
+      suppressed: {},
+      occurrences: 9
     });
 
     expect(row.cves?.cves?.live).toEqual({ total: 4, by_severity: { critical: 4 } });
   });
 
-  it("should keep a suppressed finding out of the live figure when a repository has both", () => {
+  it("should report suppressed CVEs as a subset of the total rather than a second figure beside it", () => {
     const row = repositoryRow(POLICY, entry(), collected(), NO_MERGES, NO_PRODUCTION, BOTH, {
       scannedAt: new Date(Date.UTC(2026, 8, 18)),
-      codebaseTypes: ["node"],
+      codebaseTypes: ["java"],
+      all: { high: 31, medium: 12 },
       live: { high: 1 },
-      suppressed: { high: 30, medium: 12 }
+      suppressed: { high: 30, medium: 12 },
+      occurrences: 402,
+      documentedSuppressions: 40,
+      undocumentedSuppressions: 2
     });
 
+    expect(row.cves?.cves?.all.total).toBe(43);
     expect(row.cves?.cves?.live.total).toBe(1);
     expect(row.cves?.cves?.suppressed.total).toBe(42);
+    expect(row.cves?.cves?.undocumented_suppressions).toBe(2);
   });
 });
 
