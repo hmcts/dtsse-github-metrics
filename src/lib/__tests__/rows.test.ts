@@ -17,7 +17,14 @@ import {
   ASSURANCE_LABEL,
   answerOrder,
   assuranceOrder,
+  CVE_AGGREGATE,
+  CVE_COLUMNS,
+  type CveColumn,
   criterionResult,
+  cveCount,
+  cveDetail,
+  cveEvidence,
+  cveOrder,
   EXPAND_LABEL,
   EXPANDED_PARAMETER,
   EXPANDED_VALUE,
@@ -763,5 +770,151 @@ describe("hygieneSignals", () => {
     // rather than a repository with its controls switched off.
     expect(hygieneSignals(row({ repository: "hmcts/old" }))).toBeUndefined();
     expect(hygieneSignals(row({ repository: "hmcts/older", assurance: { grade: "unknown", criteria: [] } }))).toBeUndefined();
+  });
+});
+
+/**
+ * The CVE columns, and the distinction they exist to keep: a repository nobody scanned is not a clean one.
+ *
+ * ROUGHLY 1,529 REPOSITORIES OF 1,890 HAVE NO PUBLISHED REPORT, because only three CNP builders publish one. So the
+ * cheapest possible mistake here — folding that absence to `0` — would report four fifths of the estate as carrying
+ * no critical CVEs when nothing has ever looked at it, and nothing on the page would say otherwise. Every case below
+ * is ultimately about telling that dash from an earned zero.
+ */
+describe("the CVE columns", () => {
+  /** A repository whose scan ran, with every band separated so a column reading its neighbour fails. */
+  const SCANNED: RepositoryRow = row({
+    repository: "hmcts/pcs-api",
+    cves: {
+      scanned_at: "2026-09-17T02:00:00Z",
+      cves: {
+        all: { total: 11, by_severity: { critical: 2, high: 3, medium: 1, low: 4, unknown: 1 } },
+        live: { total: 7, by_severity: { critical: 2, high: 3, medium: 1, unknown: 1 } },
+        suppressed: { total: 4, by_severity: { low: 4 } },
+        occurrences: 96
+      }
+    }
+  });
+
+  /** A repository whose scan ran and found nothing: an earned zero in every column. */
+  const CLEAN: RepositoryRow = row({
+    repository: "hmcts/clean",
+    cves: {
+      scanned_at: "2026-09-17T02:00:00Z",
+      cves: { all: { total: 0, by_severity: {} }, live: { total: 0, by_severity: {} }, suppressed: { total: 0, by_severity: {} }, occurrences: 0 }
+    }
+  });
+
+  /** A repository nobody has scanned, carrying the reason instead of the figures. */
+  const UNSCANNED: RepositoryRow = row({
+    repository: "hmcts/unscanned",
+    cves: { detail: "no CVE report has been published for this repository" }
+  });
+
+  /** The count a named column reads off a row, found by its heading as the table's cells are. */
+  function count(heading: string, subject: RepositoryRow): number | undefined {
+    const column = [CVE_AGGREGATE, ...CVE_COLUMNS].find((entry) => entry.label === heading);
+    return cveCount(subject, column as CveColumn);
+  }
+
+  it("should break the aggregate into Total, Crit, High, Other and Suppressed, in that order", () => {
+    expect(CVE_COLUMNS.map((column) => column.label)).toEqual(["Total", "Crit", "High", "Other", "Suppressed"]);
+  });
+
+  it("should head the aggregate with the suppression state spelled out in full", () => {
+    // "Critical CVEs" would be read as every critical the scan found, and the two figures disagree: a team that has
+    // reviewed and accepted a finding has done the work, and counting it here reports that judgement as a risk.
+    expect(CVE_AGGREGATE.label).toBe("Unsuppressed Crit CVEs");
+  });
+
+  it("should count only unsuppressed findings in Total, Crit, High and Other when a scan has run", () => {
+    expect(count("Total", SCANNED)).toBe(7);
+    expect(count("Crit", SCANNED)).toBe(2);
+    expect(count("High", SCANNED)).toBe(3);
+    // Medium, low and unstated together: one medium, no live low, one of unstated severity.
+    expect(count("Other", SCANNED)).toBe(2);
+  });
+
+  it("should add Crit, High and Other up to Total, so a reader can sum the row", () => {
+    // THE ARITHMETIC THE BREAKDOWN PROMISES. `unknown` is counted in `Other` rather than dropped for this reason:
+    // leaving those findings out would make Total larger than its own parts with nothing on the page to explain it.
+    for (const subject of [SCANNED, CLEAN]) {
+      const parts = ["Crit", "High", "Other"].reduce((running, heading) => running + (count(heading, subject) ?? 0), 0);
+      expect(parts).toBe(count("Total", subject));
+    }
+  });
+
+  it("should count the suppressed findings beside the live ones rather than among them", () => {
+    // Four suppressed lows, which are in neither `Total` nor `Other`: reviewed and accepted is not outstanding.
+    expect(count("Suppressed", SCANNED)).toBe(4);
+    expect(count("Other", SCANNED)).toBe(2);
+  });
+
+  it("should repeat the aggregate in Crit, the two counting one figure", () => {
+    // DELIBERATE, on the Hygiene column's rule: the aggregate keeps its place and the parts are drawn beside it.
+    // They are one definition spread into two columns, so they cannot come to count different things.
+    expect(count("Crit", SCANNED)).toBe(count("Unsuppressed Crit CVEs", SCANNED));
+    expect(CVE_AGGREGATE.severities).toEqual(["critical"]);
+  });
+
+  it("should count a band with no findings as zero when the scan ran", () => {
+    // A band with nothing in it is ABSENT from `by_severity`, and a `CveCount` only exists inside a report with a
+    // scan behind it — so an empty band is a measured nothing and the one place `?? 0` is right.
+    for (const column of [CVE_AGGREGATE, ...CVE_COLUMNS]) {
+      expect(cveCount(CLEAN, column)).toBe(0);
+    }
+  });
+
+  it("should count nothing at all for a repository no scan has run against", () => {
+    // NOT ZERO. This is the mistake the whole feature is built to avoid, and it is the majority case on the estate.
+    for (const column of [CVE_AGGREGATE, ...CVE_COLUMNS]) {
+      expect(cveCount(UNSCANNED, column)).toBeUndefined();
+    }
+  });
+
+  it("should count nothing for a row served by a deployment older than the field", () => {
+    // An absent `cves` says the report layer predates it and nothing about the repository — `RepositoryRow.cves`
+    // documents that, and it takes the same fallback as a published reason: unmeasured.
+    expect(cveCount(row({ repository: "hmcts/old" }), CVE_AGGREGATE)).toBeUndefined();
+    expect(cveEvidence(row({ repository: "hmcts/old" }))).toBeUndefined();
+  });
+
+  it("should find the figures where a scan ran and nothing where one has not", () => {
+    expect(cveEvidence(SCANNED)?.live.total).toBe(7);
+    expect(cveEvidence(UNSCANNED)).toBeUndefined();
+  });
+
+  it("should carry the report's own reason for a dash, and none where the figures arrived", () => {
+    // Exactly one of the figures and the reason arrives, so a counted cell hovers nothing rather than an empty bubble.
+    expect(cveDetail(UNSCANNED)).toBe("no CVE report has been published for this repository");
+    expect(cveDetail(SCANNED)).toBeUndefined();
+    expect(cveDetail(row({ repository: "hmcts/old" }))).toBeUndefined();
+  });
+
+  it("should sort the most findings first, so one ascending click opens on the worst", () => {
+    // NEGATED, which is `findingOrder`'s rule applied to a number: the useful end of the column must not need two
+    // clicks. `answerOrder`'s columns do the same thing for a Yes/No answer.
+    const read = (subject: RepositoryRow) => cveOrder(cveCount(subject, CVE_AGGREGATE));
+
+    expect(sorted([CLEAN, SCANNED], read, "ascending").map((subject) => subject.repository)).toEqual(["hmcts/pcs-api", "hmcts/clean"]);
+  });
+
+  it("should hold an unscanned repository back from both ends of the order", () => {
+    // `sorted`'s own rule, which this column is exactly the case for: "which carries the most live criticals" is a
+    // question about the repositories somebody scanned, and one nobody scanned is not the answer to it either way up.
+    const read = (subject: RepositoryRow) => cveOrder(cveCount(subject, CVE_AGGREGATE));
+
+    expect(sorted([UNSCANNED, CLEAN, SCANNED], read, "ascending").at(-1)?.repository).toBe("hmcts/unscanned");
+    expect(sorted([UNSCANNED, CLEAN, SCANNED], read, "descending").at(-1)?.repository).toBe("hmcts/unscanned");
+  });
+
+  it("should carry a hint on every column, the dash and the zero named in the aggregate's", () => {
+    // The dash is the whole reason this column can be misread, so the hint beside the heading has to say what it
+    // means rather than leaving a reader to infer that an unscanned repository is a clean one.
+    for (const column of [CVE_AGGREGATE, ...CVE_COLUMNS]) {
+      expect(column.hint.length).toBeGreaterThan(0);
+    }
+    expect(CVE_AGGREGATE.hint).toContain("unmeasured rather than clean");
+    expect(CVE_AGGREGATE.hint).toContain("0 means a scan ran and found none");
   });
 });

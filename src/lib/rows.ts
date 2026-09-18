@@ -22,6 +22,9 @@ import type {
   AssuranceGrade,
   AssuranceHygieneSignals,
   AssuranceOutcome,
+  CveCount,
+  CveEvidence,
+  CveSeverity,
   RepositoryRow,
   Visibility
 } from "@/lib/types";
@@ -351,17 +354,23 @@ export const ASSURANCE_HINT: Record<AssuranceCriterion, string> = {
 };
 
 /**
- * The one criterion that is an AGGREGATE, and so the only column that expands.
+ * The one CRITERION that is an aggregate, and so the only criterion column that expands.
  *
  * The other five are not aggregates and are deliberately left alone. `Assurance` sums the four graded criteria and
  * each of those is already a column, so expanding it would draw them twice; `patching` is one number; the remaining
- * three are one signal apiece. Hygiene is four checks over five signals, which is the only column where a reader
- * seeing "No" cannot tell from the page which control is missing.
+ * three are one signal apiece. Hygiene is four checks over five signals, which is the only criterion column where a
+ * reader seeing "No" cannot tell from the page which control is missing.
+ *
+ * The CVE column is the estate table's other aggregate — see `CVE_AGGREGATE` — and one toggle expands both.
  */
 export const HYGIENE_CRITERION: AssuranceCriterion = "automated-hygiene";
 
 /**
  * The expand toggle's parameter, beside the four filters' rather than in the component.
+ *
+ * ONE PARAMETER FOR EVERY AGGREGATE COLUMN. The table has two — Hygiene and the live critical CVE count — and both
+ * break down on this one value, because a reader asking for the detail behind one aggregate is asking to see the
+ * table in detail. Its spelling is narrower than what it governs; the name is not worth breaking a shared URL over.
  *
  * IN THE URL, WHICH SORT DELIBERATELY IS NOT. The rule this page keeps is that a fact about the window worth
  * sending to somebody goes in the URL and how one reader is looking at the list stays in state — and expansion
@@ -376,7 +385,7 @@ export const EXPANDED_PARAMETER = "hygiene";
 
 export const EXPANDED_VALUE = "true";
 
-/** Whether the hygiene column is expanded, read off the URL by both the table and the export. */
+/** Whether the aggregate columns are expanded, read off the URL by both the table and the export. */
 export function parseExpanded(read: (parameter: string) => string | null): boolean {
   return read(EXPANDED_PARAMETER) === EXPANDED_VALUE;
 }
@@ -385,9 +394,9 @@ export function parseExpanded(read: (parameter: string) => string | null): boole
  * The word on the expand toggle: WHAT IT DOES, which is the one control on this bar named that way.
  *
  * The four filter toggles are named for what they bring IN — `public`, `internal`, `Production` — because each names
- * a set of rows the reader has not got. This one names an action instead, and deliberately: the column it opens is
- * headed `Hygiene` a few centimetres to its left, so naming the control after its content put the same word on the
- * page twice with no way to tell the heading from the button.
+ * a set of rows the reader has not got. This one names an action instead, and deliberately: it opens two columns
+ * whose own headings are a few centimetres to its left, so naming the control after its content would put one of
+ * those words on the page twice with no way to tell the heading from the button — and could not name the other.
  *
  * Beside the parameter it writes, so the control and the state it carries are one decision.
  */
@@ -461,6 +470,171 @@ export const HYGIENE_CHECKS: readonly HygieneCheck[] = [
 /** The hygiene signals off a row, or nothing where the report collected none for it. */
 export function hygieneSignals(row: RepositoryRow): AssuranceHygieneSignals | undefined {
   return row.assurance?.hygiene;
+}
+
+/**
+ * One CVE column: its heading, what it answers, and which part of the split it counts.
+ *
+ * THE PART AND THE BANDS ARE DATA RATHER THAN A READER FUNCTION, so the one test that separates "nobody scanned
+ * this" from "a scan found none" lives in `cveCount` alone. A column carrying its own `(row) => number | undefined`
+ * would be six places that test could be got wrong, and getting it wrong reads as a clean repository.
+ */
+export interface CveColumn {
+  key: string;
+  label: string;
+  hint: string;
+  /** Which half of the split this column counts. `live` and `suppressed` partition `all` — see `CveEvidence`. */
+  part: (evidence: CveEvidence) => CveCount;
+  /** The severity bands counted, or nothing for a column that counts its part whole. */
+  severities?: readonly CveSeverity[];
+}
+
+/**
+ * The bands the `Other` column folds together: every severity the two named columns do not carry.
+ *
+ * `unknown` IS IN HERE AND IS NOT A MISSING VALUE. uv audit states no severity at all and a few dependency-check
+ * findings carry no CVSS block, so those findings are real and have to be counted somewhere — see `CveSeverity`.
+ * Dropping them would make `Total` larger than `Crit + High + Other`, which is the sum this breakdown promises.
+ */
+const CVE_OTHER_SEVERITIES: readonly CveSeverity[] = ["medium", "low", "unknown"];
+
+/**
+ * The critical live count, which is both the aggregate column and one of the parts it breaks into.
+ *
+ * ONE DEFINITION SPREAD INTO TWO COLUMNS rather than two definitions that happen to agree. `Crit` repeating the
+ * aggregate is deliberate — see `CVE_AGGREGATE` — and a second literal here is how the aggregate and its own part
+ * would come to count different things.
+ */
+const CVE_CRITICAL: CveColumn = {
+  key: "cve-critical",
+  label: "Crit",
+  hint: "The critical unsuppressed CVEs. The same figure as the aggregate to its left, repeated so that Crit, High and Other add up to Total.",
+  part: (evidence) => evidence.live,
+  severities: ["critical"]
+};
+
+/**
+ * The CVE column the table draws without being expanded: the LIVE CRITICAL count.
+ *
+ * ONE FIGURE OF THE FIVE, because it is the one a reader acts on. A critical CVE nobody has suppressed is the thing
+ * to fix this week, and a column of totals would rank an estate by how much it depends on rather than by exposure.
+ *
+ * ITS HEADING NAMES THE SUPPRESSION STATE, which no shorter wording can leave out. "Critical CVEs" would be read as
+ * every critical the scan found, and the figures disagree: a team that has reviewed and accepted a finding has done
+ * the work this column is asking for, and counting it against them reports a judgement somebody already made as an
+ * outstanding risk.
+ */
+export const CVE_AGGREGATE: CveColumn = {
+  ...CVE_CRITICAL,
+  key: "cves",
+  label: "Unsuppressed Crit CVEs",
+  hint: "How many distinct critical CVEs the build pipeline's own dependency scan last found and nobody has suppressed. A dash means no report has been published for this repository, which is unmeasured rather than clean; 0 means a scan ran and found none. Expand the column for the whole position."
+};
+
+/**
+ * The five figures the CVE aggregate expands into, in the order they read.
+ *
+ * TOTAL, CRIT, HIGH AND OTHER COUNT THE UNSUPPRESSED FINDINGS ONLY, and `Suppressed` is a separate count beside
+ * them rather than part of the run. So `Total === Crit + High + Other` and a reader who adds the row up gets the
+ * right answer — which is the arithmetic the heading promises and the reason `Suppressed` is last rather than
+ * folded in. `CveEvidence.all` is therefore drawn nowhere: it is `Total + Suppressed`, and a sixth column whose
+ * value is the sum of two others invites the reader to add all five.
+ *
+ * Beside the criteria's labels and the hygiene checks' rather than in the component, on their reason: one
+ * definition heads the table and the export, so the file and the page cannot drift.
+ */
+export const CVE_COLUMNS: readonly CveColumn[] = [
+  {
+    key: "cve-total",
+    label: "Total",
+    hint: "Every unsuppressed CVE the scan found, whatever its severity. Crit, High and Other are this figure broken down, so the three of them sum to it.",
+    part: (evidence) => evidence.live
+  },
+  CVE_CRITICAL,
+  {
+    key: "cve-high",
+    label: "High",
+    hint: "The high-severity unsuppressed CVEs.",
+    part: (evidence) => evidence.live,
+    severities: ["high"]
+  },
+  {
+    key: "cve-other",
+    label: "Other",
+    hint: "The unsuppressed CVEs of medium, low or unstated severity. Some scanners state no severity at all, and those findings are counted here rather than dropped.",
+    part: (evidence) => evidence.live,
+    severities: CVE_OTHER_SEVERITIES
+  },
+  {
+    key: "cve-suppressed",
+    label: "Suppressed",
+    hint: "CVEs suppressed everywhere they appear, at any severity — reviewed and accepted, so counted beside the live figures rather than among them.",
+    part: (evidence) => evidence.suppressed
+  }
+];
+
+/**
+ * The CVE figures off a row, or nothing where no report has been published for it.
+ *
+ * THIS IS THE MEASUREMENT TEST AND THE ONLY ONE. Roughly 1,529 repositories of 1,890 reach here with nothing,
+ * because only three CNP builders publish a report at all — so an absence folded to `0` anywhere downstream would
+ * report four fifths of the estate as carrying no critical CVEs when nothing has ever looked at it.
+ */
+export function cveEvidence(row: Pick<RepositoryRow, "cves">): CveEvidence | undefined {
+  return row.cves?.cves;
+}
+
+/**
+ * Why a repository has no CVE figures, for the hover on its dash.
+ *
+ * EXACTLY ONE OF THE FIGURES AND THE REASON ARRIVES — see `CveReport` — so this is set precisely where
+ * `cveEvidence` is not, and the dash a reader hovers is the one it explains. The criteria cells surface their own
+ * detail the same way.
+ */
+export function cveDetail(row: Pick<RepositoryRow, "cves">): string | undefined {
+  return row.cves?.detail;
+}
+
+/**
+ * How many distinct CVEs the named bands of one part hold.
+ *
+ * A BAND WITH NOTHING IN IT IS ABSENT FROM `by_severity` AND READS AS ZERO HERE, which is the one place `?? 0` is
+ * right in this module: a `CveCount` only exists inside a report that has a scan behind it, so the measurement has
+ * already happened and an empty band is a measured nothing. Whether the scan happened at all is `cveEvidence`'s
+ * question, answered before this is ever called.
+ */
+function severityCount(counts: CveCount, severities: readonly CveSeverity[]): number {
+  return severities.reduce((running, severity) => running + (counts.by_severity[severity] ?? 0), 0);
+}
+
+/**
+ * One CVE column's figure for one row: a count where a scan ran, and nothing where none has.
+ *
+ * `undefined` AND `0` ARE DIFFERENT ANSWERS and this is where they are told apart, once, for every column and for
+ * both the table and the export.
+ */
+export function cveCount(row: Pick<RepositoryRow, "cves">, column: CveColumn): number | undefined {
+  const evidence = cveEvidence(row);
+  if (evidence === undefined) {
+    return undefined;
+  }
+  const part = column.part(evidence);
+  return column.severities === undefined ? part.total : severityCount(part, column.severities);
+}
+
+/**
+ * Where a CVE count sorts: the MOST findings first on one ascending click.
+ *
+ * NEGATED, which is `findingOrder`'s rule applied to a number. One click has to open on the repositories a reader
+ * is looking for, and on these columns those are the ones with the most to fix; sorted as it reads, the useful end
+ * of the column would need two clicks.
+ *
+ * An unmeasured repository stays `undefined`, which `sorted` holds back from BOTH ends — the same treatment an
+ * unread hygiene signal and an unobserved figure get. "Which repositories carry the most live criticals" is a
+ * question about the ones somebody scanned, and a repository nobody scanned is not the answer to it either way up.
+ */
+export function cveOrder(count: number | undefined): SortValue {
+  return count === undefined ? undefined : -count;
 }
 
 /**

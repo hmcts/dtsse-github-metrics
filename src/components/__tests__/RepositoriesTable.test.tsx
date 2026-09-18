@@ -347,6 +347,9 @@ describe("RepositoriesTable columns", () => {
       "Security contact",
       "Patching cycle",
       "Maintained",
+      // AFTER THE CRITERIA AND BEFORE THE ATTRIBUTES: the pipeline's own dependency scan is not one of the six
+      // criteria, so a figure the Assurance column ignores must not sit inside the run of columns that explain it.
+      "Unsuppressed Crit CVEs",
       "Production",
       "Assurance"
     ]);
@@ -1255,5 +1258,193 @@ describe("RepositoriesTable hygiene expansion", () => {
 
     expect(announced("Repository")).toBe("ascending");
     expect(order()).toEqual(["bare", "nothing", "scanned"]);
+  });
+});
+
+/**
+ * The CVE columns: the live critical count, the five figures behind it, and the dash that is not a zero.
+ *
+ * THE DASH-VERSUS-ZERO CASES ARE THE POINT OF THIS BLOCK. Only three CNP builders publish a dependency-scan report,
+ * so roughly 1,529 repositories of 1,890 have never been scanned — and a `0` against them would tell a reader that
+ * four fifths of the estate carries no critical CVEs when nothing has looked at it. That is the worst outcome this
+ * feature has available, and it is the one no reader could detect from the page.
+ *
+ * ITS OWN ROWS, on the hygiene block's precedent: these carry `cves`, which no ordering assertion in `ROWS` accounts
+ * for, and the three states have to be separated on one table for the sort cases to mean anything.
+ */
+describe("RepositoriesTable CVE columns", () => {
+  /**
+   * Three rows, one per state, with every severity band separated on the scanned one.
+   *
+   * `scanned` has live criticals, highs, a medium and one finding of unstated severity, plus four suppressed lows —
+   * so a column reading the wrong band or the wrong half of the split reads a different number and fails. `clean`
+   * was scanned and found nothing, which is the earned zero. `unscanned` carries the reason and no figures.
+   */
+  const REPORTED: RepositoryRow[] = [
+    {
+      repository: "scanned",
+      team: "platform",
+      visibility: "public",
+      pushed_at: "2026-09-10T00:00:00Z",
+      cves: {
+        scanned_at: "2026-09-17T02:00:00Z",
+        cves: {
+          all: { total: 11, by_severity: { critical: 2, high: 3, medium: 1, low: 4, unknown: 1 } },
+          live: { total: 7, by_severity: { critical: 2, high: 3, medium: 1, unknown: 1 } },
+          suppressed: { total: 4, by_severity: { low: 4 } },
+          occurrences: 96
+        }
+      }
+    },
+    {
+      repository: "clean",
+      team: "platform",
+      visibility: "public",
+      pushed_at: "2026-09-09T00:00:00Z",
+      cves: {
+        scanned_at: "2026-09-17T02:00:00Z",
+        cves: { all: { total: 0, by_severity: {} }, live: { total: 0, by_severity: {} }, suppressed: { total: 0, by_severity: {} }, occurrences: 0 }
+      }
+    },
+    {
+      repository: "unscanned",
+      team: "platform",
+      visibility: "public",
+      pushed_at: "2026-09-08T00:00:00Z",
+      cves: { detail: "no CVE report has been published for this repository" }
+    }
+  ];
+
+  const AGGREGATE = "Unsuppressed Crit CVEs";
+
+  const PARTS = ["Total", "Crit", "High", "Other", "Suppressed"];
+
+  it("should draw the aggregate alone when the URL says nothing", () => {
+    mount(REPORTED);
+
+    expect(headerNames()).toContain(AGGREGATE);
+    for (const label of PARTS) {
+      expect(headerNames()).not.toContain(label);
+    }
+  });
+
+  it("should draw the five figures between the aggregate and Production when expanded", () => {
+    // BETWEEN, not appended, and the aggregate keeps its place: a reader scanning rightwards meets the figure they
+    // act on and then the position behind it.
+    url("weeks=12&hygiene=true");
+    mount(REPORTED);
+
+    expect(headerNames().slice(headerNames().indexOf(AGGREGATE), headerNames().indexOf("Production") + 1)).toEqual([AGGREGATE, ...PARTS, "Production"]);
+  });
+
+  it("should expand the hygiene checks and the CVE figures on the one toggle", () => {
+    // ONE CONTROL FOR EVERY AGGREGATE. A second toggle would have to be named for its column, and the column's
+    // heading is already on the page beside it.
+    url("weeks=12&hygiene=true");
+    mount(REPORTED);
+
+    expect(headerNames()).toContain("Push protection");
+    expect(headerNames()).toContain("Suppressed");
+  });
+
+  it("should print the live critical count for a repository whose scan ran", () => {
+    mount(REPORTED);
+
+    expect(cellOf("scanned", AGGREGATE)?.textContent).toBe("2");
+  });
+
+  it("should print a ZERO for a repository a scan ran against and found nothing in", () => {
+    // The earned zero, which has to be visibly different from the dash beside it: a scan ran and the answer is none.
+    mount(REPORTED);
+
+    expect(cellOf("clean", AGGREGATE)?.textContent).toBe("0");
+  });
+
+  it("should print a DASH for a repository no scan has run against, never a zero", () => {
+    // THE WORST AVAILABLE MISTAKE. 1,529 repositories of 1,890 are in this state, and a `0` would report every one
+    // of them as clean when nothing has ever looked at it.
+    mount(REPORTED);
+
+    expect(cellOf("unscanned", AGGREGATE)?.textContent).toBe("-");
+    expect(cellOf("unscanned", AGGREGATE)?.textContent).not.toBe("0");
+  });
+
+  it("should print a dash in every figure of the breakdown for an unscanned repository", () => {
+    url("weeks=12&hygiene=true");
+    mount(REPORTED);
+
+    for (const label of PARTS) {
+      expect(cellOf("unscanned", label)?.textContent).toBe("-");
+      // And the scanned repository's own zero in the same column, so the two states are told apart on one page.
+      expect(cellOf("clean", label)?.textContent).toBe("0");
+    }
+  });
+
+  it("should break the count into the unsuppressed bands, the suppressed ones counted beside them", () => {
+    // `Total` is the LIVE total and not `all`, so Crit, High and Other sum to it and a reader adding the row up gets
+    // the right answer. The four suppressed lows are in `Suppressed` and in neither `Total` nor `Other`.
+    url("weeks=12&hygiene=true");
+    mount(REPORTED);
+
+    expect(PARTS.map((label) => cellOf("scanned", label)?.textContent)).toEqual(["7", "2", "3", "2", "4"]);
+  });
+
+  it("should hover the report's own reason on a dash, and hover nothing on a count", () => {
+    // The criteria cells' precedent: a mark a reader cannot explain is worse than no mark. A counted cell has no
+    // reason to give, `CveReport` sending exactly one of the figures and the detail.
+    mount(REPORTED);
+
+    expect(cellOf("unscanned", AGGREGATE)?.getAttribute("title")).toBe("no CVE report has been published for this repository");
+    expect(cellOf("scanned", AGGREGATE)?.getAttribute("title")).toBeNull();
+  });
+
+  it("should draw the figures right-aligned and uncoloured, the number being the finding", () => {
+    // The patching age's treatment: no threshold has been agreed, so a tone here would publish an SLA nobody chose.
+    url("weeks=12&hygiene=true");
+    mount(REPORTED);
+
+    expect(cellOf("scanned", AGGREGATE)?.className).toContain("text-right");
+    expect(cellOf("scanned", AGGREGATE)?.outerHTML).not.toMatch(/emerald|amber|rose|rag-/);
+    expect(cellOf("scanned", "Crit")?.className).toContain("tabular-nums");
+  });
+
+  it("should open on the repositories carrying the most live criticals on one ascending click", () => {
+    mount(REPORTED);
+
+    expect(sortBy(AGGREGATE)).toEqual(["scanned", "clean", "unscanned"]);
+    expect(announced(AGGREGATE)).toBe("ascending");
+  });
+
+  it("should hold an unscanned repository back from both ends when the column is reversed", () => {
+    mount(REPORTED);
+
+    expect(sortBy(AGGREGATE).at(-1)).toBe("unscanned");
+    expect(sortBy(AGGREGATE)).toEqual(["clean", "scanned", "unscanned"]);
+    expect(announced(AGGREGATE)).toBe("descending");
+  });
+
+  it("should sort each figure of the breakdown on its own band", () => {
+    // A column wired to its neighbour would order these the same way, so the two orders differ deliberately:
+    // `scanned` leads on every live band and `clean` leads on nothing.
+    url("weeks=12&hygiene=true");
+    mount(REPORTED);
+
+    expect(sortBy("High")).toEqual(["scanned", "clean", "unscanned"]);
+    expect(sortBy("Suppressed")).toEqual(["scanned", "clean", "unscanned"]);
+    expect(sortBy("Other").at(-1)).toBe("unscanned");
+  });
+
+  it("should keep the column a reader sorted by when the CVE aggregate is expanded", () => {
+    // THE REASON THE EXPANDED COLUMNS ARE BUILT ONCE, asserted on a CVE column rather than on identity alone: the
+    // sort holds the clicked column as an object, so a per-render array would forget it the moment the reader
+    // expanded the table.
+    const view = mount(REPORTED);
+    sortBy(AGGREGATE);
+
+    url("weeks=12&hygiene=true");
+    view.rerender(<RepositoriesTable rows={REPORTED} weeks={12} />);
+
+    expect(announced(AGGREGATE)).toBe("ascending");
+    expect(order()).toEqual(["scanned", "clean", "unscanned"]);
   });
 });
