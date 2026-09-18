@@ -69,14 +69,14 @@ function row(fields: Partial<RepositoryRow> & { repository: string }): Repositor
  * repositories the list names, one it was read and does not name, and one whose list could not be
  * read at all — the row that has to be left out rather than guessed either way.
  *
- * THE `pushed_at` VALUES DELIBERATELY CROSS THE ALPHABETICAL ORDER, which is what makes the default-sort cases
- * able to fail. `hmcts/web` is the most recently pushed and sorts LAST by `(team, repository)`; `hmcts/api` is
- * the least recent of the three that have one and sorted second. A fixture where the two orders agreed would
- * assert the new default while the old one still passed — the exact failure the brief warned about, and one that
- * was found in an earlier attempt at this change.
+ * THE `default_branch_committed_at` VALUES DELIBERATELY CROSS THE ALPHABETICAL ORDER, which is what makes the
+ * default-sort cases able to fail. `hmcts/web` has the newest default branch and sorts LAST by
+ * `(team, repository)`; `hmcts/api` is the oldest of the three that have one and sorted second. A fixture where
+ * the two orders agreed would assert the new default while the old one still passed — the exact failure the brief
+ * warned about, and one that was found in an earlier attempt at this change.
  *
- * `hmcts/legacy` carries NO `pushed_at` at all, so absence is exercised rather than assumed: it is the row the
- * order has to hold back from both ends.
+ * `hmcts/legacy` carries NO `default_branch_committed_at` at all, so absence is exercised rather than assumed: it
+ * is the row the order has to hold back from both ends.
  */
 const ROWS: RepositoryRow[] = [
   row({
@@ -90,7 +90,7 @@ const ROWS: RepositoryRow[] = [
     sonar_coverage: 12.5,
     sonar_security_issues: 4,
     production: true,
-    pushed_at: "2026-09-10T00:00:00Z"
+    default_branch_committed_at: "2026-09-10T00:00:00Z"
   }),
   row({
     repository: "hmcts/api",
@@ -103,7 +103,7 @@ const ROWS: RepositoryRow[] = [
     sonar_coverage: 95,
     sonar_security_issues: 0,
     production: true,
-    pushed_at: "2026-07-01T00:00:00Z"
+    default_branch_committed_at: "2026-07-01T00:00:00Z"
   }),
   row({
     repository: "hmcts/tools",
@@ -115,7 +115,7 @@ const ROWS: RepositoryRow[] = [
     sonar_coverage: 85,
     sonar_security_rating: { value: 4 },
     production: false,
-    pushed_at: "2026-08-15T00:00:00Z"
+    default_branch_committed_at: "2026-08-15T00:00:00Z"
   }),
   row({ repository: "hmcts/legacy", team: "platform", detail: "no window was collected" })
 ];
@@ -236,16 +236,16 @@ describe("uncollectedCount", () => {
 });
 
 describe("orderRepositories", () => {
-  it("opens on the most recently pushed, which is what a reader arriving is asking", () => {
+  it("should open on the newest default-branch commit, which is what a reader arriving is asking", () => {
     // THE ORDER THIS REPLACED was `(team, repository)`, which put these rows web, api, legacy, tools. Every
     // instant here crosses that order, so this case cannot pass under the old rule.
     expect(orderRepositories(ROWS).map((entry) => entry.repository)).toEqual(["hmcts/web", "hmcts/tools", "hmcts/api", "hmcts/legacy"]);
   });
 
-  it("places a repository with no last push last, never at the top as though it were the freshest", () => {
-    // GitHub omits `pushedAt` for a repository never pushed to, and the tempting fix is to default it. Defaulted
-    // to NOW it would head the list, which is the direction that misleads: a reader opening the page would meet
-    // the repositories nobody has ever pushed to under a heading saying "most recently pushed".
+  it("should place a repository with no default-branch date last, never at the top as though it were freshest", () => {
+    // GitHub omits the default branch ref for a repository with no commits, and the tempting fix is to default it
+    // — to now, or to the any-branch `pushedAt`. Defaulted to NOW it would head the list, which is the direction
+    // that misleads: a reader opening the page would meet the repositories with no default branch at all first.
     //
     // Worth being precise about what this case can and cannot catch, since a weaker version of it passed under
     // both rules. Defaulting to the EPOCH is indistinguishable here — 1970 is older than anything real, so a
@@ -256,12 +256,13 @@ describe("orderRepositories", () => {
         .map((entry) => entry.repository)
         .at(-1)
     ).toBe("hmcts/legacy");
-    expect(orderRepositories([row({ repository: "hmcts/none" }), row({ repository: "hmcts/pushed", pushed_at: "2014-01-01T00:00:00Z" })])[0]?.repository).toBe(
-      "hmcts/pushed"
-    );
+    expect(
+      orderRepositories([row({ repository: "hmcts/none" }), row({ repository: "hmcts/dated", default_branch_committed_at: "2014-01-01T00:00:00Z" })])[0]
+        ?.repository
+    ).toBe("hmcts/dated");
   });
 
-  it("orders two repositories with no last push by name, so the tail is stable too", () => {
+  it("should order two repositories with no default-branch date by name, so the tail is stable too", () => {
     // The absent rows are a set, not a heap: without an order among them, two renders of one estate could differ
     // in the tail — the same diffability rule the tiebreak above exists for, applied to the other bucket.
     const rows = [row({ repository: "hmcts/zebra" }), row({ repository: "hmcts/alpha" })];
@@ -270,12 +271,12 @@ describe("orderRepositories", () => {
     expect(orderRepositories([...rows].reverse()).map((entry) => entry.repository)).toEqual(["hmcts/alpha", "hmcts/zebra"]);
   });
 
-  it("holds a repository with no last push back from BOTH ends when the column is clicked", () => {
+  it("should hold a repository with no default-branch date back from BOTH ends when the column is clicked", () => {
     // WHERE THE TWO RULES ACTUALLY PART COMPANY, and so where a default would be caught. `sorted` holds
-    // `undefined` back from either direction, so a repository never pushed to is not the answer to "which was
-    // pushed longest ago" any more than to "which was pushed most recently". An epoch default would put it FIRST
-    // here; a `now` default would put it first the other way round.
-    const read = (entry: RepositoryRow) => entry.pushed_at;
+    // `undefined` back from either direction, so a repository with no default branch is not the answer to "whose
+    // default branch is stalest" any more than to "whose is freshest". An epoch default would put it FIRST here; a
+    // `now` default would put it first the other way round.
+    const read = (entry: RepositoryRow) => entry.default_branch_committed_at;
 
     expect(
       sorted(ROWS, read, "ascending")
@@ -294,7 +295,7 @@ describe("orderRepositories", () => {
     // repositories at once. "Two reports of one window must not differ" is a rule stated in three other places
     // in this codebase, and without the tiebreak the two rows could swap between renders.
     const same = "2026-09-01T12:00:00Z";
-    const rows = [row({ repository: "hmcts/zebra", pushed_at: same }), row({ repository: "hmcts/alpha", pushed_at: same })];
+    const rows = [row({ repository: "hmcts/zebra", default_branch_committed_at: same }), row({ repository: "hmcts/alpha", default_branch_committed_at: same })];
 
     expect(orderRepositories(rows).map((entry) => entry.repository)).toEqual(["hmcts/alpha", "hmcts/zebra"]);
     expect(orderRepositories([...rows].reverse()).map((entry) => entry.repository)).toEqual(["hmcts/alpha", "hmcts/zebra"]);
@@ -303,7 +304,7 @@ describe("orderRepositories", () => {
   it("places a shared repository once, at one position", () => {
     // The old order's stated decision, PRESERVED: a row appears once. It no longer appears under a heading, but
     // placing it under each of its owners would still print it twice in a table whose count the reader compares.
-    const shared = row({ repository: "hmcts/shared", team: "delivery", teams: ["delivery", "platform"], pushed_at: "2026-09-12T00:00:00Z" });
+    const shared = row({ repository: "hmcts/shared", team: "delivery", teams: ["delivery", "platform"], default_branch_committed_at: "2026-09-12T00:00:00Z" });
 
     expect(orderRepositories([...ROWS, shared]).map((entry) => entry.repository)).toEqual([
       "hmcts/shared",

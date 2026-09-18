@@ -27,7 +27,7 @@ import { StorageError } from "./storage-error.ts";
  * The transaction handle Prisma hands an interactive `$transaction` callback.
  *
  * Derived from the client rather than named, because Prisma generates the type and it carries the `$executeRaw`
- * the bulk `pushedAt` update needs — which `Omit`ing it off `PrismaClient` by hand would drop.
+ * the bulk date update needs — which `Omit`ing it off `PrismaClient` by hand would drop.
  */
 type GraphTransaction = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -477,15 +477,17 @@ export async function recordOrgTeamRepositories(
 /**
  * Records every repository the organisation holds, which is what makes "unowned" answerable at all.
  *
- * `pushedAt` IS STORED BUT NOT VERSIONED, and the distinction is the whole point. It moves on every push, so
- * putting it in `digest` would supersede and re-insert every active repository in the estate on every run —
- * turning a change history into the snapshot series this table exists not to be. So it is written on insert
- * AND updated in place on the unchanged and changed paths alike, exactly as `lastObservedAt` is: a push moves
- * the column and never ends the row.
+ * THE TWO DATES ARE STORED BUT NOT VERSIONED, and the distinction is the whole point. Each moves on every push,
+ * so putting either in `digest` would supersede and re-insert every active repository in the estate on every run
+ * — turning a change history into the snapshot series this table exists not to be. So both are written on insert
+ * AND updated in place on the unchanged and changed paths alike, exactly as `lastObservedAt` is: a push moves the
+ * columns and never ends the row.
  *
- * It is stored at all because the cohort's activity window is the only thing that can answer "which of 1,872
- * repositories is anybody still working in", and it has to answer that BEFORE deciding what to collect — so it
- * cannot read `repository_state`, which only exists for repositories already in the cohort.
+ * `pushedAt` is stored at all because the cohort's activity window is the only thing that can answer "which of
+ * 1,872 repositories is anybody still working in", and it has to answer that BEFORE deciding what to collect — so
+ * it cannot read `repository_state`, which only exists for repositories already in the cohort.
+ * `defaultBranchCommittedAt` is stored beside it because it is a DIFFERENT answer — the tip of the default branch
+ * rather than of any ref — and it is the one the repositories list prints.
  */
 export async function recordOrgRepositories(
   organization: string,
@@ -523,6 +525,7 @@ export async function recordOrgRepositories(
               archived: candidate.fact.archived,
               visibility: candidate.fact.visibility,
               pushedAt: candidate.fact.pushedAt ?? null,
+              defaultBranchCommittedAt: candidate.fact.defaultBranchCommittedAt ?? null,
               payload: payloadOf({ isFork: candidate.fact.isFork, defaultBranch: candidate.fact.defaultBranch }),
               observedAt,
               lastObservedAt: observedAt,
@@ -539,7 +542,7 @@ export async function recordOrgRepositories(
         observedAt,
         plan.toTouch.map((key) => ({ repository: key.repository }))
       );
-      await syncPushedAt(tx, organization, facts);
+      await syncCollectedDates(tx, organization, facts);
       return plan.summary;
     });
   } catch (error) {
@@ -548,31 +551,42 @@ export async function recordOrgRepositories(
 }
 
 /**
- * Brings every live row's `pushedAt` up to what this run observed, in ONE statement.
+ * Brings every live row's two non-versioned dates up to what this run observed, in ONE statement.
  *
  * Raw SQL for the reason `prune.ts` gives for its own: the query API cannot express it. `updateMany` sets one
- * value across many rows, and this is many values across many rows — a different `pushedAt` per repository —
+ * value across many rows, and this is many values across many rows — a different pair of dates per repository —
  * so through the query API it is one round trip each. At 1,872 repositories, measured at 1.3 ms a round trip,
  * that is a needless two-and-a-half seconds inside a transaction holding the whole graph.
  *
- * Run over EVERY fact rather than only the touched ones. The rows just inserted already carry the right value,
- * so re-setting it is a no-op; scoping it to `plan.toTouch` would save nothing and add a second thing to keep
+ * BOTH DATES IN THE SAME STATEMENT, and adding the second cost no round trip at all: it is another array into
+ * the same `unnest`. A second function would have doubled the transaction's statements for two columns that are
+ * written on identical terms — see `recordOrgRepositories` for why neither is versioned.
+ *
+ * Run over EVERY fact rather than only the touched ones. The rows just inserted already carry the right values,
+ * so re-setting them is a no-op; scoping it to `plan.toTouch` would save nothing and add a second thing to keep
  * in step with the plan.
  *
- * `unnest` pairs the two arrays into rows, which is what keeps the parameter count fixed at three however
- * large the estate grows — a `VALUES` list would put one placeholder per repository into the statement text
- * and eventually meet PostgreSQL's parameter limit.
+ * NULL IS WRITTEN AS NULL and never coalesced to the other date. An absent default branch — an empty repository
+ * has none — must stay absent, because the column promises the default branch and `pushed_at` is not one.
+ *
+ * `unnest` pairs the arrays into rows, which is what keeps the parameter count fixed however large the estate
+ * grows — a `VALUES` list would put one placeholder per repository into the statement text and eventually meet
+ * PostgreSQL's parameter limit.
  */
-async function syncPushedAt(tx: GraphTransaction, organization: string, facts: readonly RepositoryFact[]): Promise<void> {
+async function syncCollectedDates(tx: GraphTransaction, organization: string, facts: readonly RepositoryFact[]): Promise<void> {
   if (facts.length === 0) {
     return;
   }
   const names = facts.map((fact) => fact.name);
   const pushed = facts.map((fact) => fact.pushedAt ?? null);
+  const committed = facts.map((fact) => fact.defaultBranchCommittedAt ?? null);
   await tx.$executeRaw`
     UPDATE org_repositories AS r
-    SET pushed_at = v.pushed_at
-    FROM (SELECT * FROM unnest(${names}::text[], ${pushed}::timestamptz[]) AS t(repository, pushed_at)) AS v
+    SET pushed_at = v.pushed_at, default_branch_committed_at = v.default_branch_committed_at
+    FROM (
+      SELECT * FROM unnest(${names}::text[], ${pushed}::timestamptz[], ${committed}::timestamptz[])
+        AS t(repository, pushed_at, default_branch_committed_at)
+    ) AS v
     WHERE r.organization = ${organization} AND r.repository = v.repository AND r.superseded_at IS NULL
   `;
 }
@@ -766,6 +780,10 @@ export async function liveOrgRepositories(organization: string): Promise<LiveOrg
       archived: row.archived,
       visibility: row.visibility,
       ...(row.pushedAt === null ? {} : { pushedAt: row.pushedAt }),
+      // NULL becomes ABSENT rather than a date. It is NULL both for an empty repository and for every row
+      // collected before the column existed, and the list renders absence as a dash — which is the honest answer
+      // in both cases and the one thing a fallback to `pushedAt` here would destroy.
+      ...(row.defaultBranchCommittedAt === null ? {} : { defaultBranchCommittedAt: row.defaultBranchCommittedAt }),
       payload: row.payload,
       observedAt: row.observedAt,
       lastObservedAt: row.lastObservedAt
@@ -854,8 +872,18 @@ export interface LiveOrgRepository extends LiveInterval {
   repository: string;
   archived: boolean;
   visibility: string;
-  /** Absent where GitHub named no last push, which is not the same answer as a very old one. */
+  /**
+   * The last push to ANY ref. Absent where GitHub named no last push, which is not the same answer as a very old
+   * one. What the cohort decides from; see `CohortEntry.pushedAt`.
+   */
   pushedAt?: Date;
+  /**
+   * The last commit on the DEFAULT BRANCH's tip. What the repositories list prints.
+   *
+   * Absent where GitHub named no default branch ref, and absent on every row collected before the column
+   * existed. Both are unmeasured, and neither is the any-branch push date.
+   */
+  defaultBranchCommittedAt?: Date;
   payload: unknown;
 }
 

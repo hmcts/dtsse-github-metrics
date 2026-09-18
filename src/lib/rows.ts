@@ -102,7 +102,7 @@ export function uncollectedCount(rows: readonly Pick<RepositoryRow, "detail">[])
 }
 
 /**
- * The default order: MOST RECENTLY PUSHED FIRST.
+ * The default order: MOST RECENTLY COMMITTED ON THE DEFAULT BRANCH FIRST.
  *
  * This replaced an order by `(team, repository)`, whose reasoning was that a reader scanning the list reads one
  * team's repositories together. At 1,880 rows that is not what a reader arriving at the page is doing: they are
@@ -110,13 +110,18 @@ export function uncollectedCount(rows: readonly Pick<RepositoryRow, "detail">[])
  * repositories are still readable together — the term filters on the team name and the Team header still sorts —
  * so what changed is only which question the page opens on.
  *
- * A ROW WITH NO `pushed_at` SORTS LAST, both here and under a header click. GitHub omits it for a repository never
- * pushed to, and its absence is meaningful: it must not be defaulted to the epoch, which would put every empty
- * repository at the bottom as though it were the stalest, nor to now, which would put it at the top. `sorted`
- * already holds `undefined` back from both ends and this follows that precedent explicitly.
+ * IT ORDERS ON THE DEFAULT BRANCH'S DATE AND NOT ON GITHUB'S `pushedAt`, which is what the page opened on until
+ * this changed. `pushedAt` moves on a push to ANY ref, so an estate ordered by it led with repositories whose only
+ * recent activity was an unmerged feature branch — which is not "what has been happening" for a reader asking what
+ * is being released. See `RepositoryRow.default_branch_committed_at`.
  *
- * THE TIEBREAK IS THE REPOSITORY NAME AND IT IS LOAD-BEARING. Two repositories pushed at the same instant is not
- * hypothetical — the instant has second resolution and a `for_each` Terraform apply touches many at once — and
+ * A ROW WITH NO DATE SORTS LAST, both here and under a header click. GitHub omits the default branch ref for a
+ * repository with no commits, and its absence is meaningful: it must not be defaulted to the epoch, which would put
+ * every empty repository at the bottom as though it were the stalest, nor to now, which would put it at the top.
+ * `sorted` already holds `undefined` back from both ends and this follows that precedent explicitly.
+ *
+ * THE TIEBREAK IS THE REPOSITORY NAME AND IT IS LOAD-BEARING. Two repositories committed to at the same instant is
+ * not hypothetical — the instant has second resolution and a `for_each` Terraform apply touches many at once — and
  * "two reports of one window must not differ" is a rule this codebase states in three other places. Without it,
  * two renders of one estate could order those rows differently.
  *
@@ -124,12 +129,14 @@ export function uncollectedCount(rows: readonly Pick<RepositoryRow, "detail">[])
  * at one position. It just no longer appears under a heading.
  */
 export function orderRepositories(rows: readonly RepositoryRow[]): RepositoryRow[] {
-  const pushed = rows.filter((row) => row.pushed_at !== undefined);
-  const never = rows.filter((row) => row.pushed_at === undefined);
+  const dated = rows.filter((row) => row.default_branch_committed_at !== undefined);
+  const undated = rows.filter((row) => row.default_branch_committed_at === undefined);
   // Descending on the instant, ascending on the name: `compare` orders text and instants alike, and an ISO-8601
   // string sorts lexicographically in instant order, which is why the contract carries these as strings.
-  const ordered = [...pushed].sort((left, right) => -compare(left.pushed_at, right.pushed_at) || compare(left.repository, right.repository));
-  return [...ordered, ...[...never].sort((left, right) => compare(left.repository, right.repository))];
+  const ordered = [...dated].sort(
+    (left, right) => -compare(left.default_branch_committed_at, right.default_branch_committed_at) || compare(left.repository, right.repository)
+  );
+  return [...ordered, ...[...undated].sort((left, right) => compare(left.repository, right.repository))];
 }
 
 /**

@@ -62,13 +62,21 @@ export const teamRepositoriesSchema = z.object({
   organization: z.object({ team: z.object({ repositories: teamRepositoryConnection }).nullish() }).nullish()
 });
 
+/**
+ * One repository node, carrying BOTH dates GitHub can answer "how recent is this" with.
+ *
+ * `pushedAt` is the push to any ref; `defaultBranchRef.target.committedDate` is the tip of the default branch.
+ * Every level down to the date is nullish and each absence is ordinary: an empty repository has no
+ * `defaultBranchRef` at all, and `target` is a `GitObject` union whose non-`Commit` members carry no
+ * `committedDate`, so the narrowed selection yields an object without the field rather than an error.
+ */
 const repositoryNode = z.object({
   name: z.string(),
   isArchived: z.boolean().nullish(),
   isFork: z.boolean().nullish(),
   visibility: z.string().nullish(),
   pushedAt: instant.nullish(),
-  defaultBranchRef: z.object({ name: z.string().nullish() }).nullish()
+  defaultBranchRef: z.object({ name: z.string().nullish(), target: z.object({ committedDate: instant.nullish() }).nullish() }).nullish()
 });
 
 export const orgRepositoriesSchema = z.object({

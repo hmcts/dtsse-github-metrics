@@ -1360,6 +1360,39 @@ describe("the owner a row is reported under", () => {
     expect(rows[0]?.owner_kind).toBe("person");
   });
 
+  it("should report the default branch's commit date off the column, and never the any-branch push beside it", async () => {
+    // THE DEFECT, END TO END THROUGH POSTGRES. The two columns disagree by three weeks — `pip-account-management`'s
+    // real shape — so a report reading the wrong one names the wrong month rather than the same value twice.
+    await prisma.orgRepository.create({
+      data: {
+        organization: ORGANIZATION,
+        repository: "pip-account-management",
+        archived: false,
+        visibility: "PUBLIC",
+        pushedAt: new Date(Date.UTC(2026, 8, 18, 14, 7, 35)),
+        defaultBranchCommittedAt: new Date(Date.UTC(2026, 7, 26, 15, 49, 40)),
+        payload: { defaultBranch: "master" },
+        observedAt: new Date(Date.UTC(2026, 7, 15)),
+        lastObservedAt: new Date(Date.UTC(2026, 7, 15)),
+        digest: "pip-account-management-digest"
+      }
+    });
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as { default_branch_committed_at?: string }[];
+
+    expect(rows[0]?.default_branch_committed_at).toBe("2026-08-26T15:49:40.000Z");
+  });
+
+  it("should leave the default branch's date off a row whose column is null, which every pre-migration row is", async () => {
+    // The column is NULL on every row collected before it existed, and the page renders absence as a dash. A
+    // fallback to `pushed_at` here would make an unmeasured repository read as pushed to today.
+    await graphRepository("uncollected-date", new Date(Date.UTC(2026, 8, 18)));
+
+    const rows = (await repositoryRows(CONFIGURATION, 26, REFERENCE)) as { default_branch_committed_at?: string }[];
+
+    expect(rows[0]?.default_branch_committed_at).toBeUndefined();
+  });
+
   it("should report a repository with no ownership row at all as unowned rather than as somebody's", async () => {
     await prisma.orgRepository.create({
       data: {

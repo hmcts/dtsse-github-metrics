@@ -39,7 +39,11 @@ function entry(overrides: Partial<CohortEntry> = {}): CohortEntry {
     ownerKind: OwnerKind.Team,
     archived: false,
     visibility: "public",
-    pushedAt: new Date(Date.UTC(2026, 7, 20, 9, 30)),
+    // BOTH DATES, AND DELIBERATELY DIFFERENT ONES. `pushedAt` is the any-branch push and must not reach the row;
+    // `defaultBranchCommittedAt` is what the row reports. A fixture where the two agreed would let a reader of
+    // either field pass.
+    pushedAt: new Date(Date.UTC(2026, 8, 18, 14, 7)),
+    defaultBranchCommittedAt: new Date(Date.UTC(2026, 7, 20, 9, 30)),
     behaviourCollectable: true,
     unmaintained: false,
     ...overrides
@@ -100,17 +104,29 @@ describe("what a row says about the repository itself", () => {
     expect(person.owner_kind).toBe("person");
   });
 
-  it("should report the push instant as an ISO string and never as a Date", () => {
+  it("should report the default branch's commit instant as an ISO string and never as a Date", () => {
     // `SortValue` has no `Date` case, so a raw one would sort alphabetically by weekday name.
     const row = repositoryRow(POLICY, entry(), collected(), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN);
 
-    expect(row.pushed_at).toBe("2026-08-20T09:30:00.000Z");
+    expect(row.default_branch_committed_at).toBe("2026-08-20T09:30:00.000Z");
   });
 
-  it("should leave the push instant absent when the graph holds none", () => {
-    const row = repositoryRow(POLICY, entry({ pushedAt: undefined }), collected(), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN);
+  it("should report the default branch's date and never the any-branch push, which the cohort keeps to itself", () => {
+    // THE DEFECT THIS FIELD EXISTS FOR. `pip-account-management` had a `pushedAt` of 2026-09-18 across 66 branches
+    // against a `master` tip of 2026-08-26, and read on the list as pushed to today. The entry carries both dates,
+    // so a row wired to the wrong one reports the wrong month rather than the same value twice.
+    const row = repositoryRow(POLICY, entry(), collected(), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN);
 
-    expect(row.pushed_at).toBeUndefined();
+    expect(row.default_branch_committed_at).not.toBe("2026-09-18T14:07:00.000Z");
+  });
+
+  it("should leave the default branch's date absent when the graph holds none", () => {
+    // ABSENT STAYS ABSENT rather than falling back to `pushedAt`, which this entry still has. GitHub omits the
+    // default branch ref for an empty repository, and a row collected before the column existed holds nothing
+    // either — so the page must render a dash and never the any-branch date.
+    const row = repositoryRow(POLICY, entry({ defaultBranchCommittedAt: undefined }), collected(), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN);
+
+    expect(row.default_branch_committed_at).toBeUndefined();
   });
 
   it("should fold the visibility to the case the contract compares by", () => {
@@ -129,11 +145,11 @@ describe("what a row says about the repository itself", () => {
 
   it("should report what a repository is on the branch where nothing was collected too", () => {
     // These are facts the GRAPH holds, so suppressing them would report a repository nobody walked as one whose
-    // visibility and push date are unknown — and `pushed_at` is the table's default sort.
+    // visibility and dates are unknown — and `default_branch_committed_at` is the table's default sort.
     const row = repositoryRow(POLICY, entry(), undefined, NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN);
 
     expect(row).toMatchObject({ owner_kind: "team", visibility: "public", archived: false, unmaintained: false });
-    expect(row.pushed_at).toBe("2026-08-20T09:30:00.000Z");
+    expect(row.default_branch_committed_at).toBe("2026-08-20T09:30:00.000Z");
     expect(row.assurance).toBeDefined();
   });
 

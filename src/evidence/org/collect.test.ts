@@ -83,8 +83,10 @@ function repositoryNode(overrides: Record<string, unknown> = {}) {
     isArchived: false,
     isFork: false,
     visibility: "PUBLIC",
-    pushedAt: "2026-08-30T09:00:00Z",
-    defaultBranchRef: { name: "main" },
+    // THE TWO DATES DISAGREE, as they do on the estate: `pushedAt` moves on a push to any ref and the default
+    // branch's tip does not. A fixture where they matched would let a fact wired to the wrong one pass.
+    pushedAt: "2026-09-18T14:07:00Z",
+    defaultBranchRef: { name: "main", target: { committedDate: "2026-08-30T09:00:00Z" } },
     ...overrides
   };
 }
@@ -145,6 +147,13 @@ describe("documents", () => {
     expect(orgRepositoriesQuery()).not.toContain("repositoryTopics");
     expect(orgRepositoriesQuery()).not.toContain("object(expression");
     expect(orgRepositoriesQuery()).not.toContain("collaborators");
+  });
+
+  it("should ask the repository walk for the default branch's commit date as well as the any-branch push", () => {
+    // BOTH, because they answer different questions and the list needs the branch one. `target` is a `GitObject`,
+    // so the date only resolves through the `... on Commit` narrowing — dropping that silently returns nothing.
+    expect(orgRepositoriesQuery()).toContain("pushedAt");
+    expect(orgRepositoriesQuery()).toContain("... on Commit { committedDate }");
   });
 
   it("should carry repository names as variables and aliases, never as document text", () => {
@@ -421,12 +430,26 @@ describe("collectOrgRepositories", () => {
     const { fetch } = replying(graphql(repositories([repositoryNode()])));
 
     expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([
-      { name: "pcs-api", archived: false, isFork: false, visibility: "PUBLIC", defaultBranch: "main", pushedAt: new Date("2026-08-30T09:00:00Z") }
+      {
+        name: "pcs-api",
+        archived: false,
+        isFork: false,
+        visibility: "PUBLIC",
+        defaultBranch: "main",
+        pushedAt: new Date("2026-09-18T14:07:00Z"),
+        defaultBranchCommittedAt: new Date("2026-08-30T09:00:00Z")
+      }
     ]);
   });
 
   it("should refuse a body carrying an instant it cannot read, rather than storing a broken date", async () => {
     const { fetch } = replying(graphql(repositories([repositoryNode({ pushedAt: "the day before yesterday" })])));
+
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([]);
+  });
+
+  it("should refuse a default-branch commit date it cannot read, on the same rule as the push instant", async () => {
+    const { fetch } = replying(graphql(repositories([repositoryNode({ defaultBranchRef: { name: "main", target: { committedDate: "last Thursday" } } })])));
 
     expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([]);
   });
@@ -437,6 +460,25 @@ describe("collectOrgRepositories", () => {
     );
 
     expect((await collectOrgRepositories(client(fetch), "hmcts")).facts).toEqual([{ name: "empty-repo", archived: false, isFork: false, visibility: "" }]);
+  });
+
+  it("should leave the default-branch date absent where GitHub named no default branch, never falling back to the push", async () => {
+    // An empty repository has no default branch ref. Carrying `pushedAt` into the field would report the any-branch
+    // date under a name promising the default branch, which is the conflation the field was split out to end.
+    const { fetch } = replying(graphql(repositories([repositoryNode({ defaultBranchRef: null })])));
+
+    const [fact] = (await collectOrgRepositories(client(fetch), "hmcts")).facts;
+
+    expect(fact?.pushedAt).toEqual(new Date("2026-09-18T14:07:00Z"));
+    expect(fact).not.toHaveProperty("defaultBranchCommittedAt");
+  });
+
+  it("should leave the default-branch date absent where the ref names a target with no commit date", async () => {
+    // `target` is a `GitObject` union, so a narrowed `... on Commit` selection against a non-commit yields an object
+    // with no `committedDate` rather than an error.
+    const { fetch } = replying(graphql(repositories([repositoryNode({ defaultBranchRef: { name: "main", target: null } })])));
+
+    expect((await collectOrgRepositories(client(fetch), "hmcts")).facts[0]).not.toHaveProperty("defaultBranchCommittedAt");
   });
 
   it("should walk every page", async () => {

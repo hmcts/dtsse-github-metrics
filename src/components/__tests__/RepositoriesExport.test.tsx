@@ -29,10 +29,10 @@ vi.mock("next/navigation", () => ({
 
 /** Three public repositories under two teams, plus one private and one internal for the visibility toggles. */
 const ROWS: RepositoryRow[] = [
-  { repository: "pcs-api", team: "dtsse", visibility: "public", pushed_at: "2026-09-10T00:00:00Z", production: true },
-  { repository: "pcs-frontend", team: "dtsse", visibility: "public", pushed_at: "2026-09-09T00:00:00Z" },
-  { repository: "civil-service", team: "civil", visibility: "public", pushed_at: "2026-09-08T00:00:00Z" },
-  { repository: "closed-service", team: "civil", visibility: "private", pushed_at: "2026-09-07T00:00:00Z" }
+  { repository: "pcs-api", team: "dtsse", visibility: "public", default_branch_committed_at: "2026-09-10T00:00:00Z", production: true },
+  { repository: "pcs-frontend", team: "dtsse", visibility: "public", default_branch_committed_at: "2026-09-09T00:00:00Z" },
+  { repository: "civil-service", team: "civil", visibility: "public", default_branch_committed_at: "2026-09-08T00:00:00Z" },
+  { repository: "closed-service", team: "civil", visibility: "private", default_branch_committed_at: "2026-09-07T00:00:00Z" }
 ];
 
 const CONTRIBUTORS: Record<string, Contributor[]> = {

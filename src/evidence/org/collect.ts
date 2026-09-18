@@ -340,7 +340,11 @@ export async function collectOrgRepositories(client: GitHubClient, organization:
         isFork: node.isFork ?? false,
         visibility: node.visibility ?? "",
         ...(node.defaultBranchRef?.name == null ? {} : { defaultBranch: node.defaultBranchRef.name }),
-        ...(node.pushedAt == null ? {} : { pushedAt: node.pushedAt })
+        ...(node.pushedAt == null ? {} : { pushedAt: node.pushedAt }),
+        // ABSENT STAYS ABSENT rather than falling back to `pushedAt`. GitHub omits the default branch ref for an
+        // empty repository, and reporting the any-branch push date under a field that promises the default branch
+        // is the confusion this field exists to end — see `RepositoryFact.defaultBranchCommittedAt`.
+        ...(node.defaultBranchRef?.target?.committedDate == null ? {} : { defaultBranchCommittedAt: node.defaultBranchRef.target.committedDate })
       });
     }
 

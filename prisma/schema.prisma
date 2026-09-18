@@ -418,28 +418,46 @@ model OrgTeamRepository {
 /// without them "how many does nobody own" has no numerator to subtract from.
 ///
 /// `archived` and `visibility` are columns because they QUALIFY THE FINDING rather than decorate it: an
-/// archived unowned repository is housekeeping, and a live public one is not. `is_fork`, the default
-/// branch and `pushed_at` stay in the payload.
+/// archived unowned repository is housekeeping, and a live public one is not. `is_fork` and the default
+/// branch NAME stay in the payload; the two dates are columns, for the reasons each carries below.
 model OrgRepository {
-  organization   String
-  repository     String
-  archived       Boolean
-  visibility     String
-  /// When the repository was last pushed to. CURRENT STATE, NOT A VERSIONED FACT — see below.
+  organization             String
+  repository               String
+  archived                 Boolean
+  visibility               String
+  /// When the repository was last pushed to, ON ANY REF. CURRENT STATE, NOT A VERSIONED FACT — see below.
   ///
   /// Stored as a column and deliberately kept OUT of `digest`, which is what lets the cohort's activity
   /// window read it without the cost the writer's comment warns about: it moves on every push, so versioning
   /// on it would supersede and re-insert every active repository in the estate on every run. Updated in place
   /// beside `last_observed_at` instead, so a push changes this row rather than ending it and opening another.
   ///
+  /// WHAT THE COHORT DECIDES FROM and not what the repositories list prints — a push to a feature branch moves
+  /// it, so it answers "is anybody working in here" rather than "how current is the default branch". The column
+  /// below answers that one.
+  ///
   /// Nullable because GitHub omits it for a repository that has never been pushed to, and an absent last push
   /// is not the same answer as a very old one.
-  pushedAt       DateTime? @map("pushed_at") @db.Timestamptz(6)
-  payload        Json      @db.JsonB
-  observedAt     DateTime  @map("observed_at") @db.Timestamptz(6)
-  lastObservedAt DateTime  @map("last_observed_at") @db.Timestamptz(6)
-  supersededAt   DateTime? @map("superseded_at") @db.Timestamptz(6)
-  digest         String
+  pushedAt                 DateTime? @map("pushed_at") @db.Timestamptz(6)
+  /// When the tip of the DEFAULT BRANCH was last committed to. CURRENT STATE, NOT A VERSIONED FACT.
+  ///
+  /// A SECOND DATE BECAUSE THERE ARE TWO QUESTIONS, and conflating them is the defect this column was added
+  /// for: `pushed_at` moves on a push to any ref, so a repository with one busy feature branch reads as pushed
+  /// to today while its default branch has not moved in a month. This column is what the repositories list
+  /// prints. Neither is the other's fallback, which is why they are not one column with a changed meaning.
+  ///
+  /// Out of `digest` and updated in place for `pushed_at`'s reason exactly — it moves on every merge to the
+  /// default branch, and versioning it would write a row per active repository per run.
+  ///
+  /// Nullable because GitHub omits the default branch ref for an empty repository, and because every row
+  /// collected before this column existed carries NULL until the next `collect-org` run. Readers must render
+  /// both as unmeasured rather than as a date.
+  defaultBranchCommittedAt DateTime? @map("default_branch_committed_at") @db.Timestamptz(6)
+  payload                  Json      @db.JsonB
+  observedAt               DateTime  @map("observed_at") @db.Timestamptz(6)
+  lastObservedAt           DateTime  @map("last_observed_at") @db.Timestamptz(6)
+  supersededAt             DateTime? @map("superseded_at") @db.Timestamptz(6)
+  digest                   String
 
   @@id([organization, repository, observedAt])
   @@map("org_repositories")

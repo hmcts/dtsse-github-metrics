@@ -69,7 +69,9 @@ export function repositoryExportHeadings(expanded = false): string[] {
     "Team contributors",
     "Repository",
     "Detail",
-    "Last pushed",
+    // THE TABLE'S HEADING VERBATIM, branch qualifier included. A file read away from the page has no hover to
+    // explain it, so a bare "Last pushed" three weeks behind GitHub's own would be read as wrong.
+    "Default branch pushed",
     "Visibility",
     ...ASSURANCE_CRITERIA.flatMap((criterion) =>
       criterion === HYGIENE_CRITERION && expanded ? [ASSURANCE_LABEL[criterion], ...HYGIENE_CHECKS.map((check) => check.label)] : [ASSURANCE_LABEL[criterion]]
@@ -99,7 +101,7 @@ function repositoryExportRow(row: RepositoryRow, contributors: readonly Contribu
     teamContributorCell(row, contributors),
     row.repository,
     uncollectedDetail(row) ?? "",
-    day(row.pushed_at),
+    day(row.default_branch_committed_at),
     row.visibility ?? ABSENT,
     ...ASSURANCE_CRITERIA.flatMap((criterion) =>
       criterion === HYGIENE_CRITERION && expanded

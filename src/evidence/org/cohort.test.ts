@@ -222,6 +222,30 @@ describe("selectCohort", () => {
     ]);
   });
 
+  it("should carry the default branch's commit date through without deciding anything from it", () => {
+    // THE TWO DATES DISAGREE HERE ON PURPOSE, which is the `pip-account-management` shape: a busy branch pushed
+    // yesterday over a default branch last committed to 400 days ago. The entry must carry both — the collection
+    // window and the unmaintained flag read `pushedAt`, so a repository whose branches are alive keeps being
+    // walked, while the list reports the branch date the reader is actually asking about.
+    const stale = repository("pip-account-management", { defaultBranchCommittedAt: daysBefore(400) });
+
+    const [entry] = selectCohort([stale], [], policyOf({ activeWithinDays: 90, unmaintainedAfterDays: 365 }), REFERENCE);
+
+    expect(entry?.defaultBranchCommittedAt).toEqual(daysBefore(400));
+    expect(entry?.behaviourCollectable).toBe(true);
+    expect(entry?.unmaintained).toBe(false);
+  });
+
+  it("should leave the default branch's commit date absent rather than falling back to the push", () => {
+    // An empty repository has no default branch ref, and a row collected before the column existed holds NULL.
+    // Both must reach the report as absent so the page renders a dash — never the any-branch date, which the row
+    // beside it does have.
+    const [entry] = selectCohort([repository("empty-repo")], [], policyOf(), REFERENCE);
+
+    expect(entry?.pushedAt).toEqual(daysBefore(1));
+    expect(entry).not.toHaveProperty("defaultBranchCommittedAt");
+  });
+
   it("should carry every owner of a repository several teams hold", () => {
     const ownership = [ownedBy("shared", "zebra"), ownedBy("shared", "alpha")];
 
