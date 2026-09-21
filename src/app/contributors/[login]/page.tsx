@@ -1,7 +1,6 @@
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { ActorRepositoriesTable } from "@/components/ActorRepositoriesTable";
-import { CollectionNotice } from "@/components/CollectionNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { EntityHeader } from "@/components/EntityHeader";
 import { MetricsGrid } from "@/components/MetricsGrid";
@@ -35,8 +34,6 @@ export default async function ActorPage({ params, searchParams }: { params: Prom
 
   return (
     <div className="space-y-8">
-      <CollectionNotice windows={windows} />
-
       {/* HEADED BY THE PERSON AND NOT THE HANDLE, where the organisation graph holds a name for them. The login
           moves onto the context line rather than being dropped: it is what identifies them on GitHub and in every
           other report, and the list that linked here shows both for the same reason. Where there is no name the

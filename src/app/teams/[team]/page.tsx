@@ -1,6 +1,5 @@
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
-import { CollectionNotice } from "@/components/CollectionNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { EntityHeader } from "@/components/EntityHeader";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
@@ -52,8 +51,6 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
 
   return (
     <div className="space-y-8">
-      <CollectionNotice windows={windows} />
-
       <EntityHeader
         kind="team"
         name={detail.team}

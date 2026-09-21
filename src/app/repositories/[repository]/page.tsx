@@ -1,7 +1,6 @@
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
 import { AssessmentSection } from "@/components/AssessmentSection";
-import { CollectionNotice } from "@/components/CollectionNotice";
 import { ContributorsTable } from "@/components/ContributorsTable";
 import { DefinitionList } from "@/components/DefinitionList";
 import { EmptyState } from "@/components/EmptyState";
@@ -89,7 +88,6 @@ export default async function RepositoryPage({
   if (evidence === undefined) {
     return (
       <div className="space-y-8">
-        <CollectionNotice windows={windows} />
         {header}
         <EmptyState
           message={`This span holds no evidence for ${detail.repository}.`}
@@ -117,7 +115,6 @@ export default async function RepositoryPage({
 
   return (
     <div className="space-y-8">
-      <CollectionNotice windows={windows} />
       {header}
 
       {/* The cohort is the page's headline figure rather than a section of it, so it carries the

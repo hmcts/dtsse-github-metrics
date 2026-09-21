@@ -1,6 +1,5 @@
 import { cookies } from "next/headers";
 import { ActorsTable } from "@/components/ActorsTable";
-import { CollectionNotice } from "@/components/CollectionNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
@@ -33,8 +32,6 @@ export default async function ContributorsPage({ searchParams }: { searchParams?
 
   return (
     <div className="space-y-8">
-      <CollectionNotice windows={windows} />
-
       <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
       <Section heading="Contributors" detail="by their repositories' labels">

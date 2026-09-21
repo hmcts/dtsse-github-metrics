@@ -1,5 +1,4 @@
 import { cookies } from "next/headers";
-import { CollectionNotice } from "@/components/CollectionNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
@@ -34,8 +33,6 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Promi
 
   return (
     <div className="space-y-8">
-      <CollectionNotice windows={windows} />
-
       <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
       <Section heading="Teams" detail={`${span(overview.starts_at, overview.ends_at)}, most repositories first`}>

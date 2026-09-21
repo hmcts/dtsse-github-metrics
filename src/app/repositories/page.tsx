@@ -1,4 +1,3 @@
-import { CollectionNotice } from "@/components/CollectionNotice";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { MetricCard } from "@/components/MetricCard";
@@ -57,8 +56,6 @@ export default async function RepositoriesPage() {
 
   return (
     <div className="space-y-8">
-      <CollectionNotice windows={windows} />
-
       {/* No control in the header: this page states no window, so it offers no way to change one. What it does
           state is provenance — the collection the figures are anchored at and when the report was built. */}
       <OrganisationHeader overview={overview} snapshot unavailable={uncollected} />
