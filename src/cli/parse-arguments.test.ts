@@ -100,12 +100,28 @@ describe("parseArguments", () => {
 
 describe("COHORT_COMMANDS", () => {
   it("should name the commands whose subject is the reported cohort", () => {
-    expect([...COHORT_COMMANDS].sort()).toEqual(["collect", "evidence"]);
+    expect([...COHORT_COMMANDS].sort()).toEqual(["collect", "collect-alerts", "evidence"]);
     expect(COHORT_COMMANDS.has("prune")).toBe(false);
   });
 
   it("should not oblige collect-org to have a cohort, since it is what establishes one", () => {
     expect(COHORT_COMMANDS.has("collect-org")).toBe(false);
+  });
+
+  it("should oblige collect-alerts to have one, since the cohort is every row it writes", () => {
+    // It writes one scan row per cohort repository per family, so with no cohort there is nothing to write a row
+    // against and no way to tell a repository with no alerts from one nobody could read.
+    expect(COHORT_COMMANDS.has("collect-alerts")).toBe(true);
+  });
+});
+
+describe("collect-alerts", () => {
+  it("should be a recognised command", () => {
+    expect(parseArguments(["collect-alerts", "--config", "m.yaml"]).command).toBe("collect-alerts");
+  });
+
+  it("should read the tolerate-partial flag a scheduled run sets", () => {
+    expect(parseArguments(["collect-alerts", "--config", "m.yaml", "--tolerate-partial"]).toleratePartial).toBe(true);
   });
 });
 

@@ -1,3 +1,4 @@
+import { type AlertWalk, collectOrganisationAlerts, familyCoverage, resolveAlertScans } from "../evidence/alerts/collect.ts";
 import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { botAccounts, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
 import { collectDirectCommits, collectMergedPullRequests, mutableEdge, referencePatterns } from "../evidence/behaviour/collect.ts";
@@ -6,6 +7,7 @@ import { mergedPullRequestCountQuery, sourceSignature } from "../evidence/behavi
 import { CVE_DATABASES, cveFolder, readFrom } from "../evidence/cve/collect.ts";
 import { readCveDocuments } from "../evidence/cve/cosmos.ts";
 import { CVE_ACCOUNT_VARIABLE, CVE_KEY_VARIABLE, cveCredentials } from "../evidence/cve/credentials.ts";
+import { ALERT_FAMILIES } from "../evidence/domain/alert-detail.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { AvailabilityReason, CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
@@ -57,6 +59,7 @@ import { alreadyAnswered, attributeProject, searchPacer } from "../evidence/sona
 import { createSonarClient, type SonarClient, SonarError, sonarToken } from "../evidence/sonar/client.ts";
 import { sonarProjectMap } from "../evidence/sonar/map.ts";
 import { resolveRepositoryProject } from "../evidence/sonar/resolve.ts";
+import { recordSecurityAlerts, storedAlertCounts } from "../evidence/store/alerts.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
@@ -669,6 +672,101 @@ async function runCveCollection(configuration: Configuration, argv: Arguments): 
   await stampCollection(collectedAt);
   console.info(`read ${read} published reports; wrote ${written} scans and ${findings} findings, ${superseded} already current`);
 
+  const status = refused === 0 ? CollectionStatus.Complete : CollectionStatus.Partial;
+  return collectionStatus(status, argv.toleratePartial);
+}
+
+/**
+ * Collecting the INDIVIDUAL security alerts, rather than the counts `collect` already stores.
+ *
+ * A COMMAND OF ITS OWN, and the reason is not cost. Measured against live GitHub, the three organisation-wide walks
+ * are 317 requests and about five minutes — a fiftieth of one hour's installation quota, so on cost alone this could
+ * have been a step inside `collect`. Three other things decide it:
+ *
+ * IT MUST NOT CHANGE WHAT THE COUNTS MEAN. `collect` walks the secret-scanning alerts with `state=open` and that
+ * response is what grades the committed-secrets assurance criterion and dates the oldest open credential. This needs
+ * the RESOLVED alerts too, because `resolution` exists nowhere else, and widening the existing walk to get them
+ * would take `secretScanning.open` from 18 to 146 across the estate — silently moving a figure a criterion is graded
+ * on. Two walks with two state filters cannot do that to each other.
+ *
+ * ITS UNIT OF FAILURE IS THE ORGANISATION AND NOT A REPOSITORY, which is `collect-org`'s and `cveJob`'s stated
+ * reason for being separate. One refused walk leaves every repository unmeasured for that family, and a partial
+ * write of that shape must not read as a complete run; `collect` catches, counts and carries on per repository,
+ * which is a different completeness semantics for a different unit.
+ *
+ * AND IT HAS NO BUSINESS QUEUEING BEHIND A SIX-HOUR REPOSITORY WALK for five minutes of work whose answer moves
+ * daily. Two CronJobs are also two histories to look at when one of them stops working.
+ *
+ * IT READS THE COUNTS `collect` STORED rather than re-deriving the three states, and `alertScanState` sets out why:
+ * telling "not enabled" from "could not be read" needs the GraphQL vulnerability-alert flag, the estate listing's
+ * `security_and_analysis`, and — for code scanning, which has no estate-wide enablement signal at all — a
+ * per-repository call for every active repository. `collect` pays for all three. This reads its answer for the price
+ * of one query, which is why the chart schedules this in the morning against the previous day's `collect`: whether a
+ * family is switched on is a far slower-moving fact than how many alerts it has, and a day-old reading of it is the
+ * honest one to pair with today's walk.
+ */
+async function runAlertCollection(configuration: Configuration, argv: Arguments): Promise<number> {
+  const credentials = await resolveCredentials();
+  console.info(`authenticating as ${credentials.describe()}`);
+  const client = createGitHubClient({ credentials });
+
+  const observedAt = new Date();
+  // THE WHOLE COHORT AT ONE DEPTH. `collect` reads it at two because the deep one costs a merge walk per
+  // repository; every repository here is answered off the same three estate-wide responses, so a stale repository
+  // costs nothing to report and there is no saving to make by skipping it.
+  const cohort = await readCohort(configuration, observedAt);
+  const repositories = cohort.map((entry) => entry.repository);
+  const counts = await storedAlertCounts(configuration.organization);
+  progress(`${repositories.length} cohort repositories, ${counts.size} of them carrying collected alert counts`);
+
+  // SEQUENTIAL AND NOT `Promise.all`. The three walks share one installation's rate-limit budget and the client
+  // paces itself off the headers the last response carried, so running them together would have each waiting out a
+  // budget the other two are also spending. It is five minutes either way.
+  const walks: AlertWalk[] = [];
+  for (const family of ALERT_FAMILIES) {
+    const walk = await collectOrganisationAlerts(client, configuration.organization, family);
+    walks.push(walk);
+    if (walk.byRepository === undefined) {
+      // NAMED AND COUNTED ONCE FOR THE RUN, not once per repository: it is a single walk, and inflating one refusal
+      // to 1,890 would swamp the exit status with it.
+      console.warn(`${walk.detail ?? `${family} could not be read`}; every repository's ${family} answer will be unmeasured`);
+      continue;
+    }
+    const found = [...walk.byRepository.values()].reduce((total, alerts) => total + alerts.length, 0);
+    progress(`${family}: ${found} alerts across ${walk.byRepository.size} repositories`);
+    if (walk.unattributable > 0) {
+      // A RECORD NAMING NO REPOSITORY IS A FINDING AND NOT NOISE. It is an alert nothing can store, so it is an
+      // alert no page will ever show, and nobody would notice without this line.
+      progress(`${family}: ${walk.unattributable} records named no repository this build could read, so they are not stored`);
+    }
+  }
+
+  const scans = resolveAlertScans(repositories, walks, counts);
+  const outcome = await recordSecurityAlerts(configuration.organization, scans, observedAt);
+
+  // THE COVERAGE IS THE PRODUCT OF THIS RUN AS MUCH AS THE ROWS ARE. Three states per family, reported separately,
+  // because a reader who cannot see how much of the estate went unread has no way to know what the alert figures
+  // cover — and "not enabled" and "could not be read" are different findings with different owners.
+  for (const family of ALERT_FAMILIES) {
+    const coverage = familyCoverage(family, scans);
+    console.info(
+      `${family}: ${coverage.alerts} alerts in ${coverage.withAlerts} repositories, ${coverage.clean} read and clean, ${coverage.notEnabled} not enabled, ${coverage.unmeasured} unmeasured`
+    );
+  }
+
+  // THE COLLECTION STAMP IS WHAT PUTS THE NEW ROWS ON A PAGE, exactly as `runCveCollection` records: reports are
+  // held per `collection_state.revision`, so a run that writes rows and does not stamp has collected evidence no
+  // reader sees until tomorrow's `collect`.
+  await stampCollection(observedAt);
+  console.info(`wrote ${outcome.scans} scans and ${outcome.alerts} alerts`);
+
+  const refused = walks.filter((walk) => walk.byRepository === undefined).length;
+  // EVERY FAMILY REFUSED IS A FAILURE AND NOT A PARTIAL RUN. Nothing was read, so the rows this wrote say only that
+  // nobody could look — which is true, and is not a collection. A run that reported success having read nothing
+  // would leave that as the answer for the next reader.
+  if (refused === ALERT_FAMILIES.length) {
+    return runStatus(CollectionStatus.Failed);
+  }
   const status = refused === 0 ? CollectionStatus.Complete : CollectionStatus.Partial;
   return collectionStatus(status, argv.toleratePartial);
 }
@@ -1596,6 +1694,11 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // there is no rate-limit budget to compete for, and its writes are idempotent per repository.
       case "collect-cve":
         return await runCveCollection(configuration, parsed);
+      // UNDER THE LOCK, on `map-sonar`'s reasoning rather than `collect-cve`'s: this does make GitHub calls, both
+      // AAT clusters run the same schedule, and two concurrent runs would walk the same 317 pages twice off one
+      // installation's budget to write the same rows.
+      case "collect-alerts":
+        return await onlyCollector(parsed.command, () => runAlertCollection(configuration, parsed));
       case "doctor":
         return await runDoctor(configuration, parsed);
       case "prune":

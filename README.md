@@ -15,6 +15,7 @@ One Next.js application and one image, with two entry points:
 | `node dist/cli/run.js collect` | a daily CronJob | contacts GitHub, caches facts, stamps the collection |
 | `node dist/cli/run.js collect-org` | a second daily CronJob | walks the organisation's teams, people and repository ownership |
 | `node dist/cli/run.js collect-cve` | a daily CronJob at 13:00 | reads the CVE reports the Jenkins security stage publishes to Cosmos |
+| `node dist/cli/run.js collect-alerts` | a daily CronJob at 11:00 | walks each alert family's organisation-wide endpoint for the individual alerts |
 | `node dist/cli/run.js map-sonar` | a weekly CronJob, Mondays 09:00 | resolves each SonarCloud project to the repository it analyses |
 
 The web pod holds **no GitHub credential** and no Cosmos credential. It never contacts anything but Postgres,
@@ -316,8 +317,8 @@ Two concurrent collectors do more than duplicate work:
 - The live-row partial unique indexes catch two writers inserting one key — as a unique violation, which rolls
   back the whole transaction. A colliding run writes **no graph at all**.
 
-So `collect`, `collect-org` and `map-sonar` all take one Postgres advisory lock, the same mechanism `migrate`
-uses for the same reason. `map-sonar` takes it for a reason of its own on top: it is paced against a per-minute
+So `collect`, `collect-org`, `map-sonar` and `collect-alerts` all take one Postgres advisory lock, the same
+mechanism `migrate` uses for the same reason. `map-sonar` takes it for a reason of its own on top: it is paced against a per-minute
 quota rather than an hourly one, so two concurrent runs would each pace off a budget the other was also
 spending — slower than one run, and writing the same rows twice. A run that does not get it stands down and **exits 0**: on an estate where both clusters share a
 schedule one of them loses every day, and a CronJob reporting Failed daily for correct behaviour is an alert

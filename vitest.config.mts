@@ -58,6 +58,10 @@ export default defineConfig({
         // decides whether a repository reads unmeasured or clean, which is the one mistake in this feature that a
         // reader cannot detect from the page.
         "src/evidence/cve/**": { statements: 95, lines: 95, branches: 80, functions: 95 },
+        // The alert-detail walk and its three-state resolution, held at the same bar for the same reason: this is
+        // the code that decides whether a repository nobody could read is reported as unmeasured or as clean, and
+        // the second is the one mistake in this feature a reader cannot detect from the page.
+        "src/evidence/alerts/**": { statements: 95, lines: 95, branches: 80, functions: 95 },
         // Where the grading decisions live, so held to the same bar as the rest of `evidence` rather than
         // falling to the global floor. Measured 99.20/99.14/96.55/100 for `domain` and 99.02/98.97/91.02/100
         // for `org`.

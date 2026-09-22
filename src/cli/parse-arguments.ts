@@ -1,7 +1,18 @@
 import { parseArgs } from "node:util";
 import { parseInstant } from "../evidence/window/instant.ts";
 
-export const COMMANDS = ["doctor", "collect", "collect-org", "collect-cve", "map-sonar", "prune", "evidence", "migrate", "reduce-descriptions"] as const;
+export const COMMANDS = [
+  "doctor",
+  "collect",
+  "collect-org",
+  "collect-cve",
+  "collect-alerts",
+  "map-sonar",
+  "prune",
+  "evidence",
+  "migrate",
+  "reduce-descriptions"
+] as const;
 
 export type Command = (typeof COMMANDS)[number];
 
@@ -12,8 +23,12 @@ export type Command = (typeof COMMANDS)[number];
  * organisation graph is not about any repository a team owns — it is what establishes who owns them — so
  * obliging a team file to be layered in would make the answer depend on the question. `map-sonar` walks the
  * projects a SonarCloud organisation lists, which is a question about SonarCloud rather than about the cohort.
+ *
+ * `collect-alerts` IS one, and for `collect`'s reason twice over: the cohort is the universe it writes a row for
+ * every member of, and it reads the counts `collect` stored to tell a family that is off from one nobody could
+ * read. Without a collected cohort it has nothing to write rows against and nothing to grade them with.
  */
-export const COHORT_COMMANDS: ReadonlySet<Command> = new Set(["collect", "evidence"]);
+export const COHORT_COMMANDS: ReadonlySet<Command> = new Set(["collect", "collect-alerts", "evidence"]);
 
 export class UsageError extends Error {
   constructor(message: string) {
@@ -156,6 +171,9 @@ commands:
   collect-org collect the organisation's teams, people and repository ownership
   collect-cve collect the CVE reports the Jenkins security stage publishes, from both
               the jenkins and sds-jenkins Cosmos databases
+  collect-alerts
+              collect the individual security alerts of all three families, from each
+              one's organisation-wide endpoint
   map-sonar   resolve each SonarCloud project to the repository it analyses
   prune       delete cached intervals that have not been used recently
   evidence    explain cached behaviour evidence without GitHub access
@@ -171,7 +189,7 @@ options:
   --days <n>            span this many days, ending at the most recent UTC midnight
   --repository <name>   limit results to one configured repository
   --tolerate-partial    exit 0 when some repositories or projects refused, for a scheduled run
-                        (collect, map-sonar)
+                        (collect, map-sonar, collect-alerts)
   --propose-teams       print a reviewable teams: block instead of writing the graph (collect-org)
   --unresolved-limit <n>  cap the repositories one run reads CODEOWNERS for (collect-org)
   --all                 read every cohort repository rather than a sample of them (doctor)

@@ -34,6 +34,11 @@ const cveCredentials = vi.hoisted(() => vi.fn<() => { endpoint: string; key: str
 const readCveDocuments = vi.hoisted(() => vi.fn());
 const cveWatermarks = vi.hoisted(() => vi.fn(async () => new Map<string, Date>()));
 const recordCveScans = vi.hoisted(() => vi.fn(async (_scans: { findings: unknown[] }[]) => ({ written: 0, superseded: 0, findings: 0 })));
+// The alert-detail collection's two store seams. `alerts/collect.ts` is deliberately NOT mocked, for the reason
+// `cve/collect.ts` is not: the walk and the three-state resolution are what these cases are about, so a fake would
+// leave "a refusal is not a clean answer" asserted against a restatement of itself.
+const recordSecurityAlerts = vi.hoisted(() => vi.fn(async (_organization: string, scans: { alerts: unknown[] }[]) => ({ scans: scans.length, alerts: 0 })));
+const storedAlertCounts = vi.hoisted(() => vi.fn(async () => new Map<string, unknown>()));
 const resolveCredentials = vi.hoisted(() => vi.fn());
 const createGitHubClient = vi.hoisted(() => vi.fn());
 const stampRevision = vi.hoisted(() => vi.fn());
@@ -152,6 +157,7 @@ vi.mock("../evidence/cve/credentials.ts", async () => ({
   cveCredentials
 }));
 vi.mock("../evidence/store/cve.ts", () => ({ cveWatermarks, recordCveScans }));
+vi.mock("../evidence/store/alerts.ts", () => ({ recordSecurityAlerts, storedAlertCounts }));
 vi.mock("../evidence/github/credentials.ts", () => ({ resolveCredentials }));
 vi.mock("../evidence/github/client.ts", () => ({ createGitHubClient }));
 // The walks and the writers are the two seams `collect-org` is tested at: the walks say what the organisation
@@ -1829,5 +1835,196 @@ describe("collect-cve", () => {
     readCohort.mockRejectedValue(new CohortUncollectedError("the organisation graph is empty"));
 
     expect(await main(["collect-cve", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+  });
+});
+
+describe("collect-alerts", () => {
+  const CONFIG = { organization: "hmcts", lookback: { operational_days: 90 }, teams: [] };
+
+  /** The three organisation-wide paths, in the order `ALERT_FAMILIES` walks them. */
+  const SECRET_PATH = "/orgs/hmcts/secret-scanning/alerts";
+  const DEPENDABOT_PATH = "/orgs/hmcts/dependabot/alerts";
+  const CODE_SCANNING_PATH = "/orgs/hmcts/code-scanning/alerts";
+
+  /** One secret-scanning record, credential included, so a case can follow what happens to it. */
+  function secretRecord(repository: string, number: number) {
+    return {
+      number,
+      state: "open",
+      secret_type: "azure_storage_account_key",
+      secret: "ghp_neverReachesTheStore00000000000000",
+      created_at: "2026-01-01T00:00:00Z",
+      first_location_detected: { path: "values.yaml", start_line: 3 },
+      repository: { name: repository, full_name: `hmcts/${repository}` }
+    };
+  }
+
+  /** The paths the run asked for, beside a client that answers each one as the case says. */
+  function walking(answers: Record<string, unknown[] | Error>): string[] {
+    const asked: string[] = [];
+    createGitHubClient.mockReturnValue({
+      paginate: function paginate(path: string) {
+        asked.push(String(path));
+        return (async function* pages() {
+          const answer = answers[path] ?? [];
+          if (answer instanceof Error) {
+            throw answer;
+          }
+          yield answer;
+        })();
+      },
+      requestsIssued: () => 3,
+      callOutcomes: () => [],
+      rateLimitWaits: () => []
+    });
+    return asked;
+  }
+
+  interface WrittenScan {
+    repository: string;
+    family: string;
+    state: string;
+    alerts: { number: number; alertType?: string }[];
+  }
+
+  /** The scans one run handed the writer. */
+  function writtenScans(): WrittenScan[] {
+    return (recordSecurityAlerts.mock.calls[0]?.[1] ?? []) as unknown as WrittenScan[];
+  }
+
+  /** Those scans' states, keyed `repository/family`, which is what most of these cases are about. */
+  function writtenStates(): Record<string, string> {
+    return Object.fromEntries(writtenScans().map((scan) => [`${scan.repository}/${scan.family}`, scan.state]));
+  }
+
+  beforeEach(() => {
+    loadConfiguration.mockResolvedValue(CONFIG);
+    readCohort.mockResolvedValue([cohortEntry("alpha")]);
+    resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a GitHub App installation" });
+    storedAlertCounts.mockResolvedValue(new Map());
+    walking({});
+  });
+
+  it("should walk all three families' organisation-wide endpoints, and nothing per repository", async () => {
+    const asked = walking({});
+
+    expect(await main(["collect-alerts", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+
+    // The whole cost argument: three paginated walks for the estate, not three calls for each of 1,890 repositories.
+    expect(asked).toEqual([SECRET_PATH, DEPENDABOT_PATH, CODE_SCANNING_PATH]);
+  });
+
+  it("should write a scan for every cohort repository and family, so an absence cannot mean two things", async () => {
+    readCohort.mockResolvedValue([cohortEntry("alpha"), cohortEntry("beta")]);
+
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    expect(recordSecurityAlerts).toHaveBeenCalledWith("hmcts", expect.arrayContaining([expect.objectContaining({ repository: "beta" })]), expect.any(Date));
+    // Two repositories times three families, and not one row per repository that happened to have an alert.
+    expect(writtenScans()).toHaveLength(6);
+  });
+
+  it("should carry each walked alert through to the writer", async () => {
+    walking({ [SECRET_PATH]: [secretRecord("alpha", 7)] });
+
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    const secrets = writtenScans().find((scan) => scan.family === "secret-scanning");
+    expect(secrets?.alerts).toEqual([expect.objectContaining({ number: 7, alertType: "azure_storage_account_key" })]);
+  });
+
+  it("should never hand the writer a secret value", async () => {
+    walking({ [SECRET_PATH]: [secretRecord("alpha", 7)] });
+
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    expect(JSON.stringify(recordSecurityAlerts.mock.calls[0])).not.toContain("ghp_neverReachesTheStore00000000000000");
+  });
+
+  it("should report a repository nobody could read as unmeasured and never as clean", async () => {
+    // The answer VIBE-590 makes the common one, and the one wrong answer that reads like good news.
+    walking({ [SECRET_PATH]: new GitHubError("Resource not accessible by integration", AvailabilityReason.NotFoundOrInaccessible, 403) });
+
+    expect(await main(["collect-alerts", "--config", "m.yaml", "--tolerate-partial"])).toBe(EXIT_COMPLETE);
+
+    expect(writtenStates()["alpha/secret-scanning"]).toBe("unmeasured");
+  });
+
+  it("should report a repository the counts say was read as clean when the walk named it no alerts", async () => {
+    storedAlertCounts.mockResolvedValue(new Map([["alpha", { dependabot: {}, codeScanning: {}, secretScanning: { open: 0 } }]]));
+
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    // A measured zero, which needs a scan row to be expressible at all.
+    expect(writtenStates()["alpha/secret-scanning"]).toBe("read");
+  });
+
+  it("should report a family the counts say is switched off as not enabled", async () => {
+    storedAlertCounts.mockResolvedValue(
+      new Map([["alpha", { dependabot: {}, codeScanning: { detail: "code-scanning/alerts is not enabled for this repository" }, secretScanning: {} }]])
+    );
+
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    expect(writtenStates()["alpha/code-scanning"]).toBe("not-enabled");
+  });
+
+  it("should leave the other two families collectable when one walk is refused", async () => {
+    walking({ [DEPENDABOT_PATH]: new GitHubError("Resource not accessible", AvailabilityReason.NotFoundOrInaccessible, 403) });
+    storedAlertCounts.mockResolvedValue(new Map([["alpha", { dependabot: { open: 2 }, codeScanning: { open: 0 }, secretScanning: { open: 0 } }]]));
+
+    await main(["collect-alerts", "--config", "m.yaml", "--tolerate-partial"]);
+
+    const states = writtenStates();
+    expect(states["alpha/dependabot"]).toBe("unmeasured");
+    expect(states["alpha/secret-scanning"]).toBe("read");
+    expect(states["alpha/code-scanning"]).toBe("read");
+  });
+
+  it("should report a partial run when one family was refused", async () => {
+    walking({ [CODE_SCANNING_PATH]: new GitHubError("Resource not accessible", AvailabilityReason.NotFoundOrInaccessible, 403) });
+
+    expect(await main(["collect-alerts", "--config", "m.yaml"])).toBe(EXIT_INCOMPLETE);
+  });
+
+  it("should fail the run when every family was refused, because nothing was collected at all", async () => {
+    const refused = new GitHubError("Resource not accessible", AvailabilityReason.NotFoundOrInaccessible, 403);
+    walking({ [SECRET_PATH]: refused, [DEPENDABOT_PATH]: refused, [CODE_SCANNING_PATH]: refused });
+
+    // NOT a partial run, and `--tolerate-partial` does not rescue it: a run that read nothing has not collected.
+    expect(await main(["collect-alerts", "--config", "m.yaml", "--tolerate-partial"])).toBe(EXIT_FAILED);
+  });
+
+  it("should report the three states per family, so nobody reads a refusal as coverage", async () => {
+    readCohort.mockResolvedValue([cohortEntry("alpha"), cohortEntry("beta")]);
+    walking({ [SECRET_PATH]: [secretRecord("alpha", 1)] });
+    storedAlertCounts.mockResolvedValue(new Map([["beta", { dependabot: {}, codeScanning: {}, secretScanning: { open: 0 } }]]));
+
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    expect(console.info).toHaveBeenCalledWith("secret-scanning: 1 alerts in 1 repositories, 1 read and clean, 0 not enabled, 0 unmeasured");
+    // And the family nothing was stored for reports both repositories unmeasured rather than an estate of zeroes.
+    expect(console.info).toHaveBeenCalledWith("dependabot: 0 alerts in 0 repositories, 0 read and clean, 0 not enabled, 2 unmeasured");
+  });
+
+  it("should stamp the collection, or the rows it wrote reach no reader until tomorrow", async () => {
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    expect(stampCollection).toHaveBeenCalledOnce();
+  });
+
+  it("should take the collector lock, because two clusters would walk the same pages off one budget", async () => {
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    expect(asSoleCollector).toHaveBeenCalled();
+  });
+
+  it("should refuse to run when no cohort has been collected, having nothing to write rows against", async () => {
+    readCohort.mockRejectedValue(new CohortUncollectedError("the organisation graph is empty"));
+
+    // EXIT_USAGE and not EXIT_FAILED, because `assertCohortCollected` reads an uncollected graph as the operator
+    // having run the commands out of order rather than as a collection that failed. Same answer `collect` gives.
+    expect(await main(["collect-alerts", "--config", "m.yaml"])).toBe(EXIT_USAGE);
+    expect(recordSecurityAlerts).not.toHaveBeenCalled();
   });
 });

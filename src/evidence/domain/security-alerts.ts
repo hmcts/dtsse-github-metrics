@@ -33,3 +33,31 @@ export interface SecurityAlertEvidence {
   codeScanning: OpenAlertCount;
   secretScanning: OpenAlertCount;
 }
+
+/**
+ * GitHub's "you never turned this on" answer, in the words every reader of a count shares.
+ *
+ * HERE RATHER THAN BESIDE THE COLLECTOR THAT WRITES IT, because it is now read as well as written:
+ * `alertScanState` in `alert-detail.ts` tells a family that is off from one nobody could read by matching this
+ * sentence on the stored `detail`. A collector-local constant would have made that a string literal repeated in
+ * two features, which is the form in which the two absences quietly become one.
+ */
+export const FEATURE_NOT_ENABLED = "is not enabled for this repository";
+
+/** The gradings this tool knows, folded once so every reader of a severity agrees on the vocabulary. */
+const KNOWN_SEVERITIES: ReadonlySet<string> = new Set<string>(Object.values(AlertSeverity));
+
+/**
+ * The grading GitHub asserted, or nothing where it asserted none or asserted a word this build does not know.
+ *
+ * AN UNRECOGNISED GRADING IS DROPPED rather than mapped onto the nearest known one: GitHub adding a severity
+ * should leave the gradings this tool does understand correct, not silently reclassify the new one as the closest
+ * thing to hand.
+ */
+export function gradedSeverity(value: string | null | undefined): AlertSeverity | undefined {
+  if (value == null) {
+    return undefined;
+  }
+  const folded = value.toLowerCase();
+  return KNOWN_SEVERITIES.has(folded) ? (folded as AlertSeverity) : undefined;
+}
