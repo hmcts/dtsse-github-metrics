@@ -7,8 +7,12 @@
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
 // `alert_observations`, `sonar_project_map`, the six organisation-graph tables,
-// `repository_production`, or `cve_scans` and `cve_findings`. That is enforced by
+// `repository_production`, `repository_notes`, or `cve_scans` and `cve_findings`. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
+//
+// `repository_notes` is durable for the strongest version of that reason and is the ONE TABLE THE WEB
+// PROCESS WRITES. Everything else here is written by `collect` from a source that can be asked again;
+// a note is prose a person typed, so a deleted row is recoverable from nobody.
 //
 // Facts are stored as `jsonb` payloads beside the few queryable columns, exactly as upstream stored
 // `model_dump_json()` text, so adding a field to a fact needs no migration.
@@ -198,6 +202,43 @@ model RepositoryProduction {
 
   @@id([organization, repository])
   @@map("repository_production")
+}
+
+/// A free-text note somebody left against a repository — the context that is not derivable from
+/// GitHub, and the only table in this database the WEB process writes.
+///
+/// MANY ROWS PER REPOSITORY, unlike `repository_production` above it. A note is a remark and not a
+/// setting, so a second one does not replace the first; the page lists them oldest first and reads as
+/// a log.
+///
+/// WHO, AS TWO COLUMNS. `authorSubject` is the Entra subject claim and identifies a person for ever;
+/// `authorName` is what they were called when they wrote it, which is what the page prints. A display
+/// name changes and a subject does not, so storing only the name would let a note silently change
+/// hands, and storing only the subject would print a GUID at a reader. Where `AUTH_DISABLED=true`
+/// there is no session and both carry the anonymous author — a stated value, never a blank.
+///
+/// `createdAt` AND `updatedAt` ARE BOTH STAMPED BY THE DATABASE and by nothing in this codebase.
+/// `createdAt` comes from the column default and is never written again; `updatedAt` starts equal to
+/// it and is moved by a `BEFORE UPDATE` trigger, which is what makes "an edit preserves the author and
+/// `createdAt`" a property of the table rather than a rule the editing statement has to remember. The
+/// trigger is invisible from this schema, which is why it is stated here; see the migration
+/// `20260922090000_repository_notes`.
+///
+/// The body is held to a stated length and refused blank by CHECK constraints in that same migration.
+/// `NOTE_BODY_LIMIT` in `src/lib/notes.ts` carries the same number so the form can say so.
+model RepositoryNote {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organization   String
+  repository     String
+  body           String
+  authorSubject  String   @map("author_subject")
+  authorName     String   @map("author_name")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+
+  /// The one read this table serves: one repository's notes in the order they were written.
+  @@index([organization, repository, createdAt])
+  @@map("repository_notes")
 }
 
 /// That a CVE scan was PUBLISHED for one repository in one language, which is the fact the counts are

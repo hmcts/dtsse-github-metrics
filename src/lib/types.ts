@@ -917,6 +917,41 @@ export interface RepositoryDetail {
 }
 
 /**
+ * One free-text note left against a repository, as the page lists it.
+ *
+ * THE ONE SHAPE ON THIS CONTRACT THAT `metrics.service` NEVER EMITTED, and it is here rather than in the
+ * evidence layer for the rule this file states about itself: it crosses the seam between the pages and the
+ * server, so the compiler should be holding both ends of it. It is not evidence — nothing derives it from
+ * GitHub, nothing grades it, and `stripAbsent` never runs over it — it is prose somebody typed, which is why
+ * `store/notes.ts` reads it rather than `report/estate.ts`.
+ *
+ * EVERY FIELD IS REQUIRED, which is a departure from every interface above and is the point. The absent-means-
+ * unmeasured rule exists because a collector can fail to observe a figure; nothing here is observed. A note
+ * that reached the database has a body, an author and two instants, all of them refused blank by the table's
+ * own constraints — so there is no field whose absence would mean anything, and an optional one would invite a
+ * reader to guard on a case that cannot happen.
+ *
+ * `author_name` IS FOR READING AND `author_subject` IS FOR IDENTITY. The name is what the page prints; the
+ * subject is the Entra claim that does not change when the name does. Where authentication is disabled the
+ * pair carries the anonymous author rather than nothing — see `ANONYMOUS_AUTHOR` in `src/auth/author.ts`.
+ *
+ * `updated_at` EQUALS `created_at` ON A NOTE NOBODY HAS EDITED, rather than being absent until the first edit.
+ * A reader comparing the two is asking "has this been changed", and two equal instants answer that without a
+ * second kind of absence to interpret; the page prints the second only where it has moved.
+ *
+ * Instants are ISO-8601 strings for this file's own reason, and here it is load-bearing twice over: the
+ * ordering is by `created_at`, and `lib/sort.ts` has no `Date` case.
+ */
+export interface RepositoryNote {
+  id: string;
+  body: string;
+  author_name: string;
+  author_subject: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
  * `labels` LISTS the distinct labels this person's reported repositories carry, best first.
  *
  * It combines nothing: there is no per-person label, no score and no count beside a name. The

@@ -18,7 +18,14 @@ One Next.js application and one image, with two entry points:
 | `node dist/cli/run.js map-sonar` | a weekly CronJob, Mondays 09:00 | resolves each SonarCloud project to the repository it analyses |
 
 The web pod holds **no GitHub credential** and no Cosmos credential. It never contacts anything but Postgres,
-which is what makes the serving path read-only and both credentials the collectors' alone.
+which is what keeps both credentials the collectors' alone.
+
+The serving path writes **exactly one table**, `repository_notes`, and nothing else. A signed-in reader may add,
+edit and delete a free-text note against a repository; every other table the pages touch is read-only to them.
+The write needs no new credential — it is the same Postgres connection the reads use — so the property above is
+unchanged. `src/evidence/store/notes.ts` is the whole of that surface, the session gate is
+`src/auth/author.ts`, and the three server actions are `src/app/repositories/[repository]/notes.ts`. Where
+`AUTH_DISABLED=true` there is no session and a note is attributed to **anonymous**.
 
 `src/lib/api.ts` is the seam between the two halves: the pages call it, and it calls the ported evidence code
 in-process. Upstream reached a FastAPI service over loopback; there is no HTTP hop here.

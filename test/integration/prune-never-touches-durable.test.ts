@@ -24,6 +24,10 @@ import { pruneCache } from "../../src/evidence/store/prune.ts";
  * the wrong thing, and nothing can recover that but their memory — so a pruned row is not a hole in a history,
  * it is a badge that quietly went out or came on.
  *
+ * `repository_notes` joined them for the strongest version of that reason, and is the only one of these tables
+ * the WEB process writes. A flag is at least a fact somebody could restate from the pipeline; a note is prose,
+ * so a pruned row is gone.
+ *
  * The last cases here are not about `prune` at all. They assert the partial unique index that makes every
  * `WHERE superseded_at IS NULL` read unambiguous, and the two CHECK constraints that make a remembered negative
  * mean something in `sonar_project_map` and `repository_ownership` — guarantees Postgres gives and TypeScript
@@ -57,6 +61,7 @@ async function wipe(): Promise<void> {
   await prisma.orgPerson.deleteMany();
   await prisma.repositoryOwnership.deleteMany();
   await prisma.repositoryProduction.deleteMany();
+  await prisma.repositoryNote.deleteMany();
   // Findings first: the foreign key would refuse the scans otherwise, which is the point of having it.
   await prisma.cveFinding.deleteMany();
   await prisma.cveScan.deleteMany();
@@ -276,6 +281,26 @@ describe("pruneCache", () => {
     await pruneCache(FUTURE);
 
     expect(await prisma.repositoryProduction.count()).toBe(1);
+  });
+
+  it("should never delete a repository note, which nothing but its author could write again", async () => {
+    // The strongest version of the reason above. A production flag is at least a fact somebody could restate
+    // from the pipeline; a note is prose — "the suppressions are tracked in HDPI-8150" — and a pruned row is
+    // recoverable from nobody. It is also the one table the WEB process writes, so it is the only durable row
+    // here that a collection never put there and a collection must never take away.
+    await prisma.repositoryNote.create({
+      data: {
+        organization: "hmcts",
+        repository: "cath-service",
+        body: "Being decommissioned — the suppressions are tracked in HDPI-8150.",
+        authorSubject: "0000-1111",
+        authorName: "A Reader"
+      }
+    });
+
+    await pruneCache(FUTURE);
+
+    expect(await prisma.repositoryNote.count()).toBe(1);
   });
 
   it("should keep coverage and facts a report still reads", async () => {
