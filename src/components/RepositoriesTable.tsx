@@ -1,13 +1,13 @@
 "use client";
 
 import clsx from "clsx";
-import { Check } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { Fragment, type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
 import { type Align, SortHeader } from "@/components/SortHeader";
+import { ToggleTick } from "@/components/ToggleTick";
 import { filterTarget } from "@/lib/filter";
 import { ABSENT, day, quantity } from "@/lib/format";
 import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE, productionHint } from "@/lib/production";
@@ -45,6 +45,7 @@ import {
   PRODUCTION_VALUE,
   parseExpanded,
   parseProduction,
+  parseSelections,
   parseVisibilities,
   productionCount,
   SECRETS_CRITERION,
@@ -77,12 +78,15 @@ import { withWeeks } from "@/lib/weeks";
  * reason besides: `RepositoriesExport` reads the URL and cannot see component state, and the file's columns follow
  * the toggle.
  *
- * THE FILTERS GROUP IS FOUR TOGGLES AND NOTHING ELSE, from 2026-09-14. It used to hold the Production toggle
- * followed by a dismissible chip per filtered donut dimension — the donuts above the table were the controls and
- * the chips showed what they had been set to. The donuts are gone, so the chips went with them: a filter a reader
- * can dismiss but has no way to apply is worse than no filter. What is left is Production and the three visibility
- * toggles, each with its own affordance and none with an × on it, which is the shape Production always had. The
- * expand toggle is a control over the COLUMNS rather than over which rows are shown, so it sits outside the group.
+ * THE FILTERS GROUP IS FOUR TOGGLES AND NOTHING ELSE: Production and the three visibilities, each with its own
+ * affordance and none with an × on it. The expand toggle is a control over the COLUMNS rather than over which rows
+ * are shown, so it sits outside the group.
+ *
+ * THE FIFTH KIND OF FILTER HAS NO CONTROL IN HERE AND IS NOT MISSING ONE. The estate summary wheels above this
+ * table are the control for the four dimensions they draw — a wedge or its legend entry writes the slice to the
+ * query and `filterRepositories` reads it back — and the pressed legend entry, a few centimetres up the page, is
+ * where that state is shown and cleared. A dismissible chip down here would be a second place to clear one filter
+ * of five, which is how the previous chip row came to be the only way to see a filter it could not set.
  */
 
 // Re-exported rather than declared here, so this component and the export control beside it read one definition.
@@ -307,10 +311,14 @@ export function RepositoriesTable({
   const production = parseProduction((parameter) => searchParameters.get(parameter));
   const visibilities = parseVisibilities((parameter) => searchParameters.get(parameter));
   const expanded = parseExpanded((parameter) => searchParameters.get(parameter));
+  // THE WEDGES THE READER HAS CLICKED, read through the same hook as every other control: the wheels above this
+  // table write their slice keys to the query and this is where they narrow the list. A page that draws no wheels
+  // — a team's — simply finds none of the parameters set.
+  const selections = parseSelections((parameter) => searchParameters.get(parameter));
   const columns = expanded ? EXPANDED_COLUMNS : COLUMNS;
-  const found = filterRepositories(rows, term, production, visibilities);
+  const found = filterRepositories(rows, term, production, visibilities, selections);
   const ordered = column === null ? orderRepositories(found) : sorted(found, column.read, direction);
-  const produced = productionCount(rows, term, visibilities);
+  const produced = productionCount(rows, term, visibilities, selections);
 
   function sort(next: Column) {
     // Against the column the table is VISIBLY ordered by, not against `null`: the first click on `Last pushed`
@@ -369,10 +377,9 @@ export function RepositoriesTable({
           `ml-auto` on the action, so on a narrow viewport the row wraps instead of the button being pushed off. */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap gap-1.5" role="group" aria-label="Repository filters">
-          {/* The readiness bar's shape before the donuts replaced it: a dot, the word, and a count in
-            `tabular-nums` so the figure does not shift as it changes. `aria-pressed` rather than a
-            chip with an ×, because this is a state a reader turns on and off and not one they
-            arrived at by clicking a slice. */}
+          {/* A dot, the word, and a count in `tabular-nums` so the figure does not shift as it changes.
+            `aria-pressed` rather than a chip with an ×, because this is a state a reader turns on and off
+            here, rather than one they set by clicking a slice and clear by clicking it again. */}
           <button
             type="button"
             onClick={toggleProduction}
@@ -391,8 +398,9 @@ export function RepositoriesTable({
 
           {/* THREE INDEPENDENT TOGGLES rather than one tri-state, so "public and internal but not private" is
             expressible — which is the obvious question for a page about coding in the open. They read as the
-            Production toggle does, `aria-pressed` and no ×, because each is a state a reader turns on and off
-            rather than a filter they arrived at by clicking a slice. */}
+            Production toggle does, `aria-pressed` and no ×, for its reason. They do NOT move the summary wheels
+            above: those are drawn over the public estate and say so, so a reader looking an internal repository
+            up in the table does not silently rewrite the figures they came to read. */}
           {VISIBILITIES.map((visibility) => (
             <button
               key={visibility}
@@ -442,7 +450,7 @@ export function RepositoriesTable({
         // to public, so a reader searching for an internal repository finds nothing.
         <EmptyState
           message="No repository matches this filter."
-          detail="Clear the term, the Production toggle, or a visibility toggle above, to see more of the estate."
+          detail="Clear the term, the Production toggle, a visibility toggle, or the highlighted slice of a summary wheel above, to see more of the estate."
         />
       ) : (
         // No border of its own: the table sits inside a `Section` panel that already draws one.
@@ -527,25 +535,6 @@ export function RepositoriesTable({
       )}
     </div>
   );
-}
-
-/**
- * The tick a pressed filter toggle wears, so its state is not carried by fill colour alone.
- *
- * COLOUR WAS THE ONLY SIGHTED SIGNAL until 2026-09-15. Both toggle families said "on" by changing
- * their background — royal for Production, `slate-700` for a visibility — which is exactly the rule
- * this codebase holds everywhere else it grades something: colour is never the sole carrier. A reader
- * who cannot separate two dark fills could not tell which of four controls was filtering the table.
- *
- * `aria-hidden`, because the state is already on the button as `aria-pressed` and a screen reader
- * would otherwise be told twice. The two channels are deliberately separate — the attribute is the
- * accessible answer, the tick is the visible one, and neither substitutes for the other.
- *
- * Renders nothing when off rather than a dimmed tick: a half-visible tick is the colour-only signal
- * again, one step quieter.
- */
-function ToggleTick({ on }: { on: boolean }) {
-  return on ? <Check className="shrink-0 w-3 h-3" aria-hidden="true" /> : null;
 }
 
 /**

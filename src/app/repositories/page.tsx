@@ -1,4 +1,5 @@
 import { EmptyState } from "@/components/EmptyState";
+import { EstateSummary } from "@/components/EstateSummary";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { MetricCard } from "@/components/MetricCard";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
@@ -28,8 +29,9 @@ import { uncollectedCount } from "@/lib/rows";
  * NO `?weeks=` IS READ HERE, and a stray one is IGNORED rather than redirected away. This page has no parameter to
  * resolve, so an old bookmark cannot change what it renders; `proxy` has already turned the value into the reader's
  * remembered preference, which the pages that do state a window will honour; and the URL also carries the table's
- * own term, production, visibility and expand state, written client-side with `replaceState` — so a redirect would
- * have to carry four other parameters through or silently drop the reader's filters.
+ * own term, production, visibility and expand state and the four summary wheels' wedges, all written client-side
+ * with `replaceState` — so a redirect would have to carry nine other parameters through or silently drop the
+ * reader's filters.
  *
  * Rendered on every request. The service holds one built report per span and rebuilds it when a collection lands,
  * so a cached page here would show figures whose source has moved on with nothing on the page to say so.
@@ -87,17 +89,22 @@ export default async function RepositoriesPage() {
         </div>
       </Panel>
 
-      {/* THE SIX DONUTS ARE GONE, and what they drew is not lost — it moved. Five of the six were
-          ways-of-working dimensions: the readiness distribution, the declared gate's two halves,
-          unreviewed substantial merges. That is the same material `/teams` now reports per team,
-          which is where a reader asks how a team works. The sixth, test coverage, read a field the
-          report layer has never emitted and so drew an all-unknown circle.
+      {/* FOUR WHEELS, ON THE FOUR QUESTIONS THIS PAGE ANSWERS. Two are about stewardship and two about security;
+          none of them is a ways-of-working question, which is what `/teams` reports and what took five of the six
+          charts that used to stand here off this page. Each is a CONTROL as well as a chart — a wedge writes its
+          slice to the query and the table below narrows — which is the half the previous charts took with them
+          when they went, leaving the reader chips they could dismiss and had no way to set.
 
-          They were also the only way to CREATE a table filter — clicking a wedge wrote the query
-          parameter the chips read back — so `ESTATE_FILTERS` and the chips went with them rather
-          than leaving a reader able to dismiss a filter they had no way to apply. The controls that
-          remain are the ones with their own affordance: the term box, the Production toggle and the
-          three visibility toggles. */}
+          THE COHORT IS STATED IN THE HEADING AND THE REASON IS ON THE HINT. A figure whose denominator is not the
+          table's row count reads as disagreeing with the table, and this one is deliberately not: secret scanning
+          is free on public repositories and needs GitHub Advanced Security on internal and private ones, so every
+          internal and private repository legitimately reports the security controls off and a wheel including them
+          would draw a licensing boundary as an estate-wide gap.
+
+          NO BANNER AND NO WARNING TONE anywhere in here. Three of the four wheels have a slice for the state
+          nobody stated — three quarters of the CVE wheel is repositories with no dependency-scan report — and that
+          is the finding rather than something to apologise for on a strip across the page. */}
+      <EstateSummary rows={repositories} />
 
       {/* "UNARCHIVED ONLY" IS A FACT ABOUT THE COHORT and belongs beside the list it qualifies. The estate is
           selected by `cohort.include_archived`, which `src/evidence/policy/schema.ts` defaults to `false` and

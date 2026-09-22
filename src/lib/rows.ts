@@ -17,6 +17,7 @@ import { ABSENT } from "@/lib/format";
 import type { RAGState } from "@/lib/rag";
 import { compare, type SortValue } from "@/lib/sort";
 import type {
+  AlertScanState,
   AssuranceCriterion,
   AssuranceCriterionResult,
   AssuranceGrade,
@@ -25,6 +26,7 @@ import type {
   CveCount,
   CveEvidence,
   CveSeverity,
+  OpenAlertCount,
   RepositoryRow,
   Visibility
 } from "@/lib/types";
@@ -68,6 +70,19 @@ export const INDIVIDUAL_LABEL = "Individual";
  */
 export function ownedByIndividual(row: Pick<RepositoryRow, "owner_kind">): boolean {
   return row.owner_kind === "person";
+}
+
+/**
+ * Whether NOTHING owns the repository, which is a destination rather than an unread field.
+ *
+ * `none` is the unowned bucket the ownership graph resolves to, so this is an exact test against it and never
+ * "no team name" — `team` carries the bucket's own name for these rows. Absence reads as OWNED, in the same
+ * direction and for the same reason `ownedByIndividual` reads it as a team: an absent `owner_kind` means a
+ * deployment older than the field, and reporting most of the estate as unowned on that basis would be the
+ * sharpest possible wrong answer.
+ */
+export function unowned(row: Pick<RepositoryRow, "owner_kind">): boolean {
+  return row.owner_kind === "none";
 }
 
 /**
@@ -184,11 +199,13 @@ export function parseProduction(read: (parameter: string) => string | null): boo
 }
 
 /**
- * The rows a reader is looking at: the term, the visibilities, and the production toggle together.
+ * The rows a reader is looking at: the term, the visibilities, the production toggle and the clicked wedges.
  *
- * THE THREE AND, which is what stacking controls means — the public repositories whose name matches AND which
- * deploy to production. The six donut dimensions used to AND here too; they went with the charts, since a filter
- * a reader can dismiss but has no way to apply is a half-wired control surface.
+ * ONE AND OVER EVERY CONTROL, which is what stacking them means — the public repositories whose name matches,
+ * which deploy to production, and which are in the wedge the reader clicked. The wheels' dimensions AND here
+ * because the wheels are controls again: what removed them from this expression was that the charts above the
+ * table had gone and nothing was left to APPLY them with, and a filter a reader can dismiss but cannot set is a
+ * half-wired control surface.
  *
  * A row whose production answer could not be read is EXCLUDED while the toggle is on, rather than
  * kept on the chance that it is one. The toggle says "show me the production services", and a
@@ -199,9 +216,13 @@ export function filterRepositories(
   rows: readonly RepositoryRow[],
   term: string,
   production = false,
-  visibilities: ReadonlySet<Visibility> = new Set(VISIBILITIES)
+  visibilities: ReadonlySet<Visibility> = new Set(VISIBILITIES),
+  selections: EstateSelections = new Map()
 ): RepositoryRow[] {
-  return rows.filter((row) => matchesRepository(row, term) && matchesVisibility(row, visibilities) && (!production || row.production === true));
+  return rows.filter(
+    (row) =>
+      matchesRepository(row, term) && matchesVisibility(row, visibilities) && (!production || row.production === true) && matchesSelections(row, selections)
+  );
 }
 
 /**
@@ -211,8 +232,8 @@ export function filterRepositories(
  * read `n` before the click and `n` after it, which tells a reader nothing: the number is there to say what
  * turning the toggle on would leave.
  */
-export function productionCount(rows: readonly RepositoryRow[], term: string, visibilities?: ReadonlySet<Visibility>): number {
-  return filterRepositories(rows, term, true, visibilities).length;
+export function productionCount(rows: readonly RepositoryRow[], term: string, visibilities?: ReadonlySet<Visibility>, selections?: EstateSelections): number {
+  return filterRepositories(rows, term, true, visibilities, selections).length;
 }
 
 /**
@@ -283,6 +304,219 @@ export function parseVisibilities(read: (parameter: string) => string | null): S
  */
 export function matchesVisibility(row: RepositoryRow, showing: ReadonlySet<Visibility>): boolean {
   return row.visibility === undefined || showing.has(row.visibility);
+}
+
+/**
+ * The cohort the estate summary wheels are drawn over: PUBLIC ONLY.
+ *
+ * NOT THE TABLE'S VISIBILITY TOGGLES, though the table opens on the same narrowing. The wheels are a statement
+ * about the public estate and say so beside themselves, so they must not move when a reader turns internal on to
+ * look something up — a figure that changed under a control it does not name would be worse than one whose
+ * denominator is stated.
+ *
+ * THE REASON IS A LICENSING BOUNDARY AND NOT A SAMPLE. Secret scanning is free on public repositories and needs
+ * GitHub Advanced Security on internal and private ones, so all 446 internal and all 401 private repositories
+ * legitimately report the security controls off. A coverage wheel over the whole estate would draw that as a gap
+ * in the estate, and the same applies to everything alert-derived.
+ *
+ * AN ABSENT VISIBILITY IS EXCLUDED, which is the opposite of what `matchesVisibility` does with one and is right
+ * for the opposite reason. The table keeps such a row because dropping it would show an empty list against a
+ * deployment predating the field; a wheel counting it would put a repository whose visibility nobody read inside
+ * a figure whose whole claim is that every member is public.
+ */
+export function publicRepositories(rows: readonly RepositoryRow[]): RepositoryRow[] {
+  return rows.filter((row) => row.visibility === "public");
+}
+
+/**
+ * GitHub's "you never turned this on" answer, in the words the collector records it in.
+ *
+ * RESTATED AND NOT IMPORTED, for `ASSURANCE_CRITERIA`'s reason: `FEATURE_NOT_ENABLED` lives in
+ * `evidence/domain/security-alerts.ts` and `src/lib/**` imports nothing from `src/evidence/**`. The two spellings
+ * have to agree, because this sentence is the ONLY thing separating a family GitHub says is off from one nobody
+ * could read — `alertScanState` in `evidence/domain/alert-detail.ts` is the other end of the same comparison, and
+ * that is why the sentence is a named constant at both ends rather than a literal at either.
+ */
+const FEATURE_NOT_ENABLED = "is not enabled for this repository";
+
+/**
+ * Whether one alert family was READ for this row, is switched OFF, or said nothing either way.
+ *
+ * `alertScanState`'s rule over the contract's count block rather than over the stored one, and deliberately the
+ * same rule: `open` is the primary signal, because a number means somebody looked whatever else the block says,
+ * and the sentence is consulted only when there is no number. The two absences then have to be told apart, and
+ * prose is where the collection recorded the difference.
+ *
+ * READ OFF THE ROW AND NOT OFF `SecurityAlertReport.scans`, which is the fuller answer and is not on a row: the
+ * scans are assembled per repository for a repository's own page, and an estate of 1,046 rows cannot pay a query
+ * each. `RepositoryRow.security` is emitted on every collected row and carries the same three-state answer, which
+ * is why this reads it there — see `SecurityAlertEvidence` on the contract.
+ */
+export function scanState(count: OpenAlertCount | undefined): AlertScanState {
+  if (count?.open !== undefined) {
+    return "read";
+  }
+  return count?.detail?.endsWith(FEATURE_NOT_ENABLED) === true ? "not-enabled" : "unmeasured";
+}
+
+/** One estate wheel's slice: what it counts, the word beside it, and the state it is drawn in. */
+export interface EstateSlice {
+  /**
+   * The slice's key IN THE URL, which a wedge writes and `filterRepositories` reads back.
+   *
+   * Separate from `label` for `PieSlice.key`'s reason: the words move and the key must not, so a link shared
+   * with `?owner=team` in it keeps working when somebody rewords the legend.
+   */
+  key: string;
+  label: string;
+  /**
+   * Which `RAGState` the slice is drawn in, rather than a hex.
+   *
+   * THE WHEELS HAVE NO PALETTE OF THEIR OWN. `rag.ts` already holds the four colours this page reads every
+   * verdict in, and `lib/chart.ts` resolves the state to `RAG_HEX` at the point a mark needs a value — so a
+   * wedge and the table cell under it are the same colour for the same answer, and this module stays free of
+   * presentation literals as the rest of it is.
+   */
+  state: RAGState;
+  /** Whether this row belongs to this slice. */
+  holds: (row: RepositoryRow) => boolean;
+}
+
+/** One wheel: the parameter it filters on, what it is called, what it means, and its slices. */
+export interface EstateDimension {
+  parameter: string;
+  title: string;
+  hint: string;
+  /**
+   * Every slice, in best-to-worst order with the unmeasured one last.
+   *
+   * TOTAL OVER THE ROWS, which is the property the whole summary rests on and the one a test asserts: every
+   * repository lands in exactly one slice of every wheel, so a wheel's counts sum to the cohort it was drawn
+   * over. A row falling through would be counted nowhere and the wheel would silently under-total against the
+   * denominator stated beside it.
+   */
+  slices: readonly EstateSlice[];
+}
+
+export const OWNER_PARAMETER = "owner";
+
+export const MAINTAINED_PARAMETER = "maintained";
+
+export const SCANNING_PARAMETER = "scanning";
+
+export const CVE_PARAMETER = "cve";
+
+/**
+ * The word an unmeasured slice is labelled with, shared by the three wheels that have one.
+ *
+ * "NO STATE STATED" AND NOT "UNSCANNED" OR "UNKNOWN". Nothing here is a claim that nobody has looked: what is
+ * true is that this report holds no answer, and the two readings take different actions. One wording per wheel
+ * would have let the sharpest of them drift into blame.
+ */
+const NOT_STATED = "No state stated";
+
+/**
+ * The four questions this page answers, drawn as wheels over the public estate.
+ *
+ * FOUR AND NOT THE SIX THAT WERE REMOVED. Five of those were ways-of-working dimensions — the readiness
+ * distribution, the declared gate's two halves, unreviewed substantial merges — which are questions about a TEAM
+ * and are reported on `/teams` now. The sixth read a field the report layer has never emitted and drew an
+ * all-unknown circle. These four are stewardship and security, which is what this page is about, and every slice
+ * below reads a field the report layer emits on every row.
+ *
+ * EACH WHEEL IS A CONTROL AND NOT A PICTURE. Its `parameter` is what a wedge writes, `filterRepositories` reads
+ * it back, and the table under it narrows — which is the difference between a chart and a filter, and the reason
+ * the dismissible chips had to go when the previous charts did.
+ *
+ * THE COLOURS RUN GREEN, AMBER, THEN SLATE ON EVERY WHEEL, so four wheels side by side read as one thing: the
+ * first slice is the answer that reads well, the second is the one worth weighing, and slate is the absence of an
+ * answer. `Code owner` is the one wheel that reaches red, because it is the one whose last slice is a criterion
+ * READ AND FAILED with nobody to ask about it rather than a fact to weigh.
+ */
+export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
+  {
+    parameter: OWNER_PARAMETER,
+    title: "Code owner",
+    hint: "What owns the repository: a GitHub team, one named individual, or nothing. An individually-owned repository still MEETS the Code owner criterion — there is somebody to ask — so amber here is the bus factor worth weighing rather than a criterion that failed. Nothing owning it is the criterion unmet.",
+    slices: [
+      // Neither of the other two, so an absent `owner_kind` lands here — `ownedByIndividual` and `unowned` both
+      // document why that is the safe direction, and this slice is where their agreement shows.
+      { key: "team", label: "Team", state: "green", holds: (row) => !unowned(row) && !ownedByIndividual(row) },
+      { key: "individual", label: INDIVIDUAL_LABEL, state: "amber", holds: ownedByIndividual },
+      { key: "nobody", label: "Nobody", state: "red", holds: unowned }
+    ]
+  },
+  {
+    parameter: MAINTAINED_PARAMETER,
+    title: "Maintained",
+    hint: "Whether anything has been pushed to ANY branch inside the policy's window. Deliberately a different question from the Default branch pushed column, which reads the default branch alone — a repository with a busy feature branch is alive here and stale there, and both answers are true of it.",
+    slices: [
+      { key: "maintained", label: "Maintained", state: "green", holds: (row) => row.unmaintained === false },
+      { key: "unmaintained", label: "Unmaintained", state: "amber", holds: (row) => row.unmaintained === true },
+      // COUNTED AT ZERO ON EVERY CURRENT ROW, and drawn all the same. `unmaintained` is required on the cohort
+      // entry and emitted on both branches of measured-ness, so only a deployment older than the field reaches
+      // here — but a wheel with no slice for that row would drop it from a total the page states as the public
+      // estate, which is the one failure a summary must not have. Dimmed in the legend at zero, like any other
+      // empty slice.
+      { key: "unstated", label: NOT_STATED, state: "none", holds: (row) => row.unmaintained === undefined }
+    ]
+  },
+  {
+    parameter: SCANNING_PARAMETER,
+    title: "Code scanning",
+    hint: "Whether GitHub's code scanning answered for this repository. On means its alerts were read, however many there were. Off means GitHub answered that the feature is not enabled — over public repositories that is a real gap rather than the licensing boundary it would be on an internal or private one. No state stated means nothing said either way.",
+    slices: [
+      { key: "on", label: "On", state: "green", holds: (row) => scanState(row.security?.code_scanning) === "read" },
+      { key: "off", label: "Off", state: "amber", holds: (row) => scanState(row.security?.code_scanning) === "not-enabled" },
+      { key: "unstated", label: NOT_STATED, state: "none", holds: (row) => scanState(row.security?.code_scanning) === "unmeasured" }
+    ]
+  },
+  {
+    parameter: CVE_PARAMETER,
+    title: "Unsuppressed CVEs",
+    hint: "What the build pipeline's own dependency scan last found and nobody has suppressed. NO REPORT IS NOT UNSCANNED: a repository with no Java, Node or Python dependency tree has nothing for that stage to scan, and Dependabot may be watching it regardless — so it is its own slice and is folded into neither of the other two.",
+    slices: [
+      // A MEASURED ZERO, which is the whole reason this wheel has three slices: a scan that ran and found nothing
+      // is the finding, and it is not the same answer as a repository no scan has ever covered.
+      { key: "clean", label: "Reported clean", state: "green", holds: (row) => cveEvidence(row)?.live.total === 0 },
+      { key: "live", label: "At least one live CVE", state: "amber", holds: (row) => (cveEvidence(row)?.live.total ?? 0) > 0 },
+      { key: "unreported", label: "No dependency-scan report", state: "none", holds: (row) => cveEvidence(row) === undefined }
+    ]
+  }
+];
+
+/**
+ * Which slice each wheel is filtered on, keyed by the wheel's own parameter. An absent entry is unfiltered.
+ *
+ * A MAP RATHER THAN FOUR NAMED FLAGS, because the wheels are generated from `ESTATE_DIMENSIONS` and a fifth
+ * question added there has to reach the filter without a second edit here.
+ */
+export type EstateSelections = ReadonlyMap<string, string>;
+
+/**
+ * Which wedge each wheel is filtered on, read off the URL as every other control on this table is.
+ *
+ * A VALUE NO SLICE HAS IS IGNORED rather than matching nothing. A mistyped or stale `?owner=` would otherwise
+ * show an empty table for a filter the reader cannot see, which is the failure this module's own header names —
+ * the same reason `parseVisibilities` falls back rather than emptying the list.
+ */
+export function parseSelections(read: (parameter: string) => string | null): EstateSelections {
+  const chosen = new Map<string, string>();
+  for (const dimension of ESTATE_DIMENSIONS) {
+    const stated = read(dimension.parameter);
+    if (stated !== null && dimension.slices.some((slice) => slice.key === stated)) {
+      chosen.set(dimension.parameter, stated);
+    }
+  }
+  return chosen;
+}
+
+/** Whether a row is in every wedge the reader has clicked — the wheels' own half of the AND. */
+export function matchesSelections(row: RepositoryRow, selections: EstateSelections): boolean {
+  return ESTATE_DIMENSIONS.every((dimension) => {
+    const chosen = selections.get(dimension.parameter);
+    return chosen === undefined || dimension.slices.some((slice) => slice.key === chosen && slice.holds(row));
+  });
 }
 
 /**

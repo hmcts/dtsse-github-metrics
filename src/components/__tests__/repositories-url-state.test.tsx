@@ -3,13 +3,15 @@
  */
 
 /**
- * That the table's controls and the export beside them are looking at the same query — and that reaching it
- * costs no request.
+ * That the summary wheels, the table's controls and the export beside them are looking at the same query — and
+ * that reaching it costs no request.
  *
  * THE SEAM NO OTHER TEST CAN SEE. Every other file in this directory hands `useSearchParams` a fixed object and
  * mounts once per URL, which asserts each component against a query somebody typed rather than against one the
  * other component wrote. The defect this covers lived exactly there: `RepositoriesTable` WRITES the expand
- * parameter, `RepositoriesExport` READS it, and between them sits Next's history integration.
+ * parameter, `RepositoriesExport` READS it, and between them sits Next's history integration. `EstateSummary` is
+ * the third party to it and the sharpest case of all — a wheel WRITES a parameter that neither of the other two
+ * has a control for, and both of them read it.
  *
  * SO THE HOOK IS MODELLED ON THE REAL ONE rather than stubbed flat. Next patches `window.history.replaceState`
  * and dispatches its own `ACTION_RESTORE` — a client-only reducer action, no fetch — so `useSearchParams`
@@ -28,6 +30,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useSyncExternalStore } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { EstateSummary } from "@/components/EstateSummary";
 import { RepositoriesExport } from "@/components/RepositoriesExport";
 import { RepositoriesTable } from "@/components/RepositoriesTable";
 import { EXPAND_LABEL } from "@/lib/rows";
@@ -63,6 +66,10 @@ const ROWS: RepositoryRow[] = [
     visibility: "public",
     default_branch_committed_at: "2026-09-10T00:00:00Z",
     production: true,
+    // The two rows differ on the wheels' dimensions as well as on hygiene, so a wedge that filtered the wrong
+    // dimension — or nothing at all — cannot pass by leaving both rows in.
+    owner_kind: "team",
+    unmaintained: false,
     assurance: {
       grade: "partial",
       criteria: [{ criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: push protection" }],
@@ -74,6 +81,8 @@ const ROWS: RepositoryRow[] = [
     team: "dtsse",
     visibility: "public",
     default_branch_committed_at: "2026-09-09T00:00:00Z",
+    owner_kind: "person",
+    unmaintained: true,
     assurance: { grade: "unknown", criteria: [], hygiene: { secret_scanning: false } }
   }
 ];
@@ -125,8 +134,31 @@ function mount() {
   );
 }
 
+/** The whole page, wheels included: three components over one query, which is what the summary added to it. */
+function mountWithWheels() {
+  return render(
+    <>
+      <EstateSummary rows={ROWS} />
+      <RepositoriesTable rows={ROWS} weeks={12} action={<RepositoriesExport rows={ROWS} teamContributors={CONTRIBUTORS} window="2026-06-08 to 2026-08-31" />} />
+    </>
+  );
+}
+
+/** One wheel's legend entry, which is the wedge's own control and the half of it jsdom can aim at. */
+function slice(wheel: string, label: string): HTMLElement {
+  return within(screen.getByRole("group", { name: `${wheel} filter` })).getByRole("button", { name: new RegExp(label) });
+}
+
 function expander(): HTMLElement {
   return screen.getByRole("button", { name: EXPAND_LABEL });
+}
+
+/** The repositories the table is currently drawing, read off the link in each row's second cell. */
+function rowNames(): string[] {
+  return screen.getAllByRole("row").flatMap((line) => {
+    const link = within(line).queryAllByRole("link", { name: /^pcs-/ })[0];
+    return link === undefined ? [] : [link.textContent ?? ""];
+  });
 }
 
 /** The column names the table is currently drawing, read off each header's own accessible name. */
@@ -167,6 +199,18 @@ beforeEach(() => {
     }
   );
   vi.stubGlobal("URL", { createObjectURL: () => "blob:stubbed", revokeObjectURL: () => undefined });
+  // `ResponsiveContainer` constructs one on mount and jsdom has none, so the wheels would throw before a legend
+  // entry existed to click. It reports nothing, which leaves each ring an empty sized box — the legend is outside
+  // the container and is what these cases aim at. `charts/__tests__/SummaryPieChart.test.tsx` is where an
+  // observation is reported and the wedges themselves are clicked.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe(): void {}
+      unobserve(): void {}
+      disconnect(): void {}
+    }
+  );
   const create = document.createElement.bind(document);
   vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
     const element = create(tag);
@@ -241,6 +285,67 @@ describe("the estate table and its export over one query", () => {
     expect(exportedRepositories()).toEqual(["pcs-api"]);
     expect(written()).toBe("/repositories?weeks=12&production=true");
     expect(replaced).toEqual([]);
+  });
+
+  it("should narrow the table and the file to a clicked slice, without asking the server for anything", () => {
+    // THE WHOLE POINT OF THE WHEELS BEING BACK. The distribution is a chart; narrowing the list on a click is what
+    // makes it a control, and it costs no request because `filterRepositories` runs over the rows in props.
+    mountWithWheels();
+    expect(exportedRepositories()).toEqual(["pcs-api", "pcs-frontend"]);
+
+    fireEvent.click(slice("Code owner", "Individual"));
+
+    expect(rowNames()).toEqual(["pcs-frontend"]);
+    expect(exportedRepositories()).toEqual(["pcs-frontend"]);
+    expect(written()).toBe("/repositories?weeks=12&owner=individual");
+    expect(replaced).toEqual([]);
+  });
+
+  it("should widen the table again on a second click of the same slice", () => {
+    mountWithWheels();
+
+    fireEvent.click(slice("Maintained", "Unmaintained"));
+    expect(rowNames()).toEqual(["pcs-frontend"]);
+
+    fireEvent.click(slice("Maintained", "Unmaintained"));
+
+    expect(rowNames()).toEqual(["pcs-api", "pcs-frontend"]);
+    expect(written()).toBe("/repositories?weeks=12");
+    expect(replaced).toEqual([]);
+  });
+
+  it("should stack a slice with the toggles rather than replacing what they filtered", () => {
+    // Four kinds of control, one query, one AND: `pcs-api` is the production service AND the team-owned row, so
+    // both narrowings leave it and a wedge that overwrote the toggle would leave the other one too.
+    mountWithWheels();
+
+    fireEvent.click(within(screen.getByRole("group", { name: "Repository filters" })).getByRole("button", { name: /Production/ }));
+    fireEvent.click(slice("Code owner", "Team"));
+
+    expect(rowNames()).toEqual(["pcs-api"]);
+    expect(written()).toBe("/repositories?weeks=12&production=true&owner=team");
+    expect(replaced).toEqual([]);
+  });
+
+  it("should leave the wheels' own figures alone when a toggle narrows the table under them", () => {
+    // The wheels are drawn over the public estate and say so beside themselves, so they must not move with the
+    // table's filters — a figure that changed under a control it does not name is worse than one whose denominator
+    // is stated.
+    mountWithWheels();
+    expect(slice("Maintained", "Maintained").textContent).toContain("1");
+
+    fireEvent.click(slice("Maintained", "Unmaintained"));
+
+    expect(rowNames()).toEqual(["pcs-frontend"]);
+    expect(slice("Maintained", "Maintained").textContent).toContain("1");
+  });
+
+  it("should show the slice a shared link names as pressed when the page opens on one", () => {
+    url("weeks=12&owner=individual");
+    mountWithWheels();
+
+    expect(slice("Code owner", "Individual").getAttribute("aria-pressed")).toBe("true");
+    expect(rowNames()).toEqual(["pcs-frontend"]);
   });
 
   it("should keep the expansion and the filters in one query rather than overwriting one with the other", () => {

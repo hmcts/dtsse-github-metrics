@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { CSV_BYTE_ORDER_MARK, csvDocument, csvFilename } from "@/lib/csv";
 import { repositoryExportRows } from "@/lib/export";
 import { day } from "@/lib/format";
-import { filterRepositories, orderRepositories, parseExpanded, parseProduction, parseVisibilities, TERM_PARAMETER } from "@/lib/rows";
+import { filterRepositories, orderRepositories, parseExpanded, parseProduction, parseSelections, parseVisibilities, TERM_PARAMETER } from "@/lib/rows";
 import type { Contributor, RepositoryRow } from "@/lib/types";
 
 /**
@@ -21,7 +21,8 @@ import type { Contributor, RepositoryRow } from "@/lib/types";
  * server render, and cost no round trip either — see `getTeamContributors`.
  *
  * SCOPE IS THE READER'S FILTERS, which is what "the rows currently displayed" means: the term, the Production
- * toggle and the three visibility toggles all live in the URL, so this reads them through the same `useSearchParams`
+ * toggle, the three visibility toggles and the wedges clicked on the summary wheels all live in the URL, so this
+ * reads them through the same `useSearchParams`
  * and the same `filterRepositories` the table does. It cannot read the table's SORT, which is component state one
  * level away — so the file is ordered by `orderRepositories`, the order the table opens on and the one it is in
  * unless the reader has clicked a header. Only the SEQUENCE can differ.
@@ -49,7 +50,11 @@ export function RepositoriesExport({
       rows,
       searchParameters.get(TERM_PARAMETER) ?? "",
       parseProduction((parameter) => searchParameters.get(parameter)),
-      parseVisibilities((parameter) => searchParameters.get(parameter))
+      parseVisibilities((parameter) => searchParameters.get(parameter)),
+      // The summary wheels' wedges, through the same parser the table reads them with — a slice a reader clicked
+      // narrows the file exactly as it narrows the list, on this component's own rule that the scope is the
+      // reader's filters and not the whole estate.
+      parseSelections((parameter) => searchParameters.get(parameter))
     )
   );
   // The same parameter through the same parser the table reads it with, as every filter here is: two readings of one
