@@ -17,7 +17,9 @@ import {
   windowOptions
 } from "../../src/evidence/report/reports.ts";
 import { MAXIMUM_TREND_PERIODS } from "../../src/evidence/report/spans.ts";
+import { addRepositoryNote } from "../../src/evidence/store/notes.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
+import { getRepositoryNotes } from "../../src/lib/api.ts";
 import type * as contract from "../../src/lib/types.ts";
 
 /**
@@ -361,6 +363,19 @@ const PROVENANCE: Shape<contract.WindowProvenance> = {
 const COHORT_SUMMARY: Shape<contract.CohortSummary> = {
   declared: { merged: true, reported: true, excluded_authors: true, direct_commits: true },
   required: { excluded_authors: true }
+};
+
+/**
+ * EVERY FIELD REQUIRED, which is the only shape in this file with nothing optional.
+ *
+ * Nothing about a note is observed, so there is no field whose absence could mean "nobody measured this" —
+ * the table refuses a blank body and a blank author, and both instants have column defaults. That makes
+ * `declared` and `required` identical here, and a future optional field on this type would be worth arguing
+ * for rather than adding.
+ */
+const REPOSITORY_NOTE: Shape<contract.RepositoryNote> = {
+  declared: { id: true, body: true, author_name: true, author_subject: true, created_at: true, updated_at: true },
+  required: { id: true, body: true, author_name: true, author_subject: true, created_at: true, updated_at: true }
 };
 
 const ASSESSMENT: Shape<contract.ReadinessAssessment> = {
@@ -826,6 +841,7 @@ async function clear(): Promise<void> {
   await prisma.repositoryProduction.deleteMany();
   await prisma.orgTeamMembership.deleteMany();
   await prisma.orgPerson.deleteMany();
+  await prisma.repositoryNote.deleteMany();
 }
 
 beforeEach(async () => {
@@ -1102,6 +1118,34 @@ describe("the absent-versus-null rule the reports emit under", () => {
     const evidence = await repositoryEvidence(CONFIGURATION, "alpha", 26, { pullRequests: true, directCommits: true }, REFERENCE);
 
     expect(findNulls(evidence)).toEqual([]);
+  });
+
+  it("should emit only the fields RepositoryNote declares, through the seam a page reads them by", async () => {
+    // THROUGH `getRepositoryNotes` AND NOT THE STORE. The store returns `Date`s and camelCase; the contract
+    // declares ISO-8601 strings and snake_case, and `src/lib/api.ts` is the one place that conversion happens.
+    // Asserting against the store would leave that translation unchecked, which is the gap this whole file
+    // exists to close.
+    await addRepositoryNote({
+      organization: "hmcts",
+      repository: "alpha",
+      body: "The suppressions are tracked in HDPI-8150.",
+      authorSubject: "0000-1111",
+      authorName: "A Reader"
+    });
+
+    const notes = await getRepositoryNotes("alpha");
+
+    expect(notes).toHaveLength(1);
+    assertShape("RepositoryNote", REPOSITORY_NOTE, notes[0], "repositoryNotes[0]");
+    // The instants are text rather than `Date`s, which is what `lib/sort.ts` requires and what a component holds.
+    expect(notes[0]?.created_at).toMatch(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/);
+    expect(findNulls(notes)).toEqual([]);
+  });
+
+  it("should report a repository nobody has written about as an empty list rather than an absence", async () => {
+    // Absent is not zero — except that here there is no absence to represent: no notes is a measured nothing,
+    // so the page draws an empty state and never a dash.
+    expect(await getRepositoryNotes("alpha")).toEqual([]);
   });
 
   it("should find the null a report would have carried, so the two cases above can fail", async () => {

@@ -1,4 +1,5 @@
 import "server-only";
+import type { Author } from "@/auth/author";
 import { loadConfiguration } from "@/evidence/policy/load";
 import type { Configuration } from "@/evidence/policy/schema";
 import {
@@ -13,6 +14,7 @@ import {
   teamRows,
   windowOptions
 } from "@/evidence/report/reports";
+import { addRepositoryNote, deleteRepositoryNote, editRepositoryNote, repositoryNotes } from "@/evidence/store/notes";
 import { RepositoryUnknownError } from "@/lib/not-found";
 import { ownedByIndividual, owners } from "@/lib/rows";
 import type {
@@ -22,6 +24,7 @@ import type {
   ContributorRow,
   OverviewSummary,
   RepositoryDetail,
+  RepositoryNote,
   RepositoryRow,
   RepositoryTrend,
   TeamActorRow,
@@ -260,6 +263,76 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
     // not be read, which is a different answer from this person having nothing in production.
     ...(theirs.every((row) => row.production === undefined) ? {} : { production: theirs.filter((row) => row.production === true).map((row) => row.repository) })
   };
+}
+
+/**
+ * One repository's notes, in the contract's shape.
+ *
+ * THE ONLY GETTER HERE THAT IS NOT A REPORT. Everything above reads a built report held per collection
+ * revision; a note is read straight from its table on every render, which is what makes one written a moment
+ * ago visible now rather than after the next collection. The pages are `force-dynamic`, so there is no cache
+ * between this and the reader.
+ *
+ * The organisation comes from the policy document, as `getRepository`'s `url` does: a note belongs to the
+ * repository as this deployment names it, and the store casefolds what it looks up.
+ *
+ * INSTANTS ARE CONVERTED HERE, which is this seam's job rather than the store's. The table holds
+ * `timestamptz` and the store returns `Date`s; the contract carries ISO-8601 strings, for the reason
+ * `lib/types.ts` states — `lib/sort.ts` has no `Date` case, and a component should hold what the contract
+ * describes. `toISOString` is UTC, which is what `lib/format.ts`'s `instant` expects.
+ */
+export async function getRepositoryNotes(repository: string): Promise<RepositoryNote[]> {
+  const configured = await configuration();
+  const stored = await repositoryNotes(configured.organization, repository);
+  return stored.map((note) => ({
+    id: note.id,
+    body: note.body,
+    author_name: note.authorName,
+    author_subject: note.authorSubject,
+    created_at: note.createdAt.toISOString(),
+    updated_at: note.updatedAt.toISOString()
+  }));
+}
+
+/**
+ * Stores a note against one repository, on behalf of an author the CALLER HAS ALREADY ESTABLISHED.
+ *
+ * THIS FUNCTION DOES NOT AUTHENTICATE ANYBODY, and that is stated rather than implied because it is the one
+ * place in this file where the omission could matter. It takes an `Author`, so it cannot be called without one
+ * — but an `Author` is a value, and the thing that decides whether the request had a right to supply it is
+ * `writingAuthor` in `src/auth/author.ts`, called by the server action. The three functions below are the
+ * evidence layer's write seam and nothing more.
+ *
+ * THE BODY IS NOT VALIDATED HERE EITHER. `noteBody` is what refuses a blank or over-long note with a sentence
+ * for the reader, and the table's CHECK constraints are what hold regardless. A caller that skipped both gets
+ * a `StorageError`.
+ */
+export async function addNote(repository: string, body: string, author: Author): Promise<void> {
+  const configured = await configuration();
+  await addRepositoryNote({
+    organization: configured.organization,
+    repository,
+    body,
+    authorSubject: author.subject,
+    authorName: author.name
+  });
+}
+
+/**
+ * Replaces one note's body, reporting whether there was a note to replace.
+ *
+ * NO REPOSITORY AND NO AUTHOR. A note's identifier is unique across the table, so the repository would be
+ * redundant, and the author is deliberately not a predicate: any authenticated reader may edit any note. The
+ * original author and `created_at` survive because the store's statement does not name them — see
+ * `editRepositoryNote`.
+ */
+export async function updateNote(id: string, body: string): Promise<boolean> {
+  return await editRepositoryNote(id, body);
+}
+
+/** Deletes one note, reporting whether there was one to delete. Any authenticated reader may delete any note. */
+export async function removeNote(id: string): Promise<boolean> {
+  return await deleteRepositoryNote(id);
 }
 
 export async function getTeams(weeks: number): Promise<TeamRow[]> {

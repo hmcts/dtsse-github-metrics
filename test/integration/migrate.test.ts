@@ -74,6 +74,7 @@ describe("migrate", () => {
       "org_team_repositories",
       "org_teams",
       "pull_request_facts",
+      "repository_notes",
       "repository_ownership",
       "repository_production",
       "repository_state",

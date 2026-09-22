@@ -10,9 +10,10 @@ import { MetricCard } from "@/components/MetricCard";
 import { MetricsGrid } from "@/components/MetricsGrid";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OwnerName } from "@/components/OwnerName";
+import { RepositoryNotes } from "@/components/RepositoryNotes";
 import { Panel, Section, SectionPair } from "@/components/Section";
 import { TrendSection } from "@/components/TrendSection";
-import { getRepository, getTrend, getWindows, isNotFound } from "@/lib/api";
+import { getRepository, getRepositoryNotes, getTrend, getWindows, isNotFound } from "@/lib/api";
 import { instant, span } from "@/lib/format";
 import {
   codeownersCard,
@@ -28,6 +29,7 @@ import {
 } from "@/lib/repository";
 import type { RepositoryDetail, SonarReport } from "@/lib/types";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
+import { createNote, deleteNote, editNote } from "./notes";
 
 /**
  * One repository's whole evidence block at one window span.
@@ -61,6 +63,22 @@ export default async function RepositoryPage({
   const detail = await readRepository((await params).repository, weeks);
   const evidence = detail.evidence;
 
+  // READ BEFORE THE NO-EVIDENCE BRANCH, and drawn on both sides of it. A note is not a fact about a reporting
+  // window — "this is being decommissioned" is exactly the kind of thing written about a repository that has
+  // stopped producing evidence — so a span with nothing in it is the last page a reader should be denied the
+  // notes on. It is one indexed query against a small table, on a page that already makes several.
+  const notes = (
+    <Section heading="Notes" detail="oldest first">
+      <RepositoryNotes
+        repository={detail.repository}
+        notes={await getRepositoryNotes(detail.repository)}
+        create={createNote}
+        edit={editNote}
+        remove={deleteNote}
+      />
+    </Section>
+  );
+
   const header = (
     <EntityHeader
       kind="repository"
@@ -93,6 +111,7 @@ export default async function RepositoryPage({
           message={`This span holds no evidence for ${detail.repository}.`}
           detail={`${detail.detail ?? "no reason was given"} — run metrics collect for the span being asked for, or read the repository at a span the caches cover.`}
         />
+        {notes}
       </div>
     );
   }
@@ -212,6 +231,10 @@ export default async function RepositoryPage({
           <ContributorsTable rows={detail.contributors} weeks={weeks} />
         )}
       </Section>
+
+      {/* LAST, below every collected signal. Everything above is evidence this service gathered; this is what
+          a person wants to say about it, which reads as a footnote to the block rather than a preface. */}
+      {notes}
     </div>
   );
 }

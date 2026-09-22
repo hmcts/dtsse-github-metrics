@@ -18,9 +18,18 @@ import RepositoryPage from "@/app/repositories/[repository]/page";
 import { RepositoryUnknownError } from "@/lib/not-found";
 import { PRODUCTION_BADGE } from "@/lib/production";
 import { INDIVIDUAL_LABEL } from "@/lib/rows";
-import type { ContributorRow, PracticeFinding, RepositoryDetail, RepositoryPracticeEvidence, RepositoryTrend, TrendWindow, WindowOptions } from "@/lib/types";
+import type {
+  ContributorRow,
+  PracticeFinding,
+  RepositoryDetail,
+  RepositoryNote,
+  RepositoryPracticeEvidence,
+  RepositoryTrend,
+  TrendWindow,
+  WindowOptions
+} from "@/lib/types";
 
-const api = vi.hoisted(() => ({ getWindows: vi.fn(), getRepository: vi.fn(), getTrend: vi.fn() }));
+const api = vi.hoisted(() => ({ getWindows: vi.fn(), getRepository: vi.fn(), getTrend: vi.fn(), getRepositoryNotes: vi.fn() }));
 
 // Mocked by path, so `api.ts` — and the Postgres pool and `server-only` guard behind it — is never loaded here.
 vi.mock("@/lib/api", async () => {
@@ -31,6 +40,10 @@ vi.mock("@/lib/api", async () => {
 vi.mock("next/headers", () => ({
   cookies: () => Promise.resolve({ get: () => undefined })
 }));
+
+// The page imports the note actions, which import `revalidatePath`. Nothing here submits one — the actions
+// arrive at the section as props and are never called — but the module graph has to resolve.
+vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 
 vi.mock("next/navigation", () => ({
   notFound: () => {
@@ -144,12 +157,15 @@ function evidence(): RepositoryPracticeEvidence {
  * `series` is the trend, which is the one fetch on this page allowed to fail: `null` refuses it, and
  * every case that is not about the trend section refuses it so the charts stay out of the markup.
  */
-async function renderDetail(detail: RepositoryDetail, series: RepositoryTrend | null = null): Promise<string> {
+async function renderDetail(detail: RepositoryDetail, series: RepositoryTrend | null = null, notes: RepositoryNote[] = []): Promise<string> {
   api.getWindows.mockResolvedValue(WINDOWS);
   api.getRepository.mockResolvedValue(detail);
   // A rejected trend is how the page is shown to render its other sections regardless: the series is one block
   // among several, and losing it must not lose the evidence beside it.
   api.getTrend.mockImplementation(() => (series === null ? Promise.reject(new Error("no trend in this test")) : Promise.resolve(series)));
+  // No notes by default, which is the ordinary case for every repository on the estate and keeps the notes
+  // section's own markup out of the assertions below. `RepositoryNotes.test.tsx` covers the section itself.
+  api.getRepositoryNotes.mockResolvedValue(notes);
   const page = await RepositoryPage({
     params: Promise.resolve({ repository: "api" }),
     searchParams: Promise.resolve({})
@@ -252,7 +268,9 @@ describe("repository page layout", () => {
 
   it("reads down the page in the order a reader needs it", async () => {
     const markup = await render();
-    const order = ["Merges reported", "Behaviour", "Blocking", "Merge gate", "Security alerts", "SonarCloud", "Findings", "Contributors"];
+    // Notes LAST: everything above it is evidence this service collected, and a note is what a person wants
+    // to say about it — a footnote to the block rather than a preface.
+    const order = ["Merges reported", "Behaviour", "Blocking", "Merge gate", "Security alerts", "SonarCloud", "Findings", "Contributors", "Notes"];
     const positions = order.map((heading) => markup.indexOf(heading));
     expect(positions).not.toContain(-1);
     expect([...positions].sort((first, second) => first - second)).toEqual(positions);
@@ -377,6 +395,26 @@ describe("a repository the span cannot be reported for", () => {
     const markup = await renderDetail(unavailable());
 
     expect(markup).toContain("no reason was given —");
+  });
+
+  it("should still carry the notes when the span holds no evidence for the repository", async () => {
+    // A note is not a fact about a reporting window — "this is being decommissioned" is exactly what gets
+    // written about a repository that has stopped producing evidence — so this is the last page a reader
+    // should be denied them on.
+    const markup = await renderDetail(unavailable("the caches hold no window at 8 weeks"), null, [
+      {
+        id: "11111111-2222-3333-4444-555555555555",
+        body: "Decommissioned in July.",
+        author_name: "A Reader",
+        author_subject: "0000-1111",
+        created_at: "2026-09-20T09:30:00.000Z",
+        updated_at: "2026-09-20T09:30:00.000Z"
+      }
+    ]);
+
+    expect(markup).toContain("This span holds no evidence for api.");
+    expect(heading(markup, "Notes")).toBeGreaterThan(0);
+    expect(markup).toContain("Decommissioned in July.");
   });
 
   it("draws none of the evidence blocks, and asks for no trend it could not draw", async () => {

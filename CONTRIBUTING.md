@@ -37,6 +37,13 @@ fallbacks.
   importable from components.
 - `src/lib/types.ts` is the contract between the two halves. Adding a field there is a contract change, and its
   comment should say which of the two kinds of field it is and what absence means.
+- **The serving path writes exactly one table**, `repository_notes`, through
+  `src/app/repositories/[repository]/notes.ts` — the only `"use server"` file in the tree. Everything else the
+  pages reach is read-only to them. A server action is reachable by a direct POST rather than only through the
+  form that renders it, so **every action calls `writingAuthor` in `src/auth/author.ts` first**; the middleware
+  guard in `src/proxy.ts` is not a substitute for that check, and neither is the other way round. A second write
+  path is a decision worth arguing for in the PR, not a file to add. Never put `"use server"` on
+  `src/lib/api.ts`: it would publish every read as a POST endpoint.
 
 ## Structure
 
