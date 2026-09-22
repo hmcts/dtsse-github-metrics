@@ -4,7 +4,7 @@ import { collectOrganisationAlerts } from "../../src/evidence/alerts/collect.ts"
 import { AlertFamily, AlertScanState } from "../../src/evidence/domain/alert-detail.ts";
 import { createGitHubClient } from "../../src/evidence/github/client.ts";
 import { personalAccessToken } from "../../src/evidence/github/credentials.ts";
-import { recordSecurityAlerts, storedAlertCounts } from "../../src/evidence/store/alerts.ts";
+import { recordSecurityAlerts, storedAlertCounts, storedRepositoryAlertScans } from "../../src/evidence/store/alerts.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 import { StorageError } from "../../src/evidence/store/storage-error.ts";
 
@@ -348,5 +348,117 @@ describe("storedAlertCounts", () => {
     await storeState("pcs-api", { securityAlerts: { dependabot: { open: 1 }, codeScanning: {}, secretScanning: {} } });
 
     expect((await storedAlertCounts(ORGANIZATION)).has("never-collected")).toBe(false);
+  });
+});
+
+/**
+ * The READ side, which is the half `/repositories/<name>` renders.
+ *
+ * READ THROUGH THE SCAN AND NOT OVER THE ALERTS, and these cases are what holds that. A query over `security_alerts`
+ * alone answers an empty list for a family that is off, for a family nobody may read and for a family read and found
+ * clean — one answer to three questions, and the wrong one two times in three. The scan row is what separates them, so
+ * what is asserted below is that the state and its reason survive the round trip alongside the records.
+ */
+describe("storedRepositoryAlertScans", () => {
+  it("should read each family's state and its reason back beside the alerts", async () => {
+    await recordSecurityAlerts(
+      ORGANIZATION,
+      [
+        scan({ alerts: [alert(1), alert(2)] }),
+        scan({ family: AlertFamily.CodeScanning, state: AlertScanState.NotEnabled, detail: "code scanning is not enabled for this repository" })
+      ],
+      OBSERVED
+    );
+
+    const scans = await storedRepositoryAlertScans(ORGANIZATION, "pcs-api");
+
+    expect(scans).toHaveLength(2);
+    const dependabot = scans.find((entry) => entry.family === AlertFamily.Dependabot);
+    expect(dependabot).toMatchObject({ state: AlertScanState.Read, observedAt: OBSERVED });
+    expect(dependabot?.alerts.map((entry) => entry.number)).toEqual([1, 2]);
+    const code = scans.find((entry) => entry.family === AlertFamily.CodeScanning);
+    expect(code).toMatchObject({ state: AlertScanState.NotEnabled, detail: "code scanning is not enabled for this repository" });
+    expect(code?.alerts).toEqual([]);
+  });
+
+  it("should read a scan with no alerts as a scan rather than as no scan", async () => {
+    // THE MEASURED CLEAN this pair of tables exists for. A reader that found nothing here would have no way to tell it
+    // from a repository nobody walked.
+    await recordSecurityAlerts(ORGANIZATION, [scan()], OBSERVED);
+
+    const [only] = await storedRepositoryAlertScans(ORGANIZATION, "pcs-api");
+
+    expect(only).toMatchObject({ family: AlertFamily.Dependabot, state: AlertScanState.Read, alerts: [] });
+  });
+
+  it("should answer no scans at all for a repository nothing has walked", async () => {
+    await recordSecurityAlerts(ORGANIZATION, [scan()], OBSERVED);
+
+    // Nothing, which `reportedAlertScans` turns into three explicit `unmeasured` families rather than a silence.
+    expect(await storedRepositoryAlertScans(ORGANIZATION, "never-walked")).toEqual([]);
+  });
+
+  it("should hand back every absent column as a missing key rather than as null", async () => {
+    // `null` is what Postgres returns and what TypeScript cannot see at a `?:`. A `null` reaching the domain means
+    // every reader between here and the page has to handle a third value the type does not declare.
+    await recordSecurityAlerts(ORGANIZATION, [scan({ alerts: [{ repository: "pcs-api", family: AlertFamily.Dependabot, number: 5 }] })], OBSERVED);
+
+    const [only] = await storedRepositoryAlertScans(ORGANIZATION, "pcs-api");
+
+    expect(only?.alerts[0]).toEqual({ repository: "pcs-api", family: AlertFamily.Dependabot, number: 5 });
+    // And the scan's own reason, which is NULL on a read row.
+    expect("detail" in (only ?? {})).toBe(false);
+  });
+
+  it("should order one family's alerts open first and longest-exposed first", async () => {
+    // NOT GITHUB'S OWN ORDER, which is newest-first by number. The oldest open alert is the one the `patching`
+    // criterion's sentence is about, so it is the one a reader meets first.
+    await recordSecurityAlerts(
+      ORGANIZATION,
+      [
+        scan({
+          alerts: [
+            alert(1, { createdAt: new Date(Date.UTC(2026, 6, 1)) }),
+            alert(2, { createdAt: new Date(Date.UTC(2024, 0, 9)) }),
+            alert(3, { createdAt: new Date(Date.UTC(2023, 0, 9)), state: "fixed", resolution: "fixed" })
+          ]
+        })
+      ],
+      OBSERVED
+    );
+
+    const [only] = await storedRepositoryAlertScans(ORGANIZATION, "pcs-api");
+
+    // 2 before 1 on age, and 3 last despite being the oldest of the three, because it is no longer open.
+    expect(only?.alerts.map((entry) => entry.number)).toEqual([2, 1, 3]);
+  });
+
+  it("should keep a resolved alert with GitHub's own resolution word", async () => {
+    // The record of a decision taken on GitHub. It is stored, it is not open, and nothing here paraphrases the reason —
+    // which is what makes "resolve it there" work as the only route.
+    await recordSecurityAlerts(
+      ORGANIZATION,
+      [
+        scan({
+          family: AlertFamily.SecretScanning,
+          alerts: [
+            {
+              repository: "pcs-api",
+              family: AlertFamily.SecretScanning,
+              number: 8,
+              alertType: "github_personal_access_token",
+              state: "resolved",
+              resolution: "false_positive",
+              resolvedAt: new Date(Date.UTC(2026, 1, 3))
+            }
+          ]
+        })
+      ],
+      OBSERVED
+    );
+
+    const [only] = await storedRepositoryAlertScans(ORGANIZATION, "pcs-api");
+
+    expect(only?.alerts[0]).toMatchObject({ state: "resolved", resolution: "false_positive", resolvedAt: new Date(Date.UTC(2026, 1, 3)) });
   });
 });

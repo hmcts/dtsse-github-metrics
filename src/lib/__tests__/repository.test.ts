@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   ALERT_FAMILIES,
+  alertActionLabel,
+  alertIdentifier,
+  alertLocation,
+  alertScanSummaries,
+  alertState,
+  alertSubject,
+  assuranceRows,
   codeownersCard,
   cohortCards,
   conditionGroups,
@@ -9,6 +16,7 @@ import {
   maintenanceRows,
   maintenanceSummary,
   mergeGateRows,
+  openAlerts,
   openPullRequestCards,
   ratingLetter,
   securityCards,
@@ -17,7 +25,17 @@ import {
   sonarRows,
   yesOrNo
 } from "@/lib/repository";
-import type { CohortSummary, MaintenanceReport, MergeGateEvidence, ReadinessAssessment, SecurityAlertEvidence, SonarMeasures } from "@/lib/types";
+import type {
+  AssuranceReport,
+  CohortSummary,
+  MaintenanceReport,
+  MergeGateEvidence,
+  ReadinessAssessment,
+  SecurityAlertEvidence,
+  SecurityAlertFamilyScan,
+  SecurityAlertRecord,
+  SonarMeasures
+} from "@/lib/types";
 
 function cohort(overrides: Partial<CohortSummary> = {}): CohortSummary {
   return { merged: 12, reported: 9, excluded_authors: {}, direct_commits: 2, ...overrides };
@@ -409,6 +427,176 @@ describe("security alerts", () => {
 
   it("says secret scanning carries no severity instead of printing four zeros", () => {
     expect(severityDetail("secret-scanning", alerts.secret_scanning)).toBe("no severity is reported for this family");
+  });
+});
+
+describe("the assurance criteria as rows", () => {
+  function report(overrides: Partial<AssuranceReport> = {}): AssuranceReport {
+    return {
+      grade: "partial",
+      criteria: [
+        { criterion: "named-owner", outcome: "met", detail: "assigned to a team" },
+        { criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: secret scanning" },
+        { criterion: "no-committed-secrets", outcome: "unknown", detail: "the secret-scanning alerts could not be read" },
+        { criterion: "security-contact", outcome: "met", detail: "a security policy is reported" },
+        { criterion: "patching", outcome: "met", detail: "no severe alert is open" },
+        { criterion: "maintained", outcome: "met", detail: "pushed to within the last year" }
+      ],
+      ...overrides
+    };
+  }
+
+  it("draws all six criteria in the table's own column order", () => {
+    // One order for the columns and the rows, so a reader moving between the two pages is not re-learning the list.
+    expect(assuranceRows(report()).map((row) => row.label)).toEqual(["Code owner", "Hygiene", "Secrets", "Security contact", "Patching cycle", "Maintained"]);
+  });
+
+  it("carries every criterion's reason as the row's detail rather than a tooltip", () => {
+    // THE WHOLE POINT OF THE SECTION: the sentence naming the missing control is text under the pair.
+    const rows = assuranceRows(report());
+
+    expect(rows[1]).toMatchObject({ value: "not met", detail: "not configured: secret scanning", tone: "bad" });
+  });
+
+  it("reads an unknown outcome as unknown and colours it neither way", () => {
+    // Never folded into met or unmet, and never amber: one refused organisation-wide call leaves a criterion unknown
+    // for the whole estate at once, and a colour there would blame the collection on every team.
+    const rows = assuranceRows(report());
+
+    expect(rows[2]).toMatchObject({ value: "unknown", detail: "the secret-scanning alerts could not be read", tone: "neutral" });
+  });
+
+  it("prints a met criterion in words rather than as a tick", () => {
+    expect(assuranceRows(report())[0]).toMatchObject({ value: "met", tone: "good" });
+  });
+
+  it("draws a criterion the report never judged as unknown rather than leaving the row out", () => {
+    // Six rows every time. A criterion silently absent is a question a reader cannot tell was never asked.
+    const rows = assuranceRows(report({ criteria: [] }));
+
+    expect(rows).toHaveLength(6);
+    for (const row of rows) {
+      expect(row).toMatchObject({ value: "unknown", detail: "this criterion was not judged for this repository", tone: "neutral" });
+    }
+  });
+});
+
+describe("the individual alerts behind each family", () => {
+  function alert(overrides: Partial<SecurityAlertRecord> = {}): SecurityAlertRecord {
+    return {
+      family: "secret-scanning",
+      number: 7,
+      alert_type: "azure_storage_account_key",
+      path: "src/config.ts",
+      line: 12,
+      state: "open",
+      created_at: "2024-03-09T00:00:00Z",
+      html_url: "https://github.com/hmcts/alpha/security/secret-scanning/7",
+      ...overrides
+    };
+  }
+
+  function scan(overrides: Partial<SecurityAlertFamilyScan> = {}): SecurityAlertFamilyScan {
+    return { family: "secret-scanning", state: "read", observed_at: "2026-09-22T06:00:00Z", alerts: [alert()], ...overrides };
+  }
+
+  it("counts only the open alerts, a resolved one being the record of a decision already taken", () => {
+    // A resolved alert is stored — it is the only place GitHub's own `resolution` exists — and counting it would
+    // report a repository that has revoked every leaked credential as still leaking them.
+    const alerts = openAlerts(scan({ alerts: [alert(), alert({ number: 8, state: "resolved", resolution: "false_positive" })] }));
+
+    expect(alerts.map((entry) => entry.number)).toEqual([7]);
+  });
+
+  it("states a family that was read and found clean as read, not as unmeasured", () => {
+    const [summary] = alertScanSummaries([scan({ alerts: [] })]);
+
+    expect(summary).toMatchObject({ state: "read", tone: "good", empty: "This family was read and nothing is open." });
+    expect(summary?.detail).toBe("read 2026-09-22T06:00Z");
+  });
+
+  it("states a family that is switched off without ever saying it has no alerts", () => {
+    const [summary] = alertScanSummaries([scan({ state: "not-enabled", detail: "secret scanning is not enabled for this repository", alerts: [] })]);
+
+    expect(summary).toMatchObject({ state: "not enabled", tone: "neutral" });
+    expect(summary?.empty).toBe("This family is switched off for this repository, so there was nothing to scan.");
+    expect(summary?.empty).not.toContain("no alerts");
+  });
+
+  it("states a family nobody could read as unknown rather than as clean, and without an alarm", () => {
+    // THE FAILURE THIS FEATURE EXISTS TO AVOID, and neutral because the reader cannot install the App that was
+    // refused — an unmeasured family is a statement and not a warning.
+    const [summary] = alertScanSummaries([scan({ state: "unmeasured", detail: "the walk was refused", alerts: [] })]);
+
+    expect(summary).toMatchObject({ state: "could not be read", tone: "neutral", detail: "the walk was refused" });
+    expect(summary?.empty).toBe("Nobody could read this family, so whether anything is open is unknown.");
+  });
+
+  it("falls back to the scan instant where a read family carries no stored reason", () => {
+    expect(alertScanSummaries([scan()])[0]?.detail).toBe("read 2026-09-22T06:00Z");
+  });
+
+  it("says no instant was recorded rather than printing a dash for a scan with neither", () => {
+    const [summary] = alertScanSummaries([{ family: "dependabot", state: "read", alerts: [] }]);
+
+    expect(summary?.detail).toBe("no scan instant was recorded");
+  });
+
+  it("reads any open secret badly and a medium dependency alert as worth weighing", () => {
+    // A leaked credential has no low-severity form, which is the one family-specific threshold here.
+    const [secrets, dependabot] = alertScanSummaries([scan(), scan({ family: "dependabot", alerts: [alert({ family: "dependabot", severity: "medium" })] })]);
+
+    expect(secrets?.tone).toBe("bad");
+    expect(dependabot?.tone).toBe("warn");
+  });
+
+  it("reads a high-severity dependency alert badly", () => {
+    const [summary] = alertScanSummaries([scan({ family: "dependabot", alerts: [alert({ family: "dependabot", severity: "high" })] })]);
+
+    expect(summary?.tone).toBe("bad");
+  });
+
+  it("leads on the package where an alert names one, with the advisory identifier behind it", () => {
+    // `GHSA-…` at the head of a row tells a reader nothing they can act on; the package does.
+    const dependency = alert({ family: "dependabot", alert_type: "GHSA-1234-5678-90ab", subject: "lodash" });
+
+    expect(alertSubject(dependency)).toBe("lodash");
+    expect(alertIdentifier(dependency)).toBe("GHSA-1234-5678-90ab");
+  });
+
+  it("leads on the type where there is no subject, and offers nothing behind it", () => {
+    expect(alertSubject(alert())).toBe("azure_storage_account_key");
+    expect(alertIdentifier(alert())).toBeUndefined();
+  });
+
+  it("names an alert by its number where neither the type nor the subject was readable", () => {
+    expect(alertSubject({ family: "code-scanning", number: 4 })).toBe("alert 4");
+  });
+
+  it("narrows a location to the line where the family reports one", () => {
+    expect(alertLocation(alert())).toBe("src/config.ts:12");
+    // Dependabot gives a manifest path and no line, so the line is appended rather than assumed.
+    expect(alertLocation(alert({ line: undefined }))).toBe("src/config.ts");
+  });
+
+  it("says no location was reported rather than leaving a cell that reads as the repository root", () => {
+    expect(alertLocation(alert({ path: undefined }))).toBe("no location was reported");
+  });
+
+  it("states an alert's resolution in GitHub's own word rather than a paraphrase", () => {
+    expect(alertState(alert({ state: "resolved", resolution: "false_positive" }))).toBe("resolved: false_positive");
+    expect(alertState(alert())).toBe("open");
+  });
+
+  it("says no state was reported rather than guessing at one", () => {
+    expect(alertState({ family: "dependabot", number: 1 })).toBe("no state was reported");
+  });
+
+  it("offers to resolve a secret-scanning alert on GitHub and only to view the other two", () => {
+    // False positives are GitHub's to record: our count follows at the next collection, so there is deliberately no
+    // local override and the link says what it is for.
+    expect(alertActionLabel("secret-scanning")).toBe("Resolve on GitHub");
+    expect(alertActionLabel("dependabot")).toBe("View on GitHub");
   });
 });
 

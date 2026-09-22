@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { notFound } from "next/navigation";
+import { AlertDetailSection } from "@/components/AlertDetailSection";
 import { AssessmentSection } from "@/components/AssessmentSection";
 import { ContributorsTable } from "@/components/ContributorsTable";
 import { DefinitionList } from "@/components/DefinitionList";
@@ -16,6 +17,7 @@ import { TrendSection } from "@/components/TrendSection";
 import { getRepository, getRepositoryNotes, getTrend, getWindows, isNotFound } from "@/lib/api";
 import { instant, span } from "@/lib/format";
 import {
+  assuranceRows,
   codeownersCard,
   cohortCards,
   type LabelledValue,
@@ -27,6 +29,7 @@ import {
   sonarGateCard,
   sonarRows
 } from "@/lib/repository";
+import { ASSURANCE_GRADE_LABEL } from "@/lib/rows";
 import type { RepositoryDetail, SonarReport } from "@/lib/types";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 import { createNote, deleteNote, editNote } from "./notes";
@@ -41,6 +44,11 @@ import { createNote, deleteNote, editNote } from "./notes";
  * the grading drawn from them. And inside the clear group, `repository.gradedFirst` sinks the
  * informational rows below the graded ones, for the reason its own comment gives — no condition
  * moves between groups, and the policy's order survives inside each half of that one.
+ *
+ * TWO SECTIONS STATE REASONS RATHER THAN FIGURES, and they are the page's answer to a tooltip not being good
+ * enough. `Assurance criteria` draws all six criteria with the sentence behind each — the estate table can only
+ * carry those as a `title` — and `Alert detail` draws each alert family's three-state position and its individual
+ * alerts. Both are text in the document, never a hover.
  *
  * Nothing is recomputed here — every figure is one the service
  * sent, formatted by `lib/repository.ts` — so the page and `metrics evidence` for the same span are
@@ -165,6 +173,19 @@ export default async function RepositoryPage({
         </Section>
       )}
 
+      {/* DIRECTLY UNDER READINESS, because the two are the page's two verdicts and they grade different things —
+          `AssuranceGrade`'s own comment records that a repository can be ready to enable agentic tooling on and
+          still fail the assurance criteria, and the reverse. Adjacent and separately headed is what makes that
+          legible; a screen apart, the second reads as a restatement of the first.
+
+          WHY THE SENTENCES ARE HERE AND NOT ON `/repositories`. Each criterion carries a `detail` naming the
+          control that is missing, and in a table of 1,890 rows that can only be a `title` — invisible on touch,
+          not reliably announced, and a paragraph under one name in that table reads as a fault in that repository.
+          This is one repository with room for six sentences, so this is where they are text in the document. */}
+      <Section heading="Assurance criteria" detail={ASSURANCE_GRADE_LABEL[evidence.assurance.grade].toLowerCase()}>
+        <DefinitionList values={assuranceRows(evidence.assurance)} />
+      </Section>
+
       {/* The gate is what open pull requests have to pass, so the rules and the queue are read as
           one thing rather than a screen apart. */}
       <SectionPair>
@@ -206,6 +227,12 @@ export default async function RepositoryPage({
           )}
         </Section>
       </SectionPair>
+
+      {/* FULL WIDTH AND UNDER THE COUNTS, not beside them. The pair above answers how many are open per family; this
+          answers which ones, and five facts per alert plus a link does not fit in half a row. It is drawn
+          unconditionally, because its three families each state whether anybody looked — which is precisely what a
+          section that appeared only when there were alerts to show could not say. */}
+      <AlertDetailSection scans={evidence.security.scans} />
 
       <Section heading="SonarCloud" detail={read(evidence.sonar.fetched_at)}>
         <ValueCards values={[sonarGateCard(evidence.sonar), ...sonarMeasures(evidence.sonar)]} />

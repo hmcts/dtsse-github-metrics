@@ -17,8 +17,11 @@
  */
 
 import { ABSENT, count, figure, instant, percent, quantity } from "@/lib/format";
+import { ASSURANCE_CRITERIA, ASSURANCE_LABEL } from "@/lib/rows";
 import {
+  alertScanTone,
   alertTone,
+  assuranceOutcomeTone,
   type ConditionOutcome,
   codeownersTone,
   directCommitTone,
@@ -31,6 +34,8 @@ import {
   type Tone
 } from "@/lib/tone";
 import type {
+  AssuranceOutcome,
+  AssuranceReport,
   CodeownersReport,
   CohortSummary,
   MaintenanceReport,
@@ -40,6 +45,8 @@ import type {
   ReadinessAssessment,
   ReadinessCondition,
   SecurityAlertEvidence,
+  SecurityAlertFamilyScan,
+  SecurityAlertRecord,
   SonarMeasures,
   SonarRating,
   SonarReport
@@ -369,6 +376,190 @@ export function securityCards(alerts: SecurityAlertEvidence): LabelledValue[] {
     detail: severityDetail(family, counts[family]),
     tone: alertTone(family, counts[family])
   }));
+}
+
+/**
+ * How each assurance outcome READS, which is not the word the contract spells it with.
+ *
+ * `unmet` is printed "not met" rather than "unmet", because the six rows sit one under another and `met` against
+ * `unmet` differ by two characters at the front of a word — a reader skimming the column sees the same word six
+ * times. "not met" differs at a glance.
+ *
+ * `unknown` IS ITS OWN WORD AND IS NEVER FOLDED INTO EITHER. That is the acceptance criterion this map exists to
+ * hold: on this estate one refused organisation-wide call leaves a criterion unknown for every row at once, and
+ * either of the other two words would be a claim nobody measured.
+ */
+export const ASSURANCE_OUTCOME_WORD: Record<AssuranceOutcome, string> = {
+  met: "met",
+  unmet: "not met",
+  unknown: "unknown"
+};
+
+/**
+ * The six assurance criteria, each with its outcome and the sentence behind it.
+ *
+ * WHY THIS IS THE POINT OF THE SECTION. The estate table has a cell per criterion and a cell can only hold a word, so
+ * the report's own sentence — "not configured: secret scanning", "2 secret-scanning alerts open, the oldest for 900
+ * days" — reached a reader there as a `title` attribute: invisible on a touch device, and not reliably announced by a
+ * screen reader. Here it is the `detail` of a `<dl>` row, which is text in the document.
+ *
+ * IN `ASSURANCE_CRITERIA` ORDER AND NOT THE REPORT'S ARRAY ORDER, so this section and the table's columns read in one
+ * sequence. A criterion the report did not judge is still drawn, as `unknown` with the reason there is no judgement:
+ * six rows every time is what makes a missing criterion visible rather than a row that quietly is not there.
+ *
+ * NOTHING IS RE-JUDGED. Every outcome and every sentence is the report's, through one derivation shared with the
+ * table — see `contract/assurance.ts`.
+ */
+export function assuranceRows(report: AssuranceReport): LabelledValue[] {
+  const judged = new Map(report.criteria.map((result) => [result.criterion, result]));
+  return ASSURANCE_CRITERIA.map((criterion) => {
+    const result = judged.get(criterion);
+    const outcome: AssuranceOutcome = result?.outcome ?? "unknown";
+    return {
+      label: ASSURANCE_LABEL[criterion],
+      value: ASSURANCE_OUTCOME_WORD[outcome],
+      detail: result?.detail ?? "this criterion was not judged for this repository",
+      tone: assuranceOutcomeTone(outcome)
+    };
+  });
+}
+
+/**
+ * The alerts a reader has to act on, which is not every alert stored.
+ *
+ * The walks deliberately keep resolved records — for secret scanning 128 of 146 stored alerts are resolved, and a
+ * resolved alert is the only place GitHub's own `resolution` exists — so counting the rows would report a repository
+ * that has revoked every leaked credential as still leaking them. Only `open` is counted, which is the same basis the
+ * stored COUNTS use, and it is why an alert resolved on GitHub as a false positive drops out of our figure by itself
+ * with nothing to record here.
+ */
+export function openAlerts(scan: SecurityAlertFamilyScan): SecurityAlertRecord[] {
+  return scan.alerts.filter((alert) => alert.state === "open");
+}
+
+/**
+ * One family's scan as the page states it: the state in words, the reason, and its alerts.
+ *
+ * THE THREE STATES ARE THREE SENTENCES AND THAT IS THE WHOLE FEATURE. "not enabled for this repository", "read, and
+ * nothing is open" and "could not be read" are what a reader is owed, because the three look identical as an empty
+ * table and two of them are not findings about the repository at all. The measured spread is why it matters: code
+ * scanning is unmeasured for 651 repositories and not enabled for 1,074, and secret scanning is not enabled for 893 —
+ * so on most pages at least one of these families is NOT a clean bill of health, and drawing "no alerts" for them
+ * would be the wrong answer on the majority of the estate.
+ *
+ * `empty` IS NEVER "no alerts". Under a state that measured nothing it says nobody looked; only under `read` does it
+ * report a clean family, and there it says so in those words.
+ */
+export interface AlertScanSummary {
+  family: SecurityAlertFamilyScan["family"];
+  /** The state as a reader meets it, in words rather than the contract's hyphenated token. */
+  state: string;
+  /** Why there are no alerts, or when the family was last looked at. Always present, never a tooltip. */
+  detail: string;
+  /** What to draw in place of rows, which differs by state — see this interface's header. */
+  empty: string;
+  tone: Tone;
+  /** The open alerts, in the order the report sent them: open first, longest-exposed first. */
+  alerts: SecurityAlertRecord[];
+}
+
+/** How each scan state reads. The two absences are named for what nobody knows, never for what was found. */
+const SCAN_STATE_WORD: Record<SecurityAlertFamilyScan["state"], string> = {
+  read: "read",
+  "not-enabled": "not enabled",
+  unmeasured: "could not be read"
+};
+
+/** What stands in for rows under each state. Only the `read` arm may report a repository as clean. */
+const SCAN_EMPTY: Record<SecurityAlertFamilyScan["state"], string> = {
+  read: "This family was read and nothing is open.",
+  "not-enabled": "This family is switched off for this repository, so there was nothing to scan.",
+  unmeasured: "Nobody could read this family, so whether anything is open is unknown."
+};
+
+export function alertScanSummaries(scans: readonly SecurityAlertFamilyScan[]): AlertScanSummary[] {
+  return scans.map((scan) => {
+    const alerts = openAlerts(scan);
+    return {
+      family: scan.family,
+      state: SCAN_STATE_WORD[scan.state],
+      detail: scanDetail(scan),
+      empty: SCAN_EMPTY[scan.state],
+      tone: alertScanTone(scan.family, scan.state, alerts),
+      alerts
+    };
+  });
+}
+
+/**
+ * Why a family has no alerts, or when it was last looked at.
+ *
+ * THE STORED REASON WINS where there is one, because it is the words the collection itself used and a reader who met
+ * the same sentence on the estate table should meet it again here. Where there is none — which is every `read` scan,
+ * since the writer blanks the reason on one — the instant stands in, and a family read at a stated moment is the one
+ * case where "when" is the useful fact.
+ */
+function scanDetail(scan: SecurityAlertFamilyScan): string {
+  if (scan.detail !== undefined) {
+    return scan.detail;
+  }
+  return scan.observed_at === undefined ? "no scan instant was recorded" : `read ${instant(scan.observed_at)}`;
+}
+
+/**
+ * What one alert IS, in one string: the package or the secret type, with the identifier behind it.
+ *
+ * THE SUBJECT LEADS WHERE THERE IS ONE, which is the Dependabot case and the reason this is not just `alert_type`. A
+ * row headed `GHSA-4g2q-9v3h-...` tells a reader nothing they can act on; `lodash` does, and the advisory identifier
+ * is what they look up afterwards. Secret scanning and code scanning carry no subject, so for those the type is the
+ * whole answer — `azure_storage_account_key` beside a path is exactly what says what to go and revoke.
+ */
+export function alertSubject(alert: SecurityAlertRecord): string {
+  return alert.subject ?? alert.alert_type ?? `alert ${alert.number}`;
+}
+
+/** The identifier behind the subject, or nothing where the subject already was it. */
+export function alertIdentifier(alert: SecurityAlertRecord): string | undefined {
+  return alert.subject === undefined ? undefined : alert.alert_type;
+}
+
+/**
+ * Where an alert was found: the path, narrowed to a line where the family reports one.
+ *
+ * Dependabot gives a manifest path and no line, so the line is appended rather than assumed. A record whose path
+ * could not be read says so instead of rendering an empty cell, which would read as the repository root.
+ */
+export function alertLocation(alert: SecurityAlertRecord): string {
+  if (alert.path === undefined) {
+    return "no location was reported";
+  }
+  return alert.line === undefined ? alert.path : `${alert.path}:${alert.line}`;
+}
+
+/**
+ * An alert's state and, where GitHub recorded one, its own resolution word.
+ *
+ * GITHUB'S OWN WORDS AND NEVER A PARAPHRASE. `false_positive`, `used_in_tests` and `wont_fix` are the vocabulary of
+ * the place the decision was taken and where the audit of it lives, so a reader comparing this page against GitHub
+ * sees one word rather than two that have to be reconciled.
+ */
+export function alertState(alert: SecurityAlertRecord): string {
+  if (alert.state === undefined) {
+    return "no state was reported";
+  }
+  return alert.resolution === undefined ? alert.state : `${alert.state}: ${alert.resolution}`;
+}
+
+/**
+ * What the link to GitHub is FOR, which differs by family because only one of them is resolved there by us.
+ *
+ * A SECRET-SCANNING ALERT IS RESOLVED ON GITHUB AND NOWHERE ELSE, decided 2026-09-22. This tool counts only `open`
+ * alerts, so an alert closed there as a false positive stops being counted at the next collection on its own — which
+ * is why this is a link and not a control. A local override would be a second record of the same decision, and the
+ * audit of who took it and why belongs where it was taken.
+ */
+export function alertActionLabel(family: SecurityAlertFamilyScan["family"]): string {
+  return family === "secret-scanning" ? "Resolve on GitHub" : "View on GitHub";
 }
 
 /**

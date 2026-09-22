@@ -60,6 +60,11 @@ test.describe("repository notes @regression", () => {
     // THE FIRST INTERACTIVE CONTROL IN THE APPLICATION, so the first one that can fail an accessibility gate:
     // an unlabelled textarea, or a disclosure with no accessible name. The three list routes in
     // `accessibility.spec.ts` have no form on them, so this page is not covered by that loop.
+    //
+    // IT IS ALSO THE ONLY AXE SCAN OF THIS WHOLE PAGE, which since VIBE-598 is more than the form: the assurance
+    // criteria and the alert detail both put their reasons here as text precisely because a `title` tooltip was not
+    // readable on touch and not reliably announced, and this scan is what holds the markup they landed as — a `<dl>`
+    // of pairs and a `<table>` with a caption — to the same bar. `repository-detail.spec.ts` asserts the content.
     await openARepository(page);
 
     const results = await new AxeBuilder({ page }).withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"]).analyze();

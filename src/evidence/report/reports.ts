@@ -9,6 +9,7 @@ import { type CohortEntry, cohortTeams, servedCohort } from "../org/cohort.ts";
 import { contributorNames } from "../org/people.ts";
 import { enablementInstants, teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
+import { storedRepositoryAlertScans } from "../store/alerts.ts";
 import { getSourceCoverage } from "../store/coverage.ts";
 import { declaredProduction, type ProductionLayers } from "../store/production-override.ts";
 import { storedRepositoryState } from "../store/repository-state.ts";
@@ -185,9 +186,15 @@ export async function directPushRows(configuration: Configuration, weeks: number
  *
  * NOT CACHED, unlike the estate-wide reports. This is keyed by repository as well as by span, and the spans come
  * off a query string: holding one entry per repository per span is a map the size of the estate times the selector,
- * evicted by nothing. It costs two fact queries and one state read for a page a reader asked for by name, which is
- * the shape `loadCachedMerges` exists for. What the reads produce is assembled by `builtRepositoryEvidence`, which
- * states the rest.
+ * evicted by nothing. It costs two fact queries, one state read and one scan read for a page a reader asked for by
+ * name, which is the shape `loadCachedMerges` exists for. What the reads produce is assembled by
+ * `builtRepositoryEvidence`, which states the rest.
+ *
+ * THE ALERT SCANS ARE A FOURTH READ AND ARE ISSUED WITH THE OTHER THREE, not after them: nothing in the block
+ * depends on them, so serialising it behind the cohort would add a round trip to the page for no ordering. It is a
+ * per-repository read and stays off the estate path — `/repositories` draws counts and has no alert to name, so
+ * loading 1,890 repositories' alerts to render a table that shows none of them would be the estate's cost for this
+ * page's feature.
  */
 export async function repositoryEvidence(
   configuration: Configuration,
@@ -198,10 +205,11 @@ export async function repositoryEvidence(
 ): Promise<contract.RepositoryPracticeEvidence | undefined> {
   const organization = configuration.organization;
   const { window } = await resolveReportWindow(configuration, weeks, reference);
-  const [cohort, state, walked] = await Promise.all([
+  const [cohort, state, walked, scans] = await Promise.all([
     servedCohort(configuration, reference),
     storedRepositoryState(organization, repository),
-    loadCachedMerges(organization, repository, window)
+    loadCachedMerges(organization, repository, window),
+    storedRepositoryAlertScans(organization, repository)
   ]);
 
   const entry = cohort.find((candidate: CohortEntry) => candidate.repository === repository);
@@ -210,7 +218,7 @@ export async function repositoryEvidence(
     return undefined;
   }
 
-  return builtRepositoryEvidence(configuration, { repository, entry, state, walked, window, measured });
+  return builtRepositoryEvidence(configuration, { repository, entry, state, walked, window, measured, scans });
 }
 
 /**

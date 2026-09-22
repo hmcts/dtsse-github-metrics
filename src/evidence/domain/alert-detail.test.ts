@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ALERT_FAMILIES, AlertScanState, alertScanState } from "./alert-detail.ts";
+import { ALERT_FAMILIES, AlertFamily, AlertScanState, alertScanState, byExposure, type SecurityAlertDetail } from "./alert-detail.ts";
 import { FEATURE_NOT_ENABLED } from "./security-alerts.ts";
 
 /**
@@ -50,5 +50,54 @@ describe("alertScanState", () => {
 
   it("should report unmeasured for an empty block, which is what the shallow path writes for code scanning", () => {
     expect(alertScanState({})).toBe(AlertScanState.Unmeasured);
+  });
+});
+
+/**
+ * The order one family's alerts are reported in.
+ *
+ * A COMPARATOR AND NOT A BARE `sort()`, per CONTRIBUTING.md: three keys over a state word, an instant and a number,
+ * and any of them sorted as a default string is the failure that rule is named for.
+ */
+describe("byExposure", () => {
+  function alert(overrides: Partial<SecurityAlertDetail> = {}): SecurityAlertDetail {
+    return { repository: "alpha", family: AlertFamily.SecretScanning, number: 1, state: "open", ...overrides };
+  }
+
+  it("should put every open alert above every alert that has been dealt with", () => {
+    const sorted = [alert({ number: 2, state: "resolved" }), alert({ number: 1 })].sort(byExposure);
+
+    expect(sorted.map((entry) => entry.number)).toEqual([1, 2]);
+  });
+
+  it("should put the longest-exposed open alert first, which is not GitHub's own order", () => {
+    // GitHub answers newest-first by alert number, which puts the credential leaked this morning above the one that
+    // has been public for 900 days. The oldest is what the `patching` criterion's sentence is about.
+    const sorted = [alert({ number: 9, createdAt: new Date(Date.UTC(2026, 8, 1)) }), alert({ number: 3, createdAt: new Date(Date.UTC(2024, 0, 2)) })].sort(
+      byExposure
+    );
+
+    expect(sorted.map((entry) => entry.number)).toEqual([3, 9]);
+  });
+
+  it("should sort an alert with no readable instant after every dated one", () => {
+    // An unknown age is not evidence of a long exposure, so it does not win the top of the list.
+    const sorted = [alert({ number: 4 }), alert({ number: 5, createdAt: new Date(Date.UTC(2026, 0, 1)) })].sort(byExposure);
+
+    expect(sorted.map((entry) => entry.number)).toEqual([5, 4]);
+  });
+
+  it("should break a tie on the alert number so two runs over unchanged alerts produce one order", () => {
+    const raised = new Date(Date.UTC(2026, 0, 1));
+    const sorted = [alert({ number: 8, createdAt: raised }), alert({ number: 2, createdAt: raised })].sort(byExposure);
+
+    expect(sorted.map((entry) => entry.number)).toEqual([2, 8]);
+  });
+
+  it("should order two undated alerts by number rather than by whatever the engine does with NaN", () => {
+    // `Infinity - Infinity` is `NaN`, and a comparator returning `NaN` leaves `sort` free to produce any order at all.
+    const sorted = [alert({ number: 6 }), alert({ number: 3 })].sort(byExposure);
+
+    expect(sorted.map((entry) => entry.number)).toEqual([3, 6]);
   });
 });

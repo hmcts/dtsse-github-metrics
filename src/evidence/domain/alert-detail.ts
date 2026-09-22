@@ -96,6 +96,54 @@ export interface SecurityAlertDetail {
   htmlUrl?: string;
 }
 
+/** GitHub's own word for an alert nobody has dealt with, which is the only state a reader has to act on. */
+const OPEN = "open";
+
+/**
+ * The order one family's alerts are reported in: open first, longest-exposed first inside that.
+ *
+ * NOT GITHUB'S OWN ORDER, which is newest-first by alert number and puts the credential leaked this morning above
+ * the one that has been public for 900 days. The oldest open alert is the one the `patching` criterion's sentence is
+ * about, so it is the one a reader should meet first.
+ *
+ * A COMPARATOR AND NOT A BARE `sort()`, per CONTRIBUTING.md: the three keys are a state word, an instant and a
+ * number, and sorting any of them as a default string is the failure that rule is named for. An alert with no
+ * readable `createdAt` sorts after every dated one rather than at the top — an unknown age is not evidence of a long
+ * exposure — and the alert number is the final tie-break so two runs over unchanged alerts produce one order.
+ */
+export function byExposure(left: SecurityAlertDetail, right: SecurityAlertDetail): number {
+  const open = Number(right.state === OPEN) - Number(left.state === OPEN);
+  if (open !== 0) {
+    return open;
+  }
+  const dated = Number(left.createdAt === undefined) - Number(right.createdAt === undefined);
+  if (dated !== 0) {
+    return dated;
+  }
+  // Both dated or both undated by now, so this subtraction cannot produce the `NaN` that `Infinity - Infinity`
+  // would — a comparator returning `NaN` leaves `sort` free to produce any order at all.
+  const age = (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0);
+  return age === 0 ? left.number - right.number : age;
+}
+
+/**
+ * One family's stored scan for one repository, as a reader finds it rather than as a walk produced it.
+ *
+ * THE READ SIDE OF `AlertScan`, and separate from it because the two carry different facts. A walk's scan names the
+ * repository it is about and has no instant — the run supplies one for every row it writes; a stored scan is already
+ * keyed by repository and carries the `observed_at` the row was written with, which is what lets a page say WHEN a
+ * family was last looked at rather than only what was found.
+ */
+export interface StoredAlertScan {
+  family: AlertFamily;
+  state: AlertScanState;
+  /** Why there are no alerts, for the two states that have none for a reason. */
+  detail?: string;
+  observedAt: Date;
+  /** The alerts, meaningful ONLY beside a `Read` state, in `byExposure` order. */
+  alerts: SecurityAlertDetail[];
+}
+
 /**
  * What one repository's stored COUNT for a family says about whether anybody could read it.
  *

@@ -327,6 +327,7 @@ const PRACTICE_EVIDENCE: Shape<contract.RepositoryPracticeEvidence> = {
     provenance: true,
     cohort: true,
     assessment: true,
+    assurance: true,
     unreviewed_substantial: true,
     merge_gate: true,
     open_pull_requests: true,
@@ -344,6 +345,10 @@ const PRACTICE_EVIDENCE: Shape<contract.RepositoryPracticeEvidence> = {
     ends_at: true,
     provenance: true,
     cohort: true,
+    // REQUIRED HERE AND OPTIONAL ON `RepositoryRow`, which is not an inconsistency: the block is only built for a
+    // repository the cohort holds, and `reportedAssurance` judges every criterion from the entry as well as the
+    // payload — so there is always a verdict, and an unreadable criterion is `unknown` rather than a missing block.
+    assurance: true,
     merge_gate: true,
     open_pull_requests: true,
     security: true,
@@ -448,8 +453,41 @@ const STATUS_CHECK: Shape<contract.StatusCheck> = {
 };
 
 const SECURITY_REPORT: Shape<contract.SecurityAlertReport> = {
-  declared: { fetched_at: true, alerts: true, detail: true },
-  required: {}
+  declared: { fetched_at: true, alerts: true, scans: true, detail: true },
+  // `scans` IS THE ONLY REQUIRED FIELD ON THIS BLOCK, and required where `alerts` is not for the reason its own
+  // declaration gives: the counts come off a collected state a repository may not have, and the scans come off
+  // `security_alert_scans` where a missing row is itself one of the three answers — so there is always a list.
+  required: { scans: true }
+};
+
+const ALERT_FAMILY_SCAN: Shape<contract.SecurityAlertFamilyScan> = {
+  declared: { family: true, state: true, detail: true, observed_at: true, alerts: true },
+  required: { family: true, state: true, alerts: true }
+};
+
+/**
+ * ONE ALERT, whose every field but the identity is optional.
+ *
+ * NO `repository` KEY, which is the one difference from `domain.SecurityAlertDetail` worth asserting: the block
+ * already belongs to one repository, and a translation passing the domain object through would put the name on every
+ * record — a key the contract does not declare, which is exactly what `assertShape` is here to catch.
+ */
+const ALERT_RECORD: Shape<contract.SecurityAlertRecord> = {
+  declared: {
+    family: true,
+    number: true,
+    alert_type: true,
+    subject: true,
+    severity: true,
+    path: true,
+    line: true,
+    state: true,
+    resolution: true,
+    created_at: true,
+    resolved_at: true,
+    html_url: true
+  },
+  required: { family: true, number: true }
 };
 
 const CODEOWNERS_REPORT: Shape<contract.CodeownersReport> = {
@@ -820,6 +858,7 @@ async function seedEstate(): Promise<void> {
   }
   await directCommit("alpha", "aaaaaaa");
   await prisma.repositoryProduction.create({ data: { organization: ORGANIZATION, repository: "alpha", production: true } });
+  await alertScans("alpha");
 
   await graphRepository("beta");
 
@@ -831,7 +870,70 @@ async function seedEstate(): Promise<void> {
   await namedPerson("ada", "Ada Lovelace");
 }
 
+/**
+ * ONE REPOSITORY IN ALL THREE SCAN STATES AT ONCE, which is what makes the assertions below reach every arm.
+ *
+ * A fixture with one `read` family would assert a key set that never met the two absences, and those are where the
+ * wrong answer is: a family with no alerts under `not-enabled` and one under `unmeasured` are both an empty list, and
+ * only one of the three states makes an empty list mean "nothing is open".
+ *
+ * The secret-scanning scan carries TWO ALERTS, one open and one resolved as a false positive. The pair is deliberate:
+ * it is the case the whole "resolve on GitHub" decision rests on — a resolved alert is stored, is NOT counted, and its
+ * `resolution` is GitHub's own word rather than anything this tool recorded.
+ */
+async function alertScans(repository: string): Promise<void> {
+  const observedAt = new Date(Date.UTC(2026, 7, 25));
+  await prisma.securityAlertScan.create({
+    data: { organization: ORGANIZATION, repository, family: "secret-scanning", state: "read", observedAt }
+  });
+  await prisma.securityAlert.createMany({
+    data: [
+      {
+        organization: ORGANIZATION,
+        repository,
+        family: "secret-scanning",
+        alertNumber: 7,
+        alertType: "azure_storage_account_key",
+        path: "src/config.ts",
+        line: 12,
+        state: "open",
+        createdAt: new Date(Date.UTC(2024, 2, 9)),
+        htmlUrl: `https://github.com/${ORGANIZATION}/${repository}/security/secret-scanning/7`
+      },
+      {
+        organization: ORGANIZATION,
+        repository,
+        family: "secret-scanning",
+        alertNumber: 8,
+        alertType: "github_personal_access_token",
+        path: "README.md",
+        state: "resolved",
+        resolution: "false_positive",
+        createdAt: new Date(Date.UTC(2026, 1, 2)),
+        resolvedAt: new Date(Date.UTC(2026, 1, 3)),
+        htmlUrl: `https://github.com/${ORGANIZATION}/${repository}/security/secret-scanning/8`
+      }
+    ]
+  });
+  // A FAMILY THAT IS OFF, which has a row and no alerts — the state and the sentence are the whole content of it.
+  await prisma.securityAlertScan.create({
+    data: {
+      organization: ORGANIZATION,
+      repository,
+      family: "code-scanning",
+      state: "not-enabled",
+      detail: "code scanning is not enabled for this repository",
+      observedAt
+    }
+  });
+  // DEPENDABOT HAS NO ROW AT ALL, so the translation has to invent the third state rather than omit the family. That
+  // omission is the defect this fixture is shaped to catch: a family left out renders as nothing, and nothing is
+  // indistinguishable from a family read and found clean.
+}
+
 async function clear(): Promise<void> {
+  await prisma.securityAlert.deleteMany();
+  await prisma.securityAlertScan.deleteMany();
   await prisma.pullRequestFact.deleteMany();
   await prisma.directCommitFact.deleteMany();
   await prisma.repositoryState.deleteMany();
@@ -1061,6 +1163,24 @@ enablement:
       assertAlerts(evidence.security.alerts, "repositoryEvidence.security.alerts");
     }
 
+    // THE ASSURANCE BLOCK ON THE EVIDENCE AS WELL AS ON THE ROW. It went unemitted here until VIBE-598 while the
+    // estate row carried it, so a declaration alone would have said the field existed and the page would have had
+    // nothing to draw — the third thing this file's header says a type cannot see.
+    assertShape("AssuranceReport", ASSURANCE_REPORT, evidence.assurance, "repositoryEvidence.assurance");
+    for (const [index, criterion] of evidence.assurance.criteria.entries()) {
+      assertShape("AssuranceCriterionResult", ASSURANCE_CRITERION, criterion, `repositoryEvidence.assurance.criteria[${index}]`);
+    }
+
+    // ALL THREE FAMILIES, in `ALERT_FAMILIES` order, one per state the fixture seeds. Dependabot has no stored row at
+    // all, so a translation keyed off the rows would send two entries here and pass every shape assertion above.
+    expect(evidence.security.scans.map((scan) => scan.family)).toEqual(["secret-scanning", "dependabot", "code-scanning"]);
+    for (const [index, scan] of evidence.security.scans.entries()) {
+      assertShape("SecurityAlertFamilyScan", ALERT_FAMILY_SCAN, scan, `repositoryEvidence.security.scans[${index}]`);
+      for (const [position, alert] of scan.alerts.entries()) {
+        assertShape("SecurityAlertRecord", ALERT_RECORD, alert, `repositoryEvidence.security.scans[${index}].alerts[${position}]`);
+      }
+    }
+
     assertShape("CodeownersReport", CODEOWNERS_REPORT, evidence.codeowners, "repositoryEvidence.codeowners");
     assertShape("MaintenanceReport", MAINTENANCE_REPORT, evidence.maintenance, "repositoryEvidence.maintenance");
     assertShape("SonarReport", SONAR_REPORT, evidence.sonar, "repositoryEvidence.sonar");
@@ -1084,6 +1204,63 @@ enablement:
     // the distributions are different translations and a cohort producing only one kind would exercise only one.
     const kinds = new Set(evidence.metrics.map((metric) => ("unit" in metric.summary ? "distribution" : "rate")));
     expect([...kinds].sort()).toEqual(["distribution", "rate"]);
+  });
+
+  it("should tell a family that is off from one nobody scanned when neither has an alert stored", async () => {
+    // THE ONE ASSERTION THIS FEATURE EXISTS FOR. Both families below have an empty alert list, and a reader given
+    // only that list would read both as clean — on this estate that is 1,074 repositories for code scanning alone.
+    const evidence = await repositoryEvidence(CONFIGURATION, "alpha", 26, { pullRequests: true, directCommits: true }, REFERENCE);
+    const scans = new Map((evidence?.security.scans ?? []).map((scan) => [scan.family, scan]));
+
+    const off = scans.get("code-scanning");
+    expect(off?.state).toBe("not-enabled");
+    expect(off?.alerts).toEqual([]);
+    // The stored sentence survives to the contract, so the words a reader meets are the collection's own.
+    expect(off?.detail).toBe("code scanning is not enabled for this repository");
+
+    // NO ROW AT ALL, which is the state a translation keyed off the stored rows would have emitted as nothing.
+    const unmeasured = scans.get("dependabot");
+    expect(unmeasured?.state).toBe("unmeasured");
+    expect(unmeasured?.alerts).toEqual([]);
+    expect(unmeasured?.detail).toBe("no scan of this family has been recorded for this repository");
+    // No row means no instant either, and an absent key is how that stays distinguishable from a scan taken at epoch.
+    expect("observed_at" in (unmeasured ?? {})).toBe(false);
+  });
+
+  it("should carry a resolved alert with GitHub's own resolution word rather than dropping it", async () => {
+    // RESOLVED ALERTS ARE STORED AND ARE NOT THE COUNT. This is what makes "resolve it on GitHub" work as the only
+    // route: the record stays, the `resolution` is GitHub's word for why, and the page counts only the open one.
+    const evidence = await repositoryEvidence(CONFIGURATION, "alpha", 26, { pullRequests: true, directCommits: true }, REFERENCE);
+    const secrets = evidence?.security.scans.find((scan) => scan.family === "secret-scanning");
+
+    expect(secrets?.state).toBe("read");
+    // OPEN FIRST, longest-exposed first — the 2024 alert above the 2026 one, which is not GitHub's own newest-first.
+    expect(secrets?.alerts.map((alert) => alert.number)).toEqual([7, 8]);
+    expect(secrets?.alerts[1]).toMatchObject({ state: "resolved", resolution: "false_positive" });
+    // The type and the location reach the contract; the credential itself has no field to reach it in.
+    expect(secrets?.alerts[0]).toMatchObject({ alert_type: "azure_storage_account_key", path: "src/config.ts", line: 12 });
+    expect(secrets?.alerts[0]?.html_url).toBe(`https://github.com/${ORGANIZATION}/alpha/security/secret-scanning/7`);
+  });
+
+  it("should judge every assurance criterion on the block the repository page reads", async () => {
+    // Six criteria with a sentence each, which is what the estate table could only carry as a `title`.
+    const evidence = await repositoryEvidence(CONFIGURATION, "alpha", 26, { pullRequests: true, directCommits: true }, REFERENCE);
+
+    expect(evidence?.assurance.criteria.map((result) => result.criterion)).toEqual([
+      "named-owner",
+      "automated-hygiene",
+      "no-committed-secrets",
+      "security-contact",
+      "patching",
+      "maintained"
+    ]);
+    // Every one of them states a reason. A criterion with an empty `detail` is a row the page draws with nothing in it.
+    for (const result of evidence?.assurance.criteria ?? []) {
+      expect(result.detail.length, `${result.criterion} should state the reason behind its outcome`).toBeGreaterThan(0);
+    }
+    // The fixture turns push protection off, so the hygiene criterion names the missing control rather than passing.
+    const hygiene = evidence?.assurance.criteria.find((result) => result.criterion === "automated-hygiene");
+    expect(hygiene).toMatchObject({ outcome: "unmet", detail: "not configured: push protection" });
   });
 });
 
