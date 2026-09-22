@@ -101,9 +101,11 @@ export default async function RepositoriesPage() {
           internal and private repository legitimately reports the security controls off and a wheel including them
           would draw a licensing boundary as an estate-wide gap.
 
-          NO BANNER AND NO WARNING TONE anywhere in here. Three of the four wheels have a slice for the state
-          nobody stated — three quarters of the CVE wheel is repositories with no dependency-scan report — and that
-          is the finding rather than something to apologise for on a strip across the page. */}
+          NO BANNER AND NO WARNING TONE anywhere in here. Three of the four wheels keep a slice for an answer the
+          report may not hold, and two of those three are counted at ZERO on the public estate today — drawn all the
+          same, because a row in no slice would under-total the wheel against the cohort beside the heading. The
+          third is the 84 repositories neither vulnerability source is reading, which is the finding rather than
+          something to apologise for on a strip across the page. */}
       <EstateSummary rows={repositories} />
 
       {/* "UNARCHIVED ONLY" IS A FACT ABOUT THE COHORT and belongs beside the list it qualifies. The estate is

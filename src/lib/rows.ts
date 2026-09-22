@@ -17,7 +17,6 @@ import { ABSENT } from "@/lib/format";
 import type { RAGState } from "@/lib/rag";
 import { compare, type SortValue } from "@/lib/sort";
 import type {
-  AlertScanState,
   AssuranceCriterion,
   AssuranceCriterionResult,
   AssuranceGrade,
@@ -26,7 +25,6 @@ import type {
   CveCount,
   CveEvidence,
   CveSeverity,
-  OpenAlertCount,
   RepositoryRow,
   Visibility
 } from "@/lib/types";
@@ -328,37 +326,6 @@ export function publicRepositories(rows: readonly RepositoryRow[]): RepositoryRo
   return rows.filter((row) => row.visibility === "public");
 }
 
-/**
- * GitHub's "you never turned this on" answer, in the words the collector records it in.
- *
- * RESTATED AND NOT IMPORTED, for `ASSURANCE_CRITERIA`'s reason: `FEATURE_NOT_ENABLED` lives in
- * `evidence/domain/security-alerts.ts` and `src/lib/**` imports nothing from `src/evidence/**`. The two spellings
- * have to agree, because this sentence is the ONLY thing separating a family GitHub says is off from one nobody
- * could read — `alertScanState` in `evidence/domain/alert-detail.ts` is the other end of the same comparison, and
- * that is why the sentence is a named constant at both ends rather than a literal at either.
- */
-const FEATURE_NOT_ENABLED = "is not enabled for this repository";
-
-/**
- * Whether one alert family was READ for this row, is switched OFF, or said nothing either way.
- *
- * `alertScanState`'s rule over the contract's count block rather than over the stored one, and deliberately the
- * same rule: `open` is the primary signal, because a number means somebody looked whatever else the block says,
- * and the sentence is consulted only when there is no number. The two absences then have to be told apart, and
- * prose is where the collection recorded the difference.
- *
- * READ OFF THE ROW AND NOT OFF `SecurityAlertReport.scans`, which is the fuller answer and is not on a row: the
- * scans are assembled per repository for a repository's own page, and an estate of 1,046 rows cannot pay a query
- * each. `RepositoryRow.security` is emitted on every collected row and carries the same three-state answer, which
- * is why this reads it there — see `SecurityAlertEvidence` on the contract.
- */
-export function scanState(count: OpenAlertCount | undefined): AlertScanState {
-  if (count?.open !== undefined) {
-    return "read";
-  }
-  return count?.detail?.endsWith(FEATURE_NOT_ENABLED) === true ? "not-enabled" : "unmeasured";
-}
-
 /** One estate wheel's slice: what it counts, the word beside it, and the state it is drawn in. */
 export interface EstateSlice {
   /**
@@ -402,16 +369,28 @@ export const OWNER_PARAMETER = "owner";
 
 export const MAINTAINED_PARAMETER = "maintained";
 
-export const SCANNING_PARAMETER = "scanning";
+/**
+ * The Hygiene wheel's parameter, WHICH CANNOT BE `hygiene`: `EXPANDED_PARAMETER` already is.
+ *
+ * The two would collide destructively rather than harmlessly. `parseSelections` ignores a value no slice has, so
+ * the expand toggle's `hygiene=true` would be safely invisible to this wheel — but a wedge writing `hygiene=pass`
+ * over it would COLLAPSE the aggregate columns as a side effect of filtering, which is one control silently
+ * undoing another. So the wheel is named for what its slices read instead: the four hygiene signals.
+ */
+export const SIGNALS_PARAMETER = "signals";
 
-export const CVE_PARAMETER = "cve";
+export const VULNERABILITY_PARAMETER = "vulnerabilities";
 
 /**
- * The word an unmeasured slice is labelled with, shared by the three wheels that have one.
+ * The word an unmeasured slice is labelled with, shared by the two wheels that have one.
  *
  * "NO STATE STATED" AND NOT "UNSCANNED" OR "UNKNOWN". Nothing here is a claim that nobody has looked: what is
  * true is that this report holds no answer, and the two readings take different actions. One wording per wheel
  * would have let the sharpest of them drift into blame.
+ *
+ * WHICH IS WHY THE `Vulnerabilities` WHEEL DOES NOT USE IT. Its last slice is a repository both sources were
+ * asked about and neither is reading — a measured absence of scanning rather than an absence of an answer — so it
+ * gets the sharper word this one is careful to avoid. The distinction is the point of having one constant.
  */
 const NOT_STATED = "No state stated";
 
@@ -432,6 +411,13 @@ const NOT_STATED = "No state stated";
  * first slice is the answer that reads well, the second is the one worth weighing, and slate is the absence of an
  * answer. `Code owner` is the one wheel that reaches red, because it is the one whose last slice is a criterion
  * READ AND FAILED with nobody to ask about it rather than a fact to weigh.
+ *
+ * EVERY SLATE SLICE IS NOW SMALL, WHICH IS THE POINT OF THE TWO THAT CHANGED. The wheels this pair replaced —
+ * `Code scanning` and `Unsuppressed CVEs` — were the two whose largest slice was the state nobody stated: 259 of
+ * 1,046 on the first and 767 on the second. A ring whose biggest wedge is "we did not look" spends a quarter of the
+ * page on the report's own reach rather than on the estate, and the CVE one was worse than uninformative — it drew
+ * 770 repositories as unmeasured when 686 of them are dependency-scanned by Dependabot. `Hygiene` asks a question
+ * every public repository answers, and `Vulnerabilities` asks both sources instead of one.
  */
 export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
   {
@@ -462,28 +448,128 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     ]
   },
   {
-    parameter: SCANNING_PARAMETER,
-    title: "Code scanning",
-    hint: "Whether GitHub's code scanning answered for this repository. On means its alerts were read, however many there were. Off means GitHub answered that the feature is not enabled — over public repositories that is a real gap rather than the licensing boundary it would be on an internal or private one. No state stated means nothing said either way.",
+    parameter: SIGNALS_PARAMETER,
+    title: "Hygiene",
+    hint: "Whether every hygiene signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — the last of which either Renovate or Dependabot satisfies. These are the four checks the table's Hygiene column expands into and the same reading of them, so a repository failing here fails at least one of those columns. One or more off means a check was read and answered no; no state stated means nothing answered no and something could not be read at all.",
     slices: [
-      { key: "on", label: "On", state: "green", holds: (row) => scanState(row.security?.code_scanning) === "read" },
-      { key: "off", label: "Off", state: "amber", holds: (row) => scanState(row.security?.code_scanning) === "not-enabled" },
-      { key: "unstated", label: NOT_STATED, state: "none", holds: (row) => scanState(row.security?.code_scanning) === "unmeasured" }
+      // PASS IS ALL FOUR AND NOTHING LESS, which is what makes this wheel worth drawing where the code-scanning one
+      // it replaced was not: a single control answering for itself said little, and the largest slice of that wheel
+      // was the repositories it said nothing about.
+      { key: "pass", label: "All signals on", state: "green", holds: (row) => hygieneVerdict(row) === true },
+      { key: "fail", label: "One or more off", state: "amber", holds: (row) => hygieneVerdict(row) === false },
+      // COUNTED AT ZERO ON THE PUBLIC ESTATE, and drawn all the same — every public repository discloses its
+      // signals today. A signal can stop being readable, and a row in no slice would under-total the wheel against
+      // the cohort printed beside the heading with nothing on the page to say so. Dimmed in the legend at zero.
+      { key: "unstated", label: NOT_STATED, state: "none", holds: (row) => hygieneVerdict(row) === undefined }
     ]
   },
   {
-    parameter: CVE_PARAMETER,
-    title: "Unsuppressed CVEs",
-    hint: "What the build pipeline's own dependency scan last found and nobody has suppressed. NO REPORT IS NOT UNSCANNED: a repository with no Java, Node or Python dependency tree has nothing for that stage to scan, and Dependabot may be watching it regardless — so it is its own slice and is folded into neither of the other two.",
+    parameter: VULNERABILITY_PARAMETER,
+    title: "Vulnerabilities",
+    hint: "Live vulnerabilities from BOTH sources: the build pipeline's own dependency scan, and GitHub's Dependabot alerts. Clean means clean on whichever source read this repository, which for some of them is one of the two rather than both. Unscanned by anything is the blind spot — no dependency-scan report has been published AND Dependabot is not watching it.",
     slices: [
-      // A MEASURED ZERO, which is the whole reason this wheel has three slices: a scan that ran and found nothing
-      // is the finding, and it is not the same answer as a repository no scan has ever covered.
-      { key: "clean", label: "Reported clean", state: "green", holds: (row) => cveEvidence(row)?.live.total === 0 },
-      { key: "live", label: "At least one live CVE", state: "amber", holds: (row) => (cveEvidence(row)?.live.total ?? 0) > 0 },
-      { key: "unreported", label: "No dependency-scan report", state: "none", holds: (row) => cveEvidence(row) === undefined }
+      // A MEASURED ZERO, which is the whole reason this wheel has three slices: a source that read this repository
+      // and found nothing is the finding, and it is not the same answer as a repository neither source covers.
+      { key: "clean", label: "Clean on what read it", state: "green", holds: (row) => vulnerabilityFree(vulnerabilityPosition(row)) },
+      { key: "live", label: "Live vulnerabilities", state: "amber", holds: (row) => vulnerabilityPosition(row).findings > 0 },
+      // THE SHARPER WORD, and earned: both sources were consulted and neither is reading this repository, so unlike
+      // every other slate slice on this page there is no unread answer behind it. See `NOT_STATED`.
+      { key: "unscanned", label: "Unscanned by anything", state: "none", holds: (row) => !vulnerabilityPosition(row).read }
     ]
   }
 ];
+
+/**
+ * Whether every hygiene check answers yes, one of them answers no, or one could not be read.
+ *
+ * `HYGIENE_CHECKS` AND NOT A SECOND DERIVATION, which is the one thing worth guarding here: the wheel and the four
+ * columns it filters the table by have to agree, and two readings of the same five signals is how they come apart.
+ * It reads CHECKS AND NOT SIGNALS for the same reason — the last check is two signals satisfying one requirement,
+ * so counting signals would mark down every repository Renovate keeps current. See `HYGIENE_CHECKS`.
+ *
+ * A NO BEATS AN UNREADABLE, which is the opposite direction from `eitherSignal` and right for the opposite reason:
+ * there, one tool doing the job met the requirement whatever the other said; here, a control read and switched off
+ * is a failure whatever else could not be read, because no missing answer can turn it back on. Unreadable is
+ * therefore only where nothing answered no and something answered nothing.
+ *
+ * MEASURED EQUAL TO THE GRADED CRITERION, which is the corroboration worth having and not a second definition: on
+ * AAT on 2026-09-22 this splits the public estate 831 to 218, and `criterionResult(row, HYGIENE_CRITERION)` — built
+ * by `evidence/domain/assurance.ts`, a different code path over the same five signals — returns met 831, unmet 218.
+ * Two readings agreeing is what says the wheel and the column a reader compares it with are the same claim.
+ *
+ * COUNTING THE FIVE RAW SIGNALS INSTEAD SPLITS IT 541 TO 508, and the 290 repositories between the two figures are
+ * the whole reason `HYGIENE_CHECKS` folds the last pair into one check: 807 public repositories carry an update
+ * configuration and 712 have Dependabot security updates on, so requiring both marks down every repository Renovate
+ * keeps perfectly current. 541 is that bug's figure, measured the same afternoon.
+ */
+function hygieneVerdict(row: RepositoryRow): boolean | undefined {
+  const answers = HYGIENE_CHECKS.map((check) => check.read(hygieneSignals(row)));
+  if (answers.includes(false)) {
+    return false;
+  }
+  return answers.every((answer) => answer === true) ? true : undefined;
+}
+
+/**
+ * What the two vulnerability sources found on one row, and whether either of them read it at all.
+ *
+ * THE TWO SOURCES ARE COMBINED BECAUSE BOTH COUNT ONLY WHAT IS LIVE, and that is the whole licence for adding them
+ * up. A CVE suppressed in the build is excluded on our side — `CveEvidence.live` is the unsuppressed half of the
+ * split — and an alert somebody dismissed is excluded by GitHub before we ever see the `open` figure. Neither
+ * number carries an accepted risk, so a repository reading zero from either has nothing outstanding from it, and a
+ * wheel may report the pair as one position. Combining a live count with an all-time one would not be legitimate.
+ *
+ * WHY THE PAIR AND NOT THE JENKINS REPORT ALONE, which is what the wheel this replaced read: 770 public
+ * repositories have no dependency-scan report, and that wheel drew every one of them as unmeasured — when 686 of
+ * the 770, 89 per cent, are dependency-scanned by Dependabot. It stated 770 blind spots where the estate has 84.
+ * Measured on AAT on 2026-09-22; Jenkins reports 279, Dependabot reads 936, and neither reads 84.
+ *
+ * `findings` IS A SUM USED ONLY AS A TEST OF ZERO. The two sources overlap on real vulnerabilities and neither
+ * total is quotable added to the other; what is true of the sum is that it is zero exactly when both sources are
+ * clean on everything they read.
+ */
+function vulnerabilityPosition(row: RepositoryRow): VulnerabilityPosition {
+  const jenkins = cveEvidence(row)?.live.total;
+  const dependabot = dependabotAlerts(row);
+  return { findings: (jenkins ?? 0) + (dependabot ?? 0), read: jenkins !== undefined || dependabot !== undefined };
+}
+
+interface VulnerabilityPosition {
+  /** The live findings both sources hold between them — see `vulnerabilityPosition` for why it is only tested for zero. */
+  findings: number;
+  /** Whether either source read this repository. `false` is the wheel's third slice and its only real blind spot. */
+  read: boolean;
+}
+
+/**
+ * Whether a repository is clean on the sources that read it, WHICH AN UNSCANNED ONE IS NOT.
+ *
+ * Named rather than inlined into the slice because `read &&` is the half a reader drops: without it, the 84
+ * repositories neither source is watching would join the 710 that are demonstrably clean, and the wheel would
+ * report the estate's blind spot as good news — the same error in the opposite direction from the one it fixes.
+ */
+function vulnerabilityFree(position: VulnerabilityPosition): boolean {
+  return position.read && position.findings === 0;
+}
+
+/**
+ * The open Dependabot alerts on one row, or nothing where Dependabot was not read for it.
+ *
+ * `open` IS THE READ SIGNAL, which is `alertScanState`'s rule in `evidence/domain/alert-detail.ts` restated at the
+ * one place this wheel needs it: a number means somebody looked, whatever the sentence beside it says, and its
+ * ABSENCE is the only thing separating "Dependabot found nothing here" from "Dependabot is not watching this
+ * repository". Reading it as zero would report the second as the first, which is the error the wheel above exists to
+ * stop making.
+ *
+ * THE COUNT ALONE AND NO SENTENCE, unlike the three-state reader this replaces. `scanState` also parsed the
+ * collector's "is not enabled for this repository" prose, because the `Code scanning` wheel drew a slice for a
+ * control GitHub says is OFF as distinct from one it said nothing about. This wheel does not: for a dependency scan,
+ * off and unreadable are the same answer — nothing is watching — and both land in `unscanned`. So the prose is not
+ * consulted, and the constant that had to be kept in step with `evidence/domain/security-alerts.ts` went with it.
+ */
+function dependabotAlerts(row: RepositoryRow): number | undefined {
+  return row.security?.dependabot.open;
+}
 
 /**
  * Which slice each wheel is filtered on, keyed by the wheel's own parameter. An absent entry is unfiltered.
