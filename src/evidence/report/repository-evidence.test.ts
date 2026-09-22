@@ -90,6 +90,9 @@ function input(overrides: Partial<RepositoryEvidenceInput> = {}): RepositoryEvid
     walked,
     window: WINDOW,
     measured: BOTH,
+    // NO SCAN ROW BY DEFAULT, which is what a repository nothing has walked since VIBE-597 looks like — and the
+    // case whose three families must still all reach the contract rather than being omitted.
+    scans: [],
     ...overrides
   };
 }
@@ -267,10 +270,12 @@ describe("the graded sections of one repository's page", () => {
 
   it("should report the reason when no alert family was collected", () => {
     const state = { fetchedAt: new Date(Date.UTC(2026, 7, 25)), payload: { defaultBranch: "main" } };
+    const security = builtRepositoryEvidence(CONFIGURATION, input({ state })).security;
 
-    expect(builtRepositoryEvidence(CONFIGURATION, input({ state })).security).toEqual({
-      detail: "no security alert family was collected for this repository"
-    });
+    expect(security.detail).toBe("no security alert family was collected for this repository");
+    // THE SCANS RIDE THIS ARM TOO. They come off a different table from the counts, so a repository can hold one and
+    // not the other — and all three families are stated as unmeasured rather than left out.
+    expect(security.scans.map((scan) => scan.state)).toEqual(["unmeasured", "unmeasured", "unmeasured"]);
   });
 
   it("should translate the alert families into the contract's spelling when they were collected", () => {
@@ -282,6 +287,36 @@ describe("the graded sections of one repository's page", () => {
     const alerts = builtRepositoryEvidence(CONFIGURATION, input({ state })).security.alerts;
 
     expect(alerts?.dependabot).toEqual({ open: 3, by_severity: { critical: 1 } });
+  });
+
+  it("should judge every assurance criterion with the sentence behind its outcome", () => {
+    // ON THE BLOCK AS WELL AS ON THE ESTATE ROW, through one derivation. The page renders these as text; the table
+    // can only carry them as a `title`, which is invisible on touch and not reliably announced.
+    const assurance = builtRepositoryEvidence(CONFIGURATION, input()).assurance;
+
+    expect(assurance.criteria).toHaveLength(6);
+    for (const result of assurance.criteria) {
+      expect(result.detail.length, `${result.criterion} should state a reason`).toBeGreaterThan(0);
+    }
+  });
+
+  it("should read a criterion nobody could measure as unknown rather than as unmet", () => {
+    // The fixture payload carries no `assurance` block at all, which is a repository whose hygiene signals GitHub
+    // never disclosed. Grading that as a shortfall would blame a missing permission on the team.
+    const hygiene = builtRepositoryEvidence(CONFIGURATION, input()).assurance.criteria.find((result) => result.criterion === "automated-hygiene");
+
+    expect(hygiene).toMatchObject({ outcome: "unknown", detail: "nothing has been collected for this repository" });
+  });
+
+  it("should state all three families as unmeasured when no scan row was stored for the repository", () => {
+    // A family with no row must not be OMITTED: an absent family renders as nothing, and nothing is indistinguishable
+    // from a family read and found clean.
+    const scans = builtRepositoryEvidence(CONFIGURATION, input()).security.scans;
+
+    expect(scans.map((scan) => scan.family)).toEqual(["secret-scanning", "dependabot", "code-scanning"]);
+    for (const scan of scans) {
+      expect(scan).toMatchObject({ state: "unmeasured", alerts: [] });
+    }
   });
 
   it("should summarise every behaviour metric through the contract's observation shape", () => {

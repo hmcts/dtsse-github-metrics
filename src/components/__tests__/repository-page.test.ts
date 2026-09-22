@@ -120,7 +120,48 @@ function evidence(): RepositoryPracticeEvidence {
         dependabot: { open: 3, by_severity: { high: 1, low: 2 } },
         code_scanning: { open: 0, by_severity: {} },
         secret_scanning: { open: 0, by_severity: {} }
-      }
+      },
+      // ONE FAMILY IN EACH OF THE THREE STATES, because the Alert detail section's whole job is telling them apart
+      // and a fixture with three `read` families would render one arm three times.
+      scans: [
+        {
+          family: "secret-scanning",
+          state: "read",
+          observed_at: "2026-08-31T00:00:00Z",
+          alerts: [
+            {
+              family: "secret-scanning",
+              number: 7,
+              alert_type: "azure_storage_account_key",
+              path: "src/config.ts",
+              line: 12,
+              state: "open",
+              created_at: "2024-03-09T00:00:00Z",
+              html_url: "https://github.com/hmcts/api/security/secret-scanning/7"
+            }
+          ]
+        },
+        {
+          family: "dependabot",
+          state: "not-enabled",
+          detail: "Dependabot is not enabled for this repository",
+          observed_at: "2026-08-31T00:00:00Z",
+          alerts: []
+        },
+        { family: "code-scanning", state: "unmeasured", detail: "code scanning could not be read for this repository", alerts: [] }
+      ]
+    },
+    assurance: {
+      grade: "partial",
+      criteria: [
+        { criterion: "named-owner", outcome: "met", detail: "assigned to a team" },
+        { criterion: "automated-hygiene", outcome: "unmet", detail: "not configured: secret scanning" },
+        { criterion: "no-committed-secrets", outcome: "unmet", detail: "2 secret-scanning alerts open, the oldest for 900 days" },
+        { criterion: "security-contact", outcome: "met", detail: "a security policy is reported" },
+        // THE UNKNOWN ARM, which must read as unknown rather than as either of the other two.
+        { criterion: "patching", outcome: "unknown", detail: "the severe alerts could not be read" },
+        { criterion: "maintained", outcome: "met", detail: "pushed to within the last year" }
+      ]
     },
     codeowners: {
       fetched_at: "2026-08-31T00:00:00Z",
@@ -226,6 +267,25 @@ describe("repository page layout", () => {
 
     expect(security).toContain("Security alerts");
     expect(security).toContain("Maintenance");
+  });
+
+  it("puts the assurance criteria under the readiness assessment, the page's two verdicts together", async () => {
+    // They grade different things — a repository can be ready to enable agentic tooling on and still fail the
+    // assurance criteria — so adjacent and separately headed is what makes the distinction legible. `Clear` is the
+    // last of the assessment's three groups, so its position is where the readiness verdict ends.
+    const markup = await render();
+
+    expect(heading(markup, "Clear")).toBeLessThan(heading(markup, "Assurance criteria"));
+    expect(heading(markup, "Assurance criteria")).toBeLessThan(heading(markup, "Merge gate"));
+  });
+
+  it("puts the alert detail under the alert counts and above SonarCloud", async () => {
+    // Which ones, after how many. It is drawn at full width rather than inside the pair above: five facts per alert
+    // plus a link does not fit in half a row, which the pair count in the next case is what holds.
+    const markup = await render();
+
+    expect(heading(markup, "Security alerts")).toBeLessThan(heading(markup, "Alert detail"));
+    expect(heading(markup, "Alert detail")).toBeLessThan(heading(markup, "SonarCloud"));
   });
 
   it("stacks each pair to one column on a narrow viewport", async () => {
@@ -481,6 +541,52 @@ describe("a repository the span cannot be reported for", () => {
  * "not available" across them would lose which question went unanswered, and a zero in place of any
  * of them would report a missing permission as a passing check.
  */
+/**
+ * The reasons behind the outcomes, which is what this page was built to say out loud.
+ *
+ * `AssuranceCriterionResult.detail` reached a reader on `/repositories` as a `title` attribute — invisible on a touch
+ * device, and not reliably announced by a screen reader. What these cases assert is that the sentence is in the
+ * document here, that all six criteria appear whatever their outcome, and that an `unknown` reads as unknown.
+ */
+describe("the repository page’s assurance criteria", () => {
+  it("states every criterion's reason in words rather than in a tooltip", async () => {
+    const markup = await render();
+
+    expect(markup).toContain("not configured: secret scanning");
+    expect(markup).toContain("2 secret-scanning alerts open, the oldest for 900 days");
+    expect(markup).toContain("assigned to a team");
+  });
+
+  it("draws all six criteria, met ones included, so a grade can be argued with rather than only read", async () => {
+    const markup = await render();
+
+    for (const label of ["Code owner", "Hygiene", "Secrets", "Security contact", "Patching cycle", "Maintained"]) {
+      expect(markup, `${label} should have a row of its own`).toContain(label);
+    }
+  });
+
+  it("reads an unknown criterion as unknown, never as met or unmet", async () => {
+    // The fixture leaves `patching` unknown. `unmet` would blame a refused read on the team; `met` would be a pass
+    // nobody measured.
+    const markup = await render();
+    const [, criteria = ""] = markup.split(">Assurance criteria</h2>");
+
+    expect(criteria).toContain("the severe alerts could not be read");
+    expect(criteria.slice(0, 2_000)).toContain(">unknown</dd>");
+  });
+
+  it("names the grade beside the heading in the assurance vocabulary rather than the readiness one", async () => {
+    // "Partly meets" and not "Caution": the two grades are about different things and share no words.
+    const markup = await render();
+
+    expect(markup).toContain("partly meets");
+  });
+
+  it("carries no title attribute anywhere on the page, the tooltip being what this replaced", async () => {
+    expect(await render()).not.toContain("title=");
+  });
+});
+
 describe("the repository page’s cohort row", () => {
   it("should state the reported count against the walked one, and name what was excluded", async () => {
     const markup = await render();
@@ -524,7 +630,7 @@ describe("the repository page’s absences and lists", () => {
     const markup = await render((block) => ({
       ...block,
       open_pull_requests: { fetched_at: block.open_pull_requests.fetched_at, detail: "the pull-request list was refused" },
-      security: { fetched_at: block.security.fetched_at, detail: "alerts need security-events scope" },
+      security: { fetched_at: block.security.fetched_at, detail: "alerts need security-events scope", scans: block.security.scans },
       maintenance: { fetched_at: block.maintenance.fetched_at, maintenance: block.maintenance.maintenance, windows: [] },
       // No `fetched_at` at all: a block this build never stored has no read-at stamp to print, and a
       // heading reading "read Invalid Date" would be worse than one that says only what it is.

@@ -2,6 +2,7 @@ import type * as contract from "../../lib/types.ts";
 import { readinessPolicy } from "../assessment/assessment.ts";
 import { botAccounts, excludedAuthors, type ReportedCohort, reportedCohort } from "../behaviour/analysis.ts";
 import { behaviourMetrics } from "../behaviour/metrics.ts";
+import type { StoredAlertScan } from "../domain/alert-detail.ts";
 import type { Merges } from "../domain/facts.ts";
 import type { SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import type { CohortEntry } from "../org/cohort.ts";
@@ -9,6 +10,7 @@ import type { Configuration } from "../policy/schema.ts";
 import type { ReportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
 import { contractAssessment } from "./contract/assessment.ts";
+import { reportedAssurance } from "./contract/assurance.ts";
 import { contractGate, storedGate } from "./contract/merge-gate.ts";
 import { contractObservation } from "./contract/observation.ts";
 import { securityReport } from "./contract/security.ts";
@@ -26,6 +28,15 @@ export interface RepositoryEvidenceInput {
   walked: Merges;
   window: ReportingWindow;
   measured: MeasuredRow;
+  /**
+   * This repository's stored alert scans, one per family the collection has walked.
+   *
+   * A SEPARATE READ FROM `state`, because it answers a question the payload cannot. The payload holds the COUNTS,
+   * and a count of zero beside a count nobody took are the same absence there; `security_alert_scans` is where the
+   * difference is a row rather than a sentence. Fewer than three entries is normal and is handled at the
+   * translation — see `reportedAlertScans`.
+   */
+  scans: readonly StoredAlertScan[];
 }
 
 /**
@@ -70,9 +81,13 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
     // already correct. The domain and the contract spell every field of an assessment the same way, so the policy's
     // own object was handed straight over — see `./contract/assessment.ts` for why that being right was luck.
     assessment: policy.enabled ? contractAssessment(policy.assess(merges, gate)) : undefined,
+    // THE SAME DERIVATION THE ESTATE ROW'S CRITERION COLUMNS USE, called with the same two arguments. The page is
+    // where each criterion's `detail` is readable as text rather than as a `title` a touch reader never sees — and
+    // it is one function, so the column and the sentence cannot grade a repository differently.
+    assurance: reportedAssurance(input.entry, input.state.payload),
     unreviewed_substantial: policy.unreviewedSubstantialOutcome(merges),
     merge_gate: contractGate(gate, fetched),
-    security: securityReport(payload.securityAlerts, fetched),
+    security: securityReport(payload.securityAlerts, fetched, input.scans),
     metrics: metricSummaries(configuration, merges),
     // NOT COLLECTED, each said in the words of the thing that would have collected it. See this function's header:
     // an empty section here would read as a repository with nothing to report.

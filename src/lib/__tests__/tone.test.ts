@@ -10,7 +10,9 @@
 import { describe, expect, it } from "vitest";
 import type { GateField, OpenPullRequestField, SonarMeasure } from "@/lib/tone";
 import {
+  alertScanTone,
   alertTone,
+  assuranceOutcomeTone,
   borderClass,
   codeownersTone,
   conditionTone,
@@ -27,7 +29,7 @@ import {
   TONES,
   valueClass
 } from "@/lib/tone";
-import type { OpenAlertCount, SonarMeasures } from "@/lib/types";
+import type { OpenAlertCount, SecurityAlertRecord, SonarMeasures } from "@/lib/types";
 
 /** The measures a repository reported, with only the fields one case is about filled in. */
 function measures(fields: Partial<SonarMeasures> = {}): SonarMeasures {
@@ -262,6 +264,50 @@ describe("security alerts", () => {
     for (const family of ["dependabot", "code-scanning", "secret-scanning"] as const) {
       expect(alertTone(family, refused)).toBe("neutral");
     }
+  });
+});
+
+describe("one alert family's scan", () => {
+  const open: SecurityAlertRecord = { family: "dependabot", number: 1, state: "open" };
+
+  it("reads a family read and found clean as clear, which is the measured zero", () => {
+    expect(alertScanTone("dependabot", "read", [])).toBe("good");
+  });
+
+  it("grades neither absence: an unmeasured family is a statement and a disabled one is not this page's verdict", () => {
+    // Neutral for both, and the words are what separate them — see `alertScanSummaries`. Amber on 1,074 repositories'
+    // code-scanning row would be this section inventing a verdict no criterion holds.
+    expect(alertScanTone("code-scanning", "not-enabled", [])).toBe("neutral");
+    expect(alertScanTone("code-scanning", "unmeasured", [])).toBe("neutral");
+  });
+
+  it("never reads an unmeasured family as clear even where alerts somehow rode it", () => {
+    // The state decides, not the list: an unmeasured family with rows attached is a contradiction, and reporting it
+    // green would be the one wrong answer that looks like good news.
+    expect(alertScanTone("dependabot", "unmeasured", [open])).toBe("neutral");
+  });
+
+  it("takes its severity from the open alerts, as the count card does", () => {
+    expect(alertScanTone("dependabot", "read", [{ ...open, severity: "medium" }])).toBe("warn");
+    expect(alertScanTone("dependabot", "read", [{ ...open, severity: "critical" }])).toBe("bad");
+    expect(alertScanTone("code-scanning", "read", [open])).toBe("warn");
+  });
+
+  it("reads any open secret badly, the family reporting no severity to weigh", () => {
+    expect(alertScanTone("secret-scanning", "read", [{ ...open, family: "secret-scanning" }])).toBe("bad");
+  });
+});
+
+describe("one assurance criterion's outcome", () => {
+  it("reads a met criterion as clear and an unmet one as bad", () => {
+    expect(assuranceOutcomeTone("met")).toBe("good");
+    expect(assuranceOutcomeTone("unmet")).toBe("bad");
+  });
+
+  it("leaves an unknown criterion uncoloured rather than amber", () => {
+    // One refused organisation-wide secret-scanning call leaves a criterion unknown for every row at once. Amber there
+    // would light the whole estate for a fault in the collection, so the WORD carries it and no colour does.
+    expect(assuranceOutcomeTone("unknown")).toBe("neutral");
   });
 });
 describe("maintenance", () => {

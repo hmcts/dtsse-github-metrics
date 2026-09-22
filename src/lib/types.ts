@@ -209,9 +209,88 @@ export interface SecurityAlertEvidence {
   secret_scanning: OpenAlertCount;
 }
 
+/**
+ * Whether anybody looked at one alert family for one repository, WHICH IS NOT WHAT THEY FOUND.
+ *
+ * `domain.AlertScanState` verbatim. Three states because two would make every refusal read as good news, and on
+ * this estate the refusals are the majority of the two private visibilities: code scanning is unmeasured for 651
+ * repositories and not enabled for 1,074, and secret scanning is not enabled for 893.
+ *
+ * `read` IS THE ONLY STATE WHOSE EMPTY ALERT LIST MEANS ANYTHING. Under the other two the list is empty because
+ * nothing was collected, not because nothing was found, and a renderer that draws them the same way states a
+ * clean bill of health nobody issued.
+ */
+export type AlertScanState = "read" | "not-enabled" | "unmeasured";
+
+/**
+ * ONE ALERT, rather than a count of them.
+ *
+ * NOTHING HERE CARRIES A SECRET VALUE, and that is a property of the collection rather than of this declaration:
+ * the secret-scanning API returns the detected credential in a `secret` field and `alerts/records.ts` drops it
+ * inside the response schema, so no `SecurityAlertRecord` has ever held one. `alert_type` — `azure_storage_account_key`
+ * — beside a path is what tells a reader what to revoke and where.
+ *
+ * EVERY FIELD BUT THE IDENTITY IS OPTIONAL, which is the absent-versus-zero rule applied to a record instead of a
+ * figure. GitHub populates all of them in practice, but an alert whose `path` could not be read is still an alert
+ * and refusing the record for it would turn a leaked credential into silence.
+ */
+export interface SecurityAlertRecord {
+  family: AlertFamily;
+  /** GitHub's own alert number, unique within one repository and one family. */
+  number: number;
+  /** The secret type, the advisory's GHSA identifier, or the code-scanning rule's id. */
+  alert_type?: string;
+  /** What the alert is ABOUT where the type does not say: the vulnerable package, for Dependabot. */
+  subject?: string;
+  severity?: AlertSeverity;
+  path?: string;
+  line?: number;
+  /** GitHub's own state word — `open`, `resolved`, `dismissed`, `fixed`, `auto_dismissed`. */
+  state?: string;
+  /** GitHub's own resolution word, on a resolved alert only. Never this tool's paraphrase of one. */
+  resolution?: string;
+  created_at?: string;
+  resolved_at?: string;
+  /**
+   * The alert on GitHub, so a page links to it rather than reproducing it.
+   *
+   * This is also where an alert is RESOLVED, which is a deliberate absence of a feature: a false positive is
+   * recorded on GitHub and drops out of our open count at the next collection, so there is no local override to
+   * keep in step and the audit of who resolved it and why stays in one place.
+   */
+  html_url?: string;
+}
+
+/**
+ * One family's position on one repository: whether anybody looked, and what they saw.
+ *
+ * ALL THREE FAMILIES ARE ALWAYS SENT, on `SecurityAlertEvidence`'s precedent and for a sharper reason: a family
+ * omitted from this list renders as nothing at all, and nothing at all is indistinguishable from a family with no
+ * alerts. A family nobody could read arrives here as `unmeasured` with the reason that was stored for it.
+ */
+export interface SecurityAlertFamilyScan {
+  family: AlertFamily;
+  state: AlertScanState;
+  /** Why there are no alerts, for the two states that have none for a reason. Absent on a `read` scan. */
+  detail?: string;
+  /** When the scan was taken. Absent where no scan row exists, which is one of the ways a family is unmeasured. */
+  observed_at?: string;
+  /** The alerts, MEANINGFUL ONLY BESIDE A `read` STATE. Empty under the other two, and never a finding of none. */
+  alerts: SecurityAlertRecord[];
+}
+
 export interface SecurityAlertReport {
   fetched_at?: string;
   alerts?: SecurityAlertEvidence;
+  /**
+   * Each family's scan and the individual alerts under it, always three entries.
+   *
+   * REQUIRED WHERE `alerts` IS OPTIONAL, and the pair is not inconsistent. `alerts` is the count block off the
+   * collected state, which a repository no collection has reached does not have; the scans are read from
+   * `security_alert_scans`, where a missing row is itself an answer — so there is always a three-entry list to
+   * send, and the page never has to decide what an absent one would have meant.
+   */
+  scans: SecurityAlertFamilyScan[];
   detail?: string;
 }
 
@@ -436,6 +515,20 @@ export interface RepositoryPracticeEvidence {
   provenance: WindowProvenance;
   cohort: CohortSummary;
   assessment?: ReadinessAssessment;
+  /**
+   * The six assurance criteria and the sentence behind each one.
+   *
+   * ON THE BLOCK AS WELL AS ON THE ROW, which is a duplication worth having. `RepositoryRow.assurance` is what the
+   * estate table's criterion columns read, and there a `detail` can only be a `title` tooltip — invisible on touch,
+   * and not reliably announced. This page is one repository with room for the sentence, so it is the page that says
+   * "not configured: secret scanning" in words. The two are ONE derivation, `contract/assurance.ts`, so a column
+   * and a paragraph cannot disagree about a criterion.
+   *
+   * REQUIRED, unlike the row's. `reportedAssurance` judges from the cohort entry as well as the payload, and this
+   * block is only built for a repository the cohort holds — so there is always a verdict, and a criterion whose
+   * source is missing reads `unknown` rather than being left out.
+   */
+  assurance: AssuranceReport;
   unreviewed_substantial?: UnreviewedSubstantialOutcome;
   merge_gate: MergeGateReport;
   open_pull_requests: OpenPullRequestReport;

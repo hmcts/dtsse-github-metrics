@@ -28,7 +28,18 @@
  */
 
 import { type RAGState, state } from "@/lib/rag";
-import type { AlertFamily, OpenAlertCount, ReadinessCondition, ReadinessLabel, SonarGateLevel, SonarMeasures, SonarRating } from "@/lib/types";
+import type {
+  AlertFamily,
+  AlertScanState,
+  AssuranceOutcome,
+  OpenAlertCount,
+  ReadinessCondition,
+  ReadinessLabel,
+  SecurityAlertRecord,
+  SonarGateLevel,
+  SonarMeasures,
+  SonarRating
+} from "@/lib/types";
 
 /** The four presentation states: reads well, worth weighing, reads badly, and carries no verdict. */
 export type Tone = "good" | "warn" | "bad" | "neutral";
@@ -300,6 +311,66 @@ export function alertTone(family: AlertFamily, count: OpenAlertCount): Tone {
   }
   return SEVERE.some((severity) => (count.by_severity[severity] ?? 0) > 0) ? "bad" : "warn";
 }
+
+/**
+ * One assurance criterion's outcome, on a page that states the sentence behind it.
+ *
+ * `unknown` IS NEUTRAL AND NOT AMBER, which is the one decision in this function. It is the same refusal the two
+ * rules in this module's header describe: a criterion whose signal GitHub would not disclose has not been shown to
+ * fail, and amber on it would report a missing permission as a shortfall in the repository. On this estate that is
+ * not a corner — one refused organisation-wide secret-scanning call leaves every row's `no-committed-secrets`
+ * unknown at once, and colouring that would light the whole estate amber for a fault in the collection.
+ *
+ * SO THE WORD IS WHAT CARRIES IT. `assuranceRows` prints "unknown" and the criterion's own sentence beside it, which
+ * is what makes an unknown legible without a colour — and is why this can afford to say nothing.
+ */
+export function assuranceOutcomeTone(outcome: AssuranceOutcome): Tone {
+  if (outcome === "met") {
+    return "good";
+  }
+  return outcome === "unmet" ? "bad" : "neutral";
+}
+
+/**
+ * One alert family's scan: whether anybody looked, and what they found if they did.
+ *
+ * FOUR ANSWERS FROM THREE STATES, and `read` is the state that splits. A family read and found clean is the measured
+ * zero the scan table exists to be able to state, so it is the one thing here that reads green; a family read with
+ * alerts open borrows `alertTone`'s own thresholds through the severities on the records, so this page and the count
+ * cards above it grade one family the same way.
+ *
+ * NEITHER ABSENCE IS COLOURED. `unmeasured` is neutral for the reason the header gives — colouring an absence grades
+ * a permission — and `not-enabled` is neutral for a narrower one: no criterion on this page requires code scanning,
+ * so amber on 1,074 repositories' code-scanning row would be this section inventing a verdict the policy does not
+ * hold. What separates the two is the sentence each carries, which `alertScanSummaries` writes out in full.
+ *
+ * TAKES THE OPEN ALERTS RATHER THAN THE SCAN, on `alertTone`'s precedent of being handed the thing it grades: which
+ * of a family's stored records count as open is a derivation, it lives in `lib/repository.ts` with the rest of them,
+ * and a tone function reaching back for it would make these two modules import each other.
+ */
+export function alertScanTone(family: AlertFamily, scanned: AlertScanState, open: readonly SecurityAlertRecord[]): Tone {
+  // `scanned` rather than `state`, which this module already imports from `lib/rag` — a parameter of that name would
+  // shadow it inside the one function on this page that must not confuse a scan's state with a RAG one.
+  if (scanned !== SCAN_READ) {
+    return "neutral";
+  }
+  if (open.length === 0) {
+    return "good";
+  }
+  if (family === "secret-scanning") {
+    return "bad";
+  }
+  return open.some((alert) => SEVERE.some((severity) => alert.severity === severity)) ? "bad" : "warn";
+}
+
+/**
+ * The state word that means somebody looked, named once rather than spelled in each file that branches on it.
+ *
+ * It is the ONLY state under which an empty alert list is a finding, so every reader of a scan tests against this and
+ * never against the other two — a condition written the other way round has to name both absences, and silently gains
+ * a wrong answer if a fourth state is ever added.
+ */
+export const SCAN_READ: AlertScanState = "read";
 
 /**
  * One maintenance window's answer: was there a commit inside it.
