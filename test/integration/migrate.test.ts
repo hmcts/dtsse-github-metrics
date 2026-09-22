@@ -78,6 +78,8 @@ describe("migrate", () => {
       "repository_ownership",
       "repository_production",
       "repository_state",
+      "security_alert_scans",
+      "security_alerts",
       "sonar_project_map",
       "source_coverage"
     ]);

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import yaml from "js-yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CHART_PATH, KEY_VAULT_OPT_IN, keyVaultAllowed, loadSecrets } from "./secrets.ts";
 
@@ -127,5 +129,73 @@ describe("loadSecrets", () => {
 
     expect(lines.join("\n")).toContain("no such directory /mnt/secrets/dtsse");
     expect(lines).toContain("database: localhost:5432/github_metrics");
+  });
+});
+
+/**
+ * THE FOUR BLOCKS A CronJob IS USELESS WITHOUT, asserted against the chart this repository deploys.
+ *
+ * Written because dropping one is a silent failure and not a build one. `sonarJob` lost its `keyVaults`,
+ * `environment`, `activeDeadlineSeconds` and `ttlSecondsAfterFinished` in a conflict resolution and went on being
+ * scheduled every Monday with no credentials: it failed, the CronJob history recorded it, and nothing said so until
+ * somebody went looking. Helm raises nothing — a job chart given no `keyVaults` renders a perfectly valid Pod with
+ * no vault mounted, which is why this is asserted here rather than left to the render.
+ *
+ * THE VALUES FILE IS PARSED AND NOT SEARCHED, because a key present somewhere in 380 lines of YAML is a different
+ * claim from a key present on the right block. Every CronJob block is found by structure, so one added later is
+ * covered from the moment it exists rather than when somebody remembers to add it here.
+ */
+describe("the deployed chart's CronJobs", () => {
+  const values = yaml.load(readFileSync(CHART_PATH, "utf8")) as Record<string, Record<string, unknown>>;
+
+  /** Every block that renders a CronJob: the `job` dependency and each alias of it. `nodejs` is the web pod. */
+  const jobs = Object.entries(values).filter(([name, block]) => (name === "job" || name.endsWith("Job")) && typeof block === "object");
+
+  it("should find every CronJob block the chart declares", () => {
+    // Guards the filter above rather than the chart. A rename that stopped matching would leave every case below
+    // iterating an empty list, which is how a test like this stops testing without ever failing.
+    expect(jobs.map(([name]) => name).sort()).toEqual(["alertJob", "cveJob", "job", "orgJob", "sonarJob"]);
+  });
+
+  it.each(jobs)("should mount the dtsse vault for %s, so the run has credentials at all", (_name, block) => {
+    const secrets = (block.keyVaults as { dtsse?: { secrets?: { alias?: string }[] } } | undefined)?.dtsse?.secrets;
+    expect(secrets).toBeDefined();
+    // Named rather than counted, because a block that had lost only the App credentials would still carry a
+    // plausible-looking list of five Postgres parts.
+    const aliases = (secrets ?? []).map((secret) => secret.alias);
+    expect(aliases).toContain("POSTGRES_HOST");
+    expect(aliases).toContain("POSTGRES_PASSWORD");
+    expect(aliases).toContain("GH_APP_PRIVATE_KEY");
+  });
+
+  it.each(jobs)("should set the environment for %s, without which the config path and the heap ceiling are unset", (_name, block) => {
+    const environment = block.environment as Record<string, string> | undefined;
+    expect(environment?.NODE_CONFIG_ENV).toBeDefined();
+    expect(environment?.METRICS_CONFIG).toBeDefined();
+    expect(environment?.NODE_OPTIONS).toMatch(/--max-old-space-size=\d+/);
+  });
+
+  it.each(jobs)("should bound %s in time, so a wedged run cannot hold the collector lock indefinitely", (_name, block) => {
+    expect(block.activeDeadlineSeconds).toBeTypeOf("number");
+    expect(block.ttlSecondsAfterFinished).toBeTypeOf("number");
+  });
+
+  it.each(jobs)("should keep %s's heap ceiling inside its memory limit", (_name, block) => {
+    const options = (block.environment as Record<string, string | undefined>).NODE_OPTIONS ?? "";
+    const ceiling = Number(/--max-old-space-size=(\d+)/.exec(options)?.[1]);
+    const limit = Number(/^(\d+)Gi$/.exec(String(block.memoryLimits))?.[1]) * 1024;
+    // STRICTLY INSIDE, and this chart has been bitten twice by the alternative: a ceiling at or above the limit
+    // leaves V8 still declining to collect at the point the kernel has already killed the container.
+    expect(ceiling).toBeLessThan(limit);
+  });
+
+  it.each(
+    jobs.filter(([, block]) => block.devmemoryLimits !== undefined)
+  )("should keep %s's dev memory keys in step with the pair devMode ignores", (_name, block) => {
+    // `library/templates/v2/_container.tpl` reads one pair or the other and never both, and the CNP pipeline
+    // installs the `-staging` release with `global.devMode`. A dev pair left at the chart default is a pod that
+    // OOMs in staging alone, which is where that was first found.
+    expect(block.devmemoryLimits).toEqual(block.memoryLimits);
+    expect(block.devmemoryRequests).toEqual(block.memoryRequests);
   });
 });

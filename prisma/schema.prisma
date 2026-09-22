@@ -7,12 +7,19 @@
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
 // `alert_observations`, `sonar_project_map`, the six organisation-graph tables,
-// `repository_production`, `repository_notes`, or `cve_scans` and `cve_findings`. That is enforced by
+// `repository_production`, `repository_notes`, `cve_scans` and `cve_findings`, or
+// `security_alert_scans` and `security_alerts`. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
 //
 // `repository_notes` is durable for the strongest version of that reason and is the ONE TABLE THE WEB
 // PROCESS WRITES. Everything else here is written by `collect` from a source that can be asked again;
 // a note is prose a person typed, so a deleted row is recoverable from nobody.
+//
+// THE LAST PAIR IS THE OPPOSITE CASE and is on the list for a different reason from everything else on
+// it. The individual alerts ARE refetchable, in the five minutes one walk of all three families costs.
+// What makes deleting them wrong is the answer it would leave behind — a repository with no scan row
+// reads as UNMEASURED, so a prune would turn a measured clean estate into an unread one until the next
+// alert run.
 //
 // Facts are stored as `jsonb` payloads beside the few queryable columns, exactly as upstream stored
 // `model_dump_json()` text, so adding a field to a fact needs no migration.
@@ -108,6 +115,106 @@ model DirectCommitFact {
   @@id([organization, repository, queryHash, sha])
   @@index([organization, repository, queryHash, committedAt])
   @@map("direct_commit_facts")
+}
+
+/// That one family's alerts were READ for one repository, which is the fact the alerts are meaningless without.
+///
+/// THIS TABLE IS WHAT SEPARATES ZERO FROM UNMEASURED for the individual alerts, exactly as `cve_scans` does for the
+/// published CVE reports, and it is a table rather than a derived `COUNT(*) > 0` over `security_alerts` for the same
+/// reason. A row with `state = 'read'` and no alerts beside it is a family that was scanned and found nothing; a row
+/// with `state = 'not-enabled'` is a repository with no scanner; a row with `state = 'unmeasured'` is one nobody
+/// could look at. Counting alerts alone cannot tell the three apart, and collapsing them would report every
+/// repository the App installation is refused on as clean — which VIBE-590 measured at 39% of internal and 60% of
+/// private repositories.
+///
+/// ONE ROW PER `(organization, repository, family)` and never per run, so re-running replaces the answer rather than
+/// appending a second one. `alert_observations` above is the append-only history of the COUNTS and keeps its
+/// `fetched_at` in the key for that reason; this is the current position, and `observed_at` is a column recording
+/// when it was taken.
+model SecurityAlertScan {
+  organization String
+  repository   String
+
+  /// `dependabot`, `code-scanning` or `secret-scanning`, spelled as the report contract spells them.
+  family       String
+
+  /// `read`, `not-enabled` or `unmeasured`, held to those three words by a CHECK constraint in the migration.
+  state        String
+
+  /// Why there are no alerts, for the two states that have none for a reason. NULL for a state of `read`.
+  detail       String?
+  observedAt   DateTime @map("observed_at") @db.Timestamptz(6)
+
+  alerts       SecurityAlert[]
+
+  @@id([organization, repository, family])
+  @@map("security_alert_scans")
+}
+
+/// One security alert, as the latest walk of its family found it.
+///
+/// NO SECRET VALUE HAS A COLUMN HERE, AND THAT IS THE POINT OF HOW NARROW THIS IS. The secret-scanning API returns
+/// the detected credential in a `secret` field on every record; `alerts/records.ts` does not declare that field in
+/// its response schema, so zod strips it during the parse and nothing downstream is ever handed it. `secret_type`
+/// and the location are what is stored, which is what tells somebody what to revoke and where.
+///
+/// `alert_number` IS GITHUB'S OWN AND IS PART OF THE KEY. It is unique within one repository and one family and is
+/// stable across runs, so an upsert on this key is what makes re-running the collection change rows rather than
+/// duplicate them.
+///
+/// THE ALERTS ARE REPLACED WHOLESALE PER SCAN AND NOT MERGED, on `cve_findings`' precedent and for its reason: an
+/// alert that has been fixed is absent from the next walk, so merging would leave it stored and reported as open
+/// for ever. The foreign key's `ON DELETE CASCADE` is what lets the writer replace a family's alerts by replacing
+/// its scan row.
+///
+/// CACHE AND NOT DURABLE, which is the opposite side of the boundary from `alert_observations`. That table holds
+/// counts GitHub cannot be asked for again; every row here is refetchable in the five minutes one walk of all three
+/// families takes. `prune` still does not touch it — not to protect a history, but because a deleted row makes a
+/// repository read UNMEASURED when it was measured, and `prune`'s cut-off is the age of a coverage series these rows
+/// do not have. test/integration/prune-never-touches-durable.test.ts asserts that rather than leaving it to
+/// convention.
+model SecurityAlert {
+  organization String
+  repository   String
+  family       String
+
+  /// GitHub's own alert number within this repository and family.
+  alertNumber  Int       @map("alert_number")
+
+  /// What kind of thing it is: the secret type, the advisory's GHSA identifier, or the code-scanning rule's id.
+  alertType    String?   @map("alert_type")
+
+  /// What it is about where the type does not say: the vulnerable package, for Dependabot.
+  subject      String?
+
+  /// GitHub's grading, one of four words or NULL. Secret scanning has none — GitHub grades no secret alert.
+  severity     String?
+
+  /// Where in the repository. Dependabot gives a manifest path and no line, so `line` is NULL for that family.
+  path         String?
+  line         Int?
+
+  /// GitHub's own state word: `open`, `resolved`, `dismissed`, `fixed`, `auto_dismissed`.
+  state        String?
+
+  /// GITHUB'S OWN resolution word and never this tool's paraphrase — `revoked`, `false_positive`, `used_in_tests`,
+  /// `wont_fix` for secret scanning, and the `dismissed_reason` for the other two. NULL on an open alert.
+  resolution   String?
+
+  /// When GitHub raised it. NULL only where a record stated no readable instant, which is not the same as new.
+  createdAt    DateTime? @map("created_at") @db.Timestamptz(6)
+
+  /// When it stopped being open, however it stopped. NULL on an open alert.
+  resolvedAt   DateTime? @map("resolved_at") @db.Timestamptz(6)
+  htmlUrl      String?   @map("html_url")
+
+  scan         SecurityAlertScan @relation(fields: [organization, repository, family], references: [organization, repository, family], onDelete: Cascade)
+
+  @@id([organization, repository, family, alertNumber])
+  /// The estate-wide read of one family — every open secret-scanning alert in the organisation. The primary key
+  /// cannot serve it: `family` sits behind `repository`, so a predicate naming no repository has to scan.
+  @@index([organization, family])
+  @@map("security_alerts")
 }
 
 // ─── Durable: never pruned ───────────────────────────────────────────────────────────────────────

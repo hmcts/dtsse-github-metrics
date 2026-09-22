@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
-import { AlertSeverity, type OpenAlertCount, SEVERITY_ORDER, type SecurityAlertEvidence } from "../domain/security-alerts.ts";
+import {
+  type AlertSeverity,
+  FEATURE_NOT_ENABLED,
+  gradedSeverity,
+  type OpenAlertCount,
+  SEVERITY_ORDER,
+  type SecurityAlertEvidence
+} from "../domain/security-alerts.ts";
 import type { GitHubClient } from "../github/client.ts";
 
 /**
@@ -12,8 +19,14 @@ import type { GitHubClient } from "../github/client.ts";
 
 const FEATURE_NOT_CONFIGURED: ReadonlySet<AvailabilityReason> = new Set([AvailabilityReason.NotFoundOrInaccessible, AvailabilityReason.FeatureDisabled]);
 
-/** GitHub's "you never turned this on" answer, in the words the readers share. */
-export const FEATURE_NOT_ENABLED = "is not enabled for this repository";
+/**
+ * GitHub's "you never turned this on" answer, re-exported from `domain/security-alerts.ts` where it now lives.
+ *
+ * It moved because it is read as well as written — `alertScanState` matches it on a stored `detail` to tell a
+ * family that is off from one nobody could read — and a constant two features depend on belongs in the domain
+ * rather than in one of them. Re-exported so the callers that have always taken it from here still can.
+ */
+export { FEATURE_NOT_ENABLED };
 
 const dependabotAlertSchema = z.object({ security_advisory: z.object({ severity: z.string().nullish() }).nullish() });
 const codeScanningAlertSchema = z.object({ rule: z.object({ security_severity_level: z.string().nullish() }).nullish() });
@@ -27,24 +40,19 @@ export interface AlertFamilyResult {
 /**
  * Counts the gradings GitHub asserted, ignoring anything it did not grade or this tool cannot name.
  *
- * An unrecognised grading is DROPPED rather than mapped onto the nearest known one: GitHub adding a severity
- * should leave the counts it does understand correct, not silently reclassify the new one.
+ * The vocabulary itself is `gradedSeverity`'s, which the per-alert records read through too, so a count and the
+ * alerts it counts can never disagree about whether a grading is one this tool knows.
  *
  * Returned in severity order rather than in the order encountered, so two runs of the same data read the
  * same way.
  */
 export function countBySeverity(severities: Iterable<string | undefined>): Partial<Record<AlertSeverity, number>> {
   const counts = new Map<AlertSeverity, number>();
-  const known = new Set<string>(Object.values(AlertSeverity));
   for (const severity of severities) {
-    if (severity === undefined) {
+    const graded = gradedSeverity(severity);
+    if (graded === undefined) {
       continue;
     }
-    const folded = severity.toLowerCase();
-    if (!known.has(folded)) {
-      continue;
-    }
-    const graded = folded as AlertSeverity;
     counts.set(graded, (counts.get(graded) ?? 0) + 1);
   }
   const ordered: Partial<Record<AlertSeverity, number>> = {};

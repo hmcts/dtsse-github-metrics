@@ -65,6 +65,9 @@ async function wipe(): Promise<void> {
   // Findings first: the foreign key would refuse the scans otherwise, which is the point of having it.
   await prisma.cveFinding.deleteMany();
   await prisma.cveScan.deleteMany();
+  // And the alerts before their scans, for the same reason.
+  await prisma.securityAlert.deleteMany();
+  await prisma.securityAlertScan.deleteMany();
 }
 
 beforeEach(wipe);
@@ -89,6 +92,25 @@ describe("pruneCache", () => {
     await pruneCache(FUTURE);
 
     expect(await prisma.alertObservation.count()).toBe(1);
+  });
+
+  it("should never delete the individual security alerts, or a repository that was read reads unmeasured", async () => {
+    // ON THE LIST FOR A DIFFERENT REASON FROM EVERYTHING ELSE ON IT. These rows ARE refetchable — one walk of all
+    // three families is about five minutes — so the harm is not a lost history but the answer a deletion leaves
+    // behind: a repository with no scan row reads UNMEASURED, so a prune would turn a measured clean estate into an
+    // unread one until the next alert run. `prune` also has no cut-off that applies here, since these rows carry no
+    // coverage series to be stale against.
+    await prisma.securityAlertScan.create({
+      data: { organization: "hmcts", repository: "cath-service", family: "secret-scanning", state: "read", observedAt: new Date(Date.UTC(2026, 0, 1)) }
+    });
+    await prisma.securityAlert.create({
+      data: { organization: "hmcts", repository: "cath-service", family: "secret-scanning", alertNumber: 1, alertType: "azure_storage_account_key" }
+    });
+
+    await pruneCache(FUTURE);
+
+    expect(await prisma.securityAlertScan.count()).toBe(1);
+    expect(await prisma.securityAlert.count()).toBe(1);
   });
 
   it("should never delete the sonar project map, including its remembered negatives", async () => {
