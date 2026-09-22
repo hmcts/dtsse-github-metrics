@@ -725,11 +725,13 @@ describe("RepositoriesTable filtering", () => {
     expect(screen.getByText(/No repository matches this filter/)).toBeTruthy();
   });
 
-  it("names the controls an empty table can be cleared of, and no longer a chip", () => {
+  it("should name every control an empty table can be cleared of when a filter matches nothing", () => {
     url("weeks=12&repository=nothing-here");
     mount();
 
-    expect(screen.getByText(/Clear the term, the Production toggle, or a visibility/)).toBeTruthy();
+    // The four toggles AND the wheels above the table, which are the fifth way in: a reader who arrived here by
+    // clicking a wedge has to be told that the wedge is what to click again.
+    expect(screen.getByText(/Clear the term, the Production toggle, a visibility toggle, or the highlighted slice/)).toBeTruthy();
   });
 });
 
