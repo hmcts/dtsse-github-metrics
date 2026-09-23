@@ -120,7 +120,7 @@ found, so changing either list changes the figures on the next render with nothi
 `excluded_authors` drops **dependency automation from the pull-request cohort**. A Renovate pull request is small,
 single-file, frequently auto-approved and merges in minutes, so counting them inflated the throughput counts and
 the substantial-merge denominators, deflated the merge-cycle-time and time-to-first-review medians that are graded
-against a maximum, and lifted quiet repositories past `assessment.minimum_merges` — a repository with no human
+against a maximum, and lifted quiet repositories past `assessment.minimum_merges` - a repository with no human
 activity at all graded green instead of declining for insufficient sample. Agent-authored pull requests stay in:
 one was opened, reviewed and merged through the gate, which is the practice being measured.
 
@@ -161,7 +161,7 @@ or people that own it, by walking the organisation's teams, their members and th
 yarn cli collect-org --config metrics.yaml                     # walk it and store the graph
 yarn cli collect-org --config metrics.yaml --propose-teams     # print the attribution without storing it
 ```
-
+a
 `--propose-teams` no longer exists to be committed — the cohort is read from the graph, so there is nothing to
 paste. It prints the same block as a way of READING the attribution: which team got which repository, and by
 which rung, in a form that diffs against last week's.
