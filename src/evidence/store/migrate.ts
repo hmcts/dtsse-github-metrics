@@ -57,13 +57,17 @@ export function migrationsDirectory(cwd: string = process.cwd()): string {
   return path.join(cwd, "prisma", "migrations");
 }
 
-async function readMigrations(directory: string): Promise<Migration[]> {
+/** The migrations a checkout carries, in the order they are applied. */
+export async function migrationNames(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
-  const names = entries
+  return entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+}
 
+async function readMigrations(directory: string): Promise<Migration[]> {
+  const names = await migrationNames(directory);
   const migrations: Migration[] = [];
   for (const name of names) {
     const sql = await readFile(path.join(directory, name, "migration.sql"), "utf8");
@@ -72,16 +76,21 @@ async function readMigrations(directory: string): Promise<Migration[]> {
   return migrations;
 }
 
-async function applied(client: pg.ClientBase): Promise<Set<string>> {
+/** What the ledger says is applied: finished, and not rolled back. */
+export async function applied(client: pg.ClientBase): Promise<Set<string>> {
   const { rows } = await client.query<{ migration_name: string }>(
     `SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL`
   );
   return new Set(rows.map((row) => row.migration_name));
 }
 
-export async function migrate(directory: string = migrationsDirectory(), pause: (ms: number) => Promise<void> = sleep): Promise<string[]> {
+export async function migrate(
+  directory: string = migrationsDirectory(),
+  pause: (ms: number) => Promise<void> = sleep,
+  connectionString: string = resolveDatabaseUrl()
+): Promise<string[]> {
   const migrations = await readMigrations(directory);
-  const client = await connectWhenReady(resolveDatabaseUrl(), pause);
+  const client = await connectWhenReady(connectionString, pause);
 
   try {
     await client.query("SELECT pg_advisory_lock($1)", [LOCK_KEY.toString()]);

@@ -113,6 +113,62 @@ withPipeline(type, product, component) {
     env.E2E_TEST_SCOPE = '@smoke'
     env.TEST_URL = "https://dtsse-github-metrics-pr-${CHANGE_ID}.preview.platform.hmcts.net"
 
+    // A scrubbed copy of AAT's database replaces the PR's own before its smoke tests, and the PR's migrations are
+    // applied on top of it — see `src/preview/load-aat.ts` for the order and the guards. PULL REQUESTS ONLY: master's
+    // staging release reads the real AAT database, and this block is the only place the copy is reachable from.
+    //
+    // Three things the smoke stage does not provide, supplied here:
+    //
+    //   - CLUSTER ACCESS. The library runs this hook outside `withAksClient`, so it is entered here, and the
+    //     credentials go to a kubeconfig of this build's own rather than the agent's shared one, which a concurrent
+    //     build on the same agent can repoint at another cluster between two of our calls;
+    //   - THE AAT CREDENTIALS, fetched for this hook alone rather than added to `secrets`, which would load
+    //     production admin credentials into every stage of every build, master's included;
+    //   - THE POSTGRES CLIENTS, from the same ACR mirror the integration tests use, because `pg_dump` refuses a server
+    //     newer than itself and the agent's own client version is not ours to rely on.
+    //
+    // A failure fails the build. There is no fallback to the empty database: smoke tests passing on no data would
+    // hide exactly what this exists to show.
+    before('smoketest:preview') {
+      def previewSubscription = new uk.gov.hmcts.contino.Subscription(env).previewName
+      def previewEnvironment = new uk.gov.hmcts.contino.Environment(env).previewName
+      def aksSubscription = new uk.gov.hmcts.pipeline.AKSSubscriptions(this).preview.name
+      def copyDirectory = "${env.WORKSPACE_TMP ?: env.WORKSPACE + '@tmp'}/preview-aat-copy-${env.BUILD_NUMBER}"
+
+      withAksClient(previewSubscription, previewEnvironment, product) {
+        try {
+          sh script: """
+            set -e
+            rm -rf '${copyDirectory}' && mkdir -p -m 700 '${copyDirectory}'
+            env AZURE_CONFIG_DIR=/opt/jenkins/.azure-${previewSubscription} az aks get-credentials \
+              --resource-group '${env.AKS_RESOURCE_GROUP}' --name '${env.AKS_CLUSTER_NAME}' \
+              --subscription '${aksSubscription}' --admin --file '${copyDirectory}/kubeconfig' --overwrite-existing > /dev/null
+            env AZURE_CONFIG_DIR=/opt/jenkins/.azure-nonprod az acr login --name hmctsprod --subscription DCD-CNP-PROD
+            docker inspect ${postgresImage} > /dev/null 2>&1 || docker pull ${postgresImage}
+          """, label: "Reach ${env.AKS_CLUSTER_NAME} and pull the Postgres clients"
+
+          withAzureKeyvault(
+            azureKeyVaultSecrets: [
+              secret('github-metrics-postgres-host', 'AAT_POSTGRES_HOST'),
+              secret('github-metrics-postgres-port', 'AAT_POSTGRES_PORT'),
+              secret('github-metrics-postgres-user', 'AAT_POSTGRES_USER'),
+              secret('github-metrics-postgres-password', 'AAT_POSTGRES_PASSWORD'),
+              secret('github-metrics-postgres-database', 'AAT_POSTGRES_DATABASE')
+            ],
+            keyVaultURLOverride: 'https://dtsse-aat.vault.azure.net/',
+            applicationIDOverride: env.AZURE_CLIENT_ID,
+            applicationSecretOverride: env.AZURE_CLIENT_SECRET
+          ) {
+            withEnv(["KUBECONFIG=${copyDirectory}/kubeconfig", "PG_CLIENT_IMAGE=${postgresImage}", "TMPDIR=${copyDirectory}"]) {
+              yarnBuilder.yarn('preview:load-aat')
+            }
+          }
+        } finally {
+          sh script: "rm -rf '${copyDirectory}'", label: 'Remove the kubeconfig and any dump left behind'
+        }
+      }
+    }
+
     before('functionalTest:preview') {
       sh 'rm -rf playwright-report test-results'
     }

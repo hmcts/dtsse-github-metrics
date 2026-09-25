@@ -43,7 +43,13 @@ export default defineConfig({
         // `new CosmosClient(...)` and the loop that pumps its pages, and nothing that decides anything.
         "src/evidence/cve/cosmos.ts",
         "src/evidence/behaviour/fill.ts",
-        "src/lib/api.ts"
+        "src/lib/api.ts",
+        // The preview copy's SQL, which `vitest.integration.config.mts` covers against a real database, and its
+        // entry point and the real processes behind `load-aat.ts`. Every decision is in `target.ts`,
+        // `commands.ts` and `load-aat.ts`, held at the bar below.
+        "src/preview/database.ts",
+        "src/preview/main.ts",
+        "src/preview/processes.ts"
       ],
       reporter: ["lcov", "text"],
       reportsDirectory: "coverage",
@@ -67,6 +73,8 @@ export default defineConfig({
         // for `org`.
         "src/evidence/domain/**": { statements: 95, lines: 95, branches: 80, functions: 95 },
         "src/evidence/org/**": { statements: 95, lines: 95, branches: 80, functions: 95 },
+        // The guards that keep the preview copy's destructive statements off AAT.
+        "src/preview/**": { statements: 100, lines: 100, branches: 95, functions: 100 },
         // `policy` reaches 100% of statements, lines and functions, and its seven uncovered branches are
         // unreachable rather than untested: five are the `error instanceof Error ? … : String(error)` fallback
         // in a catch that only ever receives an Error (`load.ts` 68/78/94, `schema.ts` 51/318), one is a
