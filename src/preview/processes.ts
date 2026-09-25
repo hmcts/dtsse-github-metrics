@@ -2,6 +2,7 @@ import { type ChildProcess, type SpawnOptions, spawn } from "node:child_process"
 import { mkdtemp, open, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { byCodePoint } from "../evidence/org/graph.ts";
 import { applied, migrate, migrationNames, migrationsDirectory } from "../evidence/store/migrate.ts";
 import type { Command } from "./commands.ts";
 import { connectPreview, resetSchema, scrubSecretScanning } from "./database.ts";
@@ -61,7 +62,7 @@ export const dependencies: Dependencies = {
     return {
       reset: () => resetSchema(client),
       scrub: () => scrubSecretScanning(client),
-      migrations: async () => [...(await applied(client))].sort((left, right) => left.localeCompare(right)),
+      migrations: async () => [...(await applied(client))].sort(byCodePoint),
       close: () => client.end()
     };
   },
