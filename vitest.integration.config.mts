@@ -30,7 +30,13 @@ export default defineConfig({
       // `report/repositories.ts` needing a database: `estate.ts` is the one read every span is derived from and
       // `reports.ts` is the orchestration above it. Everything else the split produced is a pure function of what
       // those two hand it and is held at 95/90 by the unit config, which no longer exempts any of it.
-      include: ["src/evidence/store/**", "src/evidence/report/estate.ts", "src/evidence/report/reports.ts", "src/evidence/behaviour/fill.ts"],
+      include: [
+        "src/evidence/store/**",
+        "src/evidence/report/estate.ts",
+        "src/evidence/report/reports.ts",
+        "src/evidence/behaviour/fill.ts",
+        "src/preview/database.ts"
+      ],
       // `**/*.test.ts` because `src/evidence/store/**` matches the unit tests sitting beside the store, which
       // this run does not execute: they were being reported at 0% and pulling the aggregate down.
       exclude: ["src/evidence/store/generated/**", "src/evidence/store/prisma.ts", "**/*.test.ts"],

@@ -36,7 +36,8 @@
     "db:migrate:dev": "prisma migrate dev",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:deployed": "tsx src/cli/run.ts migrate",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "preview:load-aat": "tsx src/preview/main.ts"
   },
   "dependencies": {
     "@azure/cosmos": "4.5.1",

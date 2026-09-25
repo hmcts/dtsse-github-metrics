@@ -639,8 +639,15 @@ yarn test:e2e            # needs a running server; TEST_URL selects it
 ```
 
 Playwright is selected by tag: `@smoke` on a preview, `@regression` on AAT, `@nightly` for the accessibility
-pass. A preview deploys with its CronJob disabled and an empty database, so `@smoke` asserts that pages render
-and health is UP — never that any figure is non-zero.
+pass. `@smoke` asserts that health is UP — never that any figure is non-zero — because master's staging release
+runs it too.
+
+A pull request's preview runs no CronJob. Before its smoke tests, `yarn preview:load-aat` (in
+`before('smoketest:preview')`) stops the preview app, replaces its database with a copy of AAT's, blanks the
+location of every secret-scanning alert, applies the branch's own migrations on top and starts the app again. So
+a preview shows AAT's figures, and a new migration is tested against production data before it merges. A branch
+behind master's migrations fails that step with an instruction to merge master. Add the `enable_keep_helm` label
+before the build reaches the deploy stage to keep the preview afterwards.
 
 ## What is not ported
 
