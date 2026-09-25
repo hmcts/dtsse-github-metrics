@@ -81,10 +81,8 @@ export function missingLocally(restored: readonly string[], local: readonly stri
 }
 
 export function behindMasterMessage(missing: readonly string[]): string {
-  return (
-    `AAT's database has applied ${missing.length === 1 ? "a migration" : `${missing.length} migrations`} this branch does not have ` +
-    `(${missing.join(", ")}). Merge master into this branch and push again.`
-  );
+  const count = missing.length === 1 ? "a migration" : `${missing.length} migrations`;
+  return `AAT's database has applied ${count} this branch does not have (${missing.join(", ")}). Merge master into this branch and push again.`;
 }
 
 function replicasToRestore(output: string): number {
@@ -100,7 +98,7 @@ async function waitForPodsGone(deps: Dependencies, command: Command, timeoutMs: 
       return;
     }
     if (deps.now() >= deadline) {
-      throw new Error(`the preview's pods were still present after ${Math.round(timeoutMs / 1000)}s: ${pods.split("\n").join(", ")}`);
+      throw new Error(`the preview's pods were still present after ${Math.round(timeoutMs / 1000)}s: ${pods.replaceAll("\n", ", ")}`);
     }
     await deps.sleep(POD_POLL_MS);
   }

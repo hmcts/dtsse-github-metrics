@@ -61,7 +61,7 @@ export const dependencies: Dependencies = {
     return {
       reset: () => resetSchema(client),
       scrub: () => scrubSecretScanning(client),
-      migrations: async () => [...(await applied(client))].sort(),
+      migrations: async () => [...(await applied(client))].sort((left, right) => left.localeCompare(right)),
       close: () => client.end()
     };
   },

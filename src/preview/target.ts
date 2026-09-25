@@ -11,7 +11,7 @@
 /** The flexible server `cnp-flux-config/apps/dtsse/preview/aso/dtsse-postgres.yaml` defines. Nothing else is a target. */
 export const PREVIEW_SERVER_HOST = "dtsse-preview.postgres.database.azure.com";
 
-const PREVIEW_DATABASE = /^dtsse-github-metrics-pr-[1-9][0-9]*$/;
+const PREVIEW_DATABASE = /^dtsse-github-metrics-pr-[1-9]\d*$/;
 
 export interface Connection {
   readonly host: string;
@@ -64,7 +64,7 @@ function required(value: string | undefined, name: string): string {
 /** The pull-request number, refused unless it is one: it becomes part of the name of the database that is dropped. */
 export function changeNumber(changeId: string | undefined): string {
   const value = required(changeId, "CHANGE_ID");
-  if (!/^[1-9][0-9]*$/.test(value)) {
+  if (!/^[1-9]\d*$/.test(value)) {
     throw new GuardError(`CHANGE_ID must be a pull-request number, not ${JSON.stringify(value)}`);
   }
   return value;
@@ -123,7 +123,7 @@ export function assertPreviewTarget(target: Connection): void {
 
 /** Keyword form for libpq, which `pg_dump` and `pg_restore` read. The password travels in `PGPASSWORD`, never here. */
 export function libpqConninfo(connection: Connection): string {
-  const quote = (value: string) => `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+  const quote = (value: string) => `'${value.replaceAll("\\", String.raw`\\`).replaceAll("'", String.raw`\'`)}'`;
   return [
     `host=${quote(connection.host)}`,
     `port=${quote(connection.port)}`,
