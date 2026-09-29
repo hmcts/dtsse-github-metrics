@@ -14,6 +14,7 @@ import { roundHalfEven } from "../behaviour/rounding.ts";
 import { type DistributionObservation, type Merge, type Merges, ObservationStatus, type RateObservation } from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
 import { type ReadinessAssessment, type ReadinessCondition, ReadinessLabel, UnreviewedSubstantialOutcome } from "../domain/readiness.ts";
+import { byCodePoint } from "../org/graph.ts";
 import type { AssessmentConfiguration, Configuration, DistributionThreshold, ReadinessThresholds, TrivialityConfiguration } from "../policy/schema.ts";
 
 /**
@@ -108,7 +109,8 @@ function statusChecks(gate: MergeGateEvidence): Judgement {
   if (contexts.length === 0) {
     return caution("status-checks-not-required", `status checks required before merging to ${gate.branch}: 0, so CI cannot block a merge`);
   }
-  return clear("status-checks-required", `status checks required before merging to ${gate.branch}: ${contexts.length} (${[...contexts].sort().join(", ")})`);
+  const listed = [...contexts].sort(byCodePoint).join(", ");
+  return clear("status-checks-required", `status checks required before merging to ${gate.branch}: ${contexts.length} (${listed})`);
 }
 
 /** Whether the gate binds administrators, which was deliberately rejected as a veto. */

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { byCodePoint } from "../org/graph.ts";
 import { parseInstant } from "../window/instant.ts";
 
 /**
@@ -412,7 +413,7 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
   const repositories = value.teams.flatMap((entry) => entry.repositories);
 
   const owned = new Set(repositories);
-  const ownedExclusions = value.excluded_repositories.filter((name) => owned.has(name)).sort();
+  const ownedExclusions = value.excluded_repositories.filter((name) => owned.has(name)).sort(byCodePoint);
   if (ownedExclusions.length > 0) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

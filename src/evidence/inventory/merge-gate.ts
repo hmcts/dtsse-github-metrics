@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { type MergeGateEvidence, type MergeGateReport, mergeGateReport, type PullRequestRule, type StatusChecksRule } from "../domain/merge-gate.ts";
 import type { GitHubClient } from "../github/client.ts";
+import { byCodePoint } from "../org/graph.ts";
 
 /**
  * Reading a repository's declared merge gate. Ported from `metrics.inventory`'s merge-gate half.
@@ -298,7 +299,7 @@ export async function collectMergeGate(client: GitHubClient, organization: strin
           const binds = bindsAdministrators(contributing.map((id) => (id == null ? undefined : rulesets.get(id))));
           return binds === undefined ? {} : { appliesToAdministrators: binds };
         })(),
-        unmodelledRules: [...new Set(active.map((rule) => rule.type).filter((type) => !MODELLED_RULE_TYPES.has(type)))].sort()
+        unmodelledRules: [...new Set(active.map((rule) => rule.type).filter((type) => !MODELLED_RULE_TYPES.has(type)))].sort(byCodePoint)
       }
     });
   } catch (error) {
