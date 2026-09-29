@@ -91,7 +91,8 @@ export function createSonarClient(options: SonarClientOptions) {
     const headers: Record<string, string> = { Accept: "application/json" };
     if (options.token) {
       // SonarCloud takes the token as the basic-auth username with an empty password.
-      headers.Authorization = `Basic ${Buffer.from(`${options.token}:`).toString("base64")}`;
+      const credentials = Buffer.from(`${options.token}:`).toString("base64");
+      headers.Authorization = `Basic ${credentials}`;
     }
 
     let response: Response;

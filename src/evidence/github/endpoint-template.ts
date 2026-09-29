@@ -85,5 +85,6 @@ export function endpointTemplate(target: string, operation?: string): string {
 
   const query = [...url.searchParams.entries()].map(([name, value]) => (PAGINATION_PARAMETERS.has(name) ? `${name}={${name}}` : `${name}=${value}`)).join("&");
 
-  return `${url.origin}/${templated.join("/")}${query === "" ? "" : `?${query}`}`;
+  const search = query === "" ? "" : `?${query}`;
+  return `${url.origin}/${templated.join("/")}${search}`;
 }

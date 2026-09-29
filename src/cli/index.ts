@@ -729,7 +729,8 @@ async function runAlertCollection(configuration: Configuration, argv: Arguments)
     if (walk.byRepository === undefined) {
       // NAMED AND COUNTED ONCE FOR THE RUN, not once per repository: it is a single walk, and inflating one refusal
       // to 1,890 would swamp the exit status with it.
-      console.warn(`${walk.detail ?? `${family} could not be read`}; every repository's ${family} answer will be unmeasured`);
+      const detail = walk.detail ?? `${family} could not be read`;
+      console.warn(`${detail}; every repository's ${family} answer will be unmeasured`);
       continue;
     }
     const found = [...walk.byRepository.values()].reduce((total, alerts) => total + alerts.length, 0);
@@ -1530,13 +1531,17 @@ async function runReduceDescriptions(configuration: Configuration, argv: Argumen
   const reduction = await reduceStoredDescriptions(referencePatterns(configuration.traceability), {
     dryRun: !argv.write,
     batchSize,
-    onBatch: ({ scanned, changed }) => progress(`  derived ${scanned} of ${before.carryingDescription}${argv.write ? `, ${changed} written` : ""}`)
+    onBatch: ({ scanned, changed }) => {
+      const written = argv.write ? `, ${changed} written` : "";
+      progress(`  derived ${scanned} of ${before.carryingDescription}${written}`);
+    }
   });
 
   if (!argv.write) {
     progress(`DRY RUN: nothing was written. ${reduction.scanned} rows would be reduced.`);
     progress("to apply it, and then to make the space the descriptions held reusable:");
-    progress(`  yarn cli reduce-descriptions ${argv.config.map((path) => `--config ${path}`).join(" ")} --write`);
+    const configs = argv.config.map((path) => `--config ${path}`).join(" ");
+    progress(`  yarn cli reduce-descriptions ${configs} --write`);
     // Plain VACUUM, and the reason is in the flag that is absent: VACUUM FULL rewrites the table under an ACCESS
     // EXCLUSIVE lock, which every read the web pod makes would block on.
     progress("  psql \"$DATABASE_URL\" -c 'VACUUM (VERBOSE, ANALYZE) pull_request_facts'");

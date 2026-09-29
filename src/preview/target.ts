@@ -123,7 +123,10 @@ export function assertPreviewTarget(target: Connection): void {
 
 /** Keyword form for libpq, which `pg_dump` and `pg_restore` read. The password travels in `PGPASSWORD`, never here. */
 export function libpqConninfo(connection: Connection): string {
-  const quote = (value: string) => `'${value.replaceAll("\\", String.raw`\\`).replaceAll("'", String.raw`\'`)}'`;
+  const quote = (value: string) => {
+    const escaped = value.replaceAll("\\", String.raw`\\`).replaceAll("'", String.raw`\'`);
+    return `'${escaped}'`;
+  };
   return [
     `host=${quote(connection.host)}`,
     `port=${quote(connection.port)}`,
