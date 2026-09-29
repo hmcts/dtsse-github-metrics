@@ -97,6 +97,17 @@ export function personalAccessToken(value: string): GitHubCredentials {
 }
 
 /**
+ * Reads the App's key in either format GitHub hands out.
+ *
+ * GitHub's "Generate a private key" button downloads PKCS#1 (`BEGIN RSA PRIVATE KEY`), while a key converted
+ * for another tool is usually PKCS#8 (`BEGIN PRIVATE KEY`). `jose`'s `importPKCS8` reads only the second, so
+ * the real downloaded key was rejected as unusable. Node's own `createPrivateKey` reads both.
+ */
+function importPrivateKey(pem: string): KeyObject {
+  return createPrivateKey(pem);
+}
+
+/**
  * Mints and holds an installation access token for one GitHub App installation.
  *
  * The token exchange is the one GitHub call in this project that does not go through the client, because
@@ -137,17 +148,6 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
    */
   function expiring(): boolean {
     return expiresAt !== undefined && now().getTime() + RENEWAL_MARGIN_MS >= expiresAt.getTime();
-  }
-
-  /**
-   * Reads the App's key in either format GitHub hands out.
-   *
-   * GitHub's "Generate a private key" button downloads PKCS#1 (`BEGIN RSA PRIVATE KEY`), while a key converted
-   * for another tool is usually PKCS#8 (`BEGIN PRIVATE KEY`). `jose`'s `importPKCS8` reads only the second, so
-   * the real downloaded key was rejected as unusable. Node's own `createPrivateKey` reads both.
-   */
-  function importPrivateKey(pem: string): KeyObject {
-    return createPrivateKey(pem);
   }
 
   /** Signs the short-lived JWT that proves this process holds the App's private key. */
