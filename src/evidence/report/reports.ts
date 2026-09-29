@@ -254,7 +254,7 @@ export async function repositoryTrend(
   }
   const span = days(TREND_PERIOD_DAYS);
   const windows = periodWindows(enablement, span, cut, reference);
-  const last = windows[windows.length - 1];
+  const last = windows.at(-1);
   if (last === undefined) {
     return trendWithoutWholePeriod(repository, enablement, TREND_PERIOD_DAYS);
   }

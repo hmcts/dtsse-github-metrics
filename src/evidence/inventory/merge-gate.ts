@@ -89,7 +89,7 @@ function bypassesAsAdministrator(actor: { bypass_mode: string }): boolean {
  * `appliesToAdministrators` absent for exactly that.
  */
 export function bindsAdministrators(rulesets: readonly (Ruleset | undefined)[]): boolean | undefined {
-  if (rulesets.length === 0 || rulesets.some((ruleset) => ruleset === undefined)) {
+  if (rulesets.length === 0 || rulesets.includes(undefined)) {
     return undefined;
   }
   return !rulesets.some((ruleset) => ruleset?.bypass_actors.some((actor) => bypassesAsAdministrator(actor)));
