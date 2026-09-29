@@ -70,8 +70,7 @@ export function refusal(body: string, ...secrets: (string | undefined)[]): strin
     // Not JSON, so the body itself is the best summary available.
   }
   return redacted(text, ...secrets)
-    .split(/\s+/)
-    .join(" ")
+    .replaceAll(/\s+/g, " ")
     .trim()
     .slice(0, 200);
 }

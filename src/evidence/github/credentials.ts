@@ -393,7 +393,7 @@ export async function privateKeyMaterial(environment: Environment): Promise<stri
     }
     source = `read from ${configured}`;
   } else {
-    key = (environment[PRIVATE_KEY_VARIABLE] ?? "").replace(/\\n/g, "\n");
+    key = (environment[PRIVATE_KEY_VARIABLE] ?? "").replaceAll(String.raw`\n`, "\n");
     source = `in ${PRIVATE_KEY_VARIABLE}`;
   }
 
