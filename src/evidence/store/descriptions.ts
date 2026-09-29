@@ -142,7 +142,7 @@ export async function reduceStoredDescriptions(patterns: readonly RegExp[], opti
       progress.changed += await writeAnswers(batch, patterns);
     }
 
-    const last = batch[batch.length - 1] as StoredDescription;
+    const last = batch.at(-1) as StoredDescription;
     cursor = { organization: last.organization, repository: last.repository, queryHash: last.queryHash, identifier: last.identifier };
     options.onBatch?.({ ...progress });
   }

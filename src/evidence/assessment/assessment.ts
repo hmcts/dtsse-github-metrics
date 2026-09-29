@@ -84,136 +84,227 @@ function neutral(condition: string, detail: string): Judgement {
   return clear(condition, `${detail}, which does not bear on the readiness label`, true);
 }
 
+/** Whether the gate requires an approving review, which is the FIRST VETO and is not configurable. */
+function reviewRequirement(gate: MergeGateEvidence): Judgement {
+  const required = requiredApprovals(gate);
+  if (required === 0) {
+    return blocking(
+      "pull-request-review-not-required",
+      ReadinessLabel.Red,
+      `approving reviews required before merging to ${gate.branch}: 0, so review is not enforced at all`
+    );
+  }
+  return clear("pull-request-review-required", `approving reviews required before merging to ${gate.branch}: ${required}`);
+}
+
+/**
+ * Whether the gate requires any status check.
+ *
+ * A caution rather than a veto: `checks-passing-at-merge` measures whether CI actually held at the merge
+ * point, which is the stronger signal than whether a rule nominally demanded it.
+ */
+function statusChecks(gate: MergeGateEvidence): Judgement {
+  const contexts = requiredContexts(gate);
+  if (contexts.length === 0) {
+    return caution("status-checks-not-required", `status checks required before merging to ${gate.branch}: 0, so CI cannot block a merge`);
+  }
+  return clear("status-checks-required", `status checks required before merging to ${gate.branch}: ${contexts.length} (${[...contexts].sort().join(", ")})`);
+}
+
+/** Whether the gate binds administrators, which was deliberately rejected as a veto. */
+function administrators(gate: MergeGateEvidence): Judgement {
+  if (gate.appliesToAdministrators === undefined) {
+    return caution(
+      "gate-enforcement-on-administrators-unknown",
+      `whether the gate on ${gate.branch} binds administrators was not disclosed, so a bypass is neither confirmed nor ruled out`
+    );
+  }
+  if (!gate.appliesToAdministrators) {
+    return caution("administrators-can-bypass-the-gate", `the gate on ${gate.branch} does not apply to administrators, so it can be bypassed`);
+  }
+  return clear("gate-applies-to-administrators", `the gate on ${gate.branch} applies to administrators too`);
+}
+
+/**
+ * Whether an approval survives a later push.
+ *
+ * Worth weighing before agentic tooling in particular: where an agent revises a branch after approval, a
+ * surviving approval means the reviewed code and the merged code are not the same.
+ */
+function staleReviews(gate: MergeGateEvidence): Judgement {
+  if (gate.pullRequests.some((rule) => rule.dismissStaleReviewsOnPush)) {
+    return clear("stale-reviews-dismissed", `an approval on ${gate.branch} is dismissed when the branch is pushed again`);
+  }
+  return caution("stale-reviews-not-dismissed", `an approval on ${gate.branch} survives a later push, so reviewed and merged code can differ`);
+}
+
+/**
+ * Whether the branch can be force pushed after a review has been given.
+ *
+ * A CAUTION and never a veto: the veto set is fixed at two conditions, and this does not reopen it.
+ */
+function forcePushes(gate: MergeGateEvidence): Judgement {
+  if (!gate.blocksForcePushes) {
+    return caution("force-pushes-not-blocked", `${gate.branch} accepts a force push, so an approved history can be rewritten after review`);
+  }
+  return clear("force-pushes-blocked", `a force push to ${gate.branch} is blocked, so an approved history cannot be rewritten after review`);
+}
+
+function deletions(gate: MergeGateEvidence): Judgement {
+  return gate.restrictsDeletions
+    ? neutral("branch-deletion-restricted", `deleting ${gate.branch} is blocked by the gate`)
+    : neutral("branch-deletion-not-restricted", `deleting ${gate.branch} is not blocked by the gate`);
+}
+
+function linearHistory(gate: MergeGateEvidence): Judgement {
+  return gate.requiresLinearHistory
+    ? neutral("linear-history-required", `merging to ${gate.branch} requires a linear history`)
+    : neutral("linear-history-not-required", `merging to ${gate.branch} does not require a linear history`);
+}
+
+function branchNames(gate: MergeGateEvidence): Judgement {
+  return gate.restrictsBranchNames
+    ? neutral("branch-names-restricted", `the gate on ${gate.branch} restricts branch names`)
+    : neutral("branch-names-not-restricted", `the gate on ${gate.branch} does not restrict branch names`);
+}
+
+/**
+ * One rate and how it reads, or `undefined` when there was no denominator to divide by.
+ *
+ * Shared by every graded rate so a change to how a percentage is phrased is made once. The percentage
+ * itself comes from `ratePercentage`, which a trend reads too.
+ */
+function measuredRate(identifier: string, observation: RateObservation): { percentage: number; measured: string } | undefined {
+  const percentage = ratePercentage(observation);
+  if (percentage === undefined) {
+    return undefined;
+  }
+  return { percentage, measured: `${identifier} is ${g(percentage)}% (${observation.numerator} of ${observation.denominator})` };
+}
+
+/** The value a distribution is graded at, read from the percentile the metric declares. */
+function percentileValue(metric: BehaviourMetric, observation: DistributionObservation): number | undefined {
+  if (metric.percentile === Percentile.Percentile75) {
+    return observation.percentile75;
+  }
+  if (metric.percentile === Percentile.Percentile90) {
+    return observation.percentile90;
+  }
+  return observation.median;
+}
+
+function percentileLabel(metric: BehaviourMetric): string {
+  if (metric.percentile === Percentile.Percentile75) {
+    return "75th percentile";
+  }
+  if (metric.percentile === Percentile.Percentile90) {
+    return "90th percentile";
+  }
+  return "median";
+}
+
+function section(judgements: readonly Judgement[], outcome: Outcome): ReadinessCondition[] {
+  return judgements.filter((judgement) => judgement.outcome === outcome).map((judgement) => judgement.condition);
+}
+
+/** The most severe label any blocking condition imposes. */
+function label(blockingConditions: readonly ReadinessCondition[]): ReadinessLabel {
+  const imposed = new Set(blockingConditions.map((condition) => condition.label));
+  return PRECEDENCE.find((candidate) => imposed.has(candidate)) ?? ReadinessLabel.Green;
+}
+
+/**
+ * Judges the declared merge gate, or states that it could not be read.
+ *
+ * THE ORDER IS THE ARGUMENT. An unprotected default branch is an observed fact and vetoes even though no
+ * rule detail came with it, while a protected branch whose rules GitHub withheld is evidence of nothing at
+ * all — so it must not be read as a gate that requires no review, and nothing further about it is
+ * reported.
+ *
+ * The three rules that can never hold the label back are reported LAST so that a run of neutral rule
+ * names cannot crowd out the graded and veto-adjacent conditions above them.
+ */
+function governance(report: MergeGateReport): Judgement[] {
+  const gate = report.gate;
+  if (gate === undefined) {
+    return [blocking("merge-gate-not-collected", ReadinessLabel.CannotAssess, report.detail ?? "the merge gate has not been collected")];
+  }
+  if (!gate.protected) {
+    return [blocking("branch-not-protected", ReadinessLabel.Red, `the default branch ${gate.branch} has no protection, so any push can bypass review`)];
+  }
+  if (!gate.rulesObserved) {
+    return [
+      blocking(
+        "merge-gate-rules-not-observable",
+        ReadinessLabel.CannotAssess,
+        `${gate.branch} is protected but GitHub did not disclose its rules; reading them needs Administration access, or a move to rulesets`
+      )
+    ];
+  }
+  return [
+    clear("branch-protected", `the default branch ${gate.branch} is protected`),
+    reviewRequirement(gate),
+    statusChecks(gate),
+    administrators(gate),
+    staleReviews(gate),
+    forcePushes(gate),
+    deletions(gate),
+    linearHistory(gate),
+    branchNames(gate)
+  ];
+}
+
+/** Compares one observed rate against its configured green and amber boundaries. */
+function gradeRate(metric: BehaviourMetric, thresholds: ReadinessThresholds, observation: RateObservation): Judgement {
+  const graded = measuredRate(metric.identifier, observation);
+  if (graded === undefined) {
+    return caution(`${metric.identifier}-not-observed`, `${metric.identifier} has no denominator in this window, so it was not graded`);
+  }
+  const { percentage, measured } = graded;
+  if (percentage >= thresholds.green_percentage) {
+    return clear(`${metric.identifier}-at-target`, `${measured}, at or above the ${g(thresholds.green_percentage)}% target`);
+  }
+  return blocking(
+    `${metric.identifier}-below-target`,
+    percentage >= thresholds.amber_percentage ? ReadinessLabel.Amber : ReadinessLabel.Red,
+    `${measured}, below the ${g(thresholds.green_percentage)}% target`
+  );
+}
+
+/**
+ * Compares one observed percentile against its configured maximum, AS A CAUTION ONLY.
+ *
+ * Which percentile is read comes from the metric, so the assessment and a trend compare the same number: a
+ * series measuring movement in the median while the label graded the 75th percentile would be two reports
+ * describing one window differently.
+ *
+ * Lower is better here, the opposite direction from a rate: a value at or below its maximum is `clear` and
+ * one above it a caution, since the metric measures cost, not compliance.
+ *
+ * A cost NEVER decides the label, however far above the maximum it sits. Letting one impose a ceiling made
+ * two very different findings indistinguishable: on the HMCTS estate the fastest merge-cycle-time medians
+ * all belonged to repositories that merge almost nothing through review — 0.003 hours on a repository with
+ * 0% review coverage — while a repository reviewing 99.3% of 294 merges was held below ready for taking
+ * four days.
+ */
+function gradeDistribution(metric: BehaviourMetric, threshold: DistributionThreshold, observation: DistributionObservation): Judgement {
+  const identifier = metric.identifier;
+  const value = percentileValue(metric, observation);
+  if (observation.status !== ObservationStatus.Observed || value === undefined) {
+    return caution(`${identifier}-not-observed`, `${identifier} has no observations in this window, so it was not graded`);
+  }
+  const measured = `${identifier} ${percentileLabel(metric)} is ${g(value)} ${observation.unit}`;
+  if (value <= threshold.maximum) {
+    return clear(`${identifier}-at-target`, `${measured}, at or below the ${g(threshold.maximum)} ${observation.unit} target`);
+  }
+  return caution(`${identifier}-above-target`, `${measured}, above the ${g(threshold.maximum)} ${observation.unit} target`);
+}
+
 export function readinessPolicy(configuration: Configuration) {
   return createPolicy(configuration.assessment, configuration.triviality);
 }
 
 export function createPolicy(configuration: AssessmentConfiguration, triviality: TrivialityConfiguration) {
-  /** Whether the gate requires an approving review, which is the FIRST VETO and is not configurable. */
-  function reviewRequirement(gate: MergeGateEvidence): Judgement {
-    const required = requiredApprovals(gate);
-    if (required === 0) {
-      return blocking(
-        "pull-request-review-not-required",
-        ReadinessLabel.Red,
-        `approving reviews required before merging to ${gate.branch}: 0, so review is not enforced at all`
-      );
-    }
-    return clear("pull-request-review-required", `approving reviews required before merging to ${gate.branch}: ${required}`);
-  }
-
-  /**
-   * Whether the gate requires any status check.
-   *
-   * A caution rather than a veto: `checks-passing-at-merge` measures whether CI actually held at the merge
-   * point, which is the stronger signal than whether a rule nominally demanded it.
-   */
-  function statusChecks(gate: MergeGateEvidence): Judgement {
-    const contexts = requiredContexts(gate);
-    if (contexts.length === 0) {
-      return caution("status-checks-not-required", `status checks required before merging to ${gate.branch}: 0, so CI cannot block a merge`);
-    }
-    return clear("status-checks-required", `status checks required before merging to ${gate.branch}: ${contexts.length} (${[...contexts].sort().join(", ")})`);
-  }
-
-  /** Whether the gate binds administrators, which was deliberately rejected as a veto. */
-  function administrators(gate: MergeGateEvidence): Judgement {
-    if (gate.appliesToAdministrators === undefined) {
-      return caution(
-        "gate-enforcement-on-administrators-unknown",
-        `whether the gate on ${gate.branch} binds administrators was not disclosed, so a bypass is neither confirmed nor ruled out`
-      );
-    }
-    if (!gate.appliesToAdministrators) {
-      return caution("administrators-can-bypass-the-gate", `the gate on ${gate.branch} does not apply to administrators, so it can be bypassed`);
-    }
-    return clear("gate-applies-to-administrators", `the gate on ${gate.branch} applies to administrators too`);
-  }
-
-  /**
-   * Whether an approval survives a later push.
-   *
-   * Worth weighing before agentic tooling in particular: where an agent revises a branch after approval, a
-   * surviving approval means the reviewed code and the merged code are not the same.
-   */
-  function staleReviews(gate: MergeGateEvidence): Judgement {
-    if (gate.pullRequests.some((rule) => rule.dismissStaleReviewsOnPush)) {
-      return clear("stale-reviews-dismissed", `an approval on ${gate.branch} is dismissed when the branch is pushed again`);
-    }
-    return caution("stale-reviews-not-dismissed", `an approval on ${gate.branch} survives a later push, so reviewed and merged code can differ`);
-  }
-
-  /**
-   * Whether the branch can be force pushed after a review has been given.
-   *
-   * A CAUTION and never a veto: the veto set is fixed at two conditions, and this does not reopen it.
-   */
-  function forcePushes(gate: MergeGateEvidence): Judgement {
-    if (!gate.blocksForcePushes) {
-      return caution("force-pushes-not-blocked", `${gate.branch} accepts a force push, so an approved history can be rewritten after review`);
-    }
-    return clear("force-pushes-blocked", `a force push to ${gate.branch} is blocked, so an approved history cannot be rewritten after review`);
-  }
-
-  function deletions(gate: MergeGateEvidence): Judgement {
-    return gate.restrictsDeletions
-      ? neutral("branch-deletion-restricted", `deleting ${gate.branch} is blocked by the gate`)
-      : neutral("branch-deletion-not-restricted", `deleting ${gate.branch} is not blocked by the gate`);
-  }
-
-  function linearHistory(gate: MergeGateEvidence): Judgement {
-    return gate.requiresLinearHistory
-      ? neutral("linear-history-required", `merging to ${gate.branch} requires a linear history`)
-      : neutral("linear-history-not-required", `merging to ${gate.branch} does not require a linear history`);
-  }
-
-  function branchNames(gate: MergeGateEvidence): Judgement {
-    return gate.restrictsBranchNames
-      ? neutral("branch-names-restricted", `the gate on ${gate.branch} restricts branch names`)
-      : neutral("branch-names-not-restricted", `the gate on ${gate.branch} does not restrict branch names`);
-  }
-
-  /**
-   * Judges the declared merge gate, or states that it could not be read.
-   *
-   * THE ORDER IS THE ARGUMENT. An unprotected default branch is an observed fact and vetoes even though no
-   * rule detail came with it, while a protected branch whose rules GitHub withheld is evidence of nothing at
-   * all — so it must not be read as a gate that requires no review, and nothing further about it is
-   * reported.
-   *
-   * The three rules that can never hold the label back are reported LAST so that a run of neutral rule
-   * names cannot crowd out the graded and veto-adjacent conditions above them.
-   */
-  function governance(report: MergeGateReport): Judgement[] {
-    const gate = report.gate;
-    if (gate === undefined) {
-      return [blocking("merge-gate-not-collected", ReadinessLabel.CannotAssess, report.detail ?? "the merge gate has not been collected")];
-    }
-    if (!gate.protected) {
-      return [blocking("branch-not-protected", ReadinessLabel.Red, `the default branch ${gate.branch} has no protection, so any push can bypass review`)];
-    }
-    if (!gate.rulesObserved) {
-      return [
-        blocking(
-          "merge-gate-rules-not-observable",
-          ReadinessLabel.CannotAssess,
-          `${gate.branch} is protected but GitHub did not disclose its rules; reading them needs Administration access, or a move to rulesets`
-        )
-      ];
-    }
-    return [
-      clear("branch-protected", `the default branch ${gate.branch} is protected`),
-      reviewRequirement(gate),
-      statusChecks(gate),
-      administrators(gate),
-      staleReviews(gate),
-      forcePushes(gate),
-      deletions(gate),
-      linearHistory(gate),
-      branchNames(gate)
-    ];
-  }
-
   /**
    * Whether the cohort holds enough merges for a pattern to be read from it.
    *
@@ -244,37 +335,6 @@ export function createPolicy(configuration: AssessmentConfiguration, triviality:
   }
 
   /**
-   * One rate and how it reads, or `undefined` when there was no denominator to divide by.
-   *
-   * Shared by every graded rate so a change to how a percentage is phrased is made once. The percentage
-   * itself comes from `ratePercentage`, which a trend reads too.
-   */
-  function measuredRate(identifier: string, observation: RateObservation): { percentage: number; measured: string } | undefined {
-    const percentage = ratePercentage(observation);
-    if (percentage === undefined) {
-      return undefined;
-    }
-    return { percentage, measured: `${identifier} is ${g(percentage)}% (${observation.numerator} of ${observation.denominator})` };
-  }
-
-  /** Compares one observed rate against its configured green and amber boundaries. */
-  function gradeRate(metric: BehaviourMetric, thresholds: ReadinessThresholds, observation: RateObservation): Judgement {
-    const graded = measuredRate(metric.identifier, observation);
-    if (graded === undefined) {
-      return caution(`${metric.identifier}-not-observed`, `${metric.identifier} has no denominator in this window, so it was not graded`);
-    }
-    const { percentage, measured } = graded;
-    if (percentage >= thresholds.green_percentage) {
-      return clear(`${metric.identifier}-at-target`, `${measured}, at or above the ${g(thresholds.green_percentage)}% target`);
-    }
-    return blocking(
-      `${metric.identifier}-below-target`,
-      percentage >= thresholds.amber_percentage ? ReadinessLabel.Amber : ReadinessLabel.Red,
-      `${measured}, below the ${g(thresholds.green_percentage)}% target`
-    );
-  }
-
-  /**
    * Weighs whether approvals carry evidence of scrutiny, without ever imposing a ceiling.
    *
    * Caution only: no defensible label-deciding threshold exists yet for how many approvals ought to carry a
@@ -291,56 +351,6 @@ export function createPolicy(configuration: AssessmentConfiguration, triviality:
       return clear(`${identifier}-at-target`, `${graded.measured}, at or above the ${g(boundary)}% boundary`);
     }
     return caution(`${identifier}-below-target`, `${graded.measured}, below the ${g(boundary)}% boundary`);
-  }
-
-  /** The value a distribution is graded at, read from the percentile the metric declares. */
-  function percentileValue(metric: BehaviourMetric, observation: DistributionObservation): number | undefined {
-    if (metric.percentile === Percentile.Percentile75) {
-      return observation.percentile75;
-    }
-    if (metric.percentile === Percentile.Percentile90) {
-      return observation.percentile90;
-    }
-    return observation.median;
-  }
-
-  function percentileLabel(metric: BehaviourMetric): string {
-    if (metric.percentile === Percentile.Percentile75) {
-      return "75th percentile";
-    }
-    if (metric.percentile === Percentile.Percentile90) {
-      return "90th percentile";
-    }
-    return "median";
-  }
-
-  /**
-   * Compares one observed percentile against its configured maximum, AS A CAUTION ONLY.
-   *
-   * Which percentile is read comes from the metric, so the assessment and a trend compare the same number: a
-   * series measuring movement in the median while the label graded the 75th percentile would be two reports
-   * describing one window differently.
-   *
-   * Lower is better here, the opposite direction from a rate: a value at or below its maximum is `clear` and
-   * one above it a caution, since the metric measures cost, not compliance.
-   *
-   * A cost NEVER decides the label, however far above the maximum it sits. Letting one impose a ceiling made
-   * two very different findings indistinguishable: on the HMCTS estate the fastest merge-cycle-time medians
-   * all belonged to repositories that merge almost nothing through review — 0.003 hours on a repository with
-   * 0% review coverage — while a repository reviewing 99.3% of 294 merges was held below ready for taking
-   * four days.
-   */
-  function gradeDistribution(metric: BehaviourMetric, threshold: DistributionThreshold, observation: DistributionObservation): Judgement {
-    const identifier = metric.identifier;
-    const value = percentileValue(metric, observation);
-    if (observation.status !== ObservationStatus.Observed || value === undefined) {
-      return caution(`${identifier}-not-observed`, `${identifier} has no observations in this window, so it was not graded`);
-    }
-    const measured = `${identifier} ${percentileLabel(metric)} is ${g(value)} ${observation.unit}`;
-    if (value <= threshold.maximum) {
-      return clear(`${identifier}-at-target`, `${measured}, at or below the ${g(threshold.maximum)} ${observation.unit} target`);
-    }
-    return caution(`${identifier}-above-target`, `${measured}, above the ${g(threshold.maximum)} ${observation.unit} target`);
   }
 
   /** Whether one merge is too large to be treated as trivial. */
@@ -448,16 +458,6 @@ export function createPolicy(configuration: AssessmentConfiguration, triviality:
       gradeDistribution(timeToFirstReview, configuration["time-to-first-review"], timeToFirstReview.summary(cohort) as DistributionObservation),
       unreviewedSubstantial(cohort)
     ];
-  }
-
-  function section(judgements: readonly Judgement[], outcome: Outcome): ReadinessCondition[] {
-    return judgements.filter((judgement) => judgement.outcome === outcome).map((judgement) => judgement.condition);
-  }
-
-  /** The most severe label any blocking condition imposes. */
-  function label(blockingConditions: readonly ReadinessCondition[]): ReadinessLabel {
-    const imposed = new Set(blockingConditions.map((condition) => condition.label));
-    return PRECEDENCE.find((candidate) => imposed.has(candidate)) ?? ReadinessLabel.Green;
   }
 
   return {
