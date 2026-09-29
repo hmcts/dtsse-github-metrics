@@ -9,7 +9,7 @@
 //
 // Remove the pin once the platform has resolved the identity migration against the lock; the floating
 // `Infrastructure` is what every other CFT service uses and what this should go back to.
-@Library("Infrastructure@DTSPO-35113/master")
+@Library("Infrastructure@DTSPO-35113/master-skip-publish")
 
 def type = "nodejs"
 def product = "dtsse"
