@@ -49,7 +49,25 @@ export const PAGINATION_PARAMETERS = new Set(["page", "after", "before", "cursor
  * counted at the bare address, which is what every GraphQL call was counted at before.
  */
 export function graphqlOperationName(document: string): string | undefined {
-  return /\b(?:query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(document)?.[1];
+  return /\b(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(document)?.[1];
+}
+
+/**
+ * The path with its leading and trailing slashes removed, and any inside it kept.
+ *
+ * Scanned from each end rather than matched with `/^\/+|\/+$/g`, whose second branch retries every run of
+ * slashes that is not at the end, so a long path of them takes quadratic time.
+ */
+function withoutOuterSlashes(path: string): string {
+  let start = 0;
+  let end = path.length;
+  while (start < end && path[start] === "/") {
+    start += 1;
+  }
+  while (end > start && path[end - 1] === "/") {
+    end -= 1;
+  }
+  return path.slice(start, end);
 }
 
 /**
@@ -60,7 +78,7 @@ export function graphqlOperationName(document: string): string | undefined {
  */
 export function endpointTemplate(target: string, operation?: string): string {
   const url = new URL(target);
-  const segments = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
+  const segments = withoutOuterSlashes(url.pathname).split("/");
 
   if (segments.length === 1 && segments[0] === "graphql") {
     // Every GraphQL call is a POST to the same address, so the operation the body named is what tells one

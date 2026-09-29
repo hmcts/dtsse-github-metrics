@@ -615,7 +615,7 @@ function parseJson<T>(body: string, message: string): T {
 /** The `next` URL of a GitHub `Link` header, or `undefined` when there is no next page. */
 export function nextLink(header: string): string | undefined {
   for (const part of header.split(",")) {
-    const match = /<([^>]+)>\s*;\s*rel="next"/.exec(part.trim());
+    const match = /^<([^>]+)>\s*;\s*rel="next"/.exec(part.trim());
     if (match) {
       return match[1];
     }

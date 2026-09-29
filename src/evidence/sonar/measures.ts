@@ -33,7 +33,7 @@ const ORGANIZATION_PROPERTY = "sonar.organization";
 
 /** Recognised only at the start of a line, as the properties format specifies: a `#` inside a value is a `#`. */
 const PROPERTY_COMMENT_MARKERS = ["#", "!"];
-const PROPERTY_PATTERN = /^([^=:\s]+)\s*[=:]\s*(.*)$/;
+const PROPERTY_PATTERN = /^([^=:\s]+)\s*[=:](.*)$/;
 
 /**
  * Reads one `alert_status` value, treating anything unrecognised as no level at all.
