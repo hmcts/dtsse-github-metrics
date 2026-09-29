@@ -271,7 +271,7 @@ export function abandonedPullRequestQuery(): string {
  * cache — where the importer must rewrite the stored hash to this one or every imported row is unreadable.
  */
 export function querySignature(): string {
-  const documents = `${mergedPullRequestQuery()}${reviewQuery()}${checkQuery()}`.split(/\s+/).join(" ");
+  const documents = `${mergedPullRequestQuery()}${reviewQuery()}${checkQuery()}`.replaceAll(/\s+/g, " ");
   return createHash("sha256").update(documents).digest("hex").slice(0, 16);
 }
 
@@ -282,7 +282,7 @@ export function querySignature(): string {
  * cached under different sources and are refetched independently.
  */
 export function commitQuerySignature(): string {
-  const documents = commitHistoryQuery().split(/\s+/).join(" ");
+  const documents = commitHistoryQuery().replaceAll(/\s+/g, " ");
   return createHash("sha256").update(documents).digest("hex").slice(0, 16);
 }
 
