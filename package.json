@@ -69,7 +69,7 @@
     "@types/pg": "8.23.1",
     "@types/react": "18.3.3",
     "@types/react-dom": "18.3.0",
-    "@vitejs/plugin-react": "6.1.1",
+    "@vitejs/plugin-react": "6.1.2",
     "@vitest/coverage-v8": "4.1.6",
     "autoprefixer": "10.4.19",
     "jsdom": "29.1.1",
