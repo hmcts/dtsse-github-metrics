@@ -102,17 +102,18 @@ export const commitHistorySchema = z.object({
     .nullish()
 });
 
-export const openPullRequestSchema = z.object({
-  repository: z.object({ pullRequests: z.object({ totalCount: z.number(), pageInfo, nodes: z.array(z.object({ updatedAt: instant }).nullish()) }) }).nullish()
+const humanCommitNode = z.object({
+  committedDate: instant,
+  author: z.object({ user: actor, name: z.string().nullish() }).nullish()
 });
 
-export const createdPullRequestSchema = z.object({
-  repository: z.object({ pullRequests: z.object({ pageInfo, nodes: z.array(z.object({ createdAt: instant }).nullish()) }) }).nullish()
-});
-
-export const abandonedPullRequestSchema = z.object({
+export const humanCommitHistorySchema = z.object({
   repository: z
-    .object({ pullRequests: z.object({ pageInfo, nodes: z.array(z.object({ updatedAt: instant, closedAt: instant.nullish() }).nullish()) }) })
+    .object({
+      defaultBranchRef: z
+        .object({ target: z.object({ history: z.object({ pageInfo, nodes: z.array(humanCommitNode.nullish()) }).nullish() }).nullish() })
+        .nullish()
+    })
     .nullish()
 });
 

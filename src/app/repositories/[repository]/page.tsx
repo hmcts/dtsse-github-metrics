@@ -18,13 +18,11 @@ import { getRepository, getRepositoryNotes, getTrend, getWindows, isNotFound } f
 import { instant, span } from "@/lib/format";
 import {
   assuranceRows,
-  codeownersCard,
   cohortCards,
   type LabelledValue,
   maintenanceRows,
   maintenanceSummary,
   mergeGateRows,
-  openPullRequestCards,
   securityCards,
   sonarGateCard,
   sonarRows
@@ -126,7 +124,6 @@ export default async function RepositoryPage({
 
   const findings = evidence.behaviour;
   const alerts = evidence.security.alerts;
-  const openPullRequests = openPullRequestCards(evidence.open_pull_requests);
   // Read after the unavailable branch above: a series is cut from the caches per period, which is
   // work worth doing only for a page that is going to draw the rest of the block too.
   //
@@ -147,12 +144,12 @@ export default async function RepositoryPage({
       {/* The cohort is the page's headline figure rather than a section of it, so it carries the
           panel without a heading: the cards are flat, and four unbounded figures would float.
 
-          The three cohort cards come from `lib/repository` rather than being written here, so an
+          The four cohort cards come from `lib/repository` rather than being written here, so an
           unread merge history reads as a dash and its reason on this page exactly as it does in the
           estate table's Merged column. */}
       <Panel>
         <div className="p-4">
-          <ValueCards values={[...cohortCards(evidence.cohort), codeownersCard(evidence.codeowners)]} />
+          <ValueCards values={cohortCards(evidence.cohort)} />
         </div>
       </Panel>
 
@@ -186,27 +183,14 @@ export default async function RepositoryPage({
         <DefinitionList values={assuranceRows(evidence.assurance)} />
       </Section>
 
-      {/* The gate is what open pull requests have to pass, so the rules and the queue are read as
-          one thing rather than a screen apart. */}
-      <SectionPair>
-        <Section heading="Merge gate" detail={read(evidence.merge_gate.fetched_at)}>
-          {evidence.merge_gate.gate === undefined ? (
-            <EmptyState message="The merge gate could not be read for this repository." detail={evidence.merge_gate.detail} />
-          ) : (
-            <DefinitionList values={mergeGateRows(evidence.merge_gate.gate)} />
-          )}
-        </Section>
-
-        <Section heading="Open pull requests" detail={read(evidence.open_pull_requests.fetched_at)}>
-          {openPullRequests.length === 0 ? (
-            <EmptyState message="Open pull-request state was not collected for this repository." detail={evidence.open_pull_requests.detail} />
-          ) : (
-            // Two across rather than the four the full width allowed: in half a row, four counts
-            // are four cramped columns, and two rows of two keep each figure at headline size.
-            <ValueCards values={openPullRequests} columns={2} />
-          )}
-        </Section>
-      </SectionPair>
+      {/* Full width on its own: the rules a pull request has to pass before it can merge. */}
+      <Section heading="Merge gate" detail={read(evidence.merge_gate.fetched_at)}>
+        {evidence.merge_gate.gate === undefined ? (
+          <EmptyState message="The merge gate could not be read for this repository." detail={evidence.merge_gate.detail} />
+        ) : (
+          <DefinitionList values={mergeGateRows(evidence.merge_gate.gate)} />
+        )}
+      </Section>
 
       {/* An open alert and the maintenance window that would have patched it are the same question
           asked twice, which is why they sit together. */}
@@ -296,21 +280,17 @@ function sonarMeasures(report: SonarReport): LabelledValue[] {
 /**
  * A row of labelled figures, for the blocks whose figures are what the reader came for.
  *
- * The cohort row, the four open pull-request counts and the Sonar measures — a number each, worth
- * headline size. The merge gate, the maintenance windows and the alert families are drawn as
- * `DefinitionList`s instead: they are settings and their answers, and eighteen two-word answers
- * across a four-across grid read as a field of cards rather than as three blocks.
+ * The cohort row and the Sonar measures — a number each, worth headline size. The merge gate, the
+ * maintenance windows and the alert families are drawn as `DefinitionList`s instead: they are
+ * settings and their answers, and eighteen two-word answers across a four-across grid read as a
+ * field of cards rather than as three blocks.
  *
  * The tone rides on the row rather than being decided here, so the threshold behind a colour is in
  * `lib/tone.ts` where a test can reach it and this stays the page drawing what it was handed.
- *
- * `columns` is how wide the row was given, not how many values it holds: four across at full width,
- * two across for a row inside half of a `SectionPair`. Four counts squeezed into half a row read as
- * a strip of digits, and the same four on two rows of two stay figures.
  */
-function ValueCards({ values, columns = 4 }: { values: readonly LabelledValue[]; columns?: 2 | 4 }) {
+function ValueCards({ values }: { values: readonly LabelledValue[] }) {
   return (
-    <div className={columns === 2 ? "grid grid-cols-1 sm:grid-cols-2 gap-4" : "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4"}>
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {values.map((value) => (
         <MetricCard key={value.label} label={value.label} value={value.value} detail={value.detail} tone={value.tone} />
       ))}

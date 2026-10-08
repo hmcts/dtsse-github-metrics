@@ -1,29 +1,21 @@
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { CheckConclusion, type CheckFact, type DirectCommitFact, type PullRequestFact, type ReviewFact, type ReviewState } from "../domain/facts.ts";
+import { type MaintenanceEvidence, maintenanceEvidence } from "../domain/standards.ts";
 import type { GitHubClient } from "../github/client.ts";
 import type { TraceabilityConfiguration } from "../policy/schema.ts";
 import { githubTimestamp } from "../window/instant.ts";
 import type { ReportingWindow } from "../window/window.ts";
+import { isHumanCommitAuthor } from "./analysis.ts";
+import { checkQuery, commitHistoryQuery, humanCommitHistoryQuery, mergedPullRequestQuery, reviewQuery } from "./queries.ts";
 import {
-  abandonedPullRequestQuery,
-  checkQuery,
-  commitHistoryQuery,
-  createdPullRequestQuery,
-  mergedPullRequestQuery,
-  openPullRequestQuery,
-  reviewQuery
-} from "./queries.ts";
-import {
-  abandonedPullRequestSchema,
   type CheckConnection,
   type CheckContext,
   type CommitConnection,
   type CommitNode,
   checkPageSchema,
   commitHistorySchema,
-  createdPullRequestSchema,
+  humanCommitHistorySchema,
   mergedPullRequestSchema,
-  openPullRequestSchema,
   type PullRequestNode,
   parseResponse,
   type ReviewConnection,
@@ -34,14 +26,6 @@ import {
 /**
  * Collecting behaviour facts from GitHub. Ported from `metrics.behaviour`'s collection half.
  */
-
-/** Open pull-request counts for one window, never cached. */
-export interface OpenPullRequestSummary {
-  openedInWindow: number;
-  closedWithoutMerge: number;
-  currentlyOpen: number;
-  staleOpen: number;
-}
 
 /** Maps a legacy commit-status state onto a check conclusion. */
 export function statusConclusion(state: string): CheckConclusion | undefined {
@@ -343,122 +327,63 @@ export async function collectDirectCommits(
   return [...facts.values()].sort((left, right) => left.committedAt.getTime() - right.committedAt.getTime() || left.sha.localeCompare(right.sha));
 }
 
+/** How many history pages the human-commit search reads before it gives up and says how far it got. */
+export const HUMAN_COMMIT_PAGE_CAP = 10;
+
 /**
- * Fetches open pull-request counts in one call, fresh every time.
+ * The newest human commit on the default branch since `since`, or how far back the search looked for one.
  *
- * What a collection stores is a snapshot of this state on the repository's row, which every other run
- * reports from; this is the observation itself, and its answer is never read back out of the windowed fact
- * cache.
- *
- * `staleOpen` is measured from each pull request's LAST UPDATE, not from when it was opened.
+ * Stops at the FIRST commit passing `isHumanCommitAuthor`: history is walked newest first, so that is the answer.
+ * Where none is found the two endings are told apart. A walk that ran out of history reached `since`, so that
+ * is how far back it looked; a walk that hit `HUMAN_COMMIT_PAGE_CAP` looked only as far as the oldest commit it
+ * read, and the report must not read beyond it as "nobody". A branch with no commits returns neither instant. A
+ * repository GitHub omitted, or a capped walk that read no commit at all, throws: neither is an answer.
  */
-export async function collectOpenPullRequestState(
+export async function findLastHumanCommit(
   client: GitHubClient,
   organization: string,
   repository: string,
-  window: ReportingWindow,
-  staleOpenDays: number,
-  reference: Date
-): Promise<OpenPullRequestSummary> {
-  const staleCutoff = new Date(reference.getTime() - staleOpenDays * 86_400_000);
-  const variables = { organization, repository };
-
-  let currentlyOpen = 0;
-  let staleOpen = 0;
+  since: Date,
+  excluded: ReadonlySet<string>,
+  bots: ReadonlySet<string>
+): Promise<MaintenanceEvidence> {
   let cursor: string | null = null;
-  for (;;) {
-    const data: unknown = await client.graphql(openPullRequestQuery(), { ...variables, cursor });
-    const connection = parseResponse(openPullRequestSchema, data, "open pull-request data").repository?.pullRequests;
-    if (connection === undefined || connection === null) {
-      throw new GitHubError("GitHub omitted the repository while collecting open pull requests", AvailabilityReason.CollectionFailed);
+  let oldest: Date | undefined;
+  for (let page = 0; page < HUMAN_COMMIT_PAGE_CAP; page += 1) {
+    // `unknown` for the same circularity reason as the pull-request loop above.
+    const data: unknown = await client.graphql(humanCommitHistoryQuery(), { organization, repository, since: githubTimestamp(since), cursor });
+    const parsed = parseResponse(humanCommitHistorySchema, data, "commit history data");
+    if (parsed.repository == null) {
+      // Not an empty branch: a repository GitHub left out is unknown, and reading it as "nobody committed" would
+      // answer every window "no".
+      throw new GitHubError("GitHub omitted the repository while searching for the last human commit", AvailabilityReason.CollectionFailed);
     }
-    currentlyOpen = connection.totalCount;
-    // Ascending, so the first pull request touched since the cutoff ends the walk: nothing after it is stale.
-    const quiet = connection.nodes.filter((node) => node != null).filter((node) => node.updatedAt.getTime() < staleCutoff.getTime());
-    staleOpen += quiet.length;
-    if (quiet.length < connection.nodes.filter((node) => node != null).length || !connection.pageInfo.hasNextPage) {
-      break;
+    const history = parsed.repository.defaultBranchRef?.target?.history;
+    if (history === undefined || history === null) {
+      // An empty repository, or one whose default branch nobody has pushed to.
+      return maintenanceEvidence({});
     }
-    cursor = connection.pageInfo.endCursor ?? null;
+    for (const node of history.nodes) {
+      if (node == null) {
+        continue;
+      }
+      if (isHumanCommitAuthor(node.author?.user?.login, node.author?.user?.__typename, node.author?.name ?? undefined, excluded, bots)) {
+        return maintenanceEvidence({ lastHumanCommitAt: node.committedDate });
+      }
+      if (oldest === undefined || node.committedDate.getTime() < oldest.getTime()) {
+        oldest = node.committedDate;
+      }
+    }
+    if (!history.pageInfo.hasNextPage) {
+      return maintenanceEvidence({ searchedBackTo: since });
+    }
+    cursor = history.pageInfo.endCursor ?? null;
   }
-
-  const openedInWindow = await countWithin(
-    client,
-    createdPullRequestQuery(),
-    variables,
-    (data) => {
-      const connection = parseResponse(createdPullRequestSchema, data, "created pull-request data").repository?.pullRequests;
-      if (connection === undefined || connection === null) {
-        throw new GitHubError("GitHub omitted the repository while collecting created pull requests", AvailabilityReason.CollectionFailed);
-      }
-      return {
-        pageInfo: connection.pageInfo,
-        instants: connection.nodes.filter((node) => node != null).map((node) => ({ ordered: node.createdAt, counted: node.createdAt }))
-      };
-    },
-    window
-  );
-
-  const closedWithoutMerge = await countWithin(
-    client,
-    abandonedPullRequestQuery(),
-    variables,
-    (data) => {
-      const connection = parseResponse(abandonedPullRequestSchema, data, "abandoned pull-request data").repository?.pullRequests;
-      if (connection === undefined || connection === null) {
-        throw new GitHubError("GitHub omitted the repository while collecting abandoned pull requests", AvailabilityReason.CollectionFailed);
-      }
-      return {
-        pageInfo: connection.pageInfo,
-        instants: connection.nodes
-          .filter((node) => node != null)
-          .filter((node) => node.closedAt != null)
-          .map((node) => ({ ordered: node.updatedAt, counted: node.closedAt as Date }))
-      };
-    },
-    window
-  );
-
-  return { openedInWindow, closedWithoutMerge, currentlyOpen, staleOpen };
-}
-
-/**
- * Walks a descending connection counting the instants inside a window, and stops once it has passed the window.
- *
- * `ordered` is the field the connection is sorted by and `counted` is the one being tested, because they are not
- * always the same: closed-without-merge is ordered by last touch and counted by close time. The walk terminates on
- * `ordered`, which is sound as long as `counted <= ordered` — true for both callers.
- */
-async function countWithin(
-  client: GitHubClient,
-  query: string,
-  variables: Record<string, unknown>,
-  read: (data: unknown) => { pageInfo: { hasNextPage: boolean; endCursor?: string | null }; instants: { ordered: Date; counted: Date }[] },
-  window: ReportingWindow
-): Promise<number> {
-  let total = 0;
-  let cursor: string | null = null;
-
-  for (;;) {
-    const data: unknown = await client.graphql(query, { ...variables, cursor });
-    const { pageInfo, instants } = read(data);
-
-    let passed = false;
-    for (const { ordered, counted } of instants) {
-      if (ordered.getTime() < window.startsAt.getTime()) {
-        passed = true;
-        break;
-      }
-      if (counted.getTime() >= window.startsAt.getTime() && counted.getTime() < window.endsAt.getTime()) {
-        total += 1;
-      }
-    }
-
-    if (passed || !pageInfo.hasNextPage) {
-      return total;
-    }
-    cursor = pageInfo.endCursor ?? null;
+  if (oldest === undefined) {
+    // Every capped page came back without a commit, so nothing was searched; `since` would claim all of it was.
+    throw new GitHubError("GitHub returned no commits on any page while searching for the last human commit", AvailabilityReason.CollectionFailed);
   }
+  return maintenanceEvidence({ searchedBackTo: oldest });
 }
 
 /**

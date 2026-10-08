@@ -8,7 +8,6 @@ import {
   alertState,
   alertSubject,
   assuranceRows,
-  codeownersCard,
   cohortCards,
   conditionGroups,
   excludedDetail,
@@ -17,7 +16,6 @@ import {
   maintenanceSummary,
   mergeGateRows,
   openAlerts,
-  openPullRequestCards,
   ratingLetter,
   securityCards,
   severityDetail,
@@ -38,7 +36,7 @@ import type {
 } from "@/lib/types";
 
 function cohort(overrides: Partial<CohortSummary> = {}): CohortSummary {
-  return { merged: 12, reported: 9, excluded_authors: {}, direct_commits: 2, ...overrides };
+  return { merged: 12, reported: 9, excluded_authors: {}, direct_commits: 2, active_contributors: 4, ...overrides };
 }
 
 describe("yesOrNo", () => {
@@ -138,28 +136,41 @@ describe("cohortCards", () => {
     expect(cards.map((card) => [card.label, card.value, card.detail])).toEqual([
       ["Merges reported", "9", "12 merged in the span"],
       ["Merges excluded", "3", "renovate 3"],
-      ["Direct commits", "2", "landed on the default branch without a pull request"]
+      ["Direct commits", "2", "landed on the default branch without a pull request"],
+      ["Active contributors", "4", "authored the reported merges and direct commits"]
     ]);
   });
 
   it("should keep a measured zero as a zero, since nothing merged is a measurement", () => {
-    const cards = cohortCards(cohort({ merged: 0, reported: 0, direct_commits: 0 }));
+    const cards = cohortCards(cohort({ merged: 0, reported: 0, direct_commits: 0, active_contributors: 0 }));
 
-    expect(cards.map((card) => card.value)).toEqual(["0", "0", "0"]);
+    expect(cards.map((card) => card.value)).toEqual(["0", "0", "0", "0"]);
   });
 
   it("should draw a dash and say why when no merge history was read", () => {
     const unread = "no merge history was read for this repository, so this is unmeasured rather than none";
-    const cards = cohortCards(cohort({ merged: undefined, reported: undefined, direct_commits: undefined }));
+    const cards = cohortCards(cohort({ merged: undefined, reported: undefined, direct_commits: undefined, active_contributors: undefined }));
 
-    expect(cards.map((card) => card.value)).toEqual(["-", "-", "-"]);
-    expect(cards.map((card) => card.detail)).toEqual([unread, unread, unread]);
+    expect(cards.map((card) => card.value)).toEqual(["-", "-", "-", "-"]);
+    expect(cards.map((card) => card.detail)).toEqual([unread, unread, unread, unread]);
   });
 
   it("should dash only the source nobody read when the other one answered", () => {
     const cards = cohortCards(cohort({ merged: 12, reported: 9, direct_commits: undefined }));
 
-    expect(cards.map((card) => card.value)).toEqual(["9", "0", "-"]);
+    expect(cards.map((card) => card.value)).toEqual(["9", "0", "-", "4"]);
+  });
+
+  it("should say which route the active contributors were counted from when only one was read", () => {
+    expect(cohortCards(cohort({ merged: undefined, reported: undefined })).at(3)?.detail).toBe(
+      "authored the reported direct commits; merge history was not read"
+    );
+    expect(cohortCards(cohort({ direct_commits: undefined })).at(3)?.detail).toBe("authored the reported merges; direct commits were not read");
+  });
+
+  it("should leave active contributors uncoloured, since more people is not a better repository", () => {
+    expect(cohortCards(cohort({ active_contributors: 1 })).at(3)?.tone).toBe("neutral");
+    expect(cohortCards(cohort({ active_contributors: 20 })).at(3)?.tone).toBe("neutral");
   });
 
   it("should colour a direct commit nobody counted neutrally rather than as none", () => {
@@ -337,47 +348,6 @@ describe("mergeGateRows", () => {
     expect(tone(rows, "Rules not interpreted")).toBe("neutral");
     // Cautioned by `assessment.force_pushes`, unnamed by the tone table, so neutral by its default.
     expect(tone(rows, "Blocks force pushes")).toBe("neutral");
-  });
-});
-
-describe("openPullRequestCards", () => {
-  const summary = {
-    opened_in_window: 7,
-    closed_without_merge: 2,
-    currently_open: 4,
-    stale_open: 1
-  };
-
-  it("has no cards to draw when the state was never collected", () => {
-    expect(openPullRequestCards({ detail: "not collected" })).toEqual([]);
-  });
-
-  it("dates the two windowed counts by the window they were measured over", () => {
-    const cards = openPullRequestCards({
-      summary,
-      fetched_at: "2026-08-30T09:15:00Z",
-      starts_at: "2026-08-01T00:00:00Z",
-      ends_at: "2026-08-29T00:00:00Z"
-    });
-    expect(cards.map((card) => card.value)).toEqual(["7", "2", "4", "1"]);
-    expect(cards[0]?.detail).toBe("2026-08-01T00:00Z to 2026-08-29T00:00Z");
-    expect(cards[1]?.detail).toBe("2026-08-01T00:00Z to 2026-08-29T00:00Z");
-  });
-
-  it("dates the two standing counts by when the queue was read", () => {
-    const cards = openPullRequestCards({ summary, fetched_at: "2026-08-30T09:15:00Z" });
-    expect(cards[2]?.detail).toBe("as at 2026-08-30T09:15Z");
-    expect(cards[3]?.detail).toBe("as at 2026-08-30T09:15Z");
-  });
-
-  it("claims no period at all where the block carries none", () => {
-    const cards = openPullRequestCards({ summary });
-    expect(cards.every((card) => card.detail === undefined)).toBe(true);
-  });
-
-  it("colours the one count that ages and leaves throughput uncoloured", () => {
-    expect(openPullRequestCards({ summary }).map((card) => card.tone)).toEqual(["neutral", "neutral", "neutral", "warn"]);
-    expect(openPullRequestCards({ summary: { ...summary, stale_open: 0 } })[3]?.tone).toBe("good");
   });
 });
 
@@ -604,9 +574,7 @@ describe("maintenance", () => {
   const report: MaintenanceReport = {
     fetched_at: "2026-08-30T09:15:00Z",
     maintenance: {
-      branch: "main",
-      last_commit_at: "2026-08-28T11:00:00Z",
-      last_human_commit_at: "2026-08-20T08:00:00Z",
+      last_push_at: "2026-08-28T11:00:00Z",
       searched_back_to: "2026-02-01T00:00:00Z"
     },
     windows: [
@@ -640,18 +608,8 @@ describe("maintenance", () => {
     expect(rows.map((row) => row.tone)).toEqual(["warn", "good"]);
   });
 
-  it("states the instants the window answers were derived from", () => {
-    expect(maintenanceSummary(report)).toBe(
-      "branch main · last commit 2026-08-28T11:00Z · last human commit 2026-08-20T08:00Z · searched back to 2026-02-01T00:00Z"
-    );
-  });
-
-  it("distinguishes a branch with no commits from a human one nobody found", () => {
-    // The instants are OMITTED, not null: `response_model_exclude_none` drops an unobserved one
-    // through the nested model, so this is the shape the service actually sends.
-    expect(maintenanceSummary({ ...report, maintenance: { branch: "main" } })).toBe(
-      "branch main · last commit none: the branch has no commits · last human commit none found"
-    );
+  it("states the search bound where no human commit was found, and no branch", () => {
+    expect(maintenanceSummary(report)).toBe("last push 2026-08-28T11:00Z · last human commit none found · searched back to 2026-02-01T00:00Z");
   });
 
   it("states no search bound where the search found a human commit, the common shape", () => {
@@ -660,50 +618,26 @@ describe("maintenance", () => {
     expect(
       maintenanceSummary({
         ...report,
-        maintenance: {
-          branch: "main",
-          last_commit_at: "2026-08-28T11:00:00Z",
-          last_human_commit_at: "2026-08-20T08:00:00Z"
-        }
+        maintenance: { last_push_at: "2026-08-28T11:00:00Z", last_human_commit_at: "2026-08-20T08:00:00Z" }
       })
-    ).toBe("branch main · last commit 2026-08-28T11:00Z · last human commit 2026-08-20T08:00Z");
+    ).toBe("last push 2026-08-28T11:00Z · last human commit 2026-08-20T08:00Z");
+  });
+
+  it("distinguishes a branch with no commits from a human answer nobody collected", () => {
+    // The instants are OMITTED, not null: an unobserved one is dropped from the block.
+    expect(maintenanceSummary({ ...report, maintenance: {} })).toBe("last push none recorded · last human commit none: the branch has no commits");
+    expect(
+      maintenanceSummary({
+        ...report,
+        maintenance: { last_push_at: "2026-08-28T11:00:00Z" },
+        detail: "the last human commit was not collected for this repository"
+      })
+    ).toBe("last push 2026-08-28T11:00Z · the last human commit was not collected for this repository");
   });
 
   it("gives the reason where the block could not be read at all", () => {
     expect(maintenanceSummary({ windows: [], detail: "the branch was not readable" })).toBe("the branch was not readable");
     expect(maintenanceSummary({ windows: [] })).toBe("not available");
-  });
-});
-
-describe("codeownersCard", () => {
-  it("keeps found-and-empty apart from absent and from unreadable", () => {
-    expect(codeownersCard({ codeowners: { files: [] } }).value).toBe("absent");
-    expect(codeownersCard({ detail: "the contents endpoint was refused" })).toEqual({
-      label: "CODEOWNERS",
-      value: "-",
-      detail: "the contents endpoint was refused",
-      tone: "neutral"
-    });
-    expect(codeownersCard({}).detail).toBe("not available");
-  });
-
-  it("names each file with its size and whether GitHub reads it", () => {
-    const card = codeownersCard({
-      codeowners: {
-        files: [
-          { path: ".github/CODEOWNERS", size_bytes: 240, recognised_by_github: true },
-          { path: "docs/CODEOWNERS.md", size_bytes: 0, recognised_by_github: false }
-        ]
-      }
-    });
-    expect(card.value).toBe("2 files");
-    expect(card.tone).toBe("good");
-    expect(card.detail).toBe(".github/CODEOWNERS (240 bytes, recognised by GitHub) · docs/CODEOWNERS.md (0 bytes, not recognised by GitHub)");
-  });
-
-  it("weighs a repository with no CODEOWNERS and grades one nobody could look in not at all", () => {
-    expect(codeownersCard({ codeowners: { files: [] } }).tone).toBe("warn");
-    expect(codeownersCard({ detail: "the contents endpoint was refused" }).tone).toBe("neutral");
   });
 });
 

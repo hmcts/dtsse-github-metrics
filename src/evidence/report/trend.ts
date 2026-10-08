@@ -363,7 +363,7 @@ interface WindowFacts {
 function resolvedWindow(configuration: Configuration, metrics: readonly BehaviourMetric[], facts: WindowFacts): ResolvedWindow {
   const reported = reportedCohort(facts.walked, facts.excluded, facts.bots);
   const merges = reported.merges;
-  const cohort = cohortSummary(facts.walked, reported, facts.measured);
+  const cohort = cohortSummary(facts.walked, reported, facts.measured, facts.bots);
   const unread = unreadSources(facts.measured);
   if (unread !== undefined) {
     return { window: facts.window, cohort, metrics: [], detail: unread };

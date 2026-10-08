@@ -69,7 +69,7 @@ function evidence(): RepositoryPracticeEvidence {
     starts_at: "2026-07-06T00:00:00Z",
     ends_at: "2026-08-31T00:00:00Z",
     provenance: { offline: false, intervals_fetched: 2 },
-    cohort: { merged: 12, reported: 9, excluded_authors: { "dependabot[bot]": 3 }, direct_commits: 1 },
+    cohort: { merged: 12, reported: 9, excluded_authors: { "dependabot[bot]": 3 }, direct_commits: 1, active_contributors: 5 },
     assessment: {
       label: "amber",
       blocking: [],
@@ -103,15 +103,6 @@ function evidence(): RepositoryPracticeEvidence {
         requires_linear_history: false,
         restricts_branch_names: false,
         unmodelled_rules: []
-      }
-    },
-    open_pull_requests: {
-      fetched_at: "2026-08-31T00:00:00Z",
-      summary: {
-        opened_in_window: 14,
-        closed_without_merge: 2,
-        currently_open: 5,
-        stale_open: 1
       }
     },
     security: {
@@ -163,15 +154,9 @@ function evidence(): RepositoryPracticeEvidence {
         { criterion: "maintained", outcome: "met", detail: "pushed to within the last year" }
       ]
     },
-    codeowners: {
-      fetched_at: "2026-08-31T00:00:00Z",
-      codeowners: {
-        files: [{ path: ".github/CODEOWNERS", size_bytes: 120, recognised_by_github: true }]
-      }
-    },
     maintenance: {
       fetched_at: "2026-08-31T00:00:00Z",
-      maintenance: { branch: "main", last_commit_at: "2026-08-30T00:00:00Z" },
+      maintenance: { last_push_at: "2026-08-30T00:00:00Z", last_human_commit_at: "2026-08-29T00:00:00Z" },
       windows: [{ months: 3, committed_within: true, human_committed_within: true }]
     },
     sonar: {
@@ -257,16 +242,27 @@ afterEach(() => {
 });
 
 describe("repository page layout", () => {
-  it("pairs the merge gate with open pull requests, and alerts with maintenance", async () => {
+  it("draws the merge gate full width, and pairs alerts with maintenance", async () => {
     const markup = await render();
-    const [gate, security] = pairs(markup);
+    const [security] = pairs(markup);
 
-    expect(gate).toContain("Merge gate");
-    expect(gate).toContain("Open pull requests");
-    expect(gate).not.toContain("Security alerts");
-
+    expect(heading(markup, "Merge gate")).toBeLessThan(markup.indexOf(`<div ${PAIR}>`));
     expect(security).toContain("Security alerts");
     expect(security).toContain("Maintenance");
+  });
+
+  it("states the last push and the last human commit above the maintenance windows, and no branch", async () => {
+    const markup = await render();
+
+    expect(markup).toContain("last push 2026-08-30T00:00Z · last human commit 2026-08-29T00:00Z");
+    expect(markup).not.toContain("branch main ·");
+  });
+
+  it("draws no open pull-request section, which this service does not collect", async () => {
+    const markup = await render();
+
+    expect(markup).not.toContain("Open pull requests");
+    expect(markup).not.toContain("Opened in window");
   });
 
   it("puts the assurance criteria under the readiness assessment, the page's two verdicts together", async () => {
@@ -290,34 +286,23 @@ describe("repository page layout", () => {
 
   it("stacks each pair to one column on a narrow viewport", async () => {
     const markup = await render();
-    // Two pairs and no more: a third would mean a section was folded in without being asked for.
-    expect(markup.split(`<div ${PAIR}>`)).toHaveLength(3);
+    // One pair and no more: a second would mean a section was folded in without being asked for.
+    expect(markup.split(`<div ${PAIR}>`)).toHaveLength(2);
     expect(markup).toContain("grid-cols-1 lg:grid-cols-2");
   });
 
   it("keeps the pair stretching, so an empty half lines up with a full one", async () => {
     const markup = await render((block) => ({
       ...block,
-      merge_gate: { fetched_at: block.merge_gate.fetched_at, detail: "the branch is unprotected" }
+      security: { fetched_at: block.security.fetched_at, detail: "alerts need security-events scope", scans: block.security.scans }
     }));
-    const [gate] = pairs(markup);
+    const [security] = pairs(markup);
 
-    // The common case on this estate: an unreadable gate beside a full open pull-request block.
-    expect(gate).toContain("The merge gate could not be read for this repository.");
-    expect(gate).toContain("the branch is unprotected");
-    expect(gate).toContain("Opened in window");
+    // An unreadable alert block beside a full maintenance list.
+    expect(security).toContain("No security alert family could be read for this repository.");
+    expect(security).toContain("Maintenance");
     // No alignment override on the wrapper: a grid item stretches, and both panels end level.
     expect(markup).not.toContain("lg:grid-cols-2 gap-4 items-start");
-  });
-
-  it("draws the four open pull-request counts two across inside their half", async () => {
-    const markup = await render();
-    const [gate] = pairs(markup);
-
-    expect(gate).toContain("grid grid-cols-1 sm:grid-cols-2 gap-4");
-    expect(gate).toContain("Opened in window");
-    expect(gate).toContain("Currently open");
-    expect(gate).toContain("Stale open");
   });
 
   it("keeps the cohort row four across, which has the full width to spend", async () => {
@@ -536,9 +521,8 @@ describe("a repository the span cannot be reported for", () => {
  * The blocks that state an absence, and the two lists that state what they hold.
  *
  * Every one of these is a signal the collector could not read, and each has its own sentence: a
- * merge gate GitHub withheld, open pull-request state nobody collected, a security family that was
- * refused, a maintenance search that ran no window, a Sonar project with no measures. A single
- * "not available" across them would lose which question went unanswered, and a zero in place of any
+ * merge gate GitHub withheld, a security family that was refused, a maintenance search that ran no
+ * window, a Sonar project with no measures. A single "not available" across them would lose which question went unanswered, and a zero in place of any
  * of them would report a missing permission as a passing check.
  */
 /**
@@ -595,6 +579,14 @@ describe("the repository page’s cohort row", () => {
     expect(markup).toContain("dependabot[bot] 3");
   });
 
+  it("should draw active contributors in the place the CODEOWNERS card held", async () => {
+    const markup = await render();
+
+    expect(markup).toContain("Active contributors");
+    expect(markup).toContain("authored the reported merges and direct commits");
+    expect(markup).not.toContain("CODEOWNERS</");
+  });
+
   it("should draw a dash and its reason when nobody read this repository's merges", async () => {
     // THE ROW THIS IS ABOUT: a repository whose merge walk GitHub refused keeps its state row, so the page
     // renders — and until this it drew three zeros and "no author was excluded from this window", which is a
@@ -610,12 +602,13 @@ describe("the repository page’s cohort row", () => {
     // less than a dash does.
     expect(markup).toContain("Merges reported");
     expect(markup).toContain("Direct commits");
+    expect(markup).toContain("Active contributors");
   });
 
   it("should keep a measured zero as a zero, nothing merged being a measurement", async () => {
     const markup = await render((block) => ({
       ...block,
-      cohort: { merged: 4, reported: 0, excluded_authors: { renovate: 4 }, direct_commits: 0 }
+      cohort: { merged: 4, reported: 0, excluded_authors: { renovate: 4 }, direct_commits: 0, active_contributors: 0 }
     }));
 
     // A window whose only merges were Renovate's: read, and holding nothing human.
@@ -629,7 +622,6 @@ describe("the repository page’s absences and lists", () => {
   it("says which signal was not collected, one sentence each", async () => {
     const markup = await render((block) => ({
       ...block,
-      open_pull_requests: { fetched_at: block.open_pull_requests.fetched_at, detail: "the pull-request list was refused" },
       security: { fetched_at: block.security.fetched_at, detail: "alerts need security-events scope", scans: block.security.scans },
       maintenance: { fetched_at: block.maintenance.fetched_at, maintenance: block.maintenance.maintenance, windows: [] },
       // No `fetched_at` at all: a block this build never stored has no read-at stamp to print, and a
@@ -637,8 +629,6 @@ describe("the repository page’s absences and lists", () => {
       sonar: { detail: "no Sonar project is mapped" }
     }));
 
-    expect(markup).toContain("Open pull-request state was not collected for this repository.");
-    expect(markup).toContain("the pull-request list was refused");
     expect(markup).toContain("No security alert family could be read for this repository.");
     expect(markup).toContain("alerts need security-events scope");
     expect(markup).toContain("No maintenance window was checked for this repository.");

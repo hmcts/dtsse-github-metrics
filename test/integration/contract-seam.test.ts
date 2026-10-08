@@ -136,8 +136,6 @@ const REPOSITORY_ROW: Shape<contract.RepositoryRow> = {
     readiness: true,
     merged_pull_requests: true,
     direct_commits: true,
-    currently_open: true,
-    stale_open: true,
     finding_occurrences: true,
     required_approving_reviews: true,
     required_status_checks: true,
@@ -330,9 +328,7 @@ const PRACTICE_EVIDENCE: Shape<contract.RepositoryPracticeEvidence> = {
     assurance: true,
     unreviewed_substantial: true,
     merge_gate: true,
-    open_pull_requests: true,
     security: true,
-    codeowners: true,
     maintenance: true,
     sonar: true,
     metrics: true,
@@ -350,9 +346,7 @@ const PRACTICE_EVIDENCE: Shape<contract.RepositoryPracticeEvidence> = {
     // payload — so there is always a verdict, and an unreadable criterion is `unknown` rather than a missing block.
     assurance: true,
     merge_gate: true,
-    open_pull_requests: true,
     security: true,
-    codeowners: true,
     maintenance: true,
     sonar: true,
     metrics: true,
@@ -366,7 +360,7 @@ const PROVENANCE: Shape<contract.WindowProvenance> = {
 };
 
 const COHORT_SUMMARY: Shape<contract.CohortSummary> = {
-  declared: { merged: true, reported: true, excluded_authors: true, direct_commits: true },
+  declared: { merged: true, reported: true, excluded_authors: true, direct_commits: true, active_contributors: true },
   required: { excluded_authors: true }
 };
 
@@ -490,11 +484,6 @@ const ALERT_RECORD: Shape<contract.SecurityAlertRecord> = {
   required: { family: true, number: true }
 };
 
-const CODEOWNERS_REPORT: Shape<contract.CodeownersReport> = {
-  declared: { fetched_at: true, codeowners: true, detail: true },
-  required: {}
-};
-
 const MAINTENANCE_REPORT: Shape<contract.MaintenanceReport> = {
   declared: { fetched_at: true, maintenance: true, windows: true, detail: true },
   required: { windows: true }
@@ -532,11 +521,6 @@ const SONAR_MEASURES: Shape<contract.SonarMeasures> = {
 const SONAR_GATE_CONDITION: Shape<contract.SonarQualityGateCondition> = {
   declared: { metric: true, comparator: true, threshold: true, actual: true, level: true },
   required: { metric: true, comparator: true, level: true }
-};
-
-const OPEN_PULL_REQUEST_REPORT: Shape<contract.OpenPullRequestReport> = {
-  declared: { fetched_at: true, starts_at: true, ends_at: true, summary: true, detail: true },
-  required: {}
 };
 
 const METRIC_SUMMARY: Shape<contract.BehaviourMetricSummary> = {
@@ -1181,7 +1165,6 @@ enablement:
       }
     }
 
-    assertShape("CodeownersReport", CODEOWNERS_REPORT, evidence.codeowners, "repositoryEvidence.codeowners");
     assertShape("MaintenanceReport", MAINTENANCE_REPORT, evidence.maintenance, "repositoryEvidence.maintenance");
     assertShape("SonarReport", SONAR_REPORT, evidence.sonar, "repositoryEvidence.sonar");
     // The nested blocks, because the section's whole value is in them: a `SonarReport` naming only declared keys
@@ -1191,7 +1174,6 @@ enablement:
     for (const [index, condition] of (evidence.sonar.measures?.gate?.conditions ?? []).entries()) {
       assertShape("SonarQualityGateCondition", SONAR_GATE_CONDITION, condition, `repositoryEvidence.sonar.measures.gate.conditions[${index}]`);
     }
-    assertShape("OpenPullRequestReport", OPEN_PULL_REQUEST_REPORT, evidence.open_pull_requests, "repositoryEvidence.open_pull_requests");
 
     expect(evidence.metrics.length).toBeGreaterThan(0);
     for (const [index, metric] of evidence.metrics.entries()) {

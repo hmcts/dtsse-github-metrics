@@ -99,7 +99,11 @@ excluded_repositories: []       # removed outright, whatever the graph says
 dropping stale repositories from the report hid exactly the ones an assurance report is most about: 334
 unarchived repositories are a year or more stale, and not one of them had ever been collected. They are
 reported now, carrying the assurance answers that need no merge history and none of the behaviour figures that
-do — so the window still keeps the expensive half of collection as narrow as it was.
+do — so the window still keeps the expensive half of collection as narrow as it was. The one per-repository
+GitHub read a stale repository does get is a bounded search of its default branch for the last human commit
+(`DefaultBranchHumanCommits`, at most 10 pages, back 730 days), which the Maintenance section needs. An active
+repository skips that search when this run's cached merges already hold a human change. A search that fails is
+warned, counted as one failure, and leaves the Maintenance human column "not collected".
 
 Two windows therefore exist and they answer different questions. A repository quiet for six months has no
 behaviour collected AND is not flagged as unmaintained; that is a real third state rather than a gap.
@@ -656,12 +660,8 @@ dashboard computes its own presentation figures. `evidence` therefore has one ou
 contract — and takes no `--format`: a flag with a single legal value that changes nothing is a promise the CLI
 cannot keep.
 
-One layer is ported, complete and **reached by nothing**, and it says so at the head of its own module rather
-than here: the CODEOWNERS and maintenance evidence (`src/evidence/domain/standards.ts`). The comment names
-what would reach it. Whether to wire it up or drop it is an open decision; nothing in the configuration file
-or the CLI advertises it in the meantime.
-
-Two others were in that state until they were wired, and each left one thing unfinished:
+Three layers were ported complete and reached by nothing, and each was later wired. Two of them left one thing
+unfinished:
 
 - the trend report (`src/evidence/report/trend.ts`), wired by VIBE-592. `getTrend` builds one repository's
   series from `enablement:` and the cached facts, and the repository page draws it. There is still no `trend`
@@ -671,3 +671,8 @@ Two others were in that state until they were wired, and each left one thing unf
   VIBE-591. The four `sonar_*` fields on `RepositoryRow` are declared and not sent, so `/repositories` has no
   SonarCloud columns. The repository page has the figures; what is missing is carrying one repository's
   measures into the estate read. See the comment on `RepositoryRow` in `src/lib/types.ts`.
+
+The third, the maintenance evidence (`src/evidence/domain/standards.ts`), was wired in full. `collect` stores
+when a person last committed to the default branch, and the repository page's Maintenance section reports it
+next to the last push. The CODEOWNERS presence check that shared the module was dropped instead: the page
+shows active contributors in its place.

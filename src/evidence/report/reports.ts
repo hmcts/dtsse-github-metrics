@@ -19,7 +19,7 @@ import { builtReport, forgetBuiltReports } from "./cache.ts";
 import { covers, type Estate, mergesSince, NO_MERGES, readEstate, resolveReportWindow } from "./estate.ts";
 import type { MeasuredRow } from "./measured.ts";
 import { builtOverviewSummary } from "./overview.ts";
-import { builtRepositoryEvidence } from "./repository-evidence.ts";
+import { builtRepositoryEvidence, reportedContributorMetrics } from "./repository-evidence.ts";
 import { builtActorRows } from "./rows/actors.ts";
 import { builtDirectPushRows, builtMergeRows } from "./rows/changes.ts";
 import { builtTeamMemberRows } from "./rows/members.ts";
@@ -39,8 +39,8 @@ import { builtRepositoryTrend, trendWithoutEnablement, trendWithoutWholePeriod }
  * built once and shared.
  *
  * EVERY SHAPE HERE IS DECLARED AS THE CONTRACT'S OWN TYPE, imported as `contract` and never by bare name. The
- * contract is `src/lib/types.ts` and it re-declares nine domain type names identically — `MergeGateEvidence`,
- * `SecurityAlertEvidence`, `Observation`, `SonarRating`, `ReadinessLabel`, `MaintenanceEvidence`, `CodeownersFile`,
+ * contract is `src/lib/types.ts` and it re-declares eight domain type names identically — `MergeGateEvidence`,
+ * `SecurityAlertEvidence`, `Observation`, `SonarRating`, `ReadinessLabel`, `MaintenanceEvidence`,
  * `MaintenanceWindowStatus`, `SonarQualityGate` — plus the latent `TrendMetric`, `TrendDelta`, `TrendThroughput`
  * and `DeltaBasis`. Handing a domain object to a parameter of the same name type-checked cleanly and then threw at
  * `.map`, or rendered `"undefined samples"`; the namespace makes each crossing read `contract.MergeGateEvidence`, so
@@ -203,6 +203,32 @@ export async function repositoryEvidence(
   measured: MeasuredRow,
   reference = new Date()
 ): Promise<contract.RepositoryPracticeEvidence | undefined> {
+  return (await repositoryReport(configuration, repository, weeks, measured, reference)).evidence;
+}
+
+/** One repository's evidence block and every contributor's own metric summaries, off one set of reads. */
+export interface RepositoryReport {
+  /** Absent where the estate holds no such repository or no collection has touched it. See `repositoryEvidence`. */
+  evidence?: contract.RepositoryPracticeEvidence;
+  /** Each contributor's summaries over their share of the reported cohort, keyed on the folded login. */
+  contributors: ReadonlyMap<string, contract.BehaviourMetricSummary[]>;
+}
+
+/**
+ * `repositoryEvidence` with the Contributors table's figures beside it.
+ *
+ * ONE LOAD OF THE WINDOW'S CACHED MERGES FOR BOTH, which is why this is one function rather than two: the
+ * per-contributor summaries are the same merges split by author, and a second `loadCachedMerges` would put two
+ * more fact queries on a per-page path to read rows this has already read. The contributor figures do not depend
+ * on the cohort entry or the stored state, so they are returned even where the evidence block is not.
+ */
+export async function repositoryReport(
+  configuration: Configuration,
+  repository: string,
+  weeks: number,
+  measured: MeasuredRow,
+  reference = new Date()
+): Promise<RepositoryReport> {
   const organization = configuration.organization;
   const { window } = await resolveReportWindow(configuration, weeks, reference);
   const [cohort, state, walked, scans] = await Promise.all([
@@ -212,13 +238,14 @@ export async function repositoryEvidence(
     storedRepositoryAlertScans(organization, repository)
   ]);
 
+  const contributors = reportedContributorMetrics(configuration, walked);
   const entry = cohort.find((candidate: CohortEntry) => candidate.repository === repository);
   if (entry === undefined || state === undefined) {
     // The page's own empty state handles this, and says which of the two it was through `RepositoryRow.detail`.
-    return undefined;
+    return { contributors };
   }
 
-  return builtRepositoryEvidence(configuration, { repository, entry, state, walked, window, measured, scans });
+  return { evidence: builtRepositoryEvidence(configuration, { repository, entry, state, walked, window, measured, scans }), contributors };
 }
 
 /**

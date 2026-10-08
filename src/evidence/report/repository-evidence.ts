@@ -1,6 +1,6 @@
 import type * as contract from "../../lib/types.ts";
 import { readinessPolicy } from "../assessment/assessment.ts";
-import { botAccounts, excludedAuthors, type ReportedCohort, reportedCohort } from "../behaviour/analysis.ts";
+import { botAccounts, contributorLogins, excludedAuthors, type ReportedCohort, reportedCohort } from "../behaviour/analysis.ts";
 import { behaviourMetrics } from "../behaviour/metrics.ts";
 import type { StoredAlertScan } from "../domain/alert-detail.ts";
 import type { Merges } from "../domain/facts.ts";
@@ -11,6 +11,7 @@ import type { ReportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
 import { contractAssessment } from "./contract/assessment.ts";
 import { reportedAssurance } from "./contract/assurance.ts";
+import { storedMaintenance } from "./contract/maintenance.ts";
 import { contractGate, storedGate } from "./contract/merge-gate.ts";
 import { contractObservation } from "./contract/observation.ts";
 import { securityReport } from "./contract/security.ts";
@@ -20,7 +21,7 @@ import type { MeasuredRow } from "./measured.ts";
 /** Everything one repository's page is assembled from, all of it read by the caller. See `repositoryEvidence`. */
 export interface RepositoryEvidenceInput {
   repository: string;
-  /** The cohort entry, which is where the owning team comes from. */
+  /** The cohort entry, which is where the owning team and the last push come from. */
   entry: CohortEntry;
   /** The collected state, whose payload holds the merge gate and the alert families. */
   state: { fetchedAt: Date; payload: unknown };
@@ -45,12 +46,10 @@ export interface RepositoryEvidenceInput {
  * The page for a repository has been rendering "this span holds no evidence" since the port landed, not because
  * nothing was collected but because nothing assembled this. Every section below it was already written.
  *
- * THREE SECTIONS CAN ONLY STATE AN ABSENCE, and they say so in their own `detail` rather than being omitted:
- * open pull requests, CODEOWNERS and maintenance are not collected by `collect` at all — no call is made for any
- * of them. Reporting them as empty would be indistinguishable from a repository that has no CODEOWNERS file and
- * no open pull requests, which is the one confusion this contract exists to prevent. What IS collected — the
- * merge gate, the three alert families, the merge facts, and since 2026-09-17 the SonarCloud project and its
- * measures — feeds the sections that carry real answers.
+ * A SECTION THAT CANNOT ANSWER says so in its own `detail` rather than being omitted: reporting it as empty would
+ * be indistinguishable from a repository with nothing to report, which is the one confusion this contract exists
+ * to prevent. The sections are fed by the merge gate, the three alert families, the merge facts, the SonarCloud
+ * project and its measures, and since 2026-10-08 the last push and the last human commit.
  *
  * `measured` IS HANDED IN AND NOT READ HERE, exactly as `repositoryRow` is handed its own. `src/lib/api.ts` holds
  * this repository's estate row by the time it calls this, and that row's two counts are absent precisely where a
@@ -65,7 +64,8 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
   // The per-repository half of the one seam. `walked` is everything the collection cached and `reported.merges`
   // is what this page counts, so every figure below — the assessment, the metric summaries and the unreviewed
   // verdict — is computed on the same cohort the estate row's figures are, and the two pages cannot disagree.
-  const reported = reportedCohort(input.walked, excludedAuthors(configuration.cohort.excluded_authors), botAccounts(configuration.cohort.bot_accounts));
+  const bots = botAccounts(configuration.cohort.bot_accounts);
+  const reported = reportedCohort(input.walked, excludedAuthors(configuration.cohort.excluded_authors), bots);
   const merges = reported.merges;
 
   return stripAbsent<contract.RepositoryPracticeEvidence>({
@@ -76,7 +76,7 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
     // `offline` because this reads the cache and never GitHub — a report is served from what a collection left,
     // which is the whole point of the fact tables. No interval is fetched to render a page.
     provenance: { offline: true, intervals_fetched: 0 },
-    cohort: cohortSummary(input.walked, reported, input.measured),
+    cohort: cohortSummary(input.walked, reported, input.measured, bots),
     // THROUGH `contractAssessment`, which is the fourth translation at this boundary and the only one that was
     // already correct. The domain and the contract spell every field of an assessment the same way, so the policy's
     // own object was handed straight over — see `./contract/assessment.ts` for why that being right was luck.
@@ -89,11 +89,9 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
     merge_gate: contractGate(gate, fetched),
     security: securityReport(payload.securityAlerts, fetched, input.scans),
     metrics: metricSummaries(configuration, merges),
-    // NOT COLLECTED, each said in the words of the thing that would have collected it. See this function's header:
-    // an empty section here would read as a repository with nothing to report.
-    open_pull_requests: { detail: "open pull-request state is not collected" },
-    codeowners: { detail: "the CODEOWNERS file is not read for this report; ownership is attributed from the organisation graph" },
-    maintenance: { windows: [], detail: "maintenance windows are not collected" },
+    // FROM TWO SOURCES: the push column from the cohort entry's `pushedAt`, the human one from what `collect`
+    // stored. See `./contract/maintenance.ts` for why a missing human answer is unknown rather than no.
+    maintenance: storedMaintenance(input.entry, input.state.payload, input.state.fetchedAt),
     // COLLECTED SINCE 2026-09-17, and read out of the same stored payload the merge gate is. `storedSonar` is
     // where "nobody looked" is told apart from "there is no project", which the constant this replaced could not
     // do: it said the second on every page of the estate while the truth was the first.
@@ -132,16 +130,75 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
  * reports its counts or not. Where nothing was read there is nothing to drop and it is empty, and
  * `lib/repository.cohortCards` reads the absent counts — not the empty map — as the signal that nobody looked.
  *
+ * `active_contributors` IS GATED THE SAME WAY, on either route having been read, and counts only the routes that
+ * were: a cached pull request in a window whose pull-request walk did not cover it is not evidence of anyone
+ * working there. It is absent where nothing was read.
+ * `bots` is the same set `reportedCohort` was given, so a bot the cohort rule kept is still not counted as a person.
+ *
  * EXPORTED FOR `./trend.ts`, which reports the same split per period. A series and the block above it describe
  * the same repository, so the cards on one and the columns on the other have to be one derivation: a second copy
  * would eventually disagree about which merges a window held.
  */
-export function cohortSummary(walked: Merges, reported: ReportedCohort, measured: MeasuredRow): contract.CohortSummary {
+export function cohortSummary(walked: Merges, reported: ReportedCohort, measured: MeasuredRow, bots: ReadonlySet<string>): contract.CohortSummary {
+  const merges = reported.merges;
   return {
-    ...(measured.pullRequests ? { merged: walked.pullRequests.length, reported: reported.merges.pullRequests.length } : {}),
+    ...(measured.pullRequests ? { merged: walked.pullRequests.length, reported: merges.pullRequests.length } : {}),
     excluded_authors: reported.excluded,
-    ...(measured.directCommits ? { direct_commits: reported.merges.directCommits.length } : {})
+    ...(measured.directCommits ? { direct_commits: merges.directCommits.length } : {}),
+    ...(measured.pullRequests || measured.directCommits
+      ? {
+          active_contributors: contributorLogins(
+            [...(measured.pullRequests ? merges.pullRequests : []), ...(measured.directCommits ? merges.directCommits : [])],
+            bots
+          ).size
+        }
+      : {})
   };
+}
+
+/**
+ * Every contributor's own metric summaries, keyed on their folded login.
+ *
+ * THE SAME `metricSummaries` THE PAGE'S OWN METRICS USE, run once per person over that person's share of the
+ * reported cohort. The Contributors table derives its four columns from these (`lib/contributor.ts`), so a
+ * contributor's figures are the repository's figures split by author rather than a second derivation that could
+ * count a merge the block above did not.
+ *
+ * `merges` is the REPORTED cohort, after `reportedCohort` has applied `cohort.excluded_authors`: an excluded
+ * author's work is not on the page's figures and is not given figures of its own here. A change with no author
+ * login cannot be attributed to anyone and is left out.
+ *
+ * Folded, because a GitHub login is unique case-insensitively and the table's rows are keyed the same way.
+ */
+export function contributorMetrics(configuration: Configuration, merges: Merges): Map<string, contract.BehaviourMetricSummary[]> {
+  const byAuthor = new Map<string, Merges>();
+  const share = (login: string): Merges => {
+    const folded = login.toLowerCase();
+    const existing = byAuthor.get(folded);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created: Merges = { pullRequests: [], directCommits: [] };
+    byAuthor.set(folded, created);
+    return created;
+  };
+  for (const pullRequest of merges.pullRequests) {
+    if (pullRequest.authorLogin !== undefined) {
+      share(pullRequest.authorLogin).pullRequests.push(pullRequest);
+    }
+  }
+  for (const commit of merges.directCommits) {
+    if (commit.authorLogin !== undefined) {
+      share(commit.authorLogin).directCommits.push(commit);
+    }
+  }
+  return new Map([...byAuthor].map(([login, share]) => [login, metricSummaries(configuration, share)]));
+}
+
+/** `contributorMetrics` over what the collection cached, narrowed by the one cohort rule the page itself applies. */
+export function reportedContributorMetrics(configuration: Configuration, walked: Merges): Map<string, contract.BehaviourMetricSummary[]> {
+  const reported = reportedCohort(walked, excludedAuthors(configuration.cohort.excluded_authors), botAccounts(configuration.cohort.bot_accounts));
+  return contributorMetrics(configuration, reported.merges);
 }
 
 /**

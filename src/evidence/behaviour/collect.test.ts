@@ -5,7 +5,15 @@ import { CheckConclusion } from "../domain/facts.ts";
 import { createGitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
 import type { TraceabilityConfiguration } from "../policy/schema.ts";
-import { checkFact, collectDirectCommits, collectMergedPullRequests, collectOpenPullRequestState, mutableEdge, statusConclusion } from "./collect.ts";
+import {
+  checkFact,
+  collectDirectCommits,
+  collectMergedPullRequests,
+  findLastHumanCommit,
+  HUMAN_COMMIT_PAGE_CAP,
+  mutableEdge,
+  statusConclusion
+} from "./collect.ts";
 import { deserialise } from "./fill.ts";
 import { commitQuerySignature, querySignature, sourceSignature } from "./queries.ts";
 
@@ -452,81 +460,87 @@ describe("collectDirectCommits", () => {
   });
 });
 
-describe("collectOpenPullRequestState", () => {
-  const WINDOW = { startsAt: new Date("2026-08-01Z"), endsAt: new Date("2026-08-31Z") };
-  const REFERENCE = new Date("2026-08-31T00:00:00Z");
+describe("findLastHumanCommit", () => {
+  const SINCE = new Date("2024-08-08T00:00:00Z");
+  const NONE = new Set<string>();
+  const BOTS = new Set(["fluxcdbot"]);
 
-  /** The three walks the summary is built from, in the order they are issued. */
-  function replyingWithState(open: unknown, created: unknown, abandoned: unknown) {
-    return replying(open, created, abandoned);
+  function node(committedDate: string, login: string | undefined, name = "Someone") {
+    return { committedDate, author: { name, user: login === undefined ? null : { login, __typename: login.endsWith("[bot]") ? "Bot" : "User" } } };
   }
 
-  function openPage(totalCount: number, updatedAt: string[], hasNextPage = false) {
-    return {
-      repository: {
-        pullRequests: { totalCount, pageInfo: { hasNextPage, endCursor: hasNextPage ? "MORE" : null }, nodes: updatedAt.map((at) => ({ updatedAt: at })) }
-      }
-    };
+  function page(nodes: unknown[], hasNextPage = false, endCursor: string | null = null) {
+    return { repository: { defaultBranchRef: { target: { history: { pageInfo: { hasNextPage, endCursor }, nodes } } } } };
   }
 
-  function createdPage(createdAt: string[]) {
-    return { repository: { pullRequests: { pageInfo: PAGE_END, nodes: createdAt.map((at) => ({ createdAt: at })) } } };
-  }
+  it("should answer the first human commit on the first page and read no further", async () => {
+    const { fetch, sent } = replying(page([node("2026-08-05T00:00:00Z", "renovate[bot]"), node("2026-08-04T00:00:00Z", "alice")], true, "c1"));
 
-  function abandonedPage(nodes: { updatedAt: string; closedAt: string | null }[]) {
-    return { repository: { pullRequests: { pageInfo: PAGE_END, nodes } } };
-  }
+    const evidence = await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS);
 
-  it("should read the four counts off the repository rather than out of search", async () => {
-    const { fetch } = replyingWithState(
-      openPage(7, ["2026-08-01T00:00:00Z", "2026-08-30T00:00:00Z"]),
-      createdPage(["2026-08-10T00:00:00Z", "2026-08-05T00:00:00Z", "2026-07-01T00:00:00Z"]),
-      abandonedPage([
-        { updatedAt: "2026-08-20T00:00:00Z", closedAt: "2026-08-20T00:00:00Z" },
-        { updatedAt: "2026-07-01T00:00:00Z", closedAt: "2026-07-01T00:00:00Z" }
-      ])
+    expect(evidence).toEqual({ lastHumanCommitAt: new Date("2026-08-04T00:00:00Z") });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.variables).toMatchObject({ since: "2024-08-08T00:00:00Z", cursor: null });
+  });
+
+  it("should follow the cursor to a human commit on a later page", async () => {
+    const { fetch, sent } = replying(page([node("2026-08-05T00:00:00Z", "fluxcdbot")], true, "c1"), page([node("2026-07-01T00:00:00Z", undefined, "Bob")]));
+
+    const evidence = await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS);
+
+    expect(evidence).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+    expect(sent[1]?.variables).toMatchObject({ cursor: "c1" });
+  });
+
+  it("should say it searched back to the bound when history ran out with no human commit", async () => {
+    const { fetch } = replying(page([node("2026-08-05T00:00:00Z", "renovate[bot]")]));
+
+    expect(await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).toEqual({ searchedBackTo: SINCE });
+  });
+
+  it("should stop at the page cap and say how far back it got", async () => {
+    // Unknown beyond the oldest commit read, which the report must not read as "nobody".
+    const pages = Array.from({ length: HUMAN_COMMIT_PAGE_CAP + 1 }, (_, index) =>
+      page([node(new Date(Date.UTC(2026, 7, 20 - index)).toISOString(), "renovate[bot]")], true, `c${index}`)
     );
+    const { fetch, sent } = replying(...pages);
 
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
+    const evidence = await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS);
 
-    // currentlyOpen is the connection total; the other three are counted from the nodes.
-    expect(summary).toEqual({ currentlyOpen: 7, staleOpen: 1, openedInWindow: 2, closedWithoutMerge: 1 });
+    expect(sent).toHaveLength(HUMAN_COMMIT_PAGE_CAP);
+    expect(evidence).toEqual({ searchedBackTo: new Date(Date.UTC(2026, 7, 20 - (HUMAN_COMMIT_PAGE_CAP - 1))) });
   });
 
-  it("should measure staleness from the last update, against the cutoff the reference implies", async () => {
-    // 14 days before 2026-08-31 is 2026-08-17: the first is stale, the second is not.
-    const { fetch } = replyingWithState(openPage(2, ["2026-08-16T23:59:59Z", "2026-08-17T00:00:01Z"]), createdPage([]), abandonedPage([]));
+  it("should answer neither instant for a branch with no commits", async () => {
+    const { fetch } = replying({ repository: { defaultBranchRef: null } });
 
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
-
-    expect(summary.staleOpen).toBe(1);
+    expect(await findLastHumanCommit(client(fetch), "hmcts", "empty", SINCE, NONE, BOTS)).toEqual({});
   });
 
-  it("should stop walking open pull requests at the first one touched since the cutoff", async () => {
-    // Ascending order, so a page whose last node is recent settles the answer and the next page is never asked for.
-    const { fetch, sent } = replyingWithState(openPage(50, ["2026-08-01T00:00:00Z", "2026-08-30T00:00:00Z"], true), createdPage([]), abandonedPage([]));
-
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
-
-    expect(summary.staleOpen).toBe(1);
-    // Three calls: one open page, then the created and abandoned walks. Not a second open page.
-    expect(sent).toHaveLength(3);
-  });
-
-  it("should ignore a closed pull request GitHub gave no close instant", async () => {
-    const { fetch } = replyingWithState(openPage(0, []), createdPage([]), abandonedPage([{ updatedAt: "2026-08-20T00:00:00Z", closedAt: null }]));
-
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
-
-    expect(summary.closedWithoutMerge).toBe(0);
-  });
-
-  it("should fail loudly when GitHub omits the repository", async () => {
+  it("should treat a repository GitHub omitted as a collection failure rather than an empty branch", async () => {
     const { fetch } = replying({ repository: null });
 
-    const error = await failing(collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE));
+    await expect(findLastHumanCommit(client(fetch), "hmcts", "gone", SINCE, NONE, BOTS)).rejects.toMatchObject({
+      reason: AvailabilityReason.CollectionFailed
+    });
+  });
 
-    expect(error.message).toMatch(/omitted the repository while collecting open pull requests/);
+  it("should treat a capped walk that read no commit at all as a collection failure", async () => {
+    // Searching back to `since` would be a claim nothing supports, and it would answer every window "no".
+    const pages = Array.from({ length: HUMAN_COMMIT_PAGE_CAP }, (_, index) => page([null], true, `c${index}`));
+    const { fetch } = replying(...pages);
+
+    await expect(findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).rejects.toMatchObject({
+      reason: AvailabilityReason.CollectionFailed
+    });
+  });
+
+  it("should treat an unreadable response as a collection failure", async () => {
+    const { fetch } = replying(page([{ committedDate: "not a date", author: null }]));
+
+    await expect(findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).rejects.toMatchObject({
+      reason: AvailabilityReason.CollectionFailed
+    });
   });
 });
 

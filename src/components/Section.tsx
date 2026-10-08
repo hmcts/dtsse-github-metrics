@@ -33,14 +33,13 @@ export function Section({ heading, detail, action, children }: { heading: string
 /**
  * Two sections side by side, stacking to one column on a narrow viewport.
  *
- * For the pairs that are read together — the merge gate with the open pull requests it governs, the
- * security alerts with the maintenance windows that would have patched them. Down a single column
- * each of those is a screen apart, and the repository page's block of settings lists reads as one
- * long scroll rather than as four things.
+ * For sections that are read together — the security alerts with the maintenance windows that would
+ * have patched them. Down a single column the two are a screen apart, and the repository page's block
+ * of settings lists reads as one long scroll rather than as separate things.
  *
  * NO `items-start`. A grid item stretches by default, so the shorter of the pair takes the taller
- * one's height and the two panels' edges line up — which matters most on this estate, where an
- * unreadable merge gate's one-line `EmptyState` sits beside a full open pull-request block. Pinning
+ * one's height and the two panels' edges line up — which matters most where one side is a
+ * one-line `EmptyState` and the other a full list. Pinning
  * the pair to the top instead would leave a stub panel beside a tall one.
  */
 export function SectionPair({ children }: { children: React.ReactNode }) {

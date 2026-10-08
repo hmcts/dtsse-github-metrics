@@ -16,18 +16,16 @@
  * the same figure in `metrics evidence` output are one claim rather than two.
  */
 
-import { ABSENT, count, figure, instant, percent, quantity } from "@/lib/format";
+import { ABSENT, figure, instant, percent, quantity } from "@/lib/format";
 import { ASSURANCE_CRITERIA, ASSURANCE_LABEL } from "@/lib/rows";
 import {
   alertScanTone,
   alertTone,
   assuranceOutcomeTone,
   type ConditionOutcome,
-  codeownersTone,
   directCommitTone,
   gateFieldTone,
   maintenanceTone,
-  openPullRequestTone,
   sonarGateTone,
   sonarMeasureTone,
   sonarRatingTone,
@@ -36,12 +34,10 @@ import {
 import type {
   AssuranceOutcome,
   AssuranceReport,
-  CodeownersReport,
   CohortSummary,
   MaintenanceReport,
   MergeGateEvidence,
   OpenAlertCount,
-  OpenPullRequestReport,
   ReadinessAssessment,
   ReadinessCondition,
   SecurityAlertEvidence,
@@ -174,18 +170,32 @@ export function excludedDetail(cohort: CohortSummary): string {
   return authors.map(([login, merges]) => `${login} ${merges}`).join(" · ");
 }
 
+/** Say which routes the active-contributor count was drawn from, since it is counted from whichever was read. */
+export function activeContributorsDetail(cohort: CohortSummary): string {
+  if (cohort.active_contributors === undefined) {
+    return UNREAD_MERGES;
+  }
+  if (cohort.merged === undefined) {
+    return "authored the reported direct commits; merge history was not read";
+  }
+  if (cohort.direct_commits === undefined) {
+    return "authored the reported merges; direct commits were not read";
+  }
+  return "authored the reported merges and direct commits";
+}
+
 /**
- * The three cohort cards: what is counted, what was left out, and what arrived without a pull request.
+ * The four cohort cards: what is counted, what was left out, what arrived without a pull request, and who did it.
  *
- * ASSEMBLED HERE RATHER THAN IN THE PAGE, on the precedent `openPullRequestCards` sets, because each of the three
- * has an absent case and the page had none of them: it read the counts through `String(...)`, which prints
- * `undefined` for a figure nobody measured, and before the counts could be absent at all it printed three zeros
+ * ASSEMBLED HERE RATHER THAN IN THE PAGE, because each of the four has an absent case and the page had none of
+ * them: it read the counts through `String(...)`, which prints `undefined` for a figure nobody measured, and before the counts could be absent at all it printed three zeros
  * and "no author was excluded from this window" for a repository whose merge walk GitHub refused.
  *
  * Every value goes through `quantity`, so an unread source is the dash the whole contract states and never a zero,
  * and each card's detail says which of the two it is. The tones are unchanged: throughput is uncoloured because a
  * busy repository is not a good one, an exclusion is the cohort working rather than a shortfall, and
- * `directCommitTone` already answers neutral for a count nobody made.
+ * `directCommitTone` already answers neutral for a count nobody made. Active contributors is uncoloured for the
+ * throughput reason: more people is not better, and fewer is not worse.
  */
 export function cohortCards(cohort: CohortSummary): LabelledValue[] {
   return [
@@ -206,6 +216,12 @@ export function cohortCards(cohort: CohortSummary): LabelledValue[] {
       value: quantity(cohort.direct_commits),
       detail: cohort.direct_commits === undefined ? UNREAD_MERGES : "landed on the default branch without a pull request",
       tone: directCommitTone(cohort.direct_commits)
+    },
+    {
+      label: "Active contributors",
+      value: quantity(cohort.active_contributors),
+      detail: activeContributorsDetail(cohort),
+      tone: "neutral"
     }
   ];
 }
@@ -293,50 +309,6 @@ export function mergeGateRows(gate: MergeGateEvidence): LabelledValue[] {
       label: "Rules not interpreted",
       value: gate.unmodelled_rules.join(", ") || "none",
       tone: gateFieldTone("unmodelled_rules")
-    }
-  ];
-}
-
-/**
- * The four open pull-request counts, each beside the period it actually describes.
- *
- * Two of them are bounded by the window the COLLECTION measured, which is not the window this page
- * is being read at, and two describe the queue as it stood when the state was read. Saying so on
- * each card is the whole point: a stale count under this page's own dates would be a wrong claim
- * about when it was true. No summary means no cards — the block carries a reason instead, and the
- * page prints that rather than four dashes.
- */
-export function openPullRequestCards(report: OpenPullRequestReport): LabelledValue[] {
-  const summary = report.summary;
-  if (summary === undefined) {
-    return [];
-  }
-  const measured = report.starts_at === undefined || report.ends_at === undefined ? undefined : `${instant(report.starts_at)} to ${instant(report.ends_at)}`;
-  const read = report.fetched_at === undefined ? undefined : `as at ${instant(report.fetched_at)}`;
-  return [
-    {
-      label: "Opened in window",
-      value: String(summary.opened_in_window),
-      detail: measured,
-      tone: openPullRequestTone("opened_in_window", summary.opened_in_window)
-    },
-    {
-      label: "Closed without merge",
-      value: String(summary.closed_without_merge),
-      detail: measured,
-      tone: openPullRequestTone("closed_without_merge", summary.closed_without_merge)
-    },
-    {
-      label: "Currently open",
-      value: String(summary.currently_open),
-      detail: read,
-      tone: openPullRequestTone("currently_open", summary.currently_open)
-    },
-    {
-      label: "Stale open",
-      value: String(summary.stale_open),
-      detail: read,
-      tone: openPullRequestTone("stale_open", summary.stale_open)
     }
   ];
 }
@@ -563,7 +535,7 @@ export function alertActionLabel(family: SecurityAlertFamilyScan["family"]): str
 }
 
 /**
- * State one maintenance window's two answers: any commit, and a human one.
+ * State one maintenance window's two answers: a push to any branch, and a human commit.
  *
  * The human answer is three-valued and stays that way. "unknown" is not "no": the search that would
  * have answered it stopped at its own bound, and the reason the block carries is printed with it.
@@ -599,45 +571,16 @@ export function maintenanceSummary(report: MaintenanceReport): string {
   // sending `null`, and a strict `=== null` here would print `searched back to -` on every
   // repository whose search DID find a human commit — the common path, and the one absence this
   // block exists to keep apart from "none within the window".
-  const lastCommit = maintenance.last_commit_at == null ? "none: the branch has no commits" : instant(maintenance.last_commit_at);
-  const lastHuman = maintenance.last_human_commit_at == null ? "none found" : instant(maintenance.last_human_commit_at);
-  const searched = maintenance.searched_back_to == null ? [] : [`searched back to ${instant(maintenance.searched_back_to)}`];
-  return [`branch ${maintenance.branch}`, `last commit ${lastCommit}`, `last human commit ${lastHuman}`, ...searched].join(" · ");
-}
-
-/**
- * CODEOWNERS as one card: how many files were found, or that none was, or why nobody could look.
- *
- * Found-and-empty, absent, and unreadable are three answers and this keeps them apart. The size
- * keeps an empty file visible as found-but-empty, and the recognised flag keeps a `.md` variant —
- * which the minimum standard names and GitHub ignores — apart from a file GitHub actually reads.
- */
-export function codeownersCard(report: CodeownersReport): LabelledValue {
-  const codeowners = report.codeowners;
-  if (codeowners === undefined) {
-    return {
-      label: "CODEOWNERS",
-      value: ABSENT,
-      detail: report.detail ?? "not available",
-      tone: codeownersTone(undefined)
-    };
+  const lastPush = `last push ${maintenance.last_push_at == null ? "none recorded" : instant(maintenance.last_push_at)}`;
+  if (maintenance.last_human_commit_at != null) {
+    return [lastPush, `last human commit ${instant(maintenance.last_human_commit_at)}`].join(" · ");
   }
-  if (codeowners.files.length === 0) {
-    return {
-      label: "CODEOWNERS",
-      value: "absent",
-      detail: "no CODEOWNERS file at any of the checked locations",
-      tone: codeownersTone(0)
-    };
+  if (maintenance.searched_back_to != null) {
+    return [lastPush, "last human commit none found", `searched back to ${instant(maintenance.searched_back_to)}`].join(" · ");
   }
-  return {
-    label: "CODEOWNERS",
-    value: count(codeowners.files.length, "file", "files"),
-    tone: codeownersTone(codeowners.files.length),
-    detail: codeowners.files
-      .map((file) => `${file.path} (${file.size_bytes} bytes, ${file.recognised_by_github ? "recognised" : "not recognised"} by GitHub)`)
-      .join(" · ")
-  };
+  // Neither instant: either nothing stored a human answer, which the block's `detail` says, or the
+  // search ran over a default branch with no commits on it.
+  return [lastPush, report.detail ?? "last human commit none: the branch has no commits"].join(" · ");
 }
 
 /**

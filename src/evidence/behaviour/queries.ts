@@ -199,62 +199,27 @@ export function commitHistoryQuery(): string {
 }
 
 /**
- * The bundled open-pull-request state query.
+ * The default-branch history read for the newest human commit, and nothing else.
  *
- * Four aliased searches share one round trip and read only `issueCount`, never a node: this state is NEVER
- * CACHED, so keeping the shape cheap and constant matters more than for a source fetched once and reused.
- * `first: 1` is the minimum GitHub's search connection accepts; nothing under it is read.
- */
-/**
- * Currently-open pull requests, oldest touch first.
+ * Separate from `commitHistoryQuery` because it answers a different question at a fraction of the cost: no
+ * rollup, no pull-request association and no sizes, so `first: 100` is safe here where it is not there. It is
+ * bounded below by `since` alone — the walk stops at the first human commit, which is usually on the first page.
  *
- * `totalCount` answers "how many are open" in one field. The nodes answer "how many have gone quiet", and
- * ASCENDING order is what makes that cheap: the stalest sit on the first page, so the walk stops at the first
- * pull request touched since the cutoff rather than reading every open one.
+ * Not part of either query signature: nothing it returns is cached as a fact.
  */
-export function openPullRequestQuery(): string {
+export function humanCommitHistoryQuery(): string {
   return `
-        query OpenPullRequests($organization: String!, $repository: String!, $cursor: String) {
+        query DefaultBranchHumanCommits($organization: String!, $repository: String!, $since: GitTimestamp!, $cursor: String) {
           repository(owner: $organization, name: $repository) {
-            pullRequests(states: OPEN, orderBy: { field: UPDATED_AT, direction: ASC }, first: 50, after: $cursor) {
-              totalCount
-              pageInfo { hasNextPage endCursor }
-              nodes { updatedAt }
-            }
-          }
-          rateLimit { cost limit remaining resetAt }
-        }
-    `;
-}
-
-/** Pull requests by creation, newest first, for the count opened inside a window. */
-export function createdPullRequestQuery(): string {
-  return `
-        query CreatedPullRequests($organization: String!, $repository: String!, $cursor: String) {
-          repository(owner: $organization, name: $repository) {
-            pullRequests(orderBy: { field: CREATED_AT, direction: DESC }, first: 50, after: $cursor) {
-              pageInfo { hasNextPage endCursor }
-              nodes { createdAt }
-            }
-          }
-          rateLimit { cost limit remaining resetAt }
-        }
-    `;
-}
-
-/**
- * Pull requests closed WITHOUT being merged, most recently touched first.
- *
- * `states: CLOSED` already excludes merged ones — GitHub's `PullRequestState` treats MERGED as its own state —
- * so no negation is needed and none can be got wrong.
- */
-export function abandonedPullRequestQuery(): string {
-  return `
-        query AbandonedPullRequests($organization: String!, $repository: String!, $cursor: String) {
-          repository(owner: $organization, name: $repository) {
-            pullRequests(states: CLOSED, orderBy: { field: UPDATED_AT, direction: DESC }, first: 50, after: $cursor) {
-              pageInfo { hasNextPage endCursor }
-              nodes { updatedAt closedAt }
+            defaultBranchRef {
+              target {
+                ... on Commit {
+                  history(first: 100, since: $since, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { committedDate author { name user { login __typename } } }
+                  }
+                }
+              }
             }
           }
           rateLimit { cost limit remaining resetAt }

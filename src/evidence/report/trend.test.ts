@@ -309,7 +309,7 @@ describe("builtRepositoryTrend", () => {
 
     // `merged` is what the cache held and `reported` is what the figures count, so the excluded author is
     // accounted for rather than showing up as a quiet drop in throughput.
-    expect(built.periods[0]?.cohort).toEqual({ merged: 4, reported: 3, excluded_authors: { renovate: 1 }, direct_commits: 0 });
+    expect(built.periods[0]?.cohort).toEqual({ merged: 4, reported: 3, excluded_authors: { renovate: 1 }, direct_commits: 0, active_contributors: 2 });
   });
 
   it("should compare every metric both windows observed, in percentage points for a rate", () => {
@@ -357,7 +357,7 @@ describe("builtRepositoryTrend", () => {
     expect(second?.throughput).toBeUndefined();
     expect(second?.metrics).toEqual([]);
     expect(second?.detail).toBe("cached pull_requests evidence does not cover this window");
-    expect(second?.cohort).toEqual({ excluded_authors: {}, direct_commits: 1 });
+    expect(second?.cohort).toEqual({ excluded_authors: {}, direct_commits: 1, active_contributors: 1 });
   });
 
   it("should name both unread sources where neither reaches the window", () => {

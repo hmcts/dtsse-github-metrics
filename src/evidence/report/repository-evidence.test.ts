@@ -1,20 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { Merges, PullRequestFact, ReviewFact } from "../domain/facts.ts";
+import { contributorFigures } from "../../lib/contributor.ts";
+import type { DirectCommitFact, Merges, PullRequestFact, ReviewFact } from "../domain/facts.ts";
 import { ReviewState } from "../domain/facts.ts";
 import type { CohortEntry } from "../org/cohort.ts";
 import { OwnerKind } from "../org/graph.ts";
 import { parseConfiguration } from "../policy/load.ts";
+import { HUMAN_COMMIT_UNCOLLECTED_DETAIL } from "./contract/maintenance.ts";
 import { SONAR_UNATTEMPTED_DETAIL } from "./contract/sonar.ts";
 import type { MeasuredRow } from "./measured.ts";
-import { builtRepositoryEvidence, type RepositoryEvidenceInput } from "./repository-evidence.ts";
+import { builtRepositoryEvidence, contributorMetrics, type RepositoryEvidenceInput, reportedContributorMetrics } from "./repository-evidence.ts";
 
 /**
  * One repository's evidence block, section by section.
  *
- * THREE SECTIONS CAN ONLY STATE AN ABSENCE and say so in their own `detail`: open pull requests, CODEOWNERS and
- * maintenance are not collected at all, and reporting them as empty would be indistinguishable from a repository
- * that genuinely has no CODEOWNERS file — which is the one confusion this contract exists to prevent. The Sonar
- * section left that group on 2026-09-17, and the two cases about its wording are what replaced it.
+ * A SECTION THAT CANNOT ANSWER says so in its own `detail`: reporting it as empty would be indistinguishable from
+ * a repository with nothing to report — which is the one confusion this contract exists to prevent. The Sonar
+ * section and the Maintenance section's human column are the two that still can, and the cases about their
+ * wording are below.
  */
 
 const CONFIGURATION = parseConfiguration(`
@@ -119,14 +121,25 @@ describe("one repository's evidence block", () => {
     expect(builtRepositoryEvidence(CONFIGURATION, input()).provenance).toEqual({ offline: true, intervals_fetched: 0 });
   });
 
-  it("should say in each section's own words that three of them are not collected", () => {
-    // An empty section here would read as a repository with nothing to report, so each names the thing that would
-    // have collected it.
-    const evidence = builtRepositoryEvidence(CONFIGURATION, input());
+  it("should report maintenance from the push instant, saying the human commit was not collected", () => {
+    // An empty human column here would read as nobody having worked on the repository, so it says why it is empty.
+    const evidence = builtRepositoryEvidence(CONFIGURATION, input({ entry: { ...ENTRY, pushedAt: new Date(Date.UTC(2026, 7, 1)) } }));
 
-    expect(evidence.open_pull_requests.detail).toBe("open pull-request state is not collected");
-    expect(evidence.codeowners.detail).toContain("the CODEOWNERS file is not read for this report");
-    expect(evidence.maintenance).toEqual({ windows: [], detail: "maintenance windows are not collected" });
+    expect("open_pull_requests" in evidence).toBe(false);
+    expect("codeowners" in evidence).toBe(false);
+    expect(evidence.maintenance.maintenance).toEqual({ last_push_at: "2026-08-01T00:00:00.000Z" });
+    expect(evidence.maintenance.windows.map((window) => window.committed_within)).toEqual([true, true, true]);
+    expect(evidence.maintenance.detail).toBe(HUMAN_COMMIT_UNCOLLECTED_DETAIL);
+  });
+
+  it("should report the stored last human commit beside the push", () => {
+    const evidence = builtRepositoryEvidence(
+      CONFIGURATION,
+      input({ state: { fetchedAt: FETCHED, payload: { maintenance: { lastHumanCommitAt: "2026-07-01T00:00:00.000Z" } } } })
+    );
+
+    expect(evidence.maintenance.maintenance).toEqual({ last_human_commit_at: "2026-07-01T00:00:00.000Z" });
+    expect(evidence.maintenance.windows.map((window) => window.human_committed_within)).toEqual([true, true, true]);
   });
 
   it("should distinguish a repository nothing has looked at from one with no SonarCloud project", () => {
@@ -194,6 +207,53 @@ describe("the cohort cards on one repository's page", () => {
     expect("merged" in evidence.cohort).toBe(false);
     expect("reported" in evidence.cohort).toBe(false);
     expect("direct_commits" in evidence.cohort).toBe(false);
+    expect("active_contributors" in evidence.cohort).toBe(false);
+  });
+
+  it("should count the people behind the reported merges and direct commits, once each and bots left out", () => {
+    const walked: Merges = {
+      pullRequests: [merge(1, "ada"), merge(2, "Ada"), merge(3, "ignored-human"), { ...merge(4, "dependabot[bot]"), authorType: "Bot" }],
+      directCommits: [
+        {
+          sha: "human",
+          repository: "alpha",
+          committedAt: new Date(Date.UTC(2026, 7, 26)),
+          authorLogin: "alan",
+          authorType: "User",
+          additions: 4,
+          deletions: 1,
+          changedFiles: 1
+        },
+        {
+          sha: "bot",
+          repository: "alpha",
+          committedAt: new Date(Date.UTC(2026, 7, 26)),
+          authorLogin: "renovate[bot]",
+          authorType: "Bot",
+          additions: 2,
+          deletions: 0,
+          changedFiles: 1
+        }
+      ]
+    };
+
+    // ada (in either case) and alan. The excluded author is out of the reported cohort, and a bot's pull request
+    // that the cohort rule kept is still not a person.
+    expect(builtRepositoryEvidence(CONFIGURATION, input({ walked })).cohort.active_contributors).toBe(2);
+  });
+
+  it("should count active contributors where only one route was read", () => {
+    const evidence = builtRepositoryEvidence(CONFIGURATION, input({ measured: { pullRequests: true, directCommits: false } }));
+
+    expect(evidence.cohort.active_contributors).toBe(1);
+    expect("direct_commits" in evidence.cohort).toBe(false);
+  });
+
+  it("should not count the authors of cached pull requests the window's walk did not cover", () => {
+    // Only direct commits were read and there are none, so ada's two cached merges are not evidence of anyone.
+    const evidence = builtRepositoryEvidence(CONFIGURATION, input({ measured: { pullRequests: false, directCommits: true } }));
+
+    expect(evidence.cohort.active_contributors).toBe(0);
   });
 
   it("should still account for the facts in the exclusion map where nothing was measured", () => {
@@ -365,5 +425,69 @@ describe("the graded sections of one repository's page", () => {
 
     expect(Math.min(...counted)).toBe(1);
     expect(Math.max(...counted)).toBe(2);
+  });
+});
+
+function directCommit(sha: string, authorLogin: string): DirectCommitFact {
+  return {
+    sha,
+    repository: "alpha",
+    committedAt: new Date(Date.UTC(2026, 7, 26)),
+    authorLogin,
+    authorType: "User",
+    additions: 4,
+    deletions: 1,
+    changedFiles: 1
+  };
+}
+
+describe("each contributor's own metric summaries", () => {
+  it("should group a person's changes under one folded login, whichever case each was spelled in", () => {
+    const merges: Merges = { pullRequests: [merge(1, "Ada"), merge(2, "ada"), merge(3, "grace")], directCommits: [directCommit("a", "ADA")] };
+
+    const metrics = contributorMetrics(CONFIGURATION, merges);
+
+    expect([...metrics.keys()].sort()).toEqual(["ada", "grace"]);
+    const coverage = metrics.get("ada")?.find((summary) => summary.metric === "independent-review-coverage");
+    expect(coverage?.summary).toMatchObject({ status: "observed", denominator: 3 });
+    expect(coverage?.classifications["direct-commit"]).toBe(1);
+  });
+
+  it("should give a person who only pushed to the branch summaries of their own", () => {
+    const metrics = contributorMetrics(CONFIGURATION, { pullRequests: [merge(1)], directCommits: [directCommit("a", "alan")] });
+
+    const coverage = metrics.get("alan")?.find((summary) => summary.metric === "independent-review-coverage");
+    expect(coverage?.summary).toMatchObject({ status: "observed", denominator: 1 });
+    expect(coverage?.classifications["direct-commit"]).toBe(1);
+  });
+
+  it("should leave out a change nobody can be named for", () => {
+    const anonymous: PullRequestFact = { ...merge(1), authorLogin: undefined };
+
+    expect(contributorMetrics(CONFIGURATION, { pullRequests: [anonymous], directCommits: [] }).size).toBe(0);
+  });
+
+  it("should give an excluded author no figures, since their work is not on the page's own", () => {
+    const walked: Merges = { pullRequests: [merge(1), merge(2, "ignored-human")], directCommits: [] };
+
+    const metrics = reportedContributorMetrics(CONFIGURATION, walked);
+
+    expect(metrics.has("ignored-human")).toBe(false);
+    expect(metrics.has("ada")).toBe(true);
+  });
+
+  it("should yield the Contributors table's four columns for a person", () => {
+    // THE END OF THE PATH THE TABLE READS: these summaries become `ContributorRow.metrics`, and the columns are
+    // `contributorFigures` over them. They were dashes while `metrics` was `[]`.
+    const unreviewed: PullRequestFact = { ...merge(3), reviews: [] };
+    const walked: Merges = { pullRequests: [merge(1), merge(2), unreviewed], directCommits: [directCommit("a", "ada"), directCommit("b", "ada")] };
+
+    const metrics = reportedContributorMetrics(CONFIGURATION, walked).get("ada") ?? [];
+    const figures = contributorFigures({ login: "ada", contributions: 5, blocking: 0, metrics });
+
+    expect(figures.merged).toBe(3);
+    expect(figures.directPushes).toBe(2);
+    expect(figures.unreviewed).toBe(1);
+    expect(figures.size).toBe("124 lines");
   });
 });
