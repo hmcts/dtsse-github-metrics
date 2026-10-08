@@ -199,6 +199,35 @@ export function commitHistoryQuery(): string {
 }
 
 /**
+ * The default-branch history read for the newest human commit, and nothing else.
+ *
+ * Separate from `commitHistoryQuery` because it answers a different question at a fraction of the cost: no
+ * rollup, no pull-request association and no sizes, so `first: 100` is safe here where it is not there. It is
+ * bounded below by `since` alone — the walk stops at the first human commit, which is usually on the first page.
+ *
+ * Not part of either query signature: nothing it returns is cached as a fact.
+ */
+export function humanCommitHistoryQuery(): string {
+  return `
+        query DefaultBranchHumanCommits($organization: String!, $repository: String!, $since: GitTimestamp!, $cursor: String) {
+          repository(owner: $organization, name: $repository) {
+            defaultBranchRef {
+              target {
+                ... on Commit {
+                  history(first: 100, since: $since, after: $cursor) {
+                    pageInfo { hasNextPage endCursor }
+                    nodes { committedDate author { name user { login __typename } } }
+                  }
+                }
+              }
+            }
+          }
+          rateLimit { cost limit remaining resetAt }
+        }
+    `;
+}
+
+/**
  * Identifies the shape of the data these queries cache, so widening them invalidates the cache.
  *
  * The hash will NOT match the Python implementation's, because the document text is not byte-identical.

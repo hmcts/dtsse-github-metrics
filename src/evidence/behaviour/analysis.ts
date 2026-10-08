@@ -179,6 +179,26 @@ export function reportedDirectCommit(commit: DirectCommitFact, excluded: Readonl
   return isHumanCommitAuthor(commit.authorLogin, commit.authorType, commit.authorName, excluded, bots);
 }
 
+/**
+ * The newest human change among one window's cached merges, or `undefined` when none of them is a person's.
+ *
+ * The collector's shortcut past the history walk: a human merge inside the window is a human commit to the
+ * default branch, and the window ends at the collection, so nothing newer could be outside it. Pull requests are
+ * judged by their author account and direct commits by `isHumanCommitAuthor` with the git author name as well,
+ * the same predicate the walk applies to each commit.
+ */
+export function cachedLastHumanCommit(merges: Merges, excluded: ReadonlySet<string>, bots: ReadonlySet<string>): Date | undefined {
+  const instants = [
+    ...merges.pullRequests
+      .filter((pullRequest) => isHumanCommitAuthor(pullRequest.authorLogin, pullRequest.authorType, undefined, excluded, bots))
+      .map((pullRequest) => pullRequest.mergedAt.getTime()),
+    ...merges.directCommits
+      .filter((commit) => isHumanCommitAuthor(commit.authorLogin, commit.authorType, commit.authorName, excluded, bots))
+      .map((commit) => commit.committedAt.getTime())
+  ];
+  return instants.length === 0 ? undefined : new Date(Math.max(...instants));
+}
+
 /** One window's merges as a report counts them, and how many changes each author it left out had landed. */
 export interface ReportedCohort {
   merges: Merges;

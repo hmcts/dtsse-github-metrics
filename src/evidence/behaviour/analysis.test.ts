@@ -10,6 +10,7 @@ import {
 } from "../domain/facts.ts";
 import {
   botAccounts,
+  cachedLastHumanCommit,
   changeSize,
   comparableLogin,
   contributorLogins,
@@ -204,6 +205,44 @@ describe("reportedDirectCommit", () => {
 
   it("should drop a dependency bot the cohort excludes, by either list", () => {
     expect(reportedDirectCommit(commit({ authorLogin: "renovate" }), excludedAuthors(["renovate"]), new Set())).toBe(false);
+  });
+});
+
+describe("cachedLastHumanCommit", () => {
+  const EXCLUDED = excludedAuthors(["renovate"]);
+  const BOTS = botAccounts(["fluxcdbot"]);
+
+  it("should answer nothing when every cached change is automation", () => {
+    const merges = {
+      pullRequests: [pullRequest({ authorLogin: "renovate[bot]", authorType: "Bot" })],
+      directCommits: [commit({ authorLogin: "fluxcdbot" }), commit({ authorLogin: undefined, authorType: undefined, authorName: "github-actions[bot]" })]
+    };
+
+    expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toBeUndefined();
+  });
+
+  it("should answer a person's merged pull request", () => {
+    const merges = { pullRequests: [pullRequest({ mergedAt: new Date("2026-08-03Z") })], directCommits: [] };
+
+    expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toEqual(new Date("2026-08-03Z"));
+  });
+
+  it("should answer a person's direct commit, judged by the git author name where no account is linked", () => {
+    const merges = {
+      pullRequests: [],
+      directCommits: [commit({ authorLogin: undefined, authorType: undefined, authorName: "Alice", committedAt: new Date("2026-08-04Z") })]
+    };
+
+    expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toEqual(new Date("2026-08-04Z"));
+  });
+
+  it("should answer the latest human change across both routes", () => {
+    const merges = {
+      pullRequests: [pullRequest({ mergedAt: new Date("2026-08-03Z") }), pullRequest({ authorLogin: "renovate", mergedAt: new Date("2026-08-09Z") })],
+      directCommits: [commit({ committedAt: new Date("2026-08-05Z") }), commit({ committedAt: new Date("2026-08-01Z") })]
+    };
+
+    expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toEqual(new Date("2026-08-05Z"));
   });
 });
 

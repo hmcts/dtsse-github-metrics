@@ -2,6 +2,7 @@ import type { AssuranceEvidence } from "../domain/assurance.ts";
 import type { MergeGateReport } from "../domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import type { SonarState } from "../domain/sonar.ts";
+import type { MaintenanceEvidence } from "../domain/standards.ts";
 import { prisma } from "./prisma.ts";
 import { StorageError } from "./storage-error.ts";
 
@@ -49,6 +50,13 @@ export interface RepositoryStatePayload {
    * `report/contract/sonar.ts`, which turns the absence into those words.
    */
   sonar?: SonarState;
+  /**
+   * When a person last committed to the default branch, or how far back the search looked, added 2026-10-08.
+   *
+   * NEEDS NO MIGRATION, for the reason `sonar` did not. Absent means the answer was not collected — a row older
+   * than the field, or a walk that failed — which the report states rather than reading it as nobody.
+   */
+  maintenance?: MaintenanceEvidence;
 }
 
 /** Records what a collection observed, replacing whatever the last one recorded. */

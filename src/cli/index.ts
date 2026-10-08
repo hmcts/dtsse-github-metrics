@@ -1,8 +1,15 @@
 import { type AlertWalk, collectOrganisationAlerts, familyCoverage, resolveAlertScans } from "../evidence/alerts/collect.ts";
 import { readinessPolicy } from "../evidence/assessment/assessment.ts";
-import { botAccounts, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
-import { collectDirectCommits, collectMergedPullRequests, mutableEdge, referencePatterns } from "../evidence/behaviour/collect.ts";
-import { deserialiseMerges, directCommitCacheWriter, fillCachedSource, pullRequestCacheWriter, requestedCoverage } from "../evidence/behaviour/fill.ts";
+import { botAccounts, cachedLastHumanCommit, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
+import { collectDirectCommits, collectMergedPullRequests, findLastHumanCommit, mutableEdge, referencePatterns } from "../evidence/behaviour/collect.ts";
+import {
+  deserialiseMerges,
+  directCommitCacheWriter,
+  fillCachedSource,
+  loadCachedMerges,
+  pullRequestCacheWriter,
+  requestedCoverage
+} from "../evidence/behaviour/fill.ts";
 import { mergedPullRequestCountQuery, sourceSignature } from "../evidence/behaviour/queries.ts";
 import { CVE_DATABASES, cveFolder, readFrom } from "../evidence/cve/collect.ts";
 import { readCveDocuments } from "../evidence/cve/cosmos.ts";
@@ -11,9 +18,11 @@ import { ALERT_FAMILIES } from "../evidence/domain/alert-detail.ts";
 import type { SecretAlertSummary } from "../evidence/domain/assurance.ts";
 import { AvailabilityReason, CollectionStatus } from "../evidence/domain/availability.ts";
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
+import type { Merges } from "../evidence/domain/facts.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
 import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
 import { isSonarObservation, SonarMappingOutcome, type SonarResolutionAttempt, type SonarState, type StoredSonarMapping } from "../evidence/domain/sonar.ts";
+import { HUMAN_MAINTENANCE_SEARCH_DAYS, type MaintenanceEvidence } from "../evidence/domain/standards.ts";
 import { createGitHubClient } from "../evidence/github/client.ts";
 import { resolveCredentials } from "../evidence/github/credentials.ts";
 import { runSummaryLines } from "../evidence/github/summary.ts";
@@ -243,6 +252,10 @@ async function collectRepository(
   failures += sonar.failures;
 
   if (!options.behaviour) {
+    // No cached merges to consult on this path, so the human commit is always searched for: a stale repository is
+    // exactly the one the Maintenance section most needs an answer about.
+    const maintenance = await lastHumanCommit(configuration, client, repository, reference, undefined);
+    failures += maintenance.failures;
     // The shallow path. No gate, no other alert family, and above all no merge walk — which is what keeps
     // admitting roughly 650 stale repositories from adding a behaviour call. The row they produce carries the
     // assurance answers and, by the absent-means-unmeasured rule, no behaviour figures at all.
@@ -255,7 +268,8 @@ async function collectRepository(
       // as unmeasured: this path never looked at it, and saying so is the honest answer rather than nothing open.
       securityAlerts: withoutCodeScanning(dependabotSource, secretScanning),
       deploysToProduction: deploysToProduction(production, organization, repository),
-      assurance
+      assurance,
+      ...(maintenance.evidence === undefined ? {} : { maintenance: maintenance.evidence })
     });
     return { observed: true, failures };
   }
@@ -287,6 +301,12 @@ async function collectRepository(
     return [];
   });
 
+  // AFTER the fills, so the cache holds this run's merges. A cache that cannot be read is not a failure of its
+  // own: the history walk answers the same question.
+  const cached = await loadCachedMerges(organization, repository, window).catch(() => undefined);
+  const maintenance = await lastHumanCommit(configuration, client, repository, reference, cached);
+  failures += maintenance.failures;
+
   const gate = await collectMergeGate(client, organization, repository, defaultBranch);
   // Handed both estate-wide families, so this pays for code scanning alone.
   const alerts = await collectSecurityAlerts(client, organization, repository, { dependabot: dependabotSource, secretScanning });
@@ -302,10 +322,40 @@ async function collectRepository(
     securityAlerts: alerts.evidence,
     deploysToProduction: deploysToProduction(production, organization, repository),
     assurance,
-    sonar: sonar.state
+    sonar: sonar.state,
+    ...(maintenance.evidence === undefined ? {} : { maintenance: maintenance.evidence })
   });
 
   return { observed: true, failures };
+}
+
+/**
+ * When a person last committed to one repository's default branch, for the Maintenance section.
+ *
+ * The window's cached merges answer it for free wherever they hold a human change — most active repositories —
+ * and the bounded history walk answers it otherwise. A walk that fails is warned, counted once and leaves the
+ * answer absent, which the report reads as not collected rather than as nobody.
+ */
+async function lastHumanCommit(
+  configuration: Configuration,
+  client: ReturnType<typeof createGitHubClient>,
+  repository: string,
+  reference: Date,
+  cached: Merges | undefined
+): Promise<{ evidence?: MaintenanceEvidence; failures: number }> {
+  const excluded = excludedAuthors(configuration.cohort.excluded_authors);
+  const bots = botAccounts(configuration.cohort.bot_accounts);
+  const found = cached === undefined ? undefined : cachedLastHumanCommit(cached, excluded, bots);
+  if (found !== undefined) {
+    return { evidence: { lastHumanCommitAt: found }, failures: 0 };
+  }
+  const since = new Date(reference.getTime() - HUMAN_MAINTENANCE_SEARCH_DAYS * 86_400_000);
+  try {
+    return { evidence: await findLastHumanCommit(client, configuration.organization, repository, since, excluded, bots), failures: 0 };
+  } catch (error) {
+    console.warn(`${repository}: the last human commit was not collected: ${error instanceof Error ? error.message : String(error)}`);
+    return { failures: 1 };
+  }
 }
 
 /**

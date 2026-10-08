@@ -724,23 +724,17 @@ describe("deploysToProduction", () => {
 });
 
 describe("maintenanceEvidence", () => {
-  it("should accept a branch with no commits", () => {
-    expect(maintenanceEvidence({ branch: "main" }).lastCommitAt).toBeUndefined();
+  it("should accept a branch with no commits, which carries neither instant", () => {
+    expect(maintenanceEvidence({})).toEqual({});
   });
 
-  it("should refuse a branch with no commits that claims to have searched", () => {
-    expect(() => maintenanceEvidence({ branch: "main", searchedBackTo: new Date() })).toThrow(/nothing to have searched/);
-  });
-
-  it("should require a search bound when no human commit was found", () => {
-    // The two absences are different answers: none within the window, and unknown beyond what was examined.
-    expect(() => maintenanceEvidence({ branch: "main", lastCommitAt: new Date() })).toThrow(/how far back the search examined/);
+  it("should accept a found human commit, or a search bound on its own", () => {
+    expect(maintenanceEvidence({ lastHumanCommitAt: new Date("2026-07-01Z") }).lastHumanCommitAt).toEqual(new Date("2026-07-01Z"));
+    expect(maintenanceEvidence({ searchedBackTo: new Date("2026-01-01Z") }).searchedBackTo).toEqual(new Date("2026-01-01Z"));
   });
 
   it("should refuse a search bound beside a found human commit", () => {
-    expect(() => maintenanceEvidence({ branch: "main", lastCommitAt: new Date(), lastHumanCommitAt: new Date(), searchedBackTo: new Date() })).toThrow(
-      /carries no search bound/
-    );
+    expect(() => maintenanceEvidence({ lastHumanCommitAt: new Date(), searchedBackTo: new Date() })).toThrow(/carries no search bound/);
   });
 });
 
@@ -748,39 +742,45 @@ describe("humanWindowAnswer", () => {
   const cutoff = new Date("2026-02-08T00:00:00Z");
 
   it("should answer true when the human commit is inside the window", () => {
-    const evidence = maintenanceEvidence({ branch: "main", lastCommitAt: new Date("2026-08-01Z"), lastHumanCommitAt: new Date("2026-07-01Z") });
+    const evidence = maintenanceEvidence({ lastHumanCommitAt: new Date("2026-07-01Z") });
 
     expect(humanWindowAnswer(evidence, cutoff)).toBe(true);
   });
 
   it("should answer false only where the search reached past the cutoff", () => {
-    const reached = maintenanceEvidence({ branch: "main", lastCommitAt: new Date("2026-08-01Z"), searchedBackTo: new Date("2026-01-01Z") });
+    const reached = maintenanceEvidence({ searchedBackTo: new Date("2026-01-01Z") });
 
     expect(humanWindowAnswer(reached, cutoff)).toBe(false);
   });
 
   it("should answer nothing where the bounded search stopped short of the cutoff", () => {
     // "Nobody committed in six months" and "we did not look back six months" are different statements.
-    const stoppedShort = maintenanceEvidence({ branch: "main", lastCommitAt: new Date("2026-08-01Z"), searchedBackTo: new Date("2026-06-01Z") });
+    const stoppedShort = maintenanceEvidence({ searchedBackTo: new Date("2026-06-01Z") });
 
     expect(humanWindowAnswer(stoppedShort, cutoff)).toBeUndefined();
   });
 
   it("should answer false for a branch with no commits at all", () => {
-    expect(humanWindowAnswer(maintenanceEvidence({ branch: "main" }), cutoff)).toBe(false);
+    expect(humanWindowAnswer(maintenanceEvidence({}), cutoff)).toBe(false);
   });
 });
 
 describe("maintenanceWindows", () => {
   it("should answer all three windows against the instant the evidence was observed", () => {
     const fetchedAt = new Date("2026-08-08T00:00:00Z");
-    const evidence = maintenanceEvidence({ branch: "main", lastCommitAt: new Date("2026-08-01Z"), lastHumanCommitAt: new Date("2026-07-01Z") });
+    const evidence = maintenanceEvidence({ lastHumanCommitAt: new Date("2026-07-01Z") });
 
-    const windows = maintenanceWindows(evidence, fetchedAt);
+    const windows = maintenanceWindows(evidence, new Date("2026-08-01Z"), fetchedAt);
 
     expect(windows.map((window) => window.months)).toEqual([6, 12, 24]);
     expect(windows.every((window) => window.committedWithin)).toBe(true);
     expect(windows.every((window) => window.humanCommittedWithin === true)).toBe(true);
+  });
+
+  it("should answer committedWithin false when no push instant is known", () => {
+    const windows = maintenanceWindows(maintenanceEvidence({}), undefined, new Date("2026-08-08T00:00:00Z"));
+
+    expect(windows.every((window) => !window.committedWithin)).toBe(true);
   });
 
   it("should search back as far as the widest window it reports", () => {

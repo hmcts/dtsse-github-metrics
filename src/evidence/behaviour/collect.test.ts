@@ -5,7 +5,15 @@ import { CheckConclusion } from "../domain/facts.ts";
 import { createGitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
 import type { TraceabilityConfiguration } from "../policy/schema.ts";
-import { checkFact, collectDirectCommits, collectMergedPullRequests, mutableEdge, statusConclusion } from "./collect.ts";
+import {
+  checkFact,
+  collectDirectCommits,
+  collectMergedPullRequests,
+  findLastHumanCommit,
+  HUMAN_COMMIT_PAGE_CAP,
+  mutableEdge,
+  statusConclusion
+} from "./collect.ts";
 import { deserialise } from "./fill.ts";
 import { commitQuerySignature, querySignature, sourceSignature } from "./queries.ts";
 
@@ -449,6 +457,72 @@ describe("collectDirectCommits", () => {
 
     expect(facts[0]).toMatchObject({ authorName: "Unlinked Person" });
     expect(facts[0]?.authorLogin).toBeUndefined();
+  });
+});
+
+describe("findLastHumanCommit", () => {
+  const SINCE = new Date("2024-08-08T00:00:00Z");
+  const NONE = new Set<string>();
+  const BOTS = new Set(["fluxcdbot"]);
+
+  function node(committedDate: string, login: string | undefined, name = "Someone") {
+    return { committedDate, author: { name, user: login === undefined ? null : { login, __typename: login.endsWith("[bot]") ? "Bot" : "User" } } };
+  }
+
+  function page(nodes: unknown[], hasNextPage = false, endCursor: string | null = null) {
+    return { repository: { defaultBranchRef: { target: { history: { pageInfo: { hasNextPage, endCursor }, nodes } } } } };
+  }
+
+  it("should answer the first human commit on the first page and read no further", async () => {
+    const { fetch, sent } = replying(page([node("2026-08-05T00:00:00Z", "renovate[bot]"), node("2026-08-04T00:00:00Z", "alice")], true, "c1"));
+
+    const evidence = await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS);
+
+    expect(evidence).toEqual({ lastHumanCommitAt: new Date("2026-08-04T00:00:00Z") });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.variables).toMatchObject({ since: "2024-08-08T00:00:00Z", cursor: null });
+  });
+
+  it("should follow the cursor to a human commit on a later page", async () => {
+    const { fetch, sent } = replying(page([node("2026-08-05T00:00:00Z", "fluxcdbot")], true, "c1"), page([node("2026-07-01T00:00:00Z", undefined, "Bob")]));
+
+    const evidence = await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS);
+
+    expect(evidence).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+    expect(sent[1]?.variables).toMatchObject({ cursor: "c1" });
+  });
+
+  it("should say it searched back to the bound when history ran out with no human commit", async () => {
+    const { fetch } = replying(page([node("2026-08-05T00:00:00Z", "renovate[bot]")]));
+
+    expect(await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).toEqual({ searchedBackTo: SINCE });
+  });
+
+  it("should stop at the page cap and say how far back it got", async () => {
+    // Unknown beyond the oldest commit read, which the report must not read as "nobody".
+    const pages = Array.from({ length: HUMAN_COMMIT_PAGE_CAP + 1 }, (_, index) =>
+      page([node(new Date(Date.UTC(2026, 7, 20 - index)).toISOString(), "renovate[bot]")], true, `c${index}`)
+    );
+    const { fetch, sent } = replying(...pages);
+
+    const evidence = await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS);
+
+    expect(sent).toHaveLength(HUMAN_COMMIT_PAGE_CAP);
+    expect(evidence).toEqual({ searchedBackTo: new Date(Date.UTC(2026, 7, 20 - (HUMAN_COMMIT_PAGE_CAP - 1))) });
+  });
+
+  it("should answer neither instant for a branch with no commits", async () => {
+    const { fetch } = replying({ repository: { defaultBranchRef: null } });
+
+    expect(await findLastHumanCommit(client(fetch), "hmcts", "empty", SINCE, NONE, BOTS)).toEqual({});
+  });
+
+  it("should treat an unreadable response as a collection failure", async () => {
+    const { fetch } = replying(page([{ committedDate: "not a date", author: null }]));
+
+    await expect(findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).rejects.toMatchObject({
+      reason: AvailabilityReason.CollectionFailed
+    });
   });
 });
 

@@ -23,6 +23,11 @@ const prevailingCachedCoverage = vi.hoisted(() => vi.fn(async (): Promise<Date |
 // Stubbed because it reaches Postgres, and a `vi.fn()` rather than an arrow so one case can let the merge walk it
 // wraps actually run — which is the only way to see what the collector was handed.
 const fillCachedSource = vi.hoisted(() => vi.fn(async (..._unused: unknown[]) => []));
+// The window's cached merges, read after the fills for the last human commit. Empty by default, which sends every
+// repository to the history walk.
+const loadCachedMerges = vi.hoisted(() =>
+  vi.fn(async (..._unused: unknown[]): Promise<{ pullRequests: unknown[]; directCommits: unknown[] }> => ({ pullRequests: [], directCommits: [] }))
+);
 const collectionState = vi.hoisted(() => vi.fn());
 // Named rather than an anonymous `vi.fn()` in the mock factory, so a case can assert that a collection was
 // STAMPED. Reports are held per `collection_state.revision` and invalidated by nothing else, so a run that writes
@@ -144,6 +149,7 @@ vi.mock("../evidence/store/repository-state.ts", () => ({ recordRepositoryState,
 vi.mock("../evidence/behaviour/fill.ts", async () => ({
   ...(await vi.importActual<typeof import("../evidence/behaviour/fill.ts")>("../evidence/behaviour/fill.ts")),
   fillCachedSource,
+  loadCachedMerges,
   requestedCoverage: () => ({}),
   pullRequestCacheWriter: () => undefined,
   directCommitCacheWriter: () => undefined
@@ -516,7 +522,7 @@ describe("what collect walks", () => {
     organization: "hmcts",
     lookback: { operational_days: 90, mutable_hours: 6 },
     teams: [],
-    cohort: { excluded_authors: [] },
+    cohort: { excluded_authors: [], bot_accounts: [] },
     production_list_url: null,
     assessment: { enabled: false },
     org_graph: { enabled: true },
@@ -716,6 +722,87 @@ describe("what collect walks", () => {
 
     expect(asked).toContain("/repos/hmcts/fresh/dependabot/alerts");
     expect(asked).not.toContain("/orgs/hmcts/dependabot/alerts");
+  });
+
+  /** What one repository's stored state says about the last human commit after a run. */
+  function storedMaintenance(repository: string): Record<string, unknown> | undefined {
+    const call = recordRepositoryState.mock.calls.find(([, named]) => named === repository);
+    return (call?.[2] as { maintenance?: Record<string, unknown> } | undefined)?.maintenance;
+  }
+
+  /** A collect run over one fresh and one stale repository, with every GraphQL call answered by `graphql`. */
+  async function collectWithHistory(graphql: (query: string) => Promise<unknown>): Promise<string[]> {
+    loadConfiguration.mockResolvedValue(CONFIG);
+    readCohort.mockResolvedValue([cohortEntry("fresh"), cohortEntry("stale", { behaviourCollectable: false, unmaintained: true })]);
+    resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
+    const queries: string[] = [];
+    createGitHubClient.mockReturnValue({
+      get: vi.fn().mockResolvedValue({ default_branch: "main" }),
+      graphql: vi.fn(async (query: string) => {
+        queries.push(query);
+        return graphql(query);
+      }),
+      paginate: (path: string) =>
+        (async function* pages() {
+          yield path === "/orgs/hmcts/repos"
+            ? [
+                { name: "fresh", default_branch: "main" },
+                { name: "stale", default_branch: "main" }
+              ]
+            : [];
+        })(),
+      requestsIssued: () => 1,
+      callOutcomes: () => [],
+      rateLimitWaits: () => []
+    });
+
+    await main(["collect", "--config", "m.yaml", "--tolerate-partial"]);
+    return queries.filter((query) => query.includes("DefaultBranchHumanCommits"));
+  }
+
+  const HUMAN_HISTORY = {
+    repository: {
+      defaultBranchRef: {
+        target: {
+          history: {
+            pageInfo: { hasNextPage: false, endCursor: null },
+            nodes: [{ committedDate: "2026-07-01T00:00:00Z", author: { name: "Alice", user: { login: "alice", __typename: "User" } } }]
+          }
+        }
+      }
+    }
+  };
+
+  it("should answer the last human commit from the cached merges without walking the fresh repository's history", async () => {
+    loadCachedMerges.mockResolvedValueOnce({
+      pullRequests: [{ identifier: 1, mergedAt: new Date("2026-08-02T00:00:00Z"), authorLogin: "alice", authorType: "User", reviews: [], checks: [] }],
+      directCommits: []
+    });
+
+    const walks = await collectWithHistory(async () => HUMAN_HISTORY);
+
+    expect(storedMaintenance("fresh")).toEqual({ lastHumanCommitAt: new Date("2026-08-02T00:00:00Z") });
+    // The one walk is the stale repository's: the shallow path has no cache to consult.
+    expect(walks).toHaveLength(1);
+    expect(storedMaintenance("stale")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+  });
+
+  it("should walk the history where the cached merges hold no human change", async () => {
+    const walks = await collectWithHistory(async () => HUMAN_HISTORY);
+
+    expect(walks).toHaveLength(2);
+    expect(storedMaintenance("fresh")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+  });
+
+  it("should leave the answer absent and warn when the history walk fails", async () => {
+    await collectWithHistory(async (query) =>
+      query.includes("DefaultBranchHumanCommits") ? { repository: { defaultBranchRef: { target: { history: { nodes: "no" } } } } } : {}
+    );
+
+    expect(recordRepositoryState.mock.calls.map(([, repository]) => repository)).toEqual(["fresh", "stale"]);
+    expect(storedMaintenance("fresh")).toBeUndefined();
+    expect(storedMaintenance("stale")).toBeUndefined();
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("the last human commit was not collected"));
   });
 
   /** What one repository's stored state says about SonarCloud after a run. */

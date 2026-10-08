@@ -102,6 +102,21 @@ export const commitHistorySchema = z.object({
     .nullish()
 });
 
+const humanCommitNode = z.object({
+  committedDate: instant,
+  author: z.object({ user: actor, name: z.string().nullish() }).nullish()
+});
+
+export const humanCommitHistorySchema = z.object({
+  repository: z
+    .object({
+      defaultBranchRef: z
+        .object({ target: z.object({ history: z.object({ pageInfo, nodes: z.array(humanCommitNode.nullish()) }).nullish() }).nullish() })
+        .nullish()
+    })
+    .nullish()
+});
+
 /**
  * Parses one GraphQL body, reporting a rejected shape as a collection failure.
  *

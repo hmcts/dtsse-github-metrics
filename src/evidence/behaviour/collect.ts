@@ -1,10 +1,12 @@
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { CheckConclusion, type CheckFact, type DirectCommitFact, type PullRequestFact, type ReviewFact, type ReviewState } from "../domain/facts.ts";
+import { type MaintenanceEvidence, maintenanceEvidence } from "../domain/standards.ts";
 import type { GitHubClient } from "../github/client.ts";
 import type { TraceabilityConfiguration } from "../policy/schema.ts";
 import { githubTimestamp } from "../window/instant.ts";
 import type { ReportingWindow } from "../window/window.ts";
-import { checkQuery, commitHistoryQuery, mergedPullRequestQuery, reviewQuery } from "./queries.ts";
+import { isHumanCommitAuthor } from "./analysis.ts";
+import { checkQuery, commitHistoryQuery, humanCommitHistoryQuery, mergedPullRequestQuery, reviewQuery } from "./queries.ts";
 import {
   type CheckConnection,
   type CheckContext,
@@ -12,6 +14,7 @@ import {
   type CommitNode,
   checkPageSchema,
   commitHistorySchema,
+  humanCommitHistorySchema,
   mergedPullRequestSchema,
   type PullRequestNode,
   parseResponse,
@@ -322,6 +325,55 @@ export async function collectDirectCommits(
     cursor = history.pageInfo.endCursor ?? null;
   }
   return [...facts.values()].sort((left, right) => left.committedAt.getTime() - right.committedAt.getTime() || left.sha.localeCompare(right.sha));
+}
+
+/** How many history pages the human-commit search reads before it gives up and says how far it got. */
+export const HUMAN_COMMIT_PAGE_CAP = 10;
+
+/**
+ * The newest human commit on the default branch since `since`, or how far back the search looked for one.
+ *
+ * Stops at the FIRST commit passing `isHumanCommitAuthor`: history is walked newest first, so that is the answer.
+ * Where none is found the two endings are told apart. A walk that ran out of history reached `since`, so that
+ * is how far back it looked; a walk that hit `HUMAN_COMMIT_PAGE_CAP` looked only as far as the oldest commit it
+ * read, and the report must not read beyond it as "nobody". A branch with no commits returns neither instant.
+ */
+export async function findLastHumanCommit(
+  client: GitHubClient,
+  organization: string,
+  repository: string,
+  since: Date,
+  excluded: ReadonlySet<string>,
+  bots: ReadonlySet<string>
+): Promise<MaintenanceEvidence> {
+  let cursor: string | null = null;
+  let oldest: Date | undefined;
+  for (let page = 0; page < HUMAN_COMMIT_PAGE_CAP; page += 1) {
+    // `unknown` for the same circularity reason as the pull-request loop above.
+    const data: unknown = await client.graphql(humanCommitHistoryQuery(), { organization, repository, since: githubTimestamp(since), cursor });
+    const parsed = parseResponse(humanCommitHistorySchema, data, "commit history data");
+    const history = parsed.repository?.defaultBranchRef?.target?.history;
+    if (history === undefined || history === null) {
+      // An empty repository, or one whose default branch nobody has pushed to.
+      return maintenanceEvidence({});
+    }
+    for (const node of history.nodes) {
+      if (node == null) {
+        continue;
+      }
+      if (isHumanCommitAuthor(node.author?.user?.login, node.author?.user?.__typename, node.author?.name ?? undefined, excluded, bots)) {
+        return maintenanceEvidence({ lastHumanCommitAt: node.committedDate });
+      }
+      if (oldest === undefined || node.committedDate.getTime() < oldest.getTime()) {
+        oldest = node.committedDate;
+      }
+    }
+    if (!history.pageInfo.hasNextPage) {
+      return maintenanceEvidence({ searchedBackTo: since });
+    }
+    cursor = history.pageInfo.endCursor ?? null;
+  }
+  return maintenanceEvidence({ searchedBackTo: oldest ?? since });
 }
 
 /**
