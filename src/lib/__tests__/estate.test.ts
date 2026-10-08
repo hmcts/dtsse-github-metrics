@@ -32,6 +32,8 @@
 import { describe, expect, it } from "vitest";
 import { dimensionSlices, totalValue } from "@/lib/chart";
 import {
+  cohortRows,
+  dimensionRows,
   ESTATE_DIMENSIONS,
   type EstateDimension,
   EXPANDED_PARAMETER,
@@ -494,6 +496,44 @@ describe("publicRepositories", () => {
     // The opposite direction from `matchesVisibility`, and right for the opposite reason: a figure whose whole
     // claim is that every member is public cannot hold a repository whose visibility is unknown.
     expect(publicRepositories([{ repository: "unstated", team: "dtsse" }])).toEqual([]);
+  });
+});
+
+describe("the wheels' cohorts", () => {
+  const MIXED: RepositoryRow[] = [
+    { repository: "open", team: "dtsse", visibility: "public" },
+    { repository: "inner", team: "dtsse", visibility: "internal" },
+    { repository: "closed", team: "dtsse", visibility: "private" },
+    { repository: "unstated", team: "dtsse" }
+  ];
+
+  it("should hand the public cohort the public rows alone", () => {
+    expect(cohortRows("public", MIXED).map((entry) => entry.repository)).toEqual(["open"]);
+  });
+
+  it("should hand the all cohort every row, including one whose visibility nobody read", () => {
+    expect(cohortRows("all", MIXED).map((entry) => entry.repository)).toEqual(["open", "inner", "closed", "unstated"]);
+  });
+
+  it("should draw each wheel over its own cohort's rows", () => {
+    for (const dimension of ESTATE_DIMENSIONS) {
+      expect(dimensionRows(dimension, MIXED)).toEqual(cohortRows(dimension.cohort, MIXED));
+    }
+  });
+
+  it("should keep the four stewardship and security wheels on the public estate", () => {
+    const publicOnly = [OWNER_PARAMETER, MAINTAINED_PARAMETER, SIGNALS_PARAMETER, VULNERABILITY_PARAMETER];
+
+    expect(publicOnly.map((parameter) => wheel(parameter).cohort)).toEqual(["public", "public", "public", "public"]);
+  });
+
+  it("should filter the table on a wedge whatever cohort its wheel is counted over", () => {
+    // The selections are read off the parameter and matched against the row; neither looks at the cohort, so an
+    // internal row in a clicked slice stays in the list rather than being dropped for not being public.
+    const internal: RepositoryRow = { repository: "inner", team: "dtsse", visibility: "internal", owner_kind: "person" };
+    const selections = parseSelections((parameter) => (parameter === OWNER_PARAMETER ? "individual" : null));
+
+    expect(matchesSelections(internal, selections)).toBe(true);
   });
 });
 

@@ -76,19 +76,19 @@ an AI readiness column to the repositories table.
 - [x] run the project test suite - must pass before task 4
 
 ### Task 4: Give each estate wheel its own cohort
-- [ ] add a `cohort: "all" | "public"` field to EstateDimension in src/lib/rows.ts, set to "public" on the
+- [x] add a `cohort: "all" | "public"` field to EstateDimension in src/lib/rows.ts, set to "public" on the
       four existing wheels, and add a helper that returns a dimension's rows (`publicRepositories(rows)` or
       `rows`)
-- [ ] split EstateSummary into two labelled groups, each with its own denominator line: an "all repositories"
+- [x] split EstateSummary into two labelled groups, each with its own denominator line: an "all repositories"
       group (counted over every row it is handed) and the existing "public repositories" group; the public
       group keeps SCOPE_HINT, the all group gets a hint saying it counts every unarchived repository listed,
       including ones the span could not be reported for, which land in the unknown / not-assessed slice
-- [ ] show the "No public repository" empty state for the public group only, so the all-repositories group
+- [x] show the "No public repository" empty state for the public group only, so the all-repositories group
       still draws when the estate has nothing public
-- [ ] check parseSelections/matchesSelections still filter the table correctly regardless of a wheel's cohort
-- [ ] write tests in estate.test.ts (each cohort helper) and list-pages.test.ts or a component test (both
+- [x] check parseSelections/matchesSelections still filter the table correctly regardless of a wheel's cohort
+- [x] write tests in estate.test.ts (each cohort helper) and list-pages.test.ts or a component test (both
       groups render with their own counts; public empty state does not hide the all group)
-- [ ] run the project test suite - must pass before task 5
+- [x] run the project test suite - must pass before task 5
 
 ### Task 5: AI readiness, Enforces review, Enforces CI and Test coverage wheels
 - [ ] let an EstateSlice override its colour with an optional hex, and have dimensionSlices in

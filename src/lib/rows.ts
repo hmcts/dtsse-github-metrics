@@ -326,6 +326,16 @@ export function publicRepositories(rows: readonly RepositoryRow[]): RepositoryRo
   return rows.filter((row) => row.visibility === "public");
 }
 
+/** The rows a cohort's wheels are drawn over: every row handed in, or the public ones alone. */
+export function cohortRows(cohort: EstateCohort, rows: readonly RepositoryRow[]): readonly RepositoryRow[] {
+  return cohort === "public" ? publicRepositories(rows) : rows;
+}
+
+/** The rows one wheel is drawn over, so its slices sum to the denominator its group states. */
+export function dimensionRows(dimension: EstateDimension, rows: readonly RepositoryRow[]): readonly RepositoryRow[] {
+  return cohortRows(dimension.cohort, rows);
+}
+
 /** One estate wheel's slice: what it counts, the word beside it, and the state it is drawn in. */
 export interface EstateSlice {
   /**
@@ -349,11 +359,21 @@ export interface EstateSlice {
   holds: (row: RepositoryRow) => boolean;
 }
 
-/** One wheel: the parameter it filters on, what it is called, what it means, and its slices. */
+/**
+ * Which repositories a wheel is counted over.
+ *
+ * `public` for the questions whose answer is distorted off the public estate by the GitHub Advanced Security
+ * licence — see `publicRepositories` — and `all` for the ones every repository answers on equal terms, where
+ * dropping the internal and private ones would only shrink the sample.
+ */
+export type EstateCohort = "all" | "public";
+
+/** One wheel: the parameter it filters on, what it is called, what it means, whom it counts, and its slices. */
 export interface EstateDimension {
   parameter: string;
   title: string;
   hint: string;
+  cohort: EstateCohort;
   /**
    * Every slice, in best-to-worst order with the unmeasured one last.
    *
@@ -425,6 +445,7 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     parameter: OWNER_PARAMETER,
     title: "Code owner",
     hint: "What owns the repository: a GitHub team, one named individual, or nothing. An individually-owned repository still MEETS the Code owner criterion — there is somebody to ask — so amber here is the bus factor worth weighing rather than a criterion that failed. Nothing owning it is the criterion unmet.",
+    cohort: "public",
     slices: [
       // Neither of the other two, so an absent `owner_kind` lands here — `ownedByIndividual` and `unowned` both
       // document why that is the safe direction, and this slice is where their agreement shows.
@@ -437,6 +458,7 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     parameter: MAINTAINED_PARAMETER,
     title: "Maintained",
     hint: "Whether anything has been pushed to ANY branch inside the policy's window. Deliberately a different question from the Default branch pushed column, which reads the default branch alone — a repository with a busy feature branch is alive here and stale there, and both answers are true of it.",
+    cohort: "public",
     slices: [
       { key: "maintained", label: "Maintained", state: "green", holds: (row) => row.unmaintained === false },
       { key: "unmaintained", label: "Unmaintained", state: "amber", holds: (row) => row.unmaintained === true },
@@ -452,6 +474,7 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     parameter: SIGNALS_PARAMETER,
     title: "Hygiene",
     hint: "Whether every hygiene signal is on: secret scanning, push protection, vulnerability alerts, and automated dependency updates — the last of which either Renovate or Dependabot satisfies. These are the four checks the table's Hygiene column expands into and the same reading of them, so a repository failing here fails at least one of those columns. One or more off means a check was read and answered no; no state stated means nothing answered no and something could not be read at all.",
+    cohort: "public",
     slices: [
       // PASS IS ALL FOUR AND NOTHING LESS, which is what makes this wheel worth drawing where the code-scanning one
       // it replaced was not: a single control answering for itself said little, and the largest slice of that wheel
@@ -468,6 +491,7 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     parameter: VULNERABILITY_PARAMETER,
     title: "Vulnerabilities",
     hint: "Live vulnerabilities from BOTH sources, by their worst severity: the build pipeline's own dependency scan, and GitHub's Dependabot alerts. High means at least one live critical or high finding on either source. Medium means live findings and none of them critical or high — including findings the source could not grade. Clear means nothing live on whichever source read this repository, which for some of them is one of the two rather than both. Unscanned is the blind spot — no dependency-scan report has been published AND Dependabot is not watching it.",
+    cohort: "public",
     slices: [
       // WORST SEVERITY WINS, on either source: one critical Dependabot alert puts a repository here whatever the
       // build scan says, because one source finding less does not clear what the other raised.
