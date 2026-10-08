@@ -120,11 +120,11 @@ an AI readiness column to the repositories table.
 - [x] run the project test suite - must pass before task 6
 
 ### Task 6: AI readiness column in the repositories table
-- [ ] add an "AI readiness" column to RepositoriesTable directly left of "Assurance", rendering
+- [x] add an "AI readiness" column to RepositoriesTable directly left of "Assurance", rendering
       `<RAGLabel label={row.readiness} />` and sorting by `severity(row.readiness)` from src/lib/rag.ts
-- [ ] give the column a hint saying it is the readiness policy's label for the repository
-- [ ] write tests in RepositoriesTable.test.tsx for the column's position, badge text and sort order
-- [ ] run the project test suite - must pass before task 7
+- [x] give the column a hint saying it is the readiness policy's label for the repository
+- [x] write tests in RepositoriesTable.test.tsx for the column's position, badge text and sort order
+- [x] run the project test suite - must pass before task 7
 
 ### Task 7: Verify acceptance criteria
 - [ ] run the full test suite

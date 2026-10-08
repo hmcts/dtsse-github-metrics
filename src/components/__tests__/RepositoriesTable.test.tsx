@@ -78,8 +78,7 @@ const ROWS: RepositoryRow[] = [
     team: "delivery",
     default_branch_committed_at: "2026-09-10T00:00:00Z",
     visibility: "public",
-    // Still on the row though no longer a COLUMN here: the readiness donut above the table filters on it, and
-    // the label moved to /teams rather than being deleted.
+    // Crossed over with `docs`, which is green, so the AI readiness column's sort has an order to get wrong.
     readiness: "red",
     merged_pull_requests: 3,
     direct_commits: 9,
@@ -352,8 +351,28 @@ describe("RepositoriesTable columns", () => {
       // criteria, so a figure the Assurance column ignores must not sit inside the run of columns that explain it.
       "Unsuppressed Crit CVEs",
       "Production",
+      // Back from 2026-10-08, directly left of the grade: a second conclusion beside the first, not evidence.
+      "AI readiness",
       "Assurance"
     ]);
+  });
+
+  it("labels AI readiness in the readiness policy's own words, and Not assessed where it graded nothing", () => {
+    mount();
+
+    expect(cellOf("web", "AI readiness")?.textContent).toBe("Blocked");
+    expect(cellOf("docs", "AI readiness")?.textContent).toBe("Ready");
+    expect(cellOf("api", "AI readiness")?.textContent).toBe("Not assessed");
+    expect(cellOf("web", "AI readiness")?.outerHTML).toContain("red");
+    expect(cellOf("docs", "AI readiness")?.outerHTML).toContain("green");
+  });
+
+  it("sorts AI readiness by what the label says, keeping an ungraded repository last both ways", () => {
+    mount();
+
+    // Ready before Blocked ascending, which spelling would reverse; `api` was graded nothing and stays last.
+    expect(sortBy("AI readiness")).toEqual(["docs", "web", "api"]);
+    expect(sortBy("AI readiness")).toEqual(["web", "docs", "api"]);
   });
 
   it("prints Yes, No and a dash, never a zero for a criterion that was not read", () => {

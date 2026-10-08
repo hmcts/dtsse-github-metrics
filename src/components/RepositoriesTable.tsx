@@ -6,12 +6,13 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Fragment, type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
+import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
 import { ToggleTick } from "@/components/ToggleTick";
 import { filterTarget } from "@/lib/filter";
 import { ABSENT, day, quantity } from "@/lib/format";
 import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE, productionHint } from "@/lib/production";
-import { RAG_BADGE, RAG_BORDER } from "@/lib/rag";
+import { RAG_BADGE, RAG_BORDER, severity } from "@/lib/rag";
 import {
   ASSURANCE_CRITERIA,
   ASSURANCE_GRADE_LABEL,
@@ -132,7 +133,8 @@ function cveColumn(column: CveColumn): Column {
  * Readiness is the one whose removal is a decision rather than a tidy-up. It grades READINESS FOR AI ENABLEMENT
  * off ways-of-working conditions, which is a different question from the assurance criteria this page now
  * answers — so it moves to `/teams`, where the ways-of-working material belongs, and to a repository's own page.
- * It is not deleted and its thresholds are untouched.
+ * It is not deleted and its thresholds are untouched. From 2026-10-08 it is back as an `AI readiness` column beside
+ * the grade, so the table and the AI readiness wheel above it can be read against each other.
  *
  * `Default branch pushed` and `Visibility` are the "basic info" the page still carries, and both are load-bearing
  * rather than decoration: the first is the default sort and the second the default filter, so a reader can see
@@ -201,6 +203,15 @@ const COLUMNS: readonly Column[] = [
     align: "center",
     read: (row) => answerOrder(row.production),
     hint: "Whether this repository is treated as deploying to production — named in the organisation's production-approvals list, named in this service's own production list, or marked by hand. Each cell says which. An attribute rather than a verdict, so it carries no colour."
+  },
+  // Back from 2026-10-08, beside the assurance grade rather than among the criteria: it answers a different
+  // question — readiness for AI enablement — and reads as a second conclusion, not as evidence for the first.
+  // Sorted by `severity`, so the order is ready, caution, blocked, cannot assess, and an ungraded row goes last.
+  {
+    key: "readiness",
+    label: "AI readiness",
+    read: (row) => severity(row.readiness),
+    hint: "The readiness policy's label for this repository: Ready, Caution, Blocked, Cannot assess where half the question could not be read, or Not assessed where the policy graded nothing."
   },
   // Last, from 2026-09-15: the grade is the conclusion the criterion columns build to, so it reads after its
   // own evidence rather than before it. Its own vocabulary rather than readiness's — see `ASSURANCE_GRADE_LABEL`.
@@ -537,6 +548,9 @@ export function RepositoriesTable({
                       absence reads as an empty cell rather than as "no". The dash keeps "not in the list" apart
                       from "the list could not be read", which a blank could not say. */}
                   <Answer value={row.production} source={row.production_source} />
+                  <td className="py-2 pr-3">
+                    <RAGLabel label={row.readiness} />
+                  </td>
                   <td className="py-2 pr-3">
                     <AssuranceLabel grade={row.assurance?.grade} />
                   </td>
