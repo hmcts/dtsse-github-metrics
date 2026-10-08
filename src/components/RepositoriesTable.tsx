@@ -6,12 +6,13 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Fragment, type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
+import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
 import { ToggleTick } from "@/components/ToggleTick";
 import { filterTarget } from "@/lib/filter";
 import { ABSENT, day, quantity } from "@/lib/format";
 import { PRODUCTION_DOT, PRODUCTION_LABEL, PRODUCTION_TOGGLE_ACTIVE, PRODUCTION_TOGGLE_INACTIVE, productionHint } from "@/lib/production";
-import { RAG_BADGE, RAG_BORDER } from "@/lib/rag";
+import { RAG_BADGE, RAG_BORDER, severity } from "@/lib/rag";
 import {
   ASSURANCE_CRITERIA,
   ASSURANCE_GRADE_LABEL,
@@ -29,6 +30,7 @@ import {
   cveCount,
   cveDetail,
   cveOrder,
+  type EstateSelections,
   EXPAND_LABEL,
   EXPANDED_PARAMETER,
   EXPANDED_VALUE,
@@ -57,7 +59,7 @@ import {
 } from "@/lib/rows";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { AssuranceGrade, AssuranceOutcome, ProductionSource, RepositoryRow, Visibility } from "@/lib/types";
-import { withWeeks } from "@/lib/weeks";
+import { withSpan, withWeeks } from "@/lib/weeks";
 
 /**
  * Every configured repository in one table: what the collection found about it, and what it did not.
@@ -131,7 +133,8 @@ function cveColumn(column: CveColumn): Column {
  * Readiness is the one whose removal is a decision rather than a tidy-up. It grades READINESS FOR AI ENABLEMENT
  * off ways-of-working conditions, which is a different question from the assurance criteria this page now
  * answers — so it moves to `/teams`, where the ways-of-working material belongs, and to a repository's own page.
- * It is not deleted and its thresholds are untouched.
+ * It is not deleted and its thresholds are untouched. From 2026-10-08 it is back as an `AI readiness` column beside
+ * the grade, so the table and the AI readiness wheel above it can be read against each other.
  *
  * `Default branch pushed` and `Visibility` are the "basic info" the page still carries, and both are load-bearing
  * rather than decoration: the first is the default sort and the second the default filter, so a reader can see
@@ -200,6 +203,15 @@ const COLUMNS: readonly Column[] = [
     align: "center",
     read: (row) => answerOrder(row.production),
     hint: "Whether this repository is treated as deploying to production — named in the organisation's production-approvals list, named in this service's own production list, or marked by hand. Each cell says which. An attribute rather than a verdict, so it carries no colour."
+  },
+  // Back from 2026-10-08, beside the assurance grade rather than among the criteria: it answers a different
+  // question — readiness for AI enablement — and reads as a second conclusion, not as evidence for the first.
+  // Sorted by `severity`, so the order is ready, caution, blocked, cannot assess, and an ungraded row goes last.
+  {
+    key: "readiness",
+    label: "AI readiness",
+    read: (row) => severity(row.readiness),
+    hint: "The readiness policy's label for this repository: Ready, Caution, Blocked, Cannot assess where half the question could not be read, or Not assessed where the policy graded nothing."
   },
   // Last, from 2026-09-15: the grade is the conclusion the criterion columns build to, so it reads after its
   // own evidence rather than before it. Its own vocabulary rather than readiness's — see `ASSURANCE_GRADE_LABEL`.
@@ -277,18 +289,22 @@ const EXPANDED_COLUMNS: readonly Column[] = COLUMNS.flatMap((entry) => {
  */
 const DEFAULT_COLUMN = COLUMNS.find((entry) => entry.key === "pushed") as Column;
 
+/** What a table drawn without the wheels is filtered by: no wedge at all. */
+const NO_SELECTIONS: EstateSelections = new Map();
+
 export function RepositoriesTable({
   rows,
   weeks,
-  action
+  action,
+  wheels = true
 }: {
   rows: readonly RepositoryRow[];
   /**
    * The span this table's drill-through links carry, or nothing from a page that states no window.
    *
    * A team's page passes its resolved span, so following a repository out of it stays in the window the reader was
-   * reading the team at. `/repositories` passes nothing: it states no window, and naming the span it pins would
-   * reset the reader's preference through `proxy` — see `withWeeks`.
+   * reading the team at. `/repositories` passes the default span it is pinned to, from 2026-10-08, so a repository
+   * opened from the list shows the readiness label the list showed. The AI readiness heading names the span too.
    */
   weeks?: number;
   /**
@@ -300,6 +316,14 @@ export function RepositoriesTable({
    * holds and neither of which this table has any other use for.
    */
   action?: ReactNode;
+  /**
+   * Whether the estate wheels' parameters narrow this table, which only the page drawing the wheels wants.
+   *
+   * `false` on a team's page. Its links have carried `?label=` since the readiness donut stood there, and `label` is
+   * a wheel's parameter again on `/repositories` — so a bookmark that once filtered a team's donut would otherwise
+   * narrow the team's list with no control on the page to show or clear it.
+   */
+  wheels?: boolean;
 }) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
@@ -313,8 +337,8 @@ export function RepositoriesTable({
   const expanded = parseExpanded((parameter) => searchParameters.get(parameter));
   // THE WEDGES THE READER HAS CLICKED, read through the same hook as every other control: the wheels above this
   // table write their slice keys to the query and this is where they narrow the list. A page that draws no wheels
-  // — a team's — simply finds none of the parameters set.
-  const selections = parseSelections((parameter) => searchParameters.get(parameter));
+  // — a team's — reads none of them; see `wheels`.
+  const selections = wheels ? parseSelections((parameter) => searchParameters.get(parameter)) : NO_SELECTIONS;
   const columns = expanded ? EXPANDED_COLUMNS : COLUMNS;
   const found = filterRepositories(rows, term, production, visibilities, selections);
   const ordered = column === null ? orderRepositories(found) : sorted(found, column.read, direction);
@@ -399,8 +423,8 @@ export function RepositoriesTable({
           {/* THREE INDEPENDENT TOGGLES rather than one tri-state, so "public and internal but not private" is
             expressible — which is the obvious question for a page about coding in the open. They read as the
             Production toggle does, `aria-pressed` and no ×, for its reason. They do NOT move the summary wheels
-            above: those are drawn over the public estate and say so, so a reader looking an internal repository
-            up in the table does not silently rewrite the figures they came to read. */}
+            above: each group is drawn over its own stated cohort, so a reader looking an internal repository up in
+            the table does not silently rewrite the figures they came to read. */}
           {VISIBILITIES.map((visibility) => (
             <button
               key={visibility}
@@ -461,7 +485,9 @@ export function RepositoriesTable({
                 {columns.map((entry, index) => (
                   <SortHeader
                     key={entry.key}
-                    label={entry.label}
+                    // The readiness label depends on the window, so its heading names the span the links below carry.
+                    // Relabelled here rather than in `COLUMNS`, whose instances the sort compares by identity.
+                    label={entry.key === "readiness" && weeks !== undefined ? withSpan(entry.label, weeks) : entry.label}
                     active={entry === (column ?? DEFAULT_COLUMN)}
                     direction={direction}
                     align={entry.align}
@@ -524,6 +550,9 @@ export function RepositoriesTable({
                       absence reads as an empty cell rather than as "no". The dash keeps "not in the list" apart
                       from "the list could not be read", which a blank could not say. */}
                   <Answer value={row.production} source={row.production_source} />
+                  <td className="py-2 pr-3">
+                    <RAGLabel label={row.readiness} />
+                  </td>
                   <td className="py-2 pr-3">
                     <AssuranceLabel grade={row.assurance?.grade} />
                   </td>

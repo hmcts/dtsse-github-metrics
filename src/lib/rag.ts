@@ -68,6 +68,15 @@ export const RAG_HEX: Record<RAGState, string> = {
   none: "#64748b"
 };
 
+/**
+ * The one chart mark that is not a state: a deeper green for a slice that is better than good.
+ *
+ * Not a sixth `RAGState`, because nothing it marks is a different verdict — a gate requiring two approvals clears
+ * the policy exactly as one requiring a single approval does. It exists only on a wheel, where the reader is looking
+ * at the whole estate at once and the distinction is the point of the picture. See `EstateSlice.hex`.
+ */
+export const STRONG_GOOD_HEX = "#16a34a";
+
 export function borderClass(label: ReadinessLabel | null | undefined): string {
   return RAG_BORDER[state(label)];
 }

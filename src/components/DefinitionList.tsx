@@ -14,7 +14,7 @@ import { type Tone, valueClass } from "@/lib/tone";
  * `<dl>`: a screen reader reads "Protected, yes" as the pair it is, and no header row is invented
  * for two columns that need none.
  *
- * Cards are still right for a headline figure — the cohort row, the open pull-request counts, the
+ * Cards are still right for a headline figure — the cohort row, the active contributors, the
  * Sonar measures — where the number is what the reader came for and the label only names it. The
  * split is which of the two is being read: a figure, or a setting's answer.
  *

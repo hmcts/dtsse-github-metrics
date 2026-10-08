@@ -306,7 +306,7 @@ async function collectRepository(
     return [];
   });
 
-  // AFTER the fills, so the cache holds this run's merges. The newest human change in it is the last human commit
+  // AFTER the fills, so the cache holds this run's merges. The newest human direct commit in it is the last human commit
   // only where both fills worked and the window reaches today: a failed fill leaves older facts standing in for
   // this run's, and a backfill (`--to` in the past) ends before newer commits. Otherwise the history walk answers.
   // A cache that cannot be read is not a failure of its own, for the same reason.
@@ -340,8 +340,9 @@ async function collectRepository(
 /**
  * When a person last committed to one repository's default branch, for the Maintenance section.
  *
- * The window's cached merges answer it for free wherever they hold a human change — most active repositories —
- * and the bounded history walk answers it otherwise. A walk that fails is warned, counted once and leaves the
+ * The window's cached direct commits answer it for free wherever they hold a person's, and the bounded history
+ * walk answers it otherwise — including every repository whose people only merge pull requests, because the
+ * cached pull requests are not narrowed to the default branch. A walk that fails is warned, counted once and leaves the
  * answer absent, which the report reads as not collected rather than as nobody.
  */
 async function lastHumanCommit(

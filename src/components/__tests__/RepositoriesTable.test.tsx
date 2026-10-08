@@ -78,8 +78,7 @@ const ROWS: RepositoryRow[] = [
     team: "delivery",
     default_branch_committed_at: "2026-09-10T00:00:00Z",
     visibility: "public",
-    // Still on the row though no longer a COLUMN here: the readiness donut above the table filters on it, and
-    // the label moved to /teams rather than being deleted.
+    // Crossed over with `docs`, which is green, so the AI readiness column's sort has an order to get wrong.
     readiness: "red",
     merged_pull_requests: 3,
     direct_commits: 9,
@@ -193,8 +192,13 @@ function criterionCells(label: string): (HTMLElement | undefined)[] {
  * anything beginning with it. An unanchored match throws "found multiple elements" — which is at least loud, but
  * a substring that matched exactly one heading by luck would silently assert against the wrong column.
  */
+/** A heading's whole name as a pattern, its brackets escaped — "AI readiness (12 weeks)" has some. */
+function exactly(label: string): RegExp {
+  return new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+}
+
 function headerCell(label: string): HTMLElement {
-  return screen.getByRole("columnheader", { name: new RegExp(`^${label}$`) });
+  return screen.getByRole("columnheader", { name: exactly(label) });
 }
 
 /**
@@ -205,7 +209,7 @@ function headerCell(label: string): HTMLElement {
  * column that has a hint, which is all of them.
  */
 function header(label: string): HTMLElement {
-  return within(headerCell(label)).getByRole("button", { name: new RegExp(`^${label}$`) });
+  return within(headerCell(label)).getByRole("button", { name: exactly(label) });
 }
 
 /** Sort on a column and report the order it left, so a click reads as one line in a test. */
@@ -352,8 +356,29 @@ describe("RepositoriesTable columns", () => {
       // criteria, so a figure the Assurance column ignores must not sit inside the run of columns that explain it.
       "Unsuppressed Crit CVEs",
       "Production",
+      // Back from 2026-10-08, directly left of the grade: a second conclusion beside the first, not evidence.
+      // Named with the span it was read at, which is the one this table's links carry.
+      "AI readiness (12 weeks)",
       "Assurance"
     ]);
+  });
+
+  it("labels AI readiness in the readiness policy's own words, and Not assessed where it graded nothing", () => {
+    mount();
+
+    expect(cellOf("web", "AI readiness (12 weeks)")?.textContent).toBe("Blocked");
+    expect(cellOf("docs", "AI readiness (12 weeks)")?.textContent).toBe("Ready");
+    expect(cellOf("api", "AI readiness (12 weeks)")?.textContent).toBe("Not assessed");
+    expect(cellOf("web", "AI readiness (12 weeks)")?.outerHTML).toContain("red");
+    expect(cellOf("docs", "AI readiness (12 weeks)")?.outerHTML).toContain("green");
+  });
+
+  it("sorts AI readiness by what the label says, keeping an ungraded repository last both ways", () => {
+    mount();
+
+    // Ready before Blocked ascending, which spelling would reverse; `api` was graded nothing and stays last.
+    expect(sortBy("AI readiness (12 weeks)")).toEqual(["docs", "web", "api"]);
+    expect(sortBy("AI readiness (12 weeks)")).toEqual(["web", "docs", "api"]);
   });
 
   it("prints Yes, No and a dash, never a zero for a criterion that was not read", () => {
@@ -611,6 +636,12 @@ describe("RepositoriesTable owner cell", () => {
     expect(screen.getByRole("link", { name: "ours" }).getAttribute("href")).toBe("/repositories/ours");
   });
 
+  it("leaves the AI readiness heading unqualified where it was handed no span", () => {
+    render(<RepositoriesTable rows={OWNERS} />);
+
+    expect(screen.getByRole("columnheader", { name: /^AI readiness/ }).textContent).not.toContain("week");
+  });
+
   it("marks one person and links nothing, there being no team page for them", () => {
     // THE LINK THIS CHANGE HAD TO NOT LEAVE BEHIND. `/teams` lists teams only, so `/teams/a1i-hussain` is the
     // not-found page — and 206 repositories of this estate are owned by one person.
@@ -700,10 +731,10 @@ describe("RepositoriesTable filtering", () => {
   });
 
   it("ignores a stale donut parameter rather than filtering on it", () => {
-    // LINKS SHARED BEFORE THIS CHANGE still carry `?label=green&review=multiple`. They must show the whole table
+    // LINKS SHARED BEFORE THIS CHANGE still carry `?unreviewed=above&security=high`. They must show the whole table
     // rather than an empty one: the dimension no longer exists, so the honest reading of the parameter is that it
-    // means nothing, not that it matches nothing.
-    url("weeks=12&label=green&review=multiple");
+    // means nothing, not that it matches nothing. `label`, `review`, `checks` and `coverage` are wheels again.
+    url("weeks=12&unreviewed=above&security=high");
     mount();
 
     expect(chips()).toEqual([]);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { filterTarget, matches } from "@/lib/filter";
+import { allVisibilitiesTarget } from "@/lib/rows";
 
 describe("filterTarget", () => {
   it("writes the term into the query", () => {
@@ -46,5 +47,25 @@ describe("matches", () => {
   it("matches everything for an empty or blank term", () => {
     expect(matches("hmcts/api-service", "")).toBe(true);
     expect(matches("hmcts/api-service", "  ")).toBe(true);
+  });
+});
+
+describe("allVisibilitiesTarget", () => {
+  it("writes the slice and turns every visibility on when a slice is selected", () => {
+    expect(allVisibilitiesTarget("/repositories", "", "review", "multiple")).toBe("/repositories?public=true&internal=true&private=true&review=multiple");
+  });
+
+  it("overrides a visibility the reader had turned off, and keeps every other parameter", () => {
+    const target = new URLSearchParams(
+      allVisibilitiesTarget("/repositories", "?repository=api&public=true&private=false&owner=team", "checks", "none").split("?")[1]
+    );
+
+    expect(Object.fromEntries(target)).toEqual({ repository: "api", public: "true", private: "true", internal: "true", owner: "team", checks: "none" });
+  });
+
+  it("removes only the slice when it is cleared, leaving the visibilities as the reader has them", () => {
+    expect(allVisibilitiesTarget("/repositories", "?public=true&internal=false&private=true&review=multiple", "review", "")).toBe(
+      "/repositories?public=true&internal=false&private=true"
+    );
   });
 });

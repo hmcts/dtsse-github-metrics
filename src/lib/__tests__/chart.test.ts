@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { distributionSlices, type PieSlice } from "@/lib/chart";
-import { RAG_HEX, RAG_STATES } from "@/lib/rag";
+import { dimensionSlices, distributionSlices, type PieSlice } from "@/lib/chart";
+import { RAG_HEX, RAG_STATES, STRONG_GOOD_HEX } from "@/lib/rag";
+import type { EstateDimension } from "@/lib/rows";
 
 /** The counts a builder returned, keyed on the words its legend reads. */
 function counts(built: readonly PieSlice[]): Record<string, number> {
@@ -50,5 +51,25 @@ describe("distributionSlices", () => {
 
   it("adds nothing where the caller distributes labels rather than an estate", () => {
     expect(counts(distributionSlices({ green: 2 }))["Not assessed"]).toBe(0);
+  });
+});
+
+describe("dimensionSlices", () => {
+  const DIMENSION: EstateDimension = {
+    parameter: "review",
+    title: "Enforces review",
+    hint: "How many approvals the gate requires.",
+    cohort: "all",
+    slices: [
+      { key: "multiple", label: "Multiple", state: "green", hex: STRONG_GOOD_HEX, holds: (row) => (row.required_approving_reviews ?? 0) >= 2 },
+      { key: "required", label: "Enforced", state: "green", holds: (row) => row.required_approving_reviews === 1 }
+    ]
+  };
+
+  it("draws a slice in its own hex where it states one, and in its state's hex otherwise", () => {
+    const built = dimensionSlices(DIMENSION, [{ repository: "a", team: "t", required_approving_reviews: 2 }]);
+
+    expect(built.map((slice) => slice.color)).toEqual([STRONG_GOOD_HEX, RAG_HEX.green]);
+    expect(built.map((slice) => slice.value)).toEqual([1, 0]);
   });
 });

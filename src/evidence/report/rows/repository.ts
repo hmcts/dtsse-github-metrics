@@ -11,6 +11,7 @@ import { reportedAssurance } from "../contract/assurance.ts";
 import { cveReport } from "../contract/cve.ts";
 import { storedGate } from "../contract/merge-gate.ts";
 import { reportedAlerts } from "../contract/security.ts";
+import { storedSonar } from "../contract/sonar.ts";
 import type { MeasuredRow } from "../measured.ts";
 import { behaviourFigures, unreportedDetail } from "./figures.ts";
 
@@ -127,6 +128,10 @@ export function repositoryRow(
     required_approving_reviews: gate.gate === undefined ? undefined : requiredApprovals(gate.gate),
     required_status_checks: gate.gate === undefined ? undefined : requiredContexts(gate.gate).length,
     ...behaviourFigures(policy, merges, measured),
+    // THROUGH `storedSonar` and not read off the payload directly, so the estate's Test coverage wheel and the
+    // repository page's coverage card agree on which stored measure counts. Absent where no project resolved, its
+    // measures went unread or it sent no coverage metric — the wheel's Unknown, and never 0%.
+    sonar_coverage: storedSonar(state.payload, state.fetchedAt.toISOString()).measures?.coverage,
     security: reportedAlerts(payload.securityAlerts),
     // THE COLUMN OVER THE UNION OF THE TWO LISTS, in both directions, and `undefined` where none of the three has
     // an answer — `reportedProduction` holds the whole rule, including the fold that lets a repository the graph

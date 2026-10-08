@@ -17,7 +17,18 @@ import { stripAbsent } from "../absent.ts";
  * An unknown label sorts last rather than throwing, so a label added to the domain appears at the end of a badge
  * row instead of taking a page down.
  */
-const READINESS_ORDER: readonly string[] = ["green", "amber", "red", "cannot_assess"];
+const READINESS_ORDER: readonly string[] = ["green", "amber", "red"];
+
+/**
+ * The label a person's row leaves out, as `domain.reported_repositories` did in the previous service.
+ *
+ * `cannot_assess` is not a grade: it means half the question could not be read, most often a merge gate a
+ * non-administrator cannot see. Beside a person it says only that somebody lacks a permission, and at hmcts
+ * scale it says that about most repositories, crowding out the labels the list exists to show. So it is dropped
+ * here, and `ActorsTable` badges "Cannot assess" only for somebody left with no label at all. The repository
+ * COUNT still covers every repository they contributed to: this changes what the row shows, not who is in it.
+ */
+const UNREPORTED_LABEL = "cannot_assess";
 
 function readinessRank(label: string): number {
   const rank = READINESS_ORDER.indexOf(label);
@@ -80,9 +91,9 @@ export function builtActorRows(
     // neither the order the labels mean anything in nor stable across locales. `combinationKey` normalises the
     // SORT key on its own, so this order was only ever the rendered one, and alphabetical was the wrong choice
     // for it.
-    const labels = [...new Set([...repositories].map((repository) => readinessOf.get(repository)).filter((label) => label !== undefined))].sort(
-      (left, right) => readinessRank(left) - readinessRank(right)
-    );
+    const labels = [
+      ...new Set([...repositories].map((repository) => readinessOf.get(repository)).filter((label) => label !== undefined && label !== UNREPORTED_LABEL))
+    ].sort((left, right) => readinessRank(left) - readinessRank(right));
     return {
       login: spelling.get(login) ?? login,
       // `login` here is already folded, which is what the name map is keyed on. Absent for the 58% of the

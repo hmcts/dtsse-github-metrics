@@ -206,22 +206,29 @@ describe("the three list routes", () => {
   });
 
   /**
-   * NO DRILL-THROUGH LINK CARRIES `weeks`, which is the regression this page must never reintroduce.
+   * EVERY DRILL-THROUGH LINK CARRIES THE PINNED SPAN, from 2026-10-08, whatever span the URL asked for.
    *
-   * `proxy` writes any span a URL names into the `weeks` cookie. So a link out of this page that named its pinned
-   * default would reset a reader who had chosen 26 weeks on the teams pages back to four — silently, on a click
-   * about a repository rather than about a window. Bare paths leave the destination to resolve the remembered
-   * preference. Asserted on the absence of the parameter and not just on the presence of the bare href, because
-   * `toContain` on `/repositories/api` matches `/repositories/api?weeks=4` too.
+   * The list's AI readiness column is read at the default span, and a repository page opened from it used to
+   * resolve the reader's remembered span instead — so a repository Ready here read Caution there. Carrying the
+   * span makes the two agree. `weeks=26` in this page's own URL is ignored, as the page is pinned, so it is the
+   * default and not 26 that the links carry.
    */
-  it("links to a repository and to a team without naming a span", async () => {
+  it("links to a repository and to a team at the span the list was read at", async () => {
     stubService();
     search = new URLSearchParams("weeks=26");
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    expect(markup).toContain('href="/repositories/api"');
-    expect(markup).toContain('href="/teams/platform"');
-    expect(markup).not.toContain("weeks=");
+    expect(markup).toContain('href="/repositories/api?weeks=4"');
+    expect(markup).toContain('href="/teams/platform?weeks=4"');
+    expect(markup).not.toContain("weeks=26");
+  });
+
+  it("names the span on the AI readiness wheel and column", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).toContain("AI readiness (4 weeks)");
+    expect(markup).not.toMatch(/>AI readiness</);
   });
 
   /**
@@ -471,11 +478,12 @@ describe("the three list routes", () => {
    * while drawing from a field nothing populates, and the chips are worse: the donuts were the only way to CREATE
    * one of those filters, so a chip surviving here would be a control a reader can dismiss and never apply.
    */
-  it("draws no donut and no filter chip, the dimensions they carried having moved to /teams", async () => {
+  it("draws no donut and no filter chip for the dimensions that moved to /teams", async () => {
+    // AI readiness, Enforces review, Enforces CI and Test coverage came back as wheels on 2026-10-08; these stay gone.
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    for (const title of ["Readiness", "Peer review enforced", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"]) {
+    for (const title of ["Readiness", "Peer review enforced", "Unreviewed substantial merges", "Security issues"]) {
       expect(markup).not.toContain(`>${title}</h3>`);
     }
     // A chip's own marks rather than a class shared with every heading on the page: it carried a dismiss button
@@ -487,15 +495,15 @@ describe("the three list routes", () => {
   });
 
   it("ignores a stale donut parameter rather than filtering the estate on it", async () => {
-    // Links shared before this change carry `?coverage=high`. The page must show the whole estate: the dimension
+    // Links shared before this change carry `?unreviewed=above`. The page must show the whole estate: the dimension
     // no longer exists, so the honest reading is that the parameter means nothing. `weeks=26` rides along as the
     // other parameter an old bookmark carries, and is ignored on the same principle rather than redirected away.
-    search = new URLSearchParams("coverage=high&label=green&weeks=26");
+    search = new URLSearchParams("unreviewed=above&security=high&weeks=26");
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    expect(markup).toContain('href="/repositories/api"');
-    expect(markup).toContain('href="/repositories/web"');
+    expect(markup).toContain('href="/repositories/api?weeks=4"');
+    expect(markup).toContain('href="/repositories/web?weeks=4"');
     expect(spans()).toEqual(["4", "4", "4"]);
   });
 

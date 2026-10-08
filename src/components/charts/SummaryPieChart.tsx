@@ -9,6 +9,7 @@ import { ToggleTick } from "@/components/ToggleTick";
 import { activeSlices, type PieSlice, totalValue } from "@/lib/chart";
 import { filterTarget } from "@/lib/filter";
 import { percentageOf } from "@/lib/format";
+import { allVisibilitiesTarget } from "@/lib/rows";
 
 /** The hover card's frame, which is inline because recharts styles its tooltip wrapper directly. */
 const TOOLTIP: CSSProperties = {
@@ -17,6 +18,12 @@ const TOOLTIP: CSSProperties = {
   borderRadius: "6px",
   padding: "8px 12px"
 };
+
+/** How far a slice outside the active filter fades, wedge and legend entry alike. */
+const UNSELECTED_OPACITY = 0.35;
+
+/** How far a legend entry counted at zero fades, whatever is selected. */
+const EMPTY_OPACITY = 0.38;
 
 /**
  * A ring over a distribution, and the control that filters the list beneath it on the slice a reader clicks.
@@ -49,7 +56,8 @@ export function SummaryPieChart({
   data,
   height = 175,
   tooltip,
-  parameter
+  parameter,
+  showsAllVisibilities = false
 }: {
   title: string;
   /** Every slice, including the ones counted at zero. */
@@ -60,13 +68,30 @@ export function SummaryPieChart({
   tooltip?: string;
   /** The query parameter this ring filters on. */
   parameter: string;
+  /**
+   * Whether selecting a slice also turns every visibility on in the table, for a wheel counted over all of them.
+   *
+   * Without it the table would stay on its public-only default under a wedge that counted internal and private
+   * repositories too, and show fewer rows than the slice it was filtered by. See `allVisibilitiesTarget`.
+   */
+  showsAllVisibilities?: boolean;
 }) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const total = totalValue(data);
   const wedges = activeSlices(data);
-  /** The slice key in the URL, or the empty string where this dimension is unfiltered. */
-  const active = searchParameters.get(parameter) ?? "";
+  /**
+   * The slice key in the URL, or the empty string where this dimension is unfiltered. A key naming no slice on this
+   * wheel — a bookmark from before a slice was renamed — is unfiltered too, as `parseSelections` treats it for the
+   * table, so the ring does not fade every wedge over a table showing every row.
+   */
+  const requested = searchParameters.get(parameter) ?? "";
+  const active = data.some((slice) => slice.key === requested) ? requested : "";
+  /**
+   * Whether a slice sits outside the active filter, and so fades. Nothing fades while the dimension is
+   * unfiltered: a ring with every slice dimmed would read as a ring with nothing in it.
+   */
+  const unselected = (key: string) => active !== "" && key !== active;
 
   /**
    * Puts the clicked slice in the URL, WITHOUT NAVIGATING.
@@ -92,7 +117,8 @@ export function SummaryPieChart({
    * is carried through: the hook catches up a React transition later, and reading it here would drop it.
    */
   function toggle(key: string) {
-    window.history.replaceState(null, "", filterTarget(pathname, window.location.search, parameter, key === active ? "" : key));
+    const target = showsAllVisibilities ? allVisibilitiesTarget : filterTarget;
+    window.history.replaceState(null, "", target(pathname, window.location.search, parameter, key === active ? "" : key));
   }
 
   return (
@@ -122,7 +148,7 @@ export function SummaryPieChart({
               onClick={(sector) => toggle(clickedKey(sector))}
             >
               {wedges.map((wedge) => (
-                <Cell key={wedge.name} fill={wedge.color} />
+                <Cell key={wedge.name} fill={wedge.color} fillOpacity={unselected(wedge.key) ? UNSELECTED_OPACITY : 1} />
               ))}
             </Pie>
             <Tooltip
@@ -165,8 +191,9 @@ export function SummaryPieChart({
               "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
               slice.key === active ? "bg-slate-800" : null
             )}
-            // Dimmed rather than hidden: the label exists in the report even when nothing is in it.
-            style={{ opacity: slice.value === 0 ? 0.38 : 1 }}
+            // Dimmed rather than hidden: the label exists in the report even when nothing is in it. An entry both
+            // empty and outside the filter takes the fainter of the two.
+            style={{ opacity: Math.min(slice.value === 0 ? EMPTY_OPACITY : 1, unselected(slice.key) ? UNSELECTED_OPACITY : 1) }}
           >
             <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
             <span className="text-xs text-slate-400 group-hover:text-slate-200">{slice.name}</span>

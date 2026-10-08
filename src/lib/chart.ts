@@ -63,8 +63,8 @@ export function distributionSlices(labels: Record<string, number>, unreportable 
  *
  * THE PALETTE RESOLVES HERE. A slice declares which `RAGState` it is, `rag.ts` owns the hex, and this is the one
  * place the two meet — so the wheels have no colour scheme of their own and a wedge matches the table cell under
- * it. The four hexes were validated against the dark surface they are drawn on (`bg-slate-900`, `#0f172a`): all
- * four clear 3:1 contrast, the worst adjacent pair is amber against green at ΔE 7.3 simulated protanopia and 19.6
+ * it. A slice carrying its own `hex` is drawn in that instead, which only `STRONG_GOOD_HEX` does today. The four
+ * hexes were validated against the dark surface they are drawn on (`bg-slate-900`, `#0f172a`): all four clear 3:1 contrast, the worst adjacent pair is amber against green at ΔE 7.3 simulated protanopia and 19.6
  * unsimulated, which is the floor band — legal because every slice also carries its word and its count in the
  * legend and the wedges are separated by a gap, so colour is never the only thing telling two of them apart.
  *
@@ -77,7 +77,7 @@ export function dimensionSlices(dimension: EstateDimension, rows: readonly Repos
     key: slice.key,
     name: slice.label,
     value: rows.filter((row) => slice.holds(row)).length,
-    color: RAG_HEX[slice.state]
+    color: slice.hex ?? RAG_HEX[slice.state]
   }));
 }
 

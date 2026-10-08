@@ -2,8 +2,17 @@ import clsx from "clsx";
 import { EmptyState } from "@/components/EmptyState";
 import { Section } from "@/components/Section";
 import { instant } from "@/lib/format";
-import { type AlertScanSummary, alertActionLabel, alertIdentifier, alertLocation, alertScanSummaries, alertState, alertSubject } from "@/lib/repository";
-import { borderClass, valueClass } from "@/lib/tone";
+import {
+  type AlertScanSummary,
+  alertActionLabel,
+  alertIdentifier,
+  alertLevel,
+  alertLocation,
+  alertScanSummaries,
+  alertState,
+  alertSubject
+} from "@/lib/repository";
+import { alertRecordTone, borderClass, valueClass } from "@/lib/tone";
 import type { SecurityAlertFamilyScan } from "@/lib/types";
 
 /**
@@ -46,10 +55,15 @@ export function AlertDetailSection({ scans }: { scans: readonly SecurityAlertFam
  * The state word is in the heading row and the reason under it, both as text. Nothing here is a `title` — the reason a
  * criterion's sentence moved off the estate table is that a tooltip is not readable on touch and is not reliably
  * announced, and reproducing one here would repeat the fault in the place it was being fixed.
+ *
+ * THE BAR MOVES ONTO THE ROWS ONCE THERE ARE ANY. A family's tone is the worst of its alerts, so one critical alert
+ * drew a red bar down a block of mostly medium and low ones, and the bar read as every alert's level. With rows to
+ * draw, each carries its own bar and the block's stays slate; with none, the block's bar is the only verdict there
+ * is — green for read and clean, slate for an absence — and keeps the family's tone.
  */
 function FamilyBlock({ summary }: { summary: AlertScanSummary }) {
   return (
-    <div className={clsx("bg-slate-900/50 rounded-r py-3 pl-3 pr-4", borderClass(summary.tone))}>
+    <div className={clsx("bg-slate-900/50 rounded-r py-3 pl-3 pr-4", borderClass(summary.alerts.length === 0 ? summary.tone : "neutral"))}>
       <div className="flex flex-wrap items-baseline gap-x-3">
         <h3 className="text-sm font-medium text-slate-200">{summary.family}</h3>
         <span className={clsx("text-xs", valueClass(summary.tone))}>{summary.state}</span>
@@ -61,9 +75,9 @@ function FamilyBlock({ summary }: { summary: AlertScanSummary }) {
 }
 
 /**
- * One family's open alerts as a table: what it is, where, when it was raised, its state, and the link.
+ * One family's open alerts as a table: what it is, how severe, where, when it was raised, its state, and the link.
  *
- * A TABLE AND NOT A LIST, unlike every other block on this page: there are five facts per alert and a reader compares
+ * A TABLE AND NOT A LIST, unlike every other block on this page: there are six facts per alert and a reader compares
  * them DOWN rather than reading each alert as a paragraph — which path is worst, which has been open longest. That is
  * the one thing that makes a `<table>` right rather than a `<dl>`, and the `caption` names which family's alerts these
  * are so the table is not orphaned from the heading above it when a screen reader lists it alone.
@@ -79,8 +93,12 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
         <caption className="sr-only">{`Open ${summary.family} alerts`}</caption>
         <thead className="text-slate-400 border-b border-slate-800">
           <tr>
-            <th scope="col" className="py-2 pr-3 text-left font-medium">
+            {/* `pl-3` lines the heading up with the cells under it: a 4px bar plus `pl-2`. */}
+            <th scope="col" className="py-2 pl-3 pr-3 text-left font-medium">
               Type
+            </th>
+            <th scope="col" className="py-2 pr-3 text-left font-medium">
+              Level
             </th>
             <th scope="col" className="py-2 pr-3 text-left font-medium">
               Location
@@ -99,12 +117,14 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
         <tbody className="divide-y divide-slate-800/50">
           {summary.alerts.map((alert) => (
             <tr key={alert.number} className="hover:bg-slate-800/30">
-              <td className="py-2 pr-3 align-top">
+              {/* The row's own bar, in its Level's tone, so the bar beside an alert is that alert's level. */}
+              <td className={clsx("py-2 pl-2 pr-3 align-top", borderClass(alertRecordTone(alert)))}>
                 <span className="font-mono text-slate-200 break-all">{alertSubject(alert)}</span>
                 {/* The advisory identifier under the package it is about, which is the Dependabot shape: the subject
                     is what a reader acts on and the identifier is what they look up. */}
                 {alertIdentifier(alert) ? <p className="font-mono text-slate-500 mt-0.5 break-all">{alertIdentifier(alert)}</p> : null}
               </td>
+              <td className={clsx("py-2 pr-3 align-top whitespace-nowrap", valueClass(alertRecordTone(alert)))}>{alertLevel(alert)}</td>
               <td className="py-2 pr-3 align-top font-mono text-slate-300 break-all">{alertLocation(alert)}</td>
               <td className="py-2 pr-3 align-top text-slate-300 whitespace-nowrap">{instant(alert.created_at)}</td>
               <td className="py-2 pr-3 align-top text-slate-300">{alertState(alert)}</td>

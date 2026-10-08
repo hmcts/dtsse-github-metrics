@@ -138,7 +138,7 @@ function mount() {
 function mountWithWheels() {
   return render(
     <>
-      <EstateSummary rows={ROWS} />
+      <EstateSummary rows={ROWS} weeks={4} />
       <RepositoriesTable rows={ROWS} weeks={12} action={<RepositoriesExport rows={ROWS} teamContributors={CONTRIBUTORS} window="2026-06-08 to 2026-08-31" />} />
     </>
   );
@@ -360,5 +360,60 @@ describe("the estate table and its export over one query", () => {
     expect(headerNames()).toContain("Push protection");
     expect(exportedRepositories()).toEqual(["pcs-api"]);
     expect(exportedHeadings()).toContain("Push protection");
+  });
+});
+
+describe("an all-repositories wheel over the public-only table", () => {
+  /** One row per visibility, two of the three hidden by the table's public-only default, and all three gated. */
+  const MIXED: RepositoryRow[] = [
+    { repository: "pcs-open", team: "dtsse", visibility: "public", owner_kind: "team", required_approving_reviews: 2 },
+    { repository: "pcs-inner", team: "dtsse", visibility: "internal", owner_kind: "team", required_approving_reviews: 2 },
+    { repository: "pcs-closed", team: "dtsse", visibility: "private", owner_kind: "person", required_approving_reviews: 2 }
+  ];
+
+  function mountMixed() {
+    return render(
+      <>
+        <EstateSummary rows={MIXED} weeks={4} />
+        <RepositoriesTable rows={MIXED} weeks={12} />
+      </>
+    );
+  }
+
+  /** The count a legend entry prints beside its word. */
+  function sliceCount(wheel: string, label: string): number {
+    return Number(slice(wheel, label).querySelector(".tabular-nums")?.textContent);
+  }
+
+  it("should turn internal and private on, so the table shows every row the clicked slice counted", () => {
+    mountMixed();
+    expect(rowNames()).toEqual(["pcs-open"]);
+
+    fireEvent.click(slice("Enforces review", "Multiple"));
+
+    expect(new URLSearchParams(window.location.search).get("internal")).toBe("true");
+    expect(new URLSearchParams(window.location.search).get("private")).toBe("true");
+    expect(rowNames()).toHaveLength(sliceCount("Enforces review", "Multiple"));
+    expect(rowNames()).toHaveLength(3);
+    expect(replaced).toEqual([]);
+  });
+
+  it("should clear only the slice on a second click, leaving the visibilities the first one turned on", () => {
+    mountMixed();
+
+    fireEvent.click(slice("Enforces review", "Multiple"));
+    fireEvent.click(slice("Enforces review", "Multiple"));
+
+    expect(written()).toBe("/repositories?weeks=12&public=true&internal=true&private=true");
+    expect(rowNames()).toHaveLength(3);
+  });
+
+  it("should leave the visibility toggles alone on a public-cohort wedge", () => {
+    mountMixed();
+
+    fireEvent.click(slice("Code owner", "Team"));
+
+    expect(written()).toBe("/repositories?weeks=12&owner=team");
+    expect(rowNames()).toEqual(["pcs-open"]);
   });
 });

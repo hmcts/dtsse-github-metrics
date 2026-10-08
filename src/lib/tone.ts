@@ -306,8 +306,8 @@ export function assuranceOutcomeTone(outcome: AssuranceOutcome): Tone {
  *
  * FOUR ANSWERS FROM THREE STATES, and `read` is the state that splits. A family read and found clean is the measured
  * zero the scan table exists to be able to state, so it is the one thing here that reads green; a family read with
- * alerts open borrows `alertTone`'s own thresholds through the severities on the records, so this page and the count
- * cards above it grade one family the same way.
+ * alerts open reads as the worst of its alerts' own tones (`alertRecordTone`), which apply `alertTone`'s thresholds to
+ * each record, so the border, the Level cells under it and the count cards above it grade one family the same way.
  *
  * NEITHER ABSENCE IS COLOURED. `unmeasured` is neutral for the reason the header gives — colouring an absence grades
  * a permission — and `not-enabled` is neutral for a narrower one: no criterion on this page requires code scanning,
@@ -330,7 +330,26 @@ export function alertScanTone(family: AlertFamily, scanned: AlertScanState, open
   if (family === "secret-scanning") {
     return "bad";
   }
-  return open.some((alert) => SEVERE.some((severity) => alert.severity === severity)) ? "bad" : "warn";
+  // Alerts that are open but all ungraded still caution, as the count card does for an open count nobody broke down:
+  // the family has something open, and only the severity of it is unknown.
+  return open.some((alert) => alertRecordTone(alert) === "bad") ? "bad" : "warn";
+}
+
+/**
+ * One open alert, from its own severity: the colour its Level cell is drawn in.
+ *
+ * The same bands as `alertTone`, applied to a record rather than a count, so the family's border and each row under
+ * it can never disagree. Secret scanning has no severity and reads badly for `alertTone`'s reason. An alert in a
+ * graded family that arrived WITHOUT a severity stays neutral: the field is absent, and an absence is not graded.
+ */
+export function alertRecordTone(alert: SecurityAlertRecord): Tone {
+  if (alert.family === "secret-scanning") {
+    return "bad";
+  }
+  if (alert.severity === undefined) {
+    return "neutral";
+  }
+  return SEVERE.some((severity) => alert.severity === severity) ? "bad" : "warn";
 }
 
 /**
