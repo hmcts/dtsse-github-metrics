@@ -197,4 +197,30 @@ describe("AlertDetailSection", () => {
     expect(warm).toContain(TONE_BORDER.warn);
     expect(warm).not.toContain(TONE_BORDER.bad);
   });
+
+  it("should draw each alert's bar in its own level, not the family's worst", () => {
+    const mixed = render([
+      {
+        family: "dependabot",
+        state: "read",
+        observed_at: "2026-09-22T06:00:00Z",
+        alerts: (["critical", "medium", "low"] as const).map((severity, index) => alert({ family: "dependabot", number: index + 1, severity }))
+      }
+    ]);
+    const bars = [...mixed.matchAll(/<td class="([^"]*border-l-4[^"]*)"/g)].map((match) => match[1]);
+
+    expect(bars).toHaveLength(3);
+    expect(bars[0]).toContain(TONE_BORDER.bad);
+    expect(bars[1]).toContain(TONE_BORDER.warn);
+    expect(bars[2]).toContain(TONE_BORDER.warn);
+  });
+
+  it("should leave the family block's own bar slate once its alerts carry theirs", () => {
+    const mixed = render([
+      { family: "dependabot", state: "read", observed_at: "2026-09-22T06:00:00Z", alerts: [alert({ family: "dependabot", number: 1, severity: "critical" })] }
+    ]);
+
+    expect(mixed).toMatch(new RegExp(`<div class="[^"]*${TONE_BORDER.neutral}`));
+    expect(mixed).not.toMatch(new RegExp(`<div class="[^"]*${TONE_BORDER.bad}`));
+  });
 });

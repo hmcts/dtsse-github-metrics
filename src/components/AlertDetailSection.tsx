@@ -55,10 +55,15 @@ export function AlertDetailSection({ scans }: { scans: readonly SecurityAlertFam
  * The state word is in the heading row and the reason under it, both as text. Nothing here is a `title` — the reason a
  * criterion's sentence moved off the estate table is that a tooltip is not readable on touch and is not reliably
  * announced, and reproducing one here would repeat the fault in the place it was being fixed.
+ *
+ * THE BAR MOVES ONTO THE ROWS ONCE THERE ARE ANY. A family's tone is the worst of its alerts, so one critical alert
+ * drew a red bar down a block of mostly medium and low ones, and the bar read as every alert's level. With rows to
+ * draw, each carries its own bar and the block's stays slate; with none, the block's bar is the only verdict there
+ * is — green for read and clean, slate for an absence — and keeps the family's tone.
  */
 function FamilyBlock({ summary }: { summary: AlertScanSummary }) {
   return (
-    <div className={clsx("bg-slate-900/50 rounded-r py-3 pl-3 pr-4", borderClass(summary.tone))}>
+    <div className={clsx("bg-slate-900/50 rounded-r py-3 pl-3 pr-4", borderClass(summary.alerts.length === 0 ? summary.tone : "neutral"))}>
       <div className="flex flex-wrap items-baseline gap-x-3">
         <h3 className="text-sm font-medium text-slate-200">{summary.family}</h3>
         <span className={clsx("text-xs", valueClass(summary.tone))}>{summary.state}</span>
@@ -88,7 +93,8 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
         <caption className="sr-only">{`Open ${summary.family} alerts`}</caption>
         <thead className="text-slate-400 border-b border-slate-800">
           <tr>
-            <th scope="col" className="py-2 pr-3 text-left font-medium">
+            {/* `pl-3` lines the heading up with the cells under it: a 4px bar plus `pl-2`. */}
+            <th scope="col" className="py-2 pl-3 pr-3 text-left font-medium">
               Type
             </th>
             <th scope="col" className="py-2 pr-3 text-left font-medium">
@@ -111,7 +117,8 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
         <tbody className="divide-y divide-slate-800/50">
           {summary.alerts.map((alert) => (
             <tr key={alert.number} className="hover:bg-slate-800/30">
-              <td className="py-2 pr-3 align-top">
+              {/* The row's own bar, in its Level's tone, so the bar beside an alert is that alert's level. */}
+              <td className={clsx("py-2 pl-2 pr-3 align-top", borderClass(alertRecordTone(alert)))}>
                 <span className="font-mono text-slate-200 break-all">{alertSubject(alert)}</span>
                 {/* The advisory identifier under the package it is about, which is the Dependabot shape: the subject
                     is what a reader acts on and the identifier is what they look up. */}
