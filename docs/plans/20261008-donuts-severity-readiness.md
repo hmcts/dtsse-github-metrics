@@ -127,7 +127,7 @@ an AI readiness column to the repositories table.
 - [x] run the project test suite - must pass before task 7
 
 ### Task 7: Verify acceptance criteria
-- [ ] run the full test suite
-- [ ] run the linter
-- [ ] run the typecheck
-- [ ] update README.md if it describes the estate wheels, the alert detail table or the repositories table columns
+- [x] run the full test suite (122 files, 3264 tests passed)
+- [x] run the linter (clean on committed tree; untracked previous-metrics/ and scripts/ excluded)
+- [x] run the typecheck (clean on committed tree; untracked previous-metrics/ excluded)
+- [x] update README.md if it describes the estate wheels, the alert detail table or the repositories table columns (no change needed - README does not describe them)
