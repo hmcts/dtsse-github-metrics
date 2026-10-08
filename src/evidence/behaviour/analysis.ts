@@ -180,21 +180,30 @@ export function reportedDirectCommit(commit: DirectCommitFact, excluded: Readonl
 }
 
 /**
- * The newest human direct commit among one window's cached merges, or `undefined` when none of them is a person's.
+ * The newest human direct commit among one window's cached merges, or `undefined` when the cache cannot say.
  *
  * The collector's shortcut past the history walk: a direct commit is read off `defaultBranchRef`, so a human one
  * inside the window is a human commit to the default branch, and where the window reaches the collection (which
- * the caller checks) nothing much newer could be outside it. MERGED PULL REQUESTS ARE NOT READ: the cache walks
- * every merged pull request whatever its base, so a person's merge into a release or feature branch would answer
- * for a default branch only automation has touched. Widening the query to carry the base would change
+ * the caller checks) nothing much newer could be outside it. MERGED PULL REQUESTS ARE NOT READ AS AN ANSWER: the
+ * cache walks every merged pull request whatever its base, so a person's merge into a release or feature branch
+ * would answer for a default branch only automation has touched. Widening the query to carry the base would change
  * `querySignature` and discard the whole pull-request cache, so the walk answers those repositories instead.
+ *
+ * BUT ANY PULL REQUEST MERGED AFTER THAT COMMIT DEFERS TO THE WALK. `directCommits` holds only the default-branch
+ * commits no pull request introduced, so a person's commit merged through a pull request yesterday is missing from
+ * it, and an older direct commit would stand in for it. Not knowing the base, a later merge of any kind might be
+ * that commit, so the walk — which reads the branch itself — settles it.
  * Commits are judged by `isHumanCommitAuthor` with the git author name as well, the same predicate the walk applies.
  */
 export function cachedLastHumanCommit(merges: Merges, excluded: ReadonlySet<string>, bots: ReadonlySet<string>): Date | undefined {
   const instants = merges.directCommits
     .filter((commit) => isHumanCommitAuthor(commit.authorLogin, commit.authorType, commit.authorName, excluded, bots))
     .map((commit) => commit.committedAt.getTime());
-  return instants.length === 0 ? undefined : new Date(Math.max(...instants));
+  if (instants.length === 0) {
+    return undefined;
+  }
+  const newest = Math.max(...instants);
+  return merges.pullRequests.some((pullRequest) => pullRequest.mergedAt.getTime() > newest) ? undefined : new Date(newest);
 }
 
 /** One window's merges as a report counts them, and how many changes each author it left out had landed. */

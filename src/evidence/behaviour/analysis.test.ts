@@ -236,13 +236,22 @@ describe("cachedLastHumanCommit", () => {
     expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toEqual(new Date("2026-08-04Z"));
   });
 
-  it("should answer the latest human direct commit, ignoring a newer merged pull request", () => {
+  it("should answer the latest human direct commit when no pull request merged after it", () => {
     const merges = {
-      pullRequests: [pullRequest({ mergedAt: new Date("2026-08-09Z") })],
+      pullRequests: [pullRequest({ mergedAt: new Date("2026-08-03Z") })],
       directCommits: [commit({ committedAt: new Date("2026-08-05Z") }), commit({ committedAt: new Date("2026-08-01Z") })]
     };
 
     expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toEqual(new Date("2026-08-05Z"));
+  });
+
+  it("should defer to the walk when a pull request merged after the latest human direct commit", () => {
+    const merges = {
+      pullRequests: [pullRequest({ mergedAt: new Date("2026-08-09Z") })],
+      directCommits: [commit({ committedAt: new Date("2026-08-05Z") })]
+    };
+
+    expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toBeUndefined();
   });
 });
 
