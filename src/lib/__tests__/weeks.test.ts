@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LANDING_PATH, landingTarget, parseWeeks, rememberableWeeks, resolveWeeks, WEEKS_COOKIE, weeksCookie, withWeeks } from "@/lib/weeks";
+import { LANDING_PATH, landingTarget, parseWeeks, rememberableWeeks, resolveWeeks, WEEKS_COOKIE, weeksCookie, withSpan, withWeeks } from "@/lib/weeks";
 
 /** The spans a service serving the default configuration offers, as `GET /windows` reports them. */
 const OPTIONS: readonly number[] = [1, 4, 8, 12, 26];
@@ -146,5 +146,12 @@ describe("weeksCookie", () => {
     expect(written).toContain("path=/");
     expect(written).toContain("max-age=31536000");
     expect(written).toContain("SameSite=Lax");
+  });
+});
+
+describe("withSpan", () => {
+  it("names the span a windowed figure was counted at", () => {
+    expect(withSpan("AI readiness", 4)).toBe("AI readiness (4 weeks)");
+    expect(withSpan("AI readiness", 1)).toBe("AI readiness (1 week)");
   });
 });

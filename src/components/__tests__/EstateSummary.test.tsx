@@ -73,14 +73,14 @@ afterEach(() => {
 
 describe("EstateSummary", () => {
   it("should draw an all-repositories group and a public group, each stating its own count", () => {
-    render(<EstateSummary rows={MIXED} dimensions={DIMENSIONS} />);
+    render(<EstateSummary rows={MIXED} weeks={4} dimensions={DIMENSIONS} />);
 
     expect(within(group("Estate summary: all repositories")).getByText(/^3 repositories;/)).toBeTruthy();
     expect(within(group("Estate summary: public repositories")).getByText(/^1 public repository;/)).toBeTruthy();
   });
 
   it("should put each wheel in its own cohort's group and count it over that cohort", () => {
-    render(<EstateSummary rows={MIXED} dimensions={DIMENSIONS} />);
+    render(<EstateSummary rows={MIXED} weeks={4} dimensions={DIMENSIONS} />);
 
     const all = group("Estate summary: all repositories");
     const everywhere = within(all).getByRole("group", { name: "Everywhere filter" });
@@ -95,7 +95,7 @@ describe("EstateSummary", () => {
 
   it("should show the public empty state without hiding the all-repositories group", () => {
     const nothingPublic = MIXED.filter((row) => row.visibility !== "public");
-    render(<EstateSummary rows={nothingPublic} dimensions={DIMENSIONS} />);
+    render(<EstateSummary rows={nothingPublic} weeks={4} dimensions={DIMENSIONS} />);
 
     expect(within(group("Estate summary: public repositories")).getByText("No public repository is reported for this organisation.")).toBeTruthy();
     expect(within(group("Estate summary: all repositories")).getByText(/^2 repositories;/)).toBeTruthy();
@@ -103,21 +103,21 @@ describe("EstateSummary", () => {
   });
 
   it("should draw no group for a cohort with no wheel in it", () => {
-    render(<EstateSummary rows={MIXED} dimensions={ESTATE_DIMENSIONS.filter((dimension) => dimension.cohort === "public")} />);
+    render(<EstateSummary rows={MIXED} weeks={4} dimensions={ESTATE_DIMENSIONS.filter((dimension) => dimension.cohort === "public")} />);
 
     expect(screen.queryByRole("heading", { name: "Estate summary: all repositories" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Estate summary: public repositories" })).toBeTruthy();
   });
 
   it("should draw the four brought-back wheels in the all-repositories group, in order, over every row", () => {
-    render(<EstateSummary rows={MIXED} />);
+    render(<EstateSummary rows={MIXED} weeks={4} />);
     const everywhere = group("Estate summary: all repositories");
 
     expect(
       within(everywhere)
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent)
-    ).toEqual(["AI readiness", "Enforces review", "Enforces CI", "Test coverage"]);
+    ).toEqual(["AI readiness (4 weeks)", "Enforces review", "Enforces CI", "Test coverage"]);
     // Nothing is graded on these rows, so every one lands in each wheel's unmeasured slice — all three of them.
     expect(within(screen.getByRole("group", { name: "Enforces review filter" })).getByRole("button", { name: /Unknown/ }).textContent).toContain("3");
   });

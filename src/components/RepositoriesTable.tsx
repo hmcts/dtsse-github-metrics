@@ -59,7 +59,7 @@ import {
 } from "@/lib/rows";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { AssuranceGrade, AssuranceOutcome, ProductionSource, RepositoryRow, Visibility } from "@/lib/types";
-import { withWeeks } from "@/lib/weeks";
+import { withSpan, withWeeks } from "@/lib/weeks";
 
 /**
  * Every configured repository in one table: what the collection found about it, and what it did not.
@@ -303,8 +303,8 @@ export function RepositoriesTable({
    * The span this table's drill-through links carry, or nothing from a page that states no window.
    *
    * A team's page passes its resolved span, so following a repository out of it stays in the window the reader was
-   * reading the team at. `/repositories` passes nothing: it states no window, and naming the span it pins would
-   * reset the reader's preference through `proxy` — see `withWeeks`.
+   * reading the team at. `/repositories` passes the default span it is pinned to, from 2026-10-08, so a repository
+   * opened from the list shows the readiness label the list showed. The AI readiness heading names the span too.
    */
   weeks?: number;
   /**
@@ -485,7 +485,9 @@ export function RepositoriesTable({
                 {columns.map((entry, index) => (
                   <SortHeader
                     key={entry.key}
-                    label={entry.label}
+                    // The readiness label depends on the window, so its heading names the span the links below carry.
+                    // Relabelled here rather than in `COLUMNS`, whose instances the sort compares by identity.
+                    label={entry.key === "readiness" && weeks !== undefined ? withSpan(entry.label, weeks) : entry.label}
                     active={entry === (column ?? DEFAULT_COLUMN)}
                     direction={direction}
                     align={entry.align}

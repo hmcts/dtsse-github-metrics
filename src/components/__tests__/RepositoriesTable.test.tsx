@@ -192,8 +192,13 @@ function criterionCells(label: string): (HTMLElement | undefined)[] {
  * anything beginning with it. An unanchored match throws "found multiple elements" — which is at least loud, but
  * a substring that matched exactly one heading by luck would silently assert against the wrong column.
  */
+/** A heading's whole name as a pattern, its brackets escaped — "AI readiness (12 weeks)" has some. */
+function exactly(label: string): RegExp {
+  return new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+}
+
 function headerCell(label: string): HTMLElement {
-  return screen.getByRole("columnheader", { name: new RegExp(`^${label}$`) });
+  return screen.getByRole("columnheader", { name: exactly(label) });
 }
 
 /**
@@ -204,7 +209,7 @@ function headerCell(label: string): HTMLElement {
  * column that has a hint, which is all of them.
  */
 function header(label: string): HTMLElement {
-  return within(headerCell(label)).getByRole("button", { name: new RegExp(`^${label}$`) });
+  return within(headerCell(label)).getByRole("button", { name: exactly(label) });
 }
 
 /** Sort on a column and report the order it left, so a click reads as one line in a test. */
@@ -352,7 +357,8 @@ describe("RepositoriesTable columns", () => {
       "Unsuppressed Crit CVEs",
       "Production",
       // Back from 2026-10-08, directly left of the grade: a second conclusion beside the first, not evidence.
-      "AI readiness",
+      // Named with the span it was read at, which is the one this table's links carry.
+      "AI readiness (12 weeks)",
       "Assurance"
     ]);
   });
@@ -360,19 +366,19 @@ describe("RepositoriesTable columns", () => {
   it("labels AI readiness in the readiness policy's own words, and Not assessed where it graded nothing", () => {
     mount();
 
-    expect(cellOf("web", "AI readiness")?.textContent).toBe("Blocked");
-    expect(cellOf("docs", "AI readiness")?.textContent).toBe("Ready");
-    expect(cellOf("api", "AI readiness")?.textContent).toBe("Not assessed");
-    expect(cellOf("web", "AI readiness")?.outerHTML).toContain("red");
-    expect(cellOf("docs", "AI readiness")?.outerHTML).toContain("green");
+    expect(cellOf("web", "AI readiness (12 weeks)")?.textContent).toBe("Blocked");
+    expect(cellOf("docs", "AI readiness (12 weeks)")?.textContent).toBe("Ready");
+    expect(cellOf("api", "AI readiness (12 weeks)")?.textContent).toBe("Not assessed");
+    expect(cellOf("web", "AI readiness (12 weeks)")?.outerHTML).toContain("red");
+    expect(cellOf("docs", "AI readiness (12 weeks)")?.outerHTML).toContain("green");
   });
 
   it("sorts AI readiness by what the label says, keeping an ungraded repository last both ways", () => {
     mount();
 
     // Ready before Blocked ascending, which spelling would reverse; `api` was graded nothing and stays last.
-    expect(sortBy("AI readiness")).toEqual(["docs", "web", "api"]);
-    expect(sortBy("AI readiness")).toEqual(["web", "docs", "api"]);
+    expect(sortBy("AI readiness (12 weeks)")).toEqual(["docs", "web", "api"]);
+    expect(sortBy("AI readiness (12 weeks)")).toEqual(["web", "docs", "api"]);
   });
 
   it("prints Yes, No and a dash, never a zero for a criterion that was not read", () => {
@@ -628,6 +634,12 @@ describe("RepositoriesTable owner cell", () => {
         .getAttribute("href")
     ).toBe("/teams/civil-admins");
     expect(screen.getByRole("link", { name: "ours" }).getAttribute("href")).toBe("/repositories/ours");
+  });
+
+  it("leaves the AI readiness heading unqualified where it was handed no span", () => {
+    render(<RepositoriesTable rows={OWNERS} />);
+
+    expect(screen.getByRole("columnheader", { name: /^AI readiness/ }).textContent).not.toContain("week");
   });
 
   it("marks one person and links nothing, there being no team page for them", () => {

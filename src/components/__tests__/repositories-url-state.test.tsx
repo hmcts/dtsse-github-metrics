@@ -138,7 +138,7 @@ function mount() {
 function mountWithWheels() {
   return render(
     <>
-      <EstateSummary rows={ROWS} />
+      <EstateSummary rows={ROWS} weeks={4} />
       <RepositoriesTable rows={ROWS} weeks={12} action={<RepositoriesExport rows={ROWS} teamContributors={CONTRIBUTORS} window="2026-06-08 to 2026-08-31" />} />
     </>
   );
@@ -374,7 +374,7 @@ describe("an all-repositories wheel over the public-only table", () => {
   function mountMixed() {
     return render(
       <>
-        <EstateSummary rows={MIXED} />
+        <EstateSummary rows={MIXED} weeks={4} />
         <RepositoriesTable rows={MIXED} weeks={12} />
       </>
     );

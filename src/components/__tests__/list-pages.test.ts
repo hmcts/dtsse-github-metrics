@@ -206,22 +206,29 @@ describe("the three list routes", () => {
   });
 
   /**
-   * NO DRILL-THROUGH LINK CARRIES `weeks`, which is the regression this page must never reintroduce.
+   * EVERY DRILL-THROUGH LINK CARRIES THE PINNED SPAN, from 2026-10-08, whatever span the URL asked for.
    *
-   * `proxy` writes any span a URL names into the `weeks` cookie. So a link out of this page that named its pinned
-   * default would reset a reader who had chosen 26 weeks on the teams pages back to four — silently, on a click
-   * about a repository rather than about a window. Bare paths leave the destination to resolve the remembered
-   * preference. Asserted on the absence of the parameter and not just on the presence of the bare href, because
-   * `toContain` on `/repositories/api` matches `/repositories/api?weeks=4` too.
+   * The list's AI readiness column is read at the default span, and a repository page opened from it used to
+   * resolve the reader's remembered span instead — so a repository Ready here read Caution there. Carrying the
+   * span makes the two agree. `weeks=26` in this page's own URL is ignored, as the page is pinned, so it is the
+   * default and not 26 that the links carry.
    */
-  it("links to a repository and to a team without naming a span", async () => {
+  it("links to a repository and to a team at the span the list was read at", async () => {
     stubService();
     search = new URLSearchParams("weeks=26");
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    expect(markup).toContain('href="/repositories/api"');
-    expect(markup).toContain('href="/teams/platform"');
-    expect(markup).not.toContain("weeks=");
+    expect(markup).toContain('href="/repositories/api?weeks=4"');
+    expect(markup).toContain('href="/teams/platform?weeks=4"');
+    expect(markup).not.toContain("weeks=26");
+  });
+
+  it("names the span on the AI readiness wheel and column", async () => {
+    stubService();
+    const markup = renderToStaticMarkup(await RepositoriesPage());
+
+    expect(markup).toContain("AI readiness (4 weeks)");
+    expect(markup).not.toMatch(/>AI readiness</);
   });
 
   /**
@@ -495,8 +502,8 @@ describe("the three list routes", () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    expect(markup).toContain('href="/repositories/api"');
-    expect(markup).toContain('href="/repositories/web"');
+    expect(markup).toContain('href="/repositories/api?weeks=4"');
+    expect(markup).toContain('href="/repositories/web?weeks=4"');
     expect(spans()).toEqual(["4", "4", "4"]);
   });
 

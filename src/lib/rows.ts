@@ -404,6 +404,13 @@ export interface EstateDimension {
   hint: string;
   cohort: EstateCohort;
   /**
+   * Whether the answer depends on the window, so the title has to name the span it was counted at.
+   *
+   * `/repositories` is pinned to the default span and a repository page follows the reader's chosen one, so an
+   * unlabelled readiness wheel reads as disagreeing with a repository page at 12 weeks when it is answering for 4.
+   */
+  windowed?: boolean;
+  /**
    * Every slice, in best-to-worst order with the unmeasured one last.
    *
    * TOTAL OVER THE ROWS, which is the property the whole summary rests on and the one a test asserts: every
@@ -483,6 +490,7 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     title: "AI readiness",
     hint: "How many repositories carry each readiness label. Repositories the span could not be reported for carry no label and are counted as not assessed instead.",
     cohort: "all",
+    windowed: true,
     // FOLDED THROUGH `distributionState`, as `distributionSlices` counts a distribution: a label this build does not
     // know lands in "Not assessed" rather than in no slice, so the wheel still totals the cohort beside its heading.
     slices: RAG_STATES.map((readiness) => ({

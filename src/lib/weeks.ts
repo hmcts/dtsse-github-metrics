@@ -63,11 +63,14 @@ export function resolveWeeks(parameter: SearchValue, cookie: string | null | und
 /**
  * Carry the current span onto a drill-through link, so no navigation silently changes the window.
  *
- * `weeks` IS OPTIONAL BECAUSE A PAGE WITHOUT A SPAN HAS NONE TO CARRY, and `/repositories` is such a page from
- * 2026-09-17. Naming the span it pins internally would be worse than saying nothing: `proxy` writes any span a URL
- * names into the `weeks` cookie, so every link out of that list would reset a reader who had chosen 26 weeks on the
- * teams pages down to the pinned default — silently, on a click that was about a repository and not about a window.
- * A bare path leaves the destination to resolve the remembered preference, exactly as a navigation-bar link does.
+ * `weeks` IS OPTIONAL BECAUSE A PAGE WITHOUT A SPAN HAS NONE TO CARRY: a bare path leaves the destination to resolve
+ * the remembered preference, exactly as a navigation-bar link does.
+ *
+ * `/repositories` DOES CARRY ITS PINNED SPAN, from 2026-10-08. It is read at the default span whatever the reader
+ * chose, and its AI readiness column showed one label while the repository page opened from it showed another at
+ * the reader's span. Carrying the span makes the two agree. The cost is the one `proxy` documents: following any
+ * link that names a span is the same as pressing that span's button, so the remembered preference becomes the
+ * default too.
  */
 export function withWeeks(path: string, weeks?: number): string {
   return weeks === undefined ? path : carry(path, String(weeks));
@@ -126,4 +129,14 @@ export function rememberableWeeks(raw: SearchValue): number | null {
 /** Build the cookie the selector writes before it navigates. */
 export function weeksCookie(weeks: number): string {
   return [`${WEEKS_COOKIE}=${weeks}`, "path=/", `max-age=${WEEKS_COOKIE_MAXIMUM_AGE}`, "SameSite=Lax"].join("; ");
+}
+
+/**
+ * A heading for a figure that depends on the window, with the span it was counted at, e.g. "AI readiness (4 weeks)".
+ *
+ * For the pinned `/repositories` page above all: its readiness figures answer for the default span while a
+ * repository page answers for the reader's, and naming the span is what stops the two reading as a contradiction.
+ */
+export function withSpan(title: string, weeks: number): string {
+  return `${title} (${weeks} ${weeks === 1 ? "week" : "weeks"})`;
 }

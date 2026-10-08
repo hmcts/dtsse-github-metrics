@@ -8,6 +8,7 @@ import { dimensionSlices } from "@/lib/chart";
 import { count } from "@/lib/format";
 import { cohortRows, ESTATE_DIMENSIONS, type EstateCohort, type EstateDimension } from "@/lib/rows";
 import type { RepositoryRow } from "@/lib/types";
+import { withSpan } from "@/lib/weeks";
 
 /**
  * Why the public group's wheels count public repositories and nothing else, in the words the page shows a reader.
@@ -85,17 +86,42 @@ const GROUPS: readonly Group[] = [
  * reading "no public repositories" is the same fact repeated, and the reason — an estate with nothing public in
  * it — is not a fault in any one question. Only that group goes quiet: the all-repositories group still draws.
  */
-export function EstateSummary({ rows, dimensions = ESTATE_DIMENSIONS }: { rows: readonly RepositoryRow[]; dimensions?: readonly EstateDimension[] }) {
+export function EstateSummary({
+  rows,
+  weeks,
+  dimensions = ESTATE_DIMENSIONS
+}: {
+  rows: readonly RepositoryRow[];
+  /** The span the rows were reported at, which a `windowed` wheel names in its title. */
+  weeks: number;
+  dimensions?: readonly EstateDimension[];
+}) {
   return (
     <>
       {GROUPS.map((group) => (
-        <EstateGroup key={group.cohort} group={group} rows={rows} dimensions={dimensions.filter((dimension) => dimension.cohort === group.cohort)} />
+        <EstateGroup
+          key={group.cohort}
+          group={group}
+          rows={rows}
+          weeks={weeks}
+          dimensions={dimensions.filter((dimension) => dimension.cohort === group.cohort)}
+        />
       ))}
     </>
   );
 }
 
-function EstateGroup({ group, rows, dimensions }: { group: Group; rows: readonly RepositoryRow[]; dimensions: readonly EstateDimension[] }) {
+function EstateGroup({
+  group,
+  rows,
+  weeks,
+  dimensions
+}: {
+  group: Group;
+  rows: readonly RepositoryRow[];
+  weeks: number;
+  dimensions: readonly EstateDimension[];
+}) {
   if (dimensions.length === 0) {
     return null;
   }
@@ -125,7 +151,7 @@ function EstateGroup({ group, rows, dimensions }: { group: Group; rows: readonly
         {dimensions.map((dimension) => (
           <SummaryPieChart
             key={dimension.parameter}
-            title={dimension.title}
+            title={dimension.windowed ? withSpan(dimension.title, weeks) : dimension.title}
             data={dimensionSlices(dimension, cohort)}
             tooltip={dimension.hint}
             parameter={dimension.parameter}

@@ -58,8 +58,11 @@ export default async function RepositoriesPage() {
 
   return (
     <div className="space-y-8">
-      {/* No control in the header: this page states no window, so it offers no way to change one. What it does
-          state is provenance — the collection the figures are anchored at and when the report was built. */}
+      {/* No control in the header: this page is pinned to the default span, so it offers no way to change one. The
+          figures that depend on the span name it instead — the two windowed cards, the AI readiness wheel and
+          column — and every repository link carries it, so a repository opens at the span the list was read at.
+          What the header does state is provenance: the collection the figures are anchored at and when the report
+          was built. */}
       <OrganisationHeader overview={overview} snapshot unavailable={uncollected} />
 
       {/* The estate's headline figures share the panel every section is drawn on: the cards
@@ -106,7 +109,7 @@ export default async function RepositoriesPage() {
           hold, and some are counted at ZERO today — drawn all the same, because a row in no slice would under-total
           the wheel against the cohort beside the heading. The 84 public repositories neither vulnerability source
           is reading are the finding rather than something to apologise for on a strip across the page. */}
-      <EstateSummary rows={repositories} />
+      <EstateSummary rows={repositories} weeks={weeks} />
 
       {/* "UNARCHIVED ONLY" IS A FACT ABOUT THE COHORT and belongs beside the list it qualifies. The estate is
           selected by `cohort.include_archived`, which `src/evidence/policy/schema.ts` defaults to `false` and
@@ -134,7 +137,11 @@ export default async function RepositoriesPage() {
           //
           // NO `weeks` ON THE TABLE, so its links to a repository and to a team are bare. This page states no
           // window and must not push its pinned span onto a reader who chose another one — see `withWeeks`.
-          <RepositoriesTable rows={repositories} action={<RepositoriesExport rows={repositories} teamContributors={teamContributors} window={window} />} />
+          <RepositoriesTable
+            rows={repositories}
+            weeks={weeks}
+            action={<RepositoriesExport rows={repositories} teamContributors={teamContributors} window={window} />}
+          />
         )}
       </Section>
     </div>
