@@ -48,6 +48,15 @@ describe("api.ts", () => {
     expect(text).toContain('export { isNotFound, RepositoryUnknownError } from "@/lib/not-found"');
   });
 
+  it("should give each repository contributor their own metric summaries rather than none", async () => {
+    // `metrics: []` drew a dash in every column the Contributors table derives from it. The summaries come from
+    // `repositoryReport` beside the evidence block, so the page reads the window's cached merges once for both.
+    const code = (await source()).replace(/\/\*\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+
+    expect(code).toContain("repositoryReport(");
+    expect(code).toContain("metrics: metrics.get(entry.login.toLowerCase()) ?? []");
+  });
+
   it("should select a team's repositories by every owner, not just the primary one", async () => {
     // 390 repositories on the estate are shared, and the report layer's `teamRows` counts each of them for every
     // team that owns it. A `row.team === team` filter here listed one repository beside a card that said two, and

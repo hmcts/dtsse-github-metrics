@@ -7,7 +7,7 @@ import {
   directPushRows,
   mergeRows,
   overviewSummary,
-  repositoryEvidence,
+  repositoryReport,
   repositoryRows,
   repositoryTrend,
   teamMemberRows,
@@ -20,6 +20,7 @@ import { ownedByIndividual, owners } from "@/lib/rows";
 import type {
   ActorDetail,
   ActorRow,
+  BehaviourMetricSummary,
   Contributor,
   ContributorRow,
   OverviewSummary,
@@ -96,14 +97,14 @@ export async function getRepository(repository: string, weeks: number): Promise<
   if (row === undefined) {
     throw new RepositoryUnknownError(`${repository} is not a configured repository`);
   }
-  // The row plus the evidence block the page's sections read. `repositoryEvidence` returns nothing for a
+  // The row plus the evidence block the page's sections read. `repositoryReport` returns no block for a
   // repository no collection has touched, which leaves `evidence` absent and the page showing its own empty state
   // with the row's `detail` as the reason — the same branch it took for every repository before this was wired.
   const configured = await configuration();
   // WHICH SOURCES WERE READ, off the row rather than a coverage query of its own. The row's two counts are absent
   // exactly where a source went unread — `behaviourFigures` gates them on the estate's single read of the coverage
   // table — so the answer is already here, and asking Postgres again would put a query on a per-page path.
-  const evidence = await repositoryEvidence(configured, repository, weeks, {
+  const { evidence, contributors } = await repositoryReport(configured, repository, weeks, {
     pullRequests: row.merged_pull_requests !== undefined,
     directCommits: row.direct_commits !== undefined
   });
@@ -113,7 +114,7 @@ export async function getRepository(repository: string, weeks: number): Promise<
     // would be the same two path segments for every repository on the estate.
     url: `https://github.com/${configured.organization}/${repository}`,
     ...(evidence === undefined ? {} : { evidence }),
-    contributors: await repositoryContributors(configured, repository, weeks)
+    contributors: await repositoryContributors(configured, repository, weeks, contributors)
   };
 }
 
@@ -122,10 +123,20 @@ export async function getRepository(repository: string, weeks: number): Promise<
  *
  * `RepositoryDetail.contributors` is a REQUIRED list on the contract and was never populated, so the page's
  * contributor section has been rendering empty since the port. The counts are of things somebody did in this
- * repository — the same scope rule `TeamActorsTable` follows — and `blocking` is 0 with `metrics` empty for
- * `getActor`'s reason: nothing evaluates the metric set over one person's subset of a repository's merges.
+ * repository — the same scope rule `TeamActorsTable` follows — and `blocking` is 0 because nothing evaluates a
+ * practice rule per person.
+ *
+ * `metrics` IS EACH PERSON'S OWN SUMMARIES, from `repositoryReport`: the repository's metric set run over that
+ * person's share of the reported cohort, looked up by folded login. It was `[]` until 2026-10-08, which is why
+ * every column the table derives from it (`lib/contributor.ts`) drew a dash. A person with no share in the map —
+ * an author the cohort rule excluded — keeps `[]`, and their columns stay dashes rather than zeros.
  */
-async function repositoryContributors(configured: Configuration, repository: string, weeks: number): Promise<ContributorRow[]> {
+async function repositoryContributors(
+  configured: Configuration,
+  repository: string,
+  weeks: number,
+  metrics: ReadonlyMap<string, BehaviourMetricSummary[]>
+): Promise<ContributorRow[]> {
   const [merges, pushes, names] = await Promise.all([mergeRows(configured, weeks), directPushRows(configured, weeks), contributorNames(weeks)]);
   const landed = new Map<string, { login: string; contributions: number }>();
   for (const change of [...merges, ...pushes]) {
@@ -138,7 +149,12 @@ async function repositoryContributors(configured: Configuration, repository: str
     landed.set(folded, entry);
   }
   return [...landed.values()]
-    .map((entry) => ({ ...named(entry.login, names), contributions: entry.contributions, blocking: 0, metrics: [] }))
+    .map((entry) => ({
+      ...named(entry.login, names),
+      contributions: entry.contributions,
+      blocking: 0,
+      metrics: metrics.get(entry.login.toLowerCase()) ?? []
+    }))
     .sort((left, right) => right.contributions - left.contributions || left.login.toLowerCase().localeCompare(right.login.toLowerCase()));
 }
 

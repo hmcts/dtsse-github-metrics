@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Merges, PullRequestFact, ReviewFact } from "../domain/facts.ts";
+import { contributorFigures } from "../../lib/contributor.ts";
+import type { DirectCommitFact, Merges, PullRequestFact, ReviewFact } from "../domain/facts.ts";
 import { ReviewState } from "../domain/facts.ts";
 import type { CohortEntry } from "../org/cohort.ts";
 import { OwnerKind } from "../org/graph.ts";
@@ -7,7 +8,7 @@ import { parseConfiguration } from "../policy/load.ts";
 import { HUMAN_COMMIT_UNCOLLECTED_DETAIL } from "./contract/maintenance.ts";
 import { SONAR_UNATTEMPTED_DETAIL } from "./contract/sonar.ts";
 import type { MeasuredRow } from "./measured.ts";
-import { builtRepositoryEvidence, type RepositoryEvidenceInput } from "./repository-evidence.ts";
+import { builtRepositoryEvidence, contributorMetrics, type RepositoryEvidenceInput, reportedContributorMetrics } from "./repository-evidence.ts";
 
 /**
  * One repository's evidence block, section by section.
@@ -424,5 +425,69 @@ describe("the graded sections of one repository's page", () => {
 
     expect(Math.min(...counted)).toBe(1);
     expect(Math.max(...counted)).toBe(2);
+  });
+});
+
+function directCommit(sha: string, authorLogin: string): DirectCommitFact {
+  return {
+    sha,
+    repository: "alpha",
+    committedAt: new Date(Date.UTC(2026, 7, 26)),
+    authorLogin,
+    authorType: "User",
+    additions: 4,
+    deletions: 1,
+    changedFiles: 1
+  };
+}
+
+describe("each contributor's own metric summaries", () => {
+  it("should group a person's changes under one folded login, whichever case each was spelled in", () => {
+    const merges: Merges = { pullRequests: [merge(1, "Ada"), merge(2, "ada"), merge(3, "grace")], directCommits: [directCommit("a", "ADA")] };
+
+    const metrics = contributorMetrics(CONFIGURATION, merges);
+
+    expect([...metrics.keys()].sort()).toEqual(["ada", "grace"]);
+    const coverage = metrics.get("ada")?.find((summary) => summary.metric === "independent-review-coverage");
+    expect(coverage?.summary).toMatchObject({ status: "observed", denominator: 3 });
+    expect(coverage?.classifications["direct-commit"]).toBe(1);
+  });
+
+  it("should give a person who only pushed to the branch summaries of their own", () => {
+    const metrics = contributorMetrics(CONFIGURATION, { pullRequests: [merge(1)], directCommits: [directCommit("a", "alan")] });
+
+    const coverage = metrics.get("alan")?.find((summary) => summary.metric === "independent-review-coverage");
+    expect(coverage?.summary).toMatchObject({ status: "observed", denominator: 1 });
+    expect(coverage?.classifications["direct-commit"]).toBe(1);
+  });
+
+  it("should leave out a change nobody can be named for", () => {
+    const anonymous: PullRequestFact = { ...merge(1), authorLogin: undefined };
+
+    expect(contributorMetrics(CONFIGURATION, { pullRequests: [anonymous], directCommits: [] }).size).toBe(0);
+  });
+
+  it("should give an excluded author no figures, since their work is not on the page's own", () => {
+    const walked: Merges = { pullRequests: [merge(1), merge(2, "ignored-human")], directCommits: [] };
+
+    const metrics = reportedContributorMetrics(CONFIGURATION, walked);
+
+    expect(metrics.has("ignored-human")).toBe(false);
+    expect(metrics.has("ada")).toBe(true);
+  });
+
+  it("should yield the Contributors table's four columns for a person", () => {
+    // THE END OF THE PATH THE TABLE READS: these summaries become `ContributorRow.metrics`, and the columns are
+    // `contributorFigures` over them. They were dashes while `metrics` was `[]`.
+    const unreviewed: PullRequestFact = { ...merge(3), reviews: [] };
+    const walked: Merges = { pullRequests: [merge(1), merge(2), unreviewed], directCommits: [directCommit("a", "ada"), directCommit("b", "ada")] };
+
+    const metrics = reportedContributorMetrics(CONFIGURATION, walked).get("ada") ?? [];
+    const figures = contributorFigures({ login: "ada", contributions: 5, blocking: 0, metrics });
+
+    expect(figures.merged).toBe(3);
+    expect(figures.directPushes).toBe(2);
+    expect(figures.unreviewed).toBe(1);
+    expect(figures.size).toBe("124 lines");
   });
 });

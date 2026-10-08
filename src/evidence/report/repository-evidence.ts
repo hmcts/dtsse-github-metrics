@@ -157,6 +157,51 @@ export function cohortSummary(walked: Merges, reported: ReportedCohort, measured
 }
 
 /**
+ * Every contributor's own metric summaries, keyed on their folded login.
+ *
+ * THE SAME `metricSummaries` THE PAGE'S OWN METRICS USE, run once per person over that person's share of the
+ * reported cohort. The Contributors table derives its four columns from these (`lib/contributor.ts`), so a
+ * contributor's figures are the repository's figures split by author rather than a second derivation that could
+ * count a merge the block above did not.
+ *
+ * `merges` is the REPORTED cohort, after `reportedCohort` has applied `cohort.excluded_authors`: an excluded
+ * author's work is not on the page's figures and is not given figures of its own here. A change with no author
+ * login cannot be attributed to anyone and is left out.
+ *
+ * Folded, because a GitHub login is unique case-insensitively and the table's rows are keyed the same way.
+ */
+export function contributorMetrics(configuration: Configuration, merges: Merges): Map<string, contract.BehaviourMetricSummary[]> {
+  const byAuthor = new Map<string, Merges>();
+  const share = (login: string): Merges => {
+    const folded = login.toLowerCase();
+    const existing = byAuthor.get(folded);
+    if (existing !== undefined) {
+      return existing;
+    }
+    const created: Merges = { pullRequests: [], directCommits: [] };
+    byAuthor.set(folded, created);
+    return created;
+  };
+  for (const pullRequest of merges.pullRequests) {
+    if (pullRequest.authorLogin !== undefined) {
+      share(pullRequest.authorLogin).pullRequests.push(pullRequest);
+    }
+  }
+  for (const commit of merges.directCommits) {
+    if (commit.authorLogin !== undefined) {
+      share(commit.authorLogin).directCommits.push(commit);
+    }
+  }
+  return new Map([...byAuthor].map(([login, share]) => [login, metricSummaries(configuration, share)]));
+}
+
+/** `contributorMetrics` over what the collection cached, narrowed by the one cohort rule the page itself applies. */
+export function reportedContributorMetrics(configuration: Configuration, walked: Merges): Map<string, contract.BehaviourMetricSummary[]> {
+  const reported = reportedCohort(walked, excludedAuthors(configuration.cohort.excluded_authors), botAccounts(configuration.cohort.bot_accounts));
+  return contributorMetrics(configuration, reported.merges);
+}
+
+/**
  * Every behaviour metric's aggregate and the classification counts behind it.
  *
  * Computed HERE rather than stored, for the reason the assessment is: a metric's definition can change with a

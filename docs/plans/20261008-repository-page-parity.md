@@ -79,11 +79,11 @@ restore the per-contributor counts in the Contributors table, which needs no new
 - [x] run `yarn test` - must pass before task 5
 
 ### Task 5: Restore per-contributor counts in the Contributors table
-- [ ] in `src/evidence/report/repository-evidence.ts`, export `contributorMetrics(configuration, merges)` that splits the reported cohort's pull requests and direct commits by folded `authorLogin` and returns a `Map<string, BehaviourMetricSummary[]>` built with the existing `metricSummaries`
-- [ ] add a report function in `src/evidence/report/reports.ts` (or extend `repositoryEvidence`'s return) that loads the window's cached merges once, applies `reportedCohort`, and returns that map; reuse the load `repositoryEvidence` already does rather than adding a second fact query
-- [ ] in `repositoryContributors` (`src/lib/api.ts`), set each row's `metrics` from the map by folded login instead of `[]`, and update its doc comment
-- [ ] write tests: `contributorMetrics` grouping (case-folded logins, PR and direct-commit routes, excluded authors absent) and an api/component test showing `contributorFigures` yields merged, direct pushes, unreviewed and median size for a contributor
-- [ ] run `yarn test` - must pass before task 6
+- [x] in `src/evidence/report/repository-evidence.ts`, export `contributorMetrics(configuration, merges)` that splits the reported cohort's pull requests and direct commits by folded `authorLogin` and returns a `Map<string, BehaviourMetricSummary[]>` built with the existing `metricSummaries`
+- [x] add a report function in `src/evidence/report/reports.ts` (or extend `repositoryEvidence`'s return) that loads the window's cached merges once, applies `reportedCohort`, and returns that map; reuse the load `repositoryEvidence` already does rather than adding a second fact query
+- [x] in `repositoryContributors` (`src/lib/api.ts`), set each row's `metrics` from the map by folded login instead of `[]`, and update its doc comment
+- [x] write tests: `contributorMetrics` grouping (case-folded logins, PR and direct-commit routes, excluded authors absent) and an api/component test showing `contributorFigures` yields merged, direct pushes, unreviewed and median size for a contributor
+- [x] run `yarn test` - must pass before task 6
 
 ### Task 6: Verify acceptance criteria
 - [ ] run `yarn test`
