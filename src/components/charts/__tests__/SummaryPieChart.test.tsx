@@ -335,3 +335,58 @@ describe("the summary wheel as a filter control", () => {
     expect(written()).toBe("/repositories?weeks=12");
   });
 });
+
+/** The opacity a wedge's path was filled at, which recharts writes as an attribute from the cell. */
+function wedgeOpacity(container: HTMLElement, colour: string): string | null {
+  return wedge(container, colour).querySelector("path")?.getAttribute("fill-opacity") ?? null;
+}
+
+describe("the summary wheel's focus on the selected slice", () => {
+  it("should fade every other wedge and leave the selected one whole when a slice is selected", async () => {
+    url("weeks=12&owner=team");
+    const container = await drawn();
+
+    expect(wedgeOpacity(container, "#4ade80")).toBe("1");
+    expect(wedgeOpacity(container, "#f87171")).toBe("0.35");
+  });
+
+  it("should fade the unselected legend entries and keep the selected one at full opacity", async () => {
+    url("weeks=12&owner=team");
+    await drawn();
+
+    expect(entry("Team").style.opacity).toBe("1");
+    expect(entry("Nobody").style.opacity).toBe("0.35");
+    // Empty and unselected: the fainter of the two.
+    expect(entry("Individual").style.opacity).toBe("0.35");
+  });
+
+  it("should keep an empty slice's own dimming when it is the one selected", async () => {
+    url("weeks=12&owner=individual");
+    const container = await drawn();
+
+    expect(entry("Individual").style.opacity).toBe("0.38");
+    expect(entry("Team").style.opacity).toBe("0.35");
+    expect(wedgeOpacity(container, "#4ade80")).toBe("0.35");
+    expect(wedgeOpacity(container, "#f87171")).toBe("0.35");
+  });
+
+  it("should draw every slice at full opacity when nothing is selected", async () => {
+    const container = await drawn();
+
+    expect(wedgeOpacity(container, "#4ade80")).toBe("1");
+    expect(wedgeOpacity(container, "#f87171")).toBe("1");
+    expect(entry("Team").style.opacity).toBe("1");
+    expect(entry("Nobody").style.opacity).toBe("1");
+    expect(entry("Individual").style.opacity).toBe("0.38");
+  });
+
+  it("should move the focus when the selection changes", async () => {
+    url("weeks=12&owner=team");
+    const container = await drawn();
+
+    fireEvent.click(entry("Nobody"));
+
+    expect(wedgeOpacity(container, "#4ade80")).toBe("0.35");
+    expect(wedgeOpacity(container, "#f87171")).toBe("1");
+  });
+});

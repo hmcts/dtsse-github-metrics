@@ -18,6 +18,12 @@ const TOOLTIP: CSSProperties = {
   padding: "8px 12px"
 };
 
+/** How far a slice outside the active filter fades, wedge and legend entry alike. */
+const UNSELECTED_OPACITY = 0.35;
+
+/** How far a legend entry counted at zero fades, whatever is selected. */
+const EMPTY_OPACITY = 0.38;
+
 /**
  * A ring over a distribution, and the control that filters the list beneath it on the slice a reader clicks.
  *
@@ -67,6 +73,11 @@ export function SummaryPieChart({
   const wedges = activeSlices(data);
   /** The slice key in the URL, or the empty string where this dimension is unfiltered. */
   const active = searchParameters.get(parameter) ?? "";
+  /**
+   * Whether a slice sits outside the active filter, and so fades. Nothing fades while the dimension is
+   * unfiltered: a ring with every slice dimmed would read as a ring with nothing in it.
+   */
+  const unselected = (key: string) => active !== "" && key !== active;
 
   /**
    * Puts the clicked slice in the URL, WITHOUT NAVIGATING.
@@ -122,7 +133,7 @@ export function SummaryPieChart({
               onClick={(sector) => toggle(clickedKey(sector))}
             >
               {wedges.map((wedge) => (
-                <Cell key={wedge.name} fill={wedge.color} />
+                <Cell key={wedge.name} fill={wedge.color} fillOpacity={unselected(wedge.key) ? UNSELECTED_OPACITY : 1} />
               ))}
             </Pie>
             <Tooltip
@@ -165,8 +176,9 @@ export function SummaryPieChart({
               "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
               slice.key === active ? "bg-slate-800" : null
             )}
-            // Dimmed rather than hidden: the label exists in the report even when nothing is in it.
-            style={{ opacity: slice.value === 0 ? 0.38 : 1 }}
+            // Dimmed rather than hidden: the label exists in the report even when nothing is in it. An entry both
+            // empty and outside the filter takes the fainter of the two.
+            style={{ opacity: Math.min(slice.value === 0 ? EMPTY_OPACITY : 1, unselected(slice.key) ? UNSELECTED_OPACITY : 1) }}
           >
             <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
             <span className="text-xs text-slate-400 group-hover:text-slate-200">{slice.name}</span>
