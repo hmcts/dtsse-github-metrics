@@ -332,8 +332,7 @@ export function alertScanTone(family: AlertFamily, scanned: AlertScanState, open
   }
   // Alerts that are open but all ungraded still caution, as the count card does for an open count nobody broke down:
   // the family has something open, and only the severity of it is unknown.
-  const worst = worstTone(open.map(alertRecordTone));
-  return worst === "neutral" ? "warn" : worst;
+  return open.some((alert) => alertRecordTone(alert) === "bad") ? "bad" : "warn";
 }
 
 /**
@@ -351,14 +350,6 @@ export function alertRecordTone(alert: SecurityAlertRecord): Tone {
     return "neutral";
   }
   return SEVERE.some((severity) => alert.severity === severity) ? "bad" : "warn";
-}
-
-/** Tones from worst to best, for reading a group of figures as its worst member. */
-const TONE_RANK: readonly Tone[] = ["bad", "warn", "neutral", "good"];
-
-/** The worst of a group's tones; an empty group is `good`, which only a caller that has checked for one reaches. */
-function worstTone(tones: readonly Tone[]): Tone {
-  return TONE_RANK.find((tone) => tones.includes(tone)) ?? "good";
 }
 
 /**

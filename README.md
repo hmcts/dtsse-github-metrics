@@ -668,9 +668,9 @@ unfinished:
   CLI command — the series is a page, not a report anybody asked to print — and `alert_observations` holds no
   rows, so a series carries an empty alert history and says so.
 - the SonarCloud resolution ladder and measures (`src/evidence/sonar/`, headed by `resolve.ts`), wired by
-  VIBE-591. The four `sonar_*` fields on `RepositoryRow` are declared and not sent, so `/repositories` has no
-  SonarCloud columns. The repository page has the figures; what is missing is carrying one repository's
-  measures into the estate read. See the comment on `RepositoryRow` in `src/lib/types.ts`.
+  VIBE-591. Of the four `sonar_*` fields on `RepositoryRow`, only `sonar_coverage` is sent, for the Test
+  coverage wheel on `/repositories`; the other three are declared and not sent, so the table has no SonarCloud
+  columns. See the comment on `RepositoryRow` in `src/lib/types.ts`.
 
 The third, the maintenance evidence (`src/evidence/domain/standards.ts`), was wired in full. `collect` stores
 when a person last committed to the default branch, and the repository page's Maintenance section reports it

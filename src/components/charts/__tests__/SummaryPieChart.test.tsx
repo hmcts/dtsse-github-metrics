@@ -370,6 +370,17 @@ describe("the summary wheel's focus on the selected slice", () => {
     expect(wedgeOpacity(container, "#f87171")).toBe("0.35");
   });
 
+  it("should draw every slice at full opacity when the URL names a slice this wheel does not have", async () => {
+    // A bookmark from before a slice was renamed: the table ignores the key, so the ring must not fade as if filtered.
+    url("weeks=12&owner=retired");
+    const container = await drawn();
+
+    expect(wedgeOpacity(container, "#4ade80")).toBe("1");
+    expect(wedgeOpacity(container, "#f87171")).toBe("1");
+    expect(entry("Team").style.opacity).toBe("1");
+    expect(entry("Team").getAttribute("aria-pressed")).toBe("false");
+  });
+
   it("should draw every slice at full opacity when nothing is selected", async () => {
     const container = await drawn();
 

@@ -36,7 +36,6 @@ import {
   CHECKS_PARAMETER,
   COVERAGE_PARAMETER,
   cohortRows,
-  dimensionRows,
   ESTATE_DIMENSIONS,
   type EstateDimension,
   EXPANDED_PARAMETER,
@@ -522,12 +521,6 @@ describe("the wheels' cohorts", () => {
     expect(cohortRows("all", MIXED).map((entry) => entry.repository)).toEqual(["open", "inner", "closed", "unstated"]);
   });
 
-  it("should draw each wheel over its own cohort's rows", () => {
-    for (const dimension of ESTATE_DIMENSIONS) {
-      expect(dimensionRows(dimension, MIXED)).toEqual(cohortRows(dimension.cohort, MIXED));
-    }
-  });
-
   it("should keep the four stewardship and security wheels on the public estate", () => {
     const publicOnly = [OWNER_PARAMETER, MAINTAINED_PARAMETER, SIGNALS_PARAMETER, VULNERABILITY_PARAMETER];
 
@@ -542,7 +535,7 @@ describe("the wheels' cohorts", () => {
 
   it("should count every row on an all-cohort wheel, the internal, private and unread ones included", () => {
     for (const dimension of ESTATE_DIMENSIONS.filter((entry) => entry.cohort === "all")) {
-      expect(totalValue(dimensionSlices(dimension, dimensionRows(dimension, MIXED)))).toBe(MIXED.length);
+      expect(totalValue(dimensionSlices(dimension, cohortRows(dimension.cohort, MIXED)))).toBe(MIXED.length);
     }
   });
 

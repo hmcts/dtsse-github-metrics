@@ -80,8 +80,13 @@ export function SummaryPieChart({
   const searchParameters = useSearchParams();
   const total = totalValue(data);
   const wedges = activeSlices(data);
-  /** The slice key in the URL, or the empty string where this dimension is unfiltered. */
-  const active = searchParameters.get(parameter) ?? "";
+  /**
+   * The slice key in the URL, or the empty string where this dimension is unfiltered. A key naming no slice on this
+   * wheel — a bookmark from before a slice was renamed — is unfiltered too, as `parseSelections` treats it for the
+   * table, so the ring does not fade every wedge over a table showing every row.
+   */
+  const requested = searchParameters.get(parameter) ?? "";
+  const active = data.some((slice) => slice.key === requested) ? requested : "";
   /**
    * Whether a slice sits outside the active filter, and so fades. Nothing fades while the dimension is
    * unfiltered: a ring with every slice dimmed would read as a ring with nothing in it.

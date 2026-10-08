@@ -781,17 +781,20 @@ export const UNCOLLECTED_DETAIL = "nothing has been collected for this repositor
  * block carries a reason instead of alerts. None is zero by default — an unprotected default branch is
  * the one thing that reads as a real `0`, because the gate was read and it requires nothing.
  *
- * FIVE OF THESE ARE NEITHER SENT NOR READ, and are kept on the contract rather than deleted:
- * `finding_occurrences`, `sonar_coverage`, `sonar_reported`, `sonar_security_rating` and
- * `sonar_security_issues`. The report layer emits none of them, so every `/repositories` column keyed on
- * one rendered a dash for the whole estate and those columns have gone. The reasons DIFFER between the two
+ * `sonar_coverage` IS SENT AND READ: `report/rows/repository.ts` carries the stored coverage measure onto the
+ * row, and the Test coverage wheel in `lib/rows.ts` bands it.
+ *
+ * FOUR OF THESE ARE NEITHER SENT NOR READ, and are kept on the contract rather than deleted:
+ * `finding_occurrences`, `sonar_reported`, `sonar_security_rating` and `sonar_security_issues`. The report
+ * layer emits none of them, so every `/repositories` column keyed on one rendered a dash for the whole
+ * estate and those columns have gone. The reasons DIFFER between the two
  * groups, and the difference is what to read before reviving either. The practice findings have no
- * producer at all. The four Sonar fields do: `collect` resolves a project and reads its measures per
+ * producer at all. The three Sonar fields do: `collect` resolves a project and reads its measures per
  * repository since 2026-09-17, and the repository page renders them — what is missing is the ESTATE
  * aggregation, which means carrying one repository's measures into `estate.ts`'s row and giving
  * `/repositories` its columns back.
  *
- * NOTHING READS THESE FIVE OFF A `RepositoryRow`, and the near-miss is worth naming because it has been
+ * NOTHING READS THESE FOUR OFF A `RepositoryRow`, and the near-miss is worth naming because it has been
  * mistaken for a reader before. `lib/repository.ts` renders coverage and the security measures off
  * `SonarMeasures`, whose fields are spelled `coverage`, `security_rating` and `security_issues` — not the
  * `sonar_`-prefixed ones here. Same words, different contracts. Deleting a field from this list will not

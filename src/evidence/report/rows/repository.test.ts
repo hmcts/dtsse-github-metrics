@@ -233,6 +233,22 @@ describe("what a row says about the window", () => {
     expect(repositoryRow(disabled, entry(), collected(READABLE_GATE), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness).toBeUndefined();
   });
 
+  it("should carry the stored SonarCloud coverage onto the row", () => {
+    const payload = {
+      defaultBranch: "main",
+      sonar: { mapping: { projectKey: "hmcts.alpha", repository: "alpha" }, measures: { projectKey: "hmcts.alpha", coverage: 84.2 } }
+    };
+
+    expect(repositoryRow(POLICY, entry(), collected(payload), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).sonar_coverage).toBe(84.2);
+  });
+
+  it("should leave coverage absent rather than zero when no SonarCloud project resolved", () => {
+    const row = repositoryRow(POLICY, entry(), collected(), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN);
+
+    expect(row.sonar_coverage).toBeUndefined();
+    expect(repositoryRow(POLICY, entry(), undefined, NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).sonar_coverage).toBeUndefined();
+  });
+
   it("should always send the three alert families even when none was collected", () => {
     // The UI reads `security.code_scanning` unconditionally, so an absent family throws.
     const row = repositoryRow(POLICY, entry(), collected(), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN);

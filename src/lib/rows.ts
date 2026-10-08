@@ -356,11 +356,6 @@ export function cohortRows(cohort: EstateCohort, rows: readonly RepositoryRow[])
   return cohort === "public" ? publicRepositories(rows) : rows;
 }
 
-/** The rows one wheel is drawn over, so its slices sum to the denominator its group states. */
-export function dimensionRows(dimension: EstateDimension, rows: readonly RepositoryRow[]): readonly RepositoryRow[] {
-  return cohortRows(dimension.cohort, rows);
-}
-
 /** One estate wheel's slice: what it counts, the word beside it, and the state it is drawn in. */
 export interface EstateSlice {
   /**
