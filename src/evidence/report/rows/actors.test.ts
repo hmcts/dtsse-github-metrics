@@ -124,7 +124,21 @@ describe("the contributor rows a window holds", () => {
     });
     const rows = [row("alpha", "red"), row("beta", "cannot_assess"), row("gamma", "green"), row("delta", "amber")];
 
-    expect(builtActorRows(rows, held, NO_NAMES, NO_BOTS)[0]?.labels).toEqual(["green", "amber", "red", "cannot_assess"]);
+    expect(builtActorRows(rows, held, NO_NAMES, NO_BOTS)[0]?.labels).toEqual(["green", "amber", "red"]);
+  });
+
+  it("should drop cannot_assess beside a graded label but still count the repository", () => {
+    const held = facts({ alpha: { pullRequests: [merge("alpha", "ada", 1)] }, beta: { pullRequests: [merge("beta", "ada", 2)] } });
+    const [actor] = builtActorRows([row("alpha", "green"), row("beta", "cannot_assess")], held, NO_NAMES, NO_BOTS);
+
+    expect(actor?.labels).toEqual(["green"]);
+    expect(actor?.repositories).toBe(2);
+  });
+
+  it("should send no labels for somebody whose every repository is cannot_assess", () => {
+    const held = facts({ alpha: { pullRequests: [merge("alpha", "ada", 1)] } });
+
+    expect("labels" in (builtActorRows([row("alpha", "cannot_assess")], held, NO_NAMES, NO_BOTS)[0] ?? {})).toBe(false);
   });
 
   it("should sort an unknown label last rather than take the page down", () => {
