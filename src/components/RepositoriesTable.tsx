@@ -29,6 +29,7 @@ import {
   cveCount,
   cveDetail,
   cveOrder,
+  type EstateSelections,
   EXPAND_LABEL,
   EXPANDED_PARAMETER,
   EXPANDED_VALUE,
@@ -277,10 +278,14 @@ const EXPANDED_COLUMNS: readonly Column[] = COLUMNS.flatMap((entry) => {
  */
 const DEFAULT_COLUMN = COLUMNS.find((entry) => entry.key === "pushed") as Column;
 
+/** What a table drawn without the wheels is filtered by: no wedge at all. */
+const NO_SELECTIONS: EstateSelections = new Map();
+
 export function RepositoriesTable({
   rows,
   weeks,
-  action
+  action,
+  wheels = true
 }: {
   rows: readonly RepositoryRow[];
   /**
@@ -300,6 +305,14 @@ export function RepositoriesTable({
    * holds and neither of which this table has any other use for.
    */
   action?: ReactNode;
+  /**
+   * Whether the estate wheels' parameters narrow this table, which only the page drawing the wheels wants.
+   *
+   * `false` on a team's page. Its links have carried `?label=` since the readiness donut stood there, and `label` is
+   * a wheel's parameter again on `/repositories` — so a bookmark that once filtered a team's donut would otherwise
+   * narrow the team's list with no control on the page to show or clear it.
+   */
+  wheels?: boolean;
 }) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
@@ -313,8 +326,8 @@ export function RepositoriesTable({
   const expanded = parseExpanded((parameter) => searchParameters.get(parameter));
   // THE WEDGES THE READER HAS CLICKED, read through the same hook as every other control: the wheels above this
   // table write their slice keys to the query and this is where they narrow the list. A page that draws no wheels
-  // — a team's — simply finds none of the parameters set.
-  const selections = parseSelections((parameter) => searchParameters.get(parameter));
+  // — a team's — reads none of them; see `wheels`.
+  const selections = wheels ? parseSelections((parameter) => searchParameters.get(parameter)) : NO_SELECTIONS;
   const columns = expanded ? EXPANDED_COLUMNS : COLUMNS;
   const found = filterRepositories(rows, term, production, visibilities, selections);
   const ordered = column === null ? orderRepositories(found) : sorted(found, column.read, direction);
@@ -399,8 +412,8 @@ export function RepositoriesTable({
           {/* THREE INDEPENDENT TOGGLES rather than one tri-state, so "public and internal but not private" is
             expressible — which is the obvious question for a page about coding in the open. They read as the
             Production toggle does, `aria-pressed` and no ×, for its reason. They do NOT move the summary wheels
-            above: those are drawn over the public estate and say so, so a reader looking an internal repository
-            up in the table does not silently rewrite the figures they came to read. */}
+            above: each group is drawn over its own stated cohort, so a reader looking an internal repository up in
+            the table does not silently rewrite the figures they came to read. */}
           {VISIBILITIES.map((visibility) => (
             <button
               key={visibility}

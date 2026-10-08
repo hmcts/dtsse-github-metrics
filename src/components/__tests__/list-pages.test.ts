@@ -471,11 +471,12 @@ describe("the three list routes", () => {
    * while drawing from a field nothing populates, and the chips are worse: the donuts were the only way to CREATE
    * one of those filters, so a chip surviving here would be a control a reader can dismiss and never apply.
    */
-  it("draws no donut and no filter chip, the dimensions they carried having moved to /teams", async () => {
+  it("draws no donut and no filter chip for the dimensions that moved to /teams", async () => {
+    // AI readiness, Enforces review, Enforces CI and Test coverage came back as wheels on 2026-10-08; these stay gone.
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    for (const title of ["Readiness", "Peer review enforced", "Enforces CI", "Unreviewed substantial merges", "Test coverage", "Security issues"]) {
+    for (const title of ["Readiness", "Peer review enforced", "Unreviewed substantial merges", "Security issues"]) {
       expect(markup).not.toContain(`>${title}</h3>`);
     }
     // A chip's own marks rather than a class shared with every heading on the page: it carried a dismiss button
@@ -487,10 +488,10 @@ describe("the three list routes", () => {
   });
 
   it("ignores a stale donut parameter rather than filtering the estate on it", async () => {
-    // Links shared before this change carry `?coverage=high`. The page must show the whole estate: the dimension
+    // Links shared before this change carry `?unreviewed=above`. The page must show the whole estate: the dimension
     // no longer exists, so the honest reading is that the parameter means nothing. `weeks=26` rides along as the
     // other parameter an old bookmark carries, and is ignored on the same principle rather than redirected away.
-    search = new URLSearchParams("coverage=high&label=green&weeks=26");
+    search = new URLSearchParams("unreviewed=above&security=high&weeks=26");
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 

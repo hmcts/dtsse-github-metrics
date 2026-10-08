@@ -129,6 +129,7 @@ function EstateGroup({ group, rows, dimensions }: { group: Group; rows: readonly
             data={dimensionSlices(dimension, cohort)}
             tooltip={dimension.hint}
             parameter={dimension.parameter}
+            showsAllVisibilities={dimension.cohort === "all"}
           />
         ))}
       </div>

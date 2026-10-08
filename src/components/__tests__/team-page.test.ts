@@ -246,9 +246,10 @@ describe("the team page", () => {
    * A stale `?label=` in somebody's bookmark must not narrow anything.
    *
    * The page used to draw a donut that filtered on `?label=`, which the shared table read back through
-   * `ESTATE_FILTERS`. The filters went with the estate's donuts and the donut itself went on 2026-09-15, so the
-   * parameter is now read by nothing — and a link somebody saved while it still worked has to show the whole
-   * table rather than an empty one.
+   * `ESTATE_FILTERS`. The filters went with the estate's donuts and the donut itself went on 2026-09-15. `label` is
+   * a wheel's parameter on `/repositories` again since 2026-10-08, but this page draws no wheel and its table is
+   * mounted with `wheels={false}` — so a link somebody saved while the donut still worked has to show the whole
+   * table rather than one narrowed by a control the page does not have.
    */
   it("ignores a label parameter nothing reads any more", async () => {
     stubService();

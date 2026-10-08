@@ -90,7 +90,7 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
             detail="Add repositories to this team in the configuration the service was started with."
           />
         ) : (
-          <RepositoriesTable rows={detail.repositories} weeks={weeks} />
+          <RepositoriesTable rows={detail.repositories} weeks={weeks} wheels={false} />
         )}
       </Section>
 

@@ -700,10 +700,10 @@ describe("RepositoriesTable filtering", () => {
   });
 
   it("ignores a stale donut parameter rather than filtering on it", () => {
-    // LINKS SHARED BEFORE THIS CHANGE still carry `?label=green&review=multiple`. They must show the whole table
+    // LINKS SHARED BEFORE THIS CHANGE still carry `?unreviewed=above&security=high`. They must show the whole table
     // rather than an empty one: the dimension no longer exists, so the honest reading of the parameter is that it
-    // means nothing, not that it matches nothing.
-    url("weeks=12&label=green&review=multiple");
+    // means nothing, not that it matches nothing. `label`, `review`, `checks` and `coverage` are wheels again.
+    url("weeks=12&unreviewed=above&security=high");
     mount();
 
     expect(chips()).toEqual([]);

@@ -9,6 +9,7 @@ import { ToggleTick } from "@/components/ToggleTick";
 import { activeSlices, type PieSlice, totalValue } from "@/lib/chart";
 import { filterTarget } from "@/lib/filter";
 import { percentageOf } from "@/lib/format";
+import { allVisibilitiesTarget } from "@/lib/rows";
 
 /** The hover card's frame, which is inline because recharts styles its tooltip wrapper directly. */
 const TOOLTIP: CSSProperties = {
@@ -55,7 +56,8 @@ export function SummaryPieChart({
   data,
   height = 175,
   tooltip,
-  parameter
+  parameter,
+  showsAllVisibilities = false
 }: {
   title: string;
   /** Every slice, including the ones counted at zero. */
@@ -66,6 +68,13 @@ export function SummaryPieChart({
   tooltip?: string;
   /** The query parameter this ring filters on. */
   parameter: string;
+  /**
+   * Whether selecting a slice also turns every visibility on in the table, for a wheel counted over all of them.
+   *
+   * Without it the table would stay on its public-only default under a wedge that counted internal and private
+   * repositories too, and show fewer rows than the slice it was filtered by. See `allVisibilitiesTarget`.
+   */
+  showsAllVisibilities?: boolean;
 }) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
@@ -103,7 +112,8 @@ export function SummaryPieChart({
    * is carried through: the hook catches up a React transition later, and reading it here would drop it.
    */
   function toggle(key: string) {
-    window.history.replaceState(null, "", filterTarget(pathname, window.location.search, parameter, key === active ? "" : key));
+    const target = showsAllVisibilities ? allVisibilitiesTarget : filterTarget;
+    window.history.replaceState(null, "", target(pathname, window.location.search, parameter, key === active ? "" : key));
   }
 
   return (

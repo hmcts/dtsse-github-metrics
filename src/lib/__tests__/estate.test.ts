@@ -1,5 +1,5 @@
 /**
- * The four estate wheels: what each slice counts, and that the four of them still count the estate.
+ * The estate wheels: what each slice counts, and that every one of them still counts its cohort.
  *
  * THE FIGURES ARE THE CLAIM, so they are asserted rather than rendered and eyeballed. The previous charts on this
  * page included one drawn over a field the report layer has never emitted, which produced an all-unknown circle
@@ -31,7 +31,10 @@
 
 import { describe, expect, it } from "vitest";
 import { dimensionSlices, totalValue } from "@/lib/chart";
+import { STRONG_GOOD_HEX } from "@/lib/rag";
 import {
+  CHECKS_PARAMETER,
+  COVERAGE_PARAMETER,
   cohortRows,
   dimensionRows,
   ESTATE_DIMENSIONS,
@@ -40,17 +43,20 @@ import {
   filterRepositories,
   HYGIENE_CHECKS,
   hygieneSignals,
+  LABEL_PARAMETER,
   MAINTAINED_PARAMETER,
   matchesSelections,
   OWNER_PARAMETER,
   parseSelections,
   productionCount,
   publicRepositories,
+  REVIEW_PARAMETER,
   SIGNALS_PARAMETER,
   unowned,
   VULNERABILITY_PARAMETER
 } from "@/lib/rows";
 import type { AssuranceHygieneSignals, CveCount, CveEvidence, OpenAlertCount, RepositoryRow, SecurityAlertEvidence } from "@/lib/types";
+import { UNCOLLECTED_DETAIL } from "@/lib/types";
 
 /** The cohort the wheels were measured over. */
 const PUBLIC_REPOSITORIES = 1049;
@@ -259,11 +265,12 @@ describe("the estate summary wheels", () => {
     }
   });
 
-  it("should draw every wheel in the RAG palette rather than a scheme of its own", () => {
+  it("should draw every wheel in the RAG palette rather than a scheme of its own, save the one stronger green", () => {
     const palette = new Set(["#4ade80", "#fbbf24", "#f87171", "#64748b"]);
     for (const dimension of ESTATE_DIMENSIONS) {
       for (const slice of dimensionSlices(dimension, ESTATE)) {
-        expect(palette.has(slice.color)).toBe(true);
+        const multiple = dimension.parameter === REVIEW_PARAMETER && slice.key === "multiple";
+        expect(multiple ? slice.color === STRONG_GOOD_HEX : palette.has(slice.color)).toBe(true);
       }
     }
   });
@@ -527,6 +534,18 @@ describe("the wheels' cohorts", () => {
     expect(publicOnly.map((parameter) => wheel(parameter).cohort)).toEqual(["public", "public", "public", "public"]);
   });
 
+  it("should count the four brought-back wheels over every repository, in the order the group draws them", () => {
+    const everywhere = ESTATE_DIMENSIONS.filter((dimension) => dimension.cohort === "all").map((dimension) => dimension.title);
+
+    expect(everywhere).toEqual(["AI readiness", "Enforces review", "Enforces CI", "Test coverage"]);
+  });
+
+  it("should count every row on an all-cohort wheel, the internal, private and unread ones included", () => {
+    for (const dimension of ESTATE_DIMENSIONS.filter((entry) => entry.cohort === "all")) {
+      expect(totalValue(dimensionSlices(dimension, dimensionRows(dimension, MIXED)))).toBe(MIXED.length);
+    }
+  });
+
   it("should filter the table on a wedge whatever cohort its wheel is counted over", () => {
     // The selections are read off the parameter and matched against the row; neither looks at the cohort, so an
     // internal row in a clicked slice stays in the list rather than being dropped for not being public.
@@ -592,5 +611,79 @@ describe("the wedge filter", () => {
     // rows deploy to production, and one of those two is unmaintained.
     expect(productionCount(ROWS, "", undefined, parseSelections(query("")))).toBe(2);
     expect(productionCount(ROWS, "", undefined, parseSelections(query(`${MAINTAINED_PARAMETER}=unmaintained`)))).toBe(1);
+  });
+});
+
+describe("the all-repositories wheels", () => {
+  /** The one slice a single row lands in on a wheel, failing if it lands in none or in more than one. */
+  function slice(parameter: string, fields: Partial<RepositoryRow>): string {
+    const holding = dimensionSlices(wheel(parameter), only(fields)).filter((entry) => entry.value === 1);
+    expect(holding).toHaveLength(1);
+    return holding[0]?.key ?? "";
+  }
+
+  /** A row nothing was collected for, which carries none of the window's figures. */
+  const UNCOLLECTED: Partial<RepositoryRow> = { visibility: "internal", detail: UNCOLLECTED_DETAIL };
+
+  it("should count each readiness label in its own slice, in RAG order", () => {
+    expect(wheel(LABEL_PARAMETER).slices.map((entry) => entry.key)).toEqual(["green", "amber", "red", "cannot_assess", "none"]);
+    expect(slice(LABEL_PARAMETER, { readiness: "green" })).toBe("green");
+    expect(slice(LABEL_PARAMETER, { readiness: "amber" })).toBe("amber");
+    expect(slice(LABEL_PARAMETER, { readiness: "red" })).toBe("red");
+    expect(slice(LABEL_PARAMETER, { readiness: "cannot_assess" })).toBe("cannot_assess");
+  });
+
+  it("should count a repository with no readiness label, or one this build does not know, as not assessed", () => {
+    expect(slice(LABEL_PARAMETER, {})).toBe("none");
+    expect(slice(LABEL_PARAMETER, { readiness: "purple" as unknown as RepositoryRow["readiness"] })).toBe("none");
+  });
+
+  it("should band the approvals a merge gate requires: two or more, one, none, unread", () => {
+    expect(slice(REVIEW_PARAMETER, { required_approving_reviews: 3 })).toBe("multiple");
+    expect(slice(REVIEW_PARAMETER, { required_approving_reviews: 2 })).toBe("multiple");
+    expect(slice(REVIEW_PARAMETER, { required_approving_reviews: 1 })).toBe("required");
+    expect(slice(REVIEW_PARAMETER, { required_approving_reviews: 0 })).toBe("none");
+    expect(slice(REVIEW_PARAMETER, {})).toBe("unknown");
+  });
+
+  it("should draw Multiple in the stronger green and Unenforced in red", () => {
+    const colours = Object.fromEntries(dimensionSlices(wheel(REVIEW_PARAMETER), []).map((entry) => [entry.key, entry.color]));
+
+    expect(colours).toEqual({ multiple: STRONG_GOOD_HEX, required: "#4ade80", none: "#f87171", unknown: "#64748b" });
+  });
+
+  it("should band the status checks a merge gate requires: any, none, unread", () => {
+    expect(slice(CHECKS_PARAMETER, { required_status_checks: 4 })).toBe("required");
+    expect(slice(CHECKS_PARAMETER, { required_status_checks: 1 })).toBe("required");
+    expect(slice(CHECKS_PARAMETER, { required_status_checks: 0 })).toBe("none");
+    expect(slice(CHECKS_PARAMETER, {})).toBe("unknown");
+  });
+
+  it("should band coverage on the boundaries the repository page grades it by", () => {
+    expect(slice(COVERAGE_PARAMETER, { sonar_coverage: 100 })).toBe("high");
+    expect(slice(COVERAGE_PARAMETER, { sonar_coverage: 90 })).toBe("high");
+    expect(slice(COVERAGE_PARAMETER, { sonar_coverage: 89.9 })).toBe("moderate");
+    expect(slice(COVERAGE_PARAMETER, { sonar_coverage: 80 })).toBe("moderate");
+    expect(slice(COVERAGE_PARAMETER, { sonar_coverage: 79.9 })).toBe("low");
+    expect(slice(COVERAGE_PARAMETER, { sonar_coverage: 0 })).toBe("low");
+    expect(slice(COVERAGE_PARAMETER, {})).toBe("unknown");
+  });
+
+  it("should count a repository nothing was collected for in each wheel's unmeasured slice", () => {
+    expect(slice(LABEL_PARAMETER, UNCOLLECTED)).toBe("none");
+    expect(slice(REVIEW_PARAMETER, UNCOLLECTED)).toBe("unknown");
+    expect(slice(CHECKS_PARAMETER, UNCOLLECTED)).toBe("unknown");
+    expect(slice(COVERAGE_PARAMETER, UNCOLLECTED)).toBe("unknown");
+  });
+
+  it("should filter the table on a brought-back wheel's slice", () => {
+    const rows: RepositoryRow[] = [
+      { repository: "two", team: "dtsse", visibility: "private", required_approving_reviews: 2 },
+      { repository: "one", team: "dtsse", visibility: "internal", required_approving_reviews: 1 },
+      { repository: "zero", team: "dtsse", visibility: "public", required_approving_reviews: 0 }
+    ];
+    const selections = parseSelections((parameter) => (parameter === REVIEW_PARAMETER ? "multiple" : null));
+
+    expect(rows.filter((entry) => matchesSelections(entry, selections)).map((entry) => entry.repository)).toEqual(["two"]);
   });
 });

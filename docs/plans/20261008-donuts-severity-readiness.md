@@ -91,33 +91,33 @@ an AI readiness column to the repositories table.
 - [x] run the project test suite - must pass before task 5
 
 ### Task 5: AI readiness, Enforces review, Enforces CI and Test coverage wheels
-- [ ] let an EstateSlice override its colour with an optional hex, and have dimensionSlices in
+- [x] let an EstateSlice override its colour with an optional hex, and have dimensionSlices in
       src/lib/chart.ts use it, so "Multiple" can be drawn in STRONG_GOOD_HEX '#16a34a'
-- [ ] add four entries with `cohort: "all"` to ESTATE_DIMENSIONS in src/lib/rows.ts, ported from
+- [x] add four entries with `cohort: "all"` to ESTATE_DIMENSIONS in src/lib/rows.ts, ported from
       previous-metrics: "AI readiness" (parameter `label`, slices Ready/Caution/Blocked/Cannot assess/Not
       assessed from RAG_STATES through `state(row.readiness)`), "Enforces review" (parameter `review`:
       Multiple/Enforced/Unenforced/Unknown from `required_approving_reviews`), "Enforces CI" (parameter
       `checks`: Enforced/Unenforced/Unknown from `required_status_checks`) and "Test coverage" (parameter
       `coverage`: 90% or more / 80% to under 90% / Below 80% / Unknown through coverageTone(sonar_coverage))
-- [ ] carry over the previous version's tooltips as each wheel's hint
-- [ ] order them AI readiness, Enforces review, Enforces CI, Test coverage in the all-repositories group, and
+- [x] carry over the previous version's tooltips as each wheel's hint
+- [x] order them AI readiness, Enforces review, Enforces CI, Test coverage in the all-repositories group, and
       update the comments in EstateSummary.tsx, rows.ts and src/app/repositories/page.tsx that say "four wheels"
       or "public estate" about all of them
-- [ ] make a wedge or legend click on an `all`-cohort wheel also show every visibility in the table, so the
+- [x] make a wedge or legend click on an `all`-cohort wheel also show every visibility in the table, so the
       filtered row count matches the slice count: add a pure helper beside `filterTarget` in src/lib/filter.ts
       (or in src/lib/rows.ts) that, when SELECTING a slice, writes the slice parameter and sets each of
       `visibilityParameter(v)` for `VISIBILITIES` to `VISIBILITY_ON` in the same URL; CLEARING the slice
       removes only the slice parameter and leaves the visibility toggles as the reader now has them
-- [ ] pass the dimension's cohort to SummaryPieChart from EstateSummary (e.g. a `showsAllVisibilities`
+- [x] pass the dimension's cohort to SummaryPieChart from EstateSummary (e.g. a `showsAllVisibilities`
       prop) and have its `toggle` use the helper when the cohort is `all`; public-cohort wheels keep the
       current behaviour and do not touch the visibility toggles
-- [ ] write tests in estate.test.ts (each new wheel covers every row, with boundary rows for 2/1/0/absent
+- [x] write tests in estate.test.ts (each new wheel covers every row, with boundary rows for 2/1/0/absent
       approvals, 1/0/absent checks, 90/89.9/80/79.9/absent coverage, and an uncollected row landing in the
       unknown slice), chart.test.ts (hex override), filter.test.ts (the helper sets all three visibilities on
       select, keeps other parameters, and leaves visibilities alone on clear) and
       repositories-url-state.test.tsx (clicking a new wedge turns internal and private on and the table row
       count equals the slice count; clicking a public-cohort wedge leaves the visibility toggles unchanged)
-- [ ] run the project test suite - must pass before task 6
+- [x] run the project test suite - must pass before task 6
 
 ### Task 6: AI readiness column in the repositories table
 - [ ] add an "AI readiness" column to RepositoriesTable directly left of "Assurance", rendering

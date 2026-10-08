@@ -108,4 +108,17 @@ describe("EstateSummary", () => {
     expect(screen.queryByRole("heading", { name: "Estate summary: all repositories" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Estate summary: public repositories" })).toBeTruthy();
   });
+
+  it("should draw the four brought-back wheels in the all-repositories group, in order, over every row", () => {
+    render(<EstateSummary rows={MIXED} />);
+    const everywhere = group("Estate summary: all repositories");
+
+    expect(
+      within(everywhere)
+        .getAllByRole("heading", { level: 3 })
+        .map((heading) => heading.textContent)
+    ).toEqual(["AI readiness", "Enforces review", "Enforces CI", "Test coverage"]);
+    // Nothing is graded on these rows, so every one lands in each wheel's unmeasured slice — all three of them.
+    expect(within(screen.getByRole("group", { name: "Enforces review filter" })).getByRole("button", { name: /Unknown/ }).textContent).toContain("3");
+  });
 });

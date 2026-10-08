@@ -12,10 +12,11 @@
  * would read as a league table. When a repository was last pushed to is not a grade.
  */
 
-import { matches } from "@/lib/filter";
+import { filterTarget, matches } from "@/lib/filter";
 import { ABSENT } from "@/lib/format";
-import type { RAGState } from "@/lib/rag";
+import { distributionState, RAG_LABEL, RAG_STATES, type RAGState, STRONG_GOOD_HEX, state } from "@/lib/rag";
 import { compare, type SortValue } from "@/lib/sort";
+import { coverageTone } from "@/lib/tone";
 import type {
   AssuranceCriterion,
   AssuranceCriterionResult,
@@ -278,6 +279,29 @@ export const VISIBILITY_ON = "true";
 export const VISIBILITY_OFF = "false";
 
 /**
+ * Where a wedge on an all-repositories wheel navigates to: its slice, AND EVERY VISIBILITY SHOWING.
+ *
+ * The wheel counts internal and private repositories, and the table opens on public alone, so a wedge that only
+ * wrote its slice would narrow the list to fewer rows than the legend beside it says — a filter disagreeing with
+ * the count that invited the click. Selecting therefore turns all three toggles on in the same URL.
+ *
+ * CLEARING TOUCHES ONLY THE SLICE. By then the toggles are the reader's own state: they may have turned one off
+ * again since, and putting the public-only default back would be undoing a choice nobody asked to undo.
+ *
+ * `filterTarget` does the rest, so every other parameter comes through as it does for any other control.
+ */
+export function allVisibilitiesTarget(pathname: string, search: string, parameter: string, key: string): string {
+  if (key === "") {
+    return filterTarget(pathname, search, parameter, key);
+  }
+  const parameters = new URLSearchParams(search);
+  for (const visibility of VISIBILITIES) {
+    parameters.set(visibilityParameter(visibility), VISIBILITY_ON);
+  }
+  return filterTarget(pathname, parameters.toString(), parameter, key);
+}
+
+/**
  * Which visibilities the reader has selected, or the default where they have selected nothing.
  *
  * A URL naming EVERY visibility as off returns an empty set, which filters the table to nothing. That is the
@@ -305,9 +329,10 @@ export function matchesVisibility(row: RepositoryRow, showing: ReadonlySet<Visib
 }
 
 /**
- * The cohort the estate summary wheels are drawn over: PUBLIC ONLY.
+ * The cohort the public group of estate summary wheels is drawn over: PUBLIC ONLY. The all-repositories group is
+ * drawn over every row it is handed — see `EstateCohort`.
  *
- * NOT THE TABLE'S VISIBILITY TOGGLES, though the table opens on the same narrowing. The wheels are a statement
+ * NOT THE TABLE'S VISIBILITY TOGGLES, though the table opens on the same narrowing. These wheels are a statement
  * about the public estate and say so beside themselves, so they must not move when a reader turns internal on to
  * look something up — a figure that changed under a control it does not name would be worse than one whose
  * denominator is stated.
@@ -355,6 +380,15 @@ export interface EstateSlice {
    * presentation literals as the rest of it is.
    */
   state: RAGState;
+  /**
+   * A hex drawn INSTEAD OF the state's, for the one slice a `RAGState` cannot name.
+   *
+   * `state` still says what the slice is, and is the palette for everything else. The only override is
+   * `STRONG_GOOD_HEX` for "Multiple" on the Enforces review wheel: a gate requiring two approvals is not a different
+   * verdict from one requiring a single approval, so it is not a fifth state, but on a wheel the distinction is the
+   * point of the picture.
+   */
+  hex?: string;
   /** Whether this row belongs to this slice. */
   holds: (row: RepositoryRow) => boolean;
 }
@@ -401,6 +435,15 @@ export const SIGNALS_PARAMETER = "signals";
 
 export const VULNERABILITY_PARAMETER = "vulnerabilities";
 
+/** The readiness wheel's parameter, the one the previous version's readiness filter used, so old links still filter. */
+export const LABEL_PARAMETER = "label";
+
+export const REVIEW_PARAMETER = "review";
+
+export const CHECKS_PARAMETER = "checks";
+
+export const COVERAGE_PARAMETER = "coverage";
+
 /**
  * The word an unmeasured slice is labelled with, shared by the two wheels that have one.
  *
@@ -415,32 +458,85 @@ export const VULNERABILITY_PARAMETER = "vulnerabilities";
 const NOT_STATED = "No state stated";
 
 /**
- * The four questions this page answers, drawn as wheels over the public estate.
+ * The eight questions this page answers, drawn as wheels in two groups by the cohort each is counted over.
  *
- * FOUR AND NOT THE SIX THAT WERE REMOVED. Five of those were ways-of-working dimensions — the readiness
- * distribution, the declared gate's two halves, unreviewed substantial merges — which are questions about a TEAM
- * and are reported on `/teams` now. The sixth read a field the report layer has never emitted and drew an
- * all-unknown circle. These four are stewardship and security, which is what this page is about, and every slice
- * below reads a field the report layer emits on every row.
+ * FOUR OVER EVERY REPOSITORY, FOUR OVER THE PUBLIC ESTATE. AI readiness, Enforces review, Enforces CI and Test
+ * coverage were brought back from the previous version on 2026-10-08, and they count every unarchived repository
+ * listed: none of them reads a control the GitHub Advanced Security licence switches off, so dropping the internal
+ * and private repositories would only shrink the sample. Code owner, Maintained, Hygiene and Vulnerabilities stay
+ * public only — stewardship and security, where `publicRepositories` gives the licensing reason.
  *
  * EACH WHEEL IS A CONTROL AND NOT A PICTURE. Its `parameter` is what a wedge writes, `filterRepositories` reads
  * it back, and the table under it narrows — which is the difference between a chart and a filter, and the reason
  * the dismissible chips had to go when the previous charts did.
  *
- * THE COLOURS RUN GREEN, AMBER, THEN SLATE ON EVERY WHEEL, so four wheels side by side read as one thing: the
- * first slice is the answer that reads well, the second is the one worth weighing, and slate is the absence of an
- * answer. `Code owner` reaches red because its last slice is a criterion READ AND FAILED with nobody to ask about
- * it rather than a fact to weigh. `Vulnerabilities` is the exception to the order: it runs by severity, red, amber,
- * green, then slate, because its question is how bad the worst live finding is and the worst answer leads.
+ * THE COLOURS RUN GOOD, WORSE, THEN SLATE ON EVERY WHEEL, so wheels side by side read as one thing: the first slice
+ * is the answer that reads well, the next are the ones worth weighing or failed, and slate is the absence of an
+ * answer. `Vulnerabilities` is the exception to the order: it runs by severity, red, amber, green, then slate,
+ * because its question is how bad the worst live finding is and the worst answer leads.
  *
- * EVERY SLATE SLICE IS NOW SMALL, WHICH IS THE POINT OF THE TWO THAT CHANGED. The wheels this pair replaced —
- * `Code scanning` and `Unsuppressed CVEs` — were the two whose largest slice was the state nobody stated: 259 of
- * 1,046 on the first and 767 on the second. A ring whose biggest wedge is "we did not look" spends a quarter of the
- * page on the report's own reach rather than on the estate, and the CVE one was worse than uninformative — it drew
- * 770 repositories as unmeasured when 686 of them are dependency-scanned by Dependabot. `Hygiene` asks a question
- * every public repository answers, and `Vulnerabilities` asks both sources instead of one.
+ * EVERY SLATE SLICE ON THE PUBLIC WHEELS IS NOW SMALL, WHICH IS THE POINT OF THE TWO THAT CHANGED. The wheels this
+ * pair replaced — `Code scanning` and `Unsuppressed CVEs` — were the two whose largest slice was the state nobody
+ * stated: 259 of 1,046 on the first and 767 on the second. A ring whose biggest wedge is "we did not look" spends a
+ * quarter of the page on the report's own reach rather than on the estate, and the CVE one was worse than
+ * uninformative — it drew 770 repositories as unmeasured when 686 of them are dependency-scanned by Dependabot.
+ * `Hygiene` asks a question every public repository answers, and `Vulnerabilities` asks both sources instead of one.
  */
 export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
+  {
+    parameter: LABEL_PARAMETER,
+    title: "AI readiness",
+    hint: "How many repositories carry each readiness label. Repositories the span could not be reported for carry no label and are counted as not assessed instead.",
+    cohort: "all",
+    // FOLDED THROUGH `distributionState`, as `distributionSlices` counts a distribution: a label this build does not
+    // know lands in "Not assessed" rather than in no slice, so the wheel still totals the cohort beside its heading.
+    slices: RAG_STATES.map((readiness) => ({
+      key: readiness,
+      label: RAG_LABEL[readiness],
+      state: readiness,
+      holds: (row: RepositoryRow) => distributionState(state(row.readiness)) === readiness
+    }))
+  },
+  {
+    parameter: REVIEW_PARAMETER,
+    title: "Enforces review",
+    hint: "How many approving reviews each repository's merge gate requires on its default branch: multiple is two or more, enforced is one. An unprotected branch is counted as unenforced, because its gate was read and it requires nothing. Unknown is a repository whose gate was not collected, whose branch is protected and whose rules GitHub withheld, or that this span could not be reported for at all.",
+    cohort: "all",
+    slices: [
+      // A DEEPER SHADE OF THE SAME GREEN and not a second verdict: the policy clears a gate requiring any approval.
+      { key: "multiple", label: "Multiple", state: "green", hex: STRONG_GOOD_HEX, holds: (row) => reviewBand(row) === "multiple" },
+      { key: "required", label: "Enforced", state: "green", holds: (row) => reviewBand(row) === "required" },
+      // RED AND NOT AMBER: `assessment.review_requirement` vetoes a gate requiring no approval.
+      { key: "none", label: "Unenforced", state: "red", holds: (row) => reviewBand(row) === "none" },
+      { key: "unknown", label: "Unknown", state: "none", holds: (row) => reviewBand(row) === "unknown" }
+    ]
+  },
+  {
+    parameter: CHECKS_PARAMETER,
+    title: "Enforces CI",
+    hint: "Whether each repository's merge gate requires any status check to pass on its default branch. This is the configuration: enforced says a check is required, not which check it is or whether it passed. Unknown is a repository whose gate was not collected, whose branch is protected and whose rules GitHub withheld, or that this span could not be reported for at all.",
+    cohort: "all",
+    slices: [
+      { key: "required", label: "Enforced", state: "green", holds: (row) => checksBand(row) === "required" },
+      { key: "none", label: "Unenforced", state: "red", holds: (row) => checksBand(row) === "none" },
+      { key: "unknown", label: "Unknown", state: "none", holds: (row) => checksBand(row) === "unknown" }
+    ]
+  },
+  {
+    parameter: COVERAGE_PARAMETER,
+    title: "Test coverage",
+    hint: "The line coverage each repository's SonarCloud project reports, banded where the repository's own page bands it. Unknown is a repository that resolved to no SonarCloud project, one whose measures could not be read, one whose project sent no coverage metric, or one this span could not be reported for at all — and never a project reporting 0%.",
+    cohort: "all",
+    // THROUGH `coverageTone`, so the 90 and the 80 move with the repository page's own coverage card.
+    slices: [
+      { key: "high", label: "90% or more", state: "green", holds: (row) => coverageTone(row.sonar_coverage) === "good" },
+      // Not "80% to 90%": exactly 90 is graded good, so a legend naming 90 twice would put the boundary in the
+      // band it is not in.
+      { key: "moderate", label: "80% to under 90%", state: "amber", holds: (row) => coverageTone(row.sonar_coverage) === "warn" },
+      { key: "low", label: "Below 80%", state: "red", holds: (row) => coverageTone(row.sonar_coverage) === "bad" },
+      { key: "unknown", label: "Unknown", state: "none", holds: (row) => coverageTone(row.sonar_coverage) === "neutral" }
+    ]
+  },
   {
     parameter: OWNER_PARAMETER,
     title: "Code owner",
@@ -509,6 +605,38 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     ]
   }
 ];
+
+/**
+ * Band a repository by the approvals its merge gate requires.
+ *
+ * Absent is the row's own word for unmeasured: no gate was collected, the branch is protected and GitHub withheld its
+ * rules, or nothing was collected for the repository at all. An unprotected branch reports `0` and is unenforced,
+ * because the gate was read and it requires nothing.
+ */
+function reviewBand(row: RepositoryRow): "multiple" | "required" | "none" | "unknown" {
+  const approvals = row.required_approving_reviews;
+  if (approvals === undefined) {
+    return "unknown";
+  }
+  if (approvals >= 2) {
+    return "multiple";
+  }
+  return approvals >= 1 ? "required" : "none";
+}
+
+/**
+ * Band a repository by whether its merge gate requires any status check.
+ *
+ * The CONFIGURATION, not what CI held: a gate requiring no check cannot block anything, and which checks they are
+ * or whether they passed is not a question a count of required contexts answers. Absent is unmeasured, as above.
+ */
+function checksBand(row: RepositoryRow): "required" | "none" | "unknown" {
+  const contexts = row.required_status_checks;
+  if (contexts === undefined) {
+    return "unknown";
+  }
+  return contexts >= 1 ? "required" : "none";
+}
 
 /**
  * Whether every hygiene check answers yes, one of them answers no, or one could not be read.

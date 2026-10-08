@@ -29,8 +29,8 @@ import { uncollectedCount } from "@/lib/rows";
  * NO `?weeks=` IS READ HERE, and a stray one is IGNORED rather than redirected away. This page has no parameter to
  * resolve, so an old bookmark cannot change what it renders; `proxy` has already turned the value into the reader's
  * remembered preference, which the pages that do state a window will honour; and the URL also carries the table's
- * own term, production, visibility and expand state and the four summary wheels' wedges, all written client-side
- * with `replaceState` — so a redirect would have to carry nine other parameters through or silently drop the
+ * own term, production, visibility and expand state and the eight summary wheels' wedges, all written client-side
+ * with `replaceState` — so a redirect would have to carry thirteen other parameters through or silently drop the
  * reader's filters.
  *
  * Rendered on every request. The service holds one built report per span and rebuilds it when a collection lands,
@@ -89,23 +89,23 @@ export default async function RepositoriesPage() {
         </div>
       </Panel>
 
-      {/* FOUR WHEELS, ON THE FOUR QUESTIONS THIS PAGE ANSWERS. Two are about stewardship and two about security;
-          none of them is a ways-of-working question, which is what `/teams` reports and what took five of the six
-          charts that used to stand here off this page. Each is a CONTROL as well as a chart — a wedge writes its
-          slice to the query and the table below narrows — which is the half the previous charts took with them
-          when they went, leaving the reader chips they could dismiss and had no way to set.
+      {/* EIGHT WHEELS IN TWO GROUPS, ONE PER COHORT. AI readiness, Enforces review, Enforces CI and Test coverage
+          count every unarchived repository listed; Code owner, Maintained, Hygiene and Vulnerabilities count the
+          public estate alone. Each is a CONTROL as well as a chart — a wedge writes its slice to the query and the
+          table below narrows — which is the half the previous charts took with them when they went, leaving the
+          reader chips they could dismiss and had no way to set. A wedge on an all-repositories wheel also turns
+          every visibility on, so the list shows the rows its slice counted.
 
-          THE COHORT IS STATED IN THE HEADING AND THE REASON IS ON THE HINT. A figure whose denominator is not the
-          table's row count reads as disagreeing with the table, and this one is deliberately not: secret scanning
-          is free on public repositories and needs GitHub Advanced Security on internal and private ones, so every
-          internal and private repository legitimately reports the security controls off and a wheel including them
-          would draw a licensing boundary as an estate-wide gap.
+          EACH GROUP STATES ITS COHORT IN ITS HEADING AND THE REASON ON ITS HINT. A figure whose denominator is not
+          the table's row count reads as disagreeing with the table. The public group is narrowed deliberately:
+          secret scanning is free on public repositories and needs GitHub Advanced Security on internal and private
+          ones, so every internal and private repository legitimately reports the security controls off and a wheel
+          including them would draw a licensing boundary as an estate-wide gap.
 
-          NO BANNER AND NO WARNING TONE anywhere in here. Three of the four wheels keep a slice for an answer the
-          report may not hold, and two of those three are counted at ZERO on the public estate today — drawn all the
-          same, because a row in no slice would under-total the wheel against the cohort beside the heading. The
-          third is the 84 repositories neither vulnerability source is reading, which is the finding rather than
-          something to apologise for on a strip across the page. */}
+          NO BANNER AND NO WARNING TONE anywhere in here. Most wheels keep a slice for an answer the report may not
+          hold, and some are counted at ZERO today — drawn all the same, because a row in no slice would under-total
+          the wheel against the cohort beside the heading. The 84 public repositories neither vulnerability source
+          is reading are the finding rather than something to apologise for on a strip across the page. */}
       <EstateSummary rows={repositories} />
 
       {/* "UNARCHIVED ONLY" IS A FACT ABOUT THE COHORT and belongs beside the list it qualifies. The estate is
