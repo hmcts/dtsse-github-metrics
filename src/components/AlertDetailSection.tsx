@@ -2,8 +2,17 @@ import clsx from "clsx";
 import { EmptyState } from "@/components/EmptyState";
 import { Section } from "@/components/Section";
 import { instant } from "@/lib/format";
-import { type AlertScanSummary, alertActionLabel, alertIdentifier, alertLocation, alertScanSummaries, alertState, alertSubject } from "@/lib/repository";
-import { borderClass, valueClass } from "@/lib/tone";
+import {
+  type AlertScanSummary,
+  alertActionLabel,
+  alertIdentifier,
+  alertLevel,
+  alertLocation,
+  alertScanSummaries,
+  alertState,
+  alertSubject
+} from "@/lib/repository";
+import { alertRecordTone, borderClass, valueClass } from "@/lib/tone";
 import type { SecurityAlertFamilyScan } from "@/lib/types";
 
 /**
@@ -61,9 +70,9 @@ function FamilyBlock({ summary }: { summary: AlertScanSummary }) {
 }
 
 /**
- * One family's open alerts as a table: what it is, where, when it was raised, its state, and the link.
+ * One family's open alerts as a table: what it is, how severe, where, when it was raised, its state, and the link.
  *
- * A TABLE AND NOT A LIST, unlike every other block on this page: there are five facts per alert and a reader compares
+ * A TABLE AND NOT A LIST, unlike every other block on this page: there are six facts per alert and a reader compares
  * them DOWN rather than reading each alert as a paragraph — which path is worst, which has been open longest. That is
  * the one thing that makes a `<table>` right rather than a `<dl>`, and the `caption` names which family's alerts these
  * are so the table is not orphaned from the heading above it when a screen reader lists it alone.
@@ -81,6 +90,9 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
           <tr>
             <th scope="col" className="py-2 pr-3 text-left font-medium">
               Type
+            </th>
+            <th scope="col" className="py-2 pr-3 text-left font-medium">
+              Level
             </th>
             <th scope="col" className="py-2 pr-3 text-left font-medium">
               Location
@@ -105,6 +117,7 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
                     is what a reader acts on and the identifier is what they look up. */}
                 {alertIdentifier(alert) ? <p className="font-mono text-slate-500 mt-0.5 break-all">{alertIdentifier(alert)}</p> : null}
               </td>
+              <td className={clsx("py-2 pr-3 align-top whitespace-nowrap", valueClass(alertRecordTone(alert)))}>{alertLevel(alert)}</td>
               <td className="py-2 pr-3 align-top font-mono text-slate-300 break-all">{alertLocation(alert)}</td>
               <td className="py-2 pr-3 align-top text-slate-300 whitespace-nowrap">{instant(alert.created_at)}</td>
               <td className="py-2 pr-3 align-top text-slate-300">{alertState(alert)}</td>

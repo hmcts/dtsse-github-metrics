@@ -51,17 +51,17 @@ an AI readiness column to the repositories table.
 - [x] run the project test suite - must pass before task 2
 
 ### Task 2: Severity colours and a Level column in the alert detail lists
-- [ ] add a helper in src/lib/tone.ts that grades one alert record: critical/high → "bad", medium/low → "warn",
+- [x] add a helper in src/lib/tone.ts that grades one alert record: critical/high → "bad", medium/low → "warn",
       secret-scanning (no severity) → "bad"; an alert with no severity in another family → "neutral"
-- [ ] have alertScanTone build on that helper, so a family's border is the worst of its alerts' tones and
+- [x] have alertScanTone build on that helper, so a family's border is the worst of its alerts' tones and
       Dependabot and code scanning holding only medium/low alerts read amber
-- [ ] add a helper in src/lib/repository.ts giving an alert's level word: "Critical", "High", "Medium", "Low",
+- [x] add a helper in src/lib/repository.ts giving an alert's level word: "Critical", "High", "Medium", "Low",
       "Secret" for secret scanning, and "Not graded" where a graded family's alert has no severity
-- [ ] add a "Level" column to AlertTable in AlertDetailSection.tsx as the second column, right after Type,
+- [x] add a "Level" column to AlertTable in AlertDetailSection.tsx as the second column, right after Type,
       showing the word in its tone colour (valueClass)
-- [ ] write tests in tone.test.ts, repository.test.ts and AlertDetailSection.test.tsx: column order,
+- [x] write tests in tone.test.ts, repository.test.ts and AlertDetailSection.test.tsx: column order,
       level words, red for critical/high/secret, amber for medium/low
-- [ ] run the project test suite - must pass before task 3
+- [x] run the project test suite - must pass before task 3
 
 ### Task 3: Relabel the Vulnerabilities wheel by severity
 - [ ] extend vulnerabilityPosition in src/lib/rows.ts to track whether any live finding is critical or high,

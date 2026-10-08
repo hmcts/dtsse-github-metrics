@@ -32,6 +32,7 @@ import {
   type Tone
 } from "@/lib/tone";
 import type {
+  AlertSeverity,
   AssuranceOutcome,
   AssuranceReport,
   CohortSummary,
@@ -493,6 +494,28 @@ export function alertSubject(alert: SecurityAlertRecord): string {
 /** The identifier behind the subject, or nothing where the subject already was it. */
 export function alertIdentifier(alert: SecurityAlertRecord): string | undefined {
   return alert.subject === undefined ? undefined : alert.alert_type;
+}
+
+/** How each GitHub severity reads in a Level cell. */
+const ALERT_LEVEL_WORD: Record<AlertSeverity, string> = {
+  critical: "Critical",
+  high: "High",
+  medium: "Medium",
+  low: "Low"
+};
+
+/**
+ * How severe one alert is, as a word, drawn in `alertRecordTone`'s colour beside it.
+ *
+ * Secret scanning has no severity, so its word names the family rather than inventing a level: a leaked credential is
+ * red for what it is. An alert in a graded family that arrived without a severity says so instead of leaving a blank
+ * cell, which would read as the lowest level.
+ */
+export function alertLevel(alert: SecurityAlertRecord): string {
+  if (alert.family === "secret-scanning") {
+    return "Secret";
+  }
+  return alert.severity === undefined ? "Not graded" : ALERT_LEVEL_WORD[alert.severity];
 }
 
 /**

@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import type { GateField, SonarMeasure } from "@/lib/tone";
 import {
+  alertRecordTone,
   alertScanTone,
   alertTone,
   assuranceOutcomeTone,
@@ -265,6 +266,54 @@ describe("one alert family's scan", () => {
 
   it("reads any open secret badly, the family reporting no severity to weigh", () => {
     expect(alertScanTone("secret-scanning", "read", [{ ...open, family: "secret-scanning" }])).toBe("bad");
+  });
+});
+
+describe("one open alert", () => {
+  const open: SecurityAlertRecord = { family: "dependabot", number: 1, state: "open" };
+
+  it("reads critical and high badly and medium and low as worth weighing", () => {
+    expect(alertRecordTone({ ...open, severity: "critical" })).toBe("bad");
+    expect(alertRecordTone({ ...open, severity: "high" })).toBe("bad");
+    expect(alertRecordTone({ ...open, family: "code-scanning", severity: "medium" })).toBe("warn");
+    expect(alertRecordTone({ ...open, severity: "low" })).toBe("warn");
+  });
+
+  it("reads a secret badly, the family reporting no severity to weigh", () => {
+    expect(alertRecordTone({ ...open, family: "secret-scanning" })).toBe("bad");
+  });
+
+  it("leaves an alert in a graded family that arrived without a severity uncoloured", () => {
+    expect(alertRecordTone(open)).toBe("neutral");
+    expect(alertRecordTone({ ...open, family: "code-scanning" })).toBe("neutral");
+  });
+});
+
+describe("one alert family's border, as the worst of its alerts", () => {
+  const open: SecurityAlertRecord = { family: "code-scanning", number: 1, state: "open" };
+
+  it("reads amber where every open alert is medium or low", () => {
+    expect(
+      alertScanTone("code-scanning", "read", [
+        { ...open, severity: "medium" },
+        { ...open, number: 2, severity: "low" }
+      ])
+    ).toBe("warn");
+    expect(alertScanTone("dependabot", "read", [{ ...open, family: "dependabot", severity: "low" }])).toBe("warn");
+  });
+
+  it("reads red as soon as one alert is critical or high", () => {
+    expect(
+      alertScanTone("code-scanning", "read", [
+        { ...open, severity: "low" },
+        { ...open, number: 2, severity: "high" }
+      ])
+    ).toBe("bad");
+  });
+
+  it("lets an ungraded alert neither lift nor lower a graded neighbour", () => {
+    expect(alertScanTone("code-scanning", "read", [open, { ...open, number: 2, severity: "medium" }])).toBe("warn");
+    expect(alertScanTone("code-scanning", "read", [open, { ...open, number: 2, severity: "critical" }])).toBe("bad");
   });
 });
 

@@ -157,4 +157,44 @@ describe("AlertDetailSection", () => {
     expect(markup).toContain("Open secret-scanning alerts");
     expect(markup).not.toContain("title=");
   });
+
+  it("should put the Level column second, straight after Type", () => {
+    const headings = [...markup.matchAll(/<th scope="col"[^>]*>([^<]+)<\/th>/g)].map((match) => match[1]);
+
+    expect(headings).toEqual(["Type", "Level", "Location", "Detected", "State", "GitHub"]);
+  });
+
+  it("should draw each alert's level in its own severity colour", () => {
+    const cell = (tone: string, word: string) => new RegExp(`<td class="[^"]*${tone}[^"]*">${word}</td>`);
+    const graded = render([
+      {
+        family: "dependabot",
+        state: "read",
+        observed_at: "2026-09-22T06:00:00Z",
+        alerts: (["critical", "high", "medium", "low"] as const).map((severity, index) =>
+          alert({ family: "dependabot", number: index + 1, severity, html_url: undefined })
+        )
+      }
+    ]);
+
+    expect(graded).toMatch(cell(TONE_VALUE.bad, "Critical"));
+    expect(graded).toMatch(cell(TONE_VALUE.bad, "High"));
+    expect(graded).toMatch(cell(TONE_VALUE.warn, "Medium"));
+    expect(graded).toMatch(cell(TONE_VALUE.warn, "Low"));
+    expect(markup).toMatch(cell(TONE_VALUE.bad, "Secret"));
+  });
+
+  it("should read a family holding only medium and low alerts as amber", () => {
+    const warm = render([
+      {
+        family: "code-scanning",
+        state: "read",
+        observed_at: "2026-09-22T06:00:00Z",
+        alerts: [alert({ family: "code-scanning", number: 1, severity: "medium" }), alert({ family: "code-scanning", number: 2, severity: "low" })]
+      }
+    ]);
+
+    expect(warm).toContain(TONE_BORDER.warn);
+    expect(warm).not.toContain(TONE_BORDER.bad);
+  });
 });

@@ -3,6 +3,7 @@ import {
   ALERT_FAMILIES,
   alertActionLabel,
   alertIdentifier,
+  alertLevel,
   alertLocation,
   alertScanSummaries,
   alertState,
@@ -763,5 +764,25 @@ describe("SonarCloud", () => {
       detail: "never analysed",
       tone: "neutral"
     });
+  });
+});
+
+describe("alertLevel", () => {
+  const open: SecurityAlertRecord = { family: "dependabot", number: 1, state: "open" };
+
+  it("names each GitHub severity", () => {
+    expect(alertLevel({ ...open, severity: "critical" })).toBe("Critical");
+    expect(alertLevel({ ...open, severity: "high" })).toBe("High");
+    expect(alertLevel({ ...open, family: "code-scanning", severity: "medium" })).toBe("Medium");
+    expect(alertLevel({ ...open, severity: "low" })).toBe("Low");
+  });
+
+  it("names a secret for what it is, the family carrying no severity", () => {
+    expect(alertLevel({ ...open, family: "secret-scanning" })).toBe("Secret");
+  });
+
+  it("says a graded family's alert without a severity was not graded rather than leaving the cell blank", () => {
+    expect(alertLevel(open)).toBe("Not graded");
+    expect(alertLevel({ ...open, family: "code-scanning" })).toBe("Not graded");
   });
 });
