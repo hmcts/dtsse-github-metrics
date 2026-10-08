@@ -10,7 +10,7 @@
  *   Code owner       team 907   individual 54   nobody 88
  *   Maintained       maintained 913   unmaintained 136   no state stated 0
  *   Hygiene          all signals on 831   one or more off 218   no state stated 0
- *   Vulnerabilities  clean on what read it 710   live vulnerabilities 255   unscanned by anything 84
+ *   Vulnerabilities  clear 710   live 255 (high + medium)   unscanned 84
  *
  * AGAINST A FIXTURE AND NEVER AGAINST LIVE DATA, because the estate moves under the assertion. The public cohort
  * was 1,046 on the morning of 2026-09-22 and 1,049 the same afternoon, and the wheel that used to stand where
@@ -48,7 +48,7 @@ import {
   unowned,
   VULNERABILITY_PARAMETER
 } from "@/lib/rows";
-import type { AssuranceHygieneSignals, CveEvidence, OpenAlertCount, RepositoryRow, SecurityAlertEvidence } from "@/lib/types";
+import type { AssuranceHygieneSignals, CveCount, CveEvidence, OpenAlertCount, RepositoryRow, SecurityAlertEvidence } from "@/lib/types";
 
 /** The cohort the wheels were measured over. */
 const PUBLIC_REPOSITORIES = 1049;
@@ -57,8 +57,8 @@ const PUBLIC_REPOSITORIES = 1049;
 const NO_CVE_REPORT = "no CVE report has been published for this repository";
 
 /** A Dependabot count block for a repository Dependabot IS watching, whatever it found — `0` is a real answer. */
-function watching(open: number): OpenAlertCount {
-  return { open, by_severity: {} };
+function watching(open: number, bySeverity: OpenAlertCount["by_severity"] = {}): OpenAlertCount {
+  return { open, by_severity: bySeverity };
 }
 
 /**
@@ -72,10 +72,10 @@ function alerts(dependabot: OpenAlertCount): SecurityAlertEvidence {
 }
 
 /** A CVE position with a stated number of unsuppressed findings, which `0` is a real answer for. */
-function scanned(live: number): CveEvidence {
+function scanned(live: number, bySeverity: CveCount["by_severity"] = {}): CveEvidence {
   return {
-    all: { total: live, by_severity: {} },
-    live: { total: live, by_severity: {} },
+    all: { total: live, by_severity: bySeverity },
+    live: { total: live, by_severity: bySeverity },
     suppressed: { total: 0, by_severity: {} },
     occurrences: live
   };
@@ -136,20 +136,36 @@ function signals(index: number, passing: boolean): AssuranceHygieneSignals {
  * EVERY ROW IS READ BY ONE SOURCE OR THE OTHER OR BOTH, by rotation, because the whole point of the combined wheel
  * is the repositories only one of the two covers. A third of each populated slice is Jenkins with no Dependabot, a
  * third is Dependabot with no Jenkins report — the 686 the old wheel drew as unmeasured — and a third is both.
+ *
+ * THE HIGH/MEDIUM SPLIT IS THE FIXTURE'S OWN and not a measurement: the 255 live rows were measured before the wheel
+ * read severity. Every live finding is graded high, or none of them is, so the even rows land in `high` and the odd
+ * ones in `medium`.
  */
-function vulnerabilities(index: number, slice: "clean" | "live" | "unscanned"): Pick<RepositoryRow, "cves" | "security"> {
+function vulnerabilities(index: number, slice: "clear" | "high" | "medium" | "unscanned"): Pick<RepositoryRow, "cves" | "security"> {
   if (slice === "unscanned") {
     return { cves: { detail: NO_CVE_REPORT }, security: alerts({ by_severity: {} }) };
   }
-  const findings = slice === "live" ? 1 + (index % 4) : 0;
+  const findings = slice === "clear" ? 0 : 1 + (index % 4);
+  const band = slice === "high" ? { high: findings } : slice === "medium" ? { medium: findings } : {};
   switch (index % 3) {
     case 0:
-      return { cves: { cves: scanned(findings) }, security: alerts({ by_severity: {} }) };
+      return { cves: { cves: scanned(findings, band) }, security: alerts({ by_severity: {} }) };
     case 1:
-      return { cves: { detail: NO_CVE_REPORT }, security: alerts(watching(findings)) };
+      return { cves: { detail: NO_CVE_REPORT }, security: alerts(watching(findings, band)) };
     default:
-      return { cves: { cves: scanned(findings) }, security: alerts(watching(findings)) };
+      return { cves: { cves: scanned(findings, band) }, security: alerts(watching(findings, band)) };
   }
+}
+
+/** Which vulnerability slice index `index` belongs to: 710 clear, 255 live split by parity, then 84 unscanned. */
+function vulnerabilitySlice(index: number): "clear" | "high" | "medium" | "unscanned" {
+  if (index < 710) {
+    return "clear";
+  }
+  if (index < 965) {
+    return index % 2 === 0 ? "high" : "medium";
+  }
+  return "unscanned";
 }
 
 /**
@@ -169,8 +185,8 @@ function row(index: number): RepositoryRow {
     unmaintained: index >= 913,
     // 831 with every signal on, then 218 with one check off.
     assurance: withSignals(signals(index, index < 831)),
-    // 710 clean on what read them, then 255 carrying live findings, then 84 neither source reads.
-    ...vulnerabilities(index, index < 710 ? "clean" : index < 965 ? "live" : "unscanned")
+    // 710 clear on what read them, then 255 carrying live findings, then 84 neither source reads.
+    ...vulnerabilities(index, vulnerabilitySlice(index))
   };
 }
 
@@ -211,7 +227,8 @@ describe("the estate summary wheels", () => {
   });
 
   it("should count the combined vulnerability distribution measured on the public estate", () => {
-    expect(counted(VULNERABILITY_PARAMETER)).toEqual({ clean: 710, live: 255, unscanned: 84 });
+    // 128 even indices and 127 odd ones between 710 and 964 — the 255 live rows, split as `vulnerabilitySlice` says.
+    expect(counted(VULNERABILITY_PARAMETER)).toEqual({ high: 128, medium: 127, clear: 710, unscanned: 84 });
   });
 
   it("should put every repository in exactly one slice of every wheel", () => {
@@ -231,11 +248,11 @@ describe("the estate summary wheels", () => {
     }
   });
 
-  it("should order every wheel's slices best first with the unmeasured one last", () => {
-    // The colours then run green, amber, slate in the same order on all four, which is what lets four wheels side
-    // by side be read as one thing.
+  it("should order every wheel's slices best first with the unmeasured one last, except Vulnerabilities", () => {
+    // The colours then run green, amber, slate in the same order on the stewardship wheels, which is what lets them
+    // be read side by side. `Vulnerabilities` runs by severity, worst first — see its own case.
     for (const dimension of ESTATE_DIMENSIONS) {
-      expect(dimension.slices[0]?.state).toBe("green");
+      expect(dimension.slices[0]?.state).toBe(dimension.parameter === VULNERABILITY_PARAMETER ? "red" : "green");
       expect(dimension.slices.at(-1)?.state).toBe(dimension.parameter === OWNER_PARAMETER ? "red" : "none");
     }
   });
@@ -345,60 +362,79 @@ describe("the hygiene wheel", () => {
 });
 
 describe("the combined vulnerability wheel", () => {
-  it("should count a repository Dependabot alone reads and finds nothing on as clean", () => {
+  /** The wheel's four counts with exactly one slice at one, for the single-row cases below. */
+  function inSlice(key: "high" | "medium" | "clear" | "unscanned"): Record<string, number> {
+    return { high: 0, medium: 0, clear: 0, unscanned: 0, [key]: 1 };
+  }
+
+  it("should draw its slices worst first: high, medium, clear, unscanned", () => {
+    const slices = wheel(VULNERABILITY_PARAMETER).slices;
+
+    expect(slices.map((slice) => slice.key)).toEqual(["high", "medium", "clear", "unscanned"]);
+    expect(slices.map((slice) => slice.label)).toEqual(["High", "Medium", "Clear", "Unscanned"]);
+    expect(slices.map((slice) => slice.state)).toEqual(["red", "amber", "green", "none"]);
+  });
+
+  it("should count a repository with a live critical finding on either source as high", () => {
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(1, { critical: 1 }) }, security: alerts(watching(0)) }))).toEqual(inSlice("high"));
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts(watching(1, { critical: 1 })) }))).toEqual(
+      inSlice("high")
+    );
+  });
+
+  it("should count a repository with a live high finding on either source as high", () => {
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(3, { high: 1, low: 2 }) }, security: alerts(watching(0)) }))).toEqual(inSlice("high"));
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(2, { medium: 2 }) }, security: alerts(watching(1, { high: 1 })) }))).toEqual(
+      inSlice("high")
+    );
+  });
+
+  it("should count a repository whose live findings are all medium or low as medium", () => {
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(2, { medium: 1, low: 1 }) }, security: alerts(watching(1, { low: 1 })) }))).toEqual(
+      inSlice("medium")
+    );
+  });
+
+  it("should count ungraded live findings as medium rather than clear", () => {
+    // THE CVE `unknown` BAND, and a Dependabot alert counted in `open` with no band of its own: both are findings,
+    // and neither is critical or high, so they are amber.
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(2, { unknown: 2 }) }, security: alerts(watching(0)) }))).toEqual(inSlice("medium"));
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts(watching(3)) }))).toEqual(inSlice("medium"));
+  });
+
+  it("should count a repository Dependabot alone reads and finds nothing on as clear", () => {
     // THE 686-REPOSITORY CASE, and the error the wheel this replaced made: no dependency-scan report has been
     // published, so the old wheel drew this as unmeasured — when Dependabot has read it and found nothing.
-    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts(watching(0)) }))).toEqual({
-      clean: 1,
-      live: 0,
-      unscanned: 0
-    });
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts(watching(0)) }))).toEqual(inSlice("clear"));
   });
 
-  it("should count a repository Dependabot alone reads and finds alerts on as carrying live vulnerabilities", () => {
-    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts(watching(3)) }))).toEqual({
-      clean: 0,
-      live: 1,
-      unscanned: 0
-    });
-  });
-
-  it("should count a repository the Jenkins scan alone reads as clean on that source when it finds nothing", () => {
-    // A MEASURED ZERO on the other source, with Dependabot not watching. The reader's "clean" means clean on
+  it("should count a repository the Jenkins scan alone reads as clear on that source when it finds nothing", () => {
+    // A MEASURED ZERO on the other source, with Dependabot not watching. The reader's "clear" means clear on
     // whichever source read it, which for this repository is one of the two.
-    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(0) }, security: alerts({ by_severity: {} }) }))).toEqual({
-      clean: 1,
-      live: 0,
-      unscanned: 0
-    });
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(0) }, security: alerts({ by_severity: {} }) }))).toEqual(inSlice("clear"));
   });
 
-  it("should count a repository as carrying live vulnerabilities when either source finds any", () => {
-    // EITHER AND NOT BOTH. One source finding nothing does not clear a finding the other one raised.
-    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(2) }, security: alerts(watching(0)) }))).toEqual({
-      clean: 0,
-      live: 1,
-      unscanned: 0
-    });
-    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(0) }, security: alerts(watching(2)) }))).toEqual({
-      clean: 0,
-      live: 1,
-      unscanned: 0
-    });
+  it("should not let one source finding nothing clear a finding the other raised", () => {
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(2, { medium: 2 }) }, security: alerts(watching(0)) }))).toEqual(inSlice("medium"));
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { cves: scanned(0) }, security: alerts(watching(2, { critical: 2 })) }))).toEqual(inSlice("high"));
   });
 
-  it("should count a repository neither source reads as unscanned by anything", () => {
+  it("should count a repository neither source reads as unscanned", () => {
     // THE 84. No dependency-scan report has been published AND Dependabot is not watching it, which is the estate's
     // real blind spot and a far smaller one than the 770 the Jenkins report alone implied.
-    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts({ by_severity: {} }) }))).toEqual({
-      clean: 0,
-      live: 0,
-      unscanned: 1
-    });
-    expect(counted(VULNERABILITY_PARAMETER, only({}))).toEqual({ clean: 0, live: 0, unscanned: 1 });
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts({ by_severity: {} }) }))).toEqual(inSlice("unscanned"));
+    expect(counted(VULNERABILITY_PARAMETER, only({}))).toEqual(inSlice("unscanned"));
   });
 
-  it("should count a repository whose only findings are suppressed or dismissed as clean", () => {
+  it("should not read a Dependabot severity band on a repository Dependabot is not watching", () => {
+    // `open` is the read signal. A band without it is not a finding, and counting it would put a row nobody read in
+    // the red slice — the wheel would then hold it twice.
+    expect(counted(VULNERABILITY_PARAMETER, only({ cves: { detail: NO_CVE_REPORT }, security: alerts({ by_severity: { critical: 1 } }) }))).toEqual(
+      inSlice("unscanned")
+    );
+  });
+
+  it("should count a repository whose only findings are suppressed or dismissed as clear", () => {
     // WHY THE TWO SOURCES MAY BE COMBINED AT ALL: both count only what is live. A CVE suppressed in the build is
     // outside `CveEvidence.live`, and an alert somebody dismissed is outside the `open` figure GitHub serves — so
     // neither number carries an accepted risk and a zero from either is a real all-clear.
@@ -407,23 +443,26 @@ describe("the combined vulnerability wheel", () => {
         VULNERABILITY_PARAMETER,
         only({
           cves: {
-            cves: { all: { total: 9, by_severity: {} }, live: { total: 0, by_severity: {} }, suppressed: { total: 9, by_severity: {} }, occurrences: 9 }
+            cves: {
+              all: { total: 9, by_severity: { critical: 9 } },
+              live: { total: 0, by_severity: {} },
+              suppressed: { total: 9, by_severity: { critical: 9 } },
+              occurrences: 9
+            }
           },
           security: alerts(watching(0))
         })
       )
-    ).toEqual({ clean: 1, live: 0, unscanned: 0 });
+    ).toEqual(inSlice("clear"));
   });
 
   it("should not read an absent Dependabot count as zero alerts", () => {
     // The absence is the ONLY thing separating "Dependabot found nothing" from "Dependabot is not watching this",
     // and reading it as zero would report the second as the first — which is the error the whole wheel exists to
-    // stop making. With no Jenkins report either, this row is unscanned rather than clean.
-    expect(counted(VULNERABILITY_PARAMETER, only({ security: alerts({ by_severity: {}, detail: "dependabot/alerts is not enabled" }) }))).toEqual({
-      clean: 0,
-      live: 0,
-      unscanned: 1
-    });
+    // stop making. With no Jenkins report either, this row is unscanned rather than clear.
+    expect(counted(VULNERABILITY_PARAMETER, only({ security: alerts({ by_severity: {}, detail: "dependabot/alerts is not enabled" }) }))).toEqual(
+      inSlice("unscanned")
+    );
   });
 });
 

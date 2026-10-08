@@ -64,16 +64,16 @@ an AI readiness column to the repositories table.
 - [x] run the project test suite - must pass before task 3
 
 ### Task 3: Relabel the Vulnerabilities wheel by severity
-- [ ] extend vulnerabilityPosition in src/lib/rows.ts to track whether any live finding is critical or high,
+- [x] extend vulnerabilityPosition in src/lib/rows.ts to track whether any live finding is critical or high,
       across both the Jenkins CVE `live.by_severity` and Dependabot `by_severity`
-- [ ] replace the slices with: "High" (red, any live critical/high), "Medium" (amber, live findings but none
+- [x] replace the slices with: "High" (red, any live critical/high), "Medium" (amber, live findings but none
       critical/high — including the CVE `unknown` band and Dependabot alerts counted in `open` but not in
       `by_severity`), "Clear" (green, read and nothing live), "Unscanned" (slate, neither source read it), in
       that order, with keys `high`, `medium`, `clear`, `unscanned`
-- [ ] update the wheel's hint and the NOT_STATED comment to match the new wording
-- [ ] update estate.test.ts: slices cover every row, and each row falls in the expected slice for critical,
+- [x] update the wheel's hint and the NOT_STATED comment to match the new wording
+- [x] update estate.test.ts: slices cover every row, and each row falls in the expected slice for critical,
       high, medium-only, unknown-only, clean and unscanned fixtures
-- [ ] run the project test suite - must pass before task 4
+- [x] run the project test suite - must pass before task 4
 
 ### Task 4: Give each estate wheel its own cohort
 - [ ] add a `cohort: "all" | "public"` field to EstateDimension in src/lib/rows.ts, set to "public" on the

@@ -388,9 +388,9 @@ export const VULNERABILITY_PARAMETER = "vulnerabilities";
  * true is that this report holds no answer, and the two readings take different actions. One wording per wheel
  * would have let the sharpest of them drift into blame.
  *
- * WHICH IS WHY THE `Vulnerabilities` WHEEL DOES NOT USE IT. Its last slice is a repository both sources were
- * asked about and neither is reading — a measured absence of scanning rather than an absence of an answer — so it
- * gets the sharper word this one is careful to avoid. The distinction is the point of having one constant.
+ * WHICH IS WHY THE `Vulnerabilities` WHEEL DOES NOT USE IT. Its last slice, "Unscanned", is a repository both
+ * sources were asked about and neither is reading — a measured absence of scanning rather than an absence of an
+ * answer — so it gets the sharper word this one is careful to avoid. The distinction is the point of having one constant.
  */
 const NOT_STATED = "No state stated";
 
@@ -409,8 +409,9 @@ const NOT_STATED = "No state stated";
  *
  * THE COLOURS RUN GREEN, AMBER, THEN SLATE ON EVERY WHEEL, so four wheels side by side read as one thing: the
  * first slice is the answer that reads well, the second is the one worth weighing, and slate is the absence of an
- * answer. `Code owner` is the one wheel that reaches red, because it is the one whose last slice is a criterion
- * READ AND FAILED with nobody to ask about it rather than a fact to weigh.
+ * answer. `Code owner` reaches red because its last slice is a criterion READ AND FAILED with nobody to ask about
+ * it rather than a fact to weigh. `Vulnerabilities` is the exception to the order: it runs by severity, red, amber,
+ * green, then slate, because its question is how bad the worst live finding is and the worst answer leads.
  *
  * EVERY SLATE SLICE IS NOW SMALL, WHICH IS THE POINT OF THE TWO THAT CHANGED. The wheels this pair replaced —
  * `Code scanning` and `Unsuppressed CVEs` — were the two whose largest slice was the state nobody stated: 259 of
@@ -466,15 +467,21 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
   {
     parameter: VULNERABILITY_PARAMETER,
     title: "Vulnerabilities",
-    hint: "Live vulnerabilities from BOTH sources: the build pipeline's own dependency scan, and GitHub's Dependabot alerts. Clean means clean on whichever source read this repository, which for some of them is one of the two rather than both. Unscanned by anything is the blind spot — no dependency-scan report has been published AND Dependabot is not watching it.",
+    hint: "Live vulnerabilities from BOTH sources, by their worst severity: the build pipeline's own dependency scan, and GitHub's Dependabot alerts. High means at least one live critical or high finding on either source. Medium means live findings and none of them critical or high — including findings the source could not grade. Clear means nothing live on whichever source read this repository, which for some of them is one of the two rather than both. Unscanned is the blind spot — no dependency-scan report has been published AND Dependabot is not watching it.",
     slices: [
-      // A MEASURED ZERO, which is the whole reason this wheel has three slices: a source that read this repository
-      // and found nothing is the finding, and it is not the same answer as a repository neither source covers.
-      { key: "clean", label: "Clean on what read it", state: "green", holds: (row) => vulnerabilityFree(vulnerabilityPosition(row)) },
-      { key: "live", label: "Live vulnerabilities", state: "amber", holds: (row) => vulnerabilityPosition(row).findings > 0 },
+      // WORST SEVERITY WINS, on either source: one critical Dependabot alert puts a repository here whatever the
+      // build scan says, because one source finding less does not clear what the other raised.
+      { key: "high", label: "High", state: "red", holds: (row) => vulnerabilityPosition(row).severe },
+      // EVERYTHING LIVE THAT IS NOT CRITICAL OR HIGH, which includes the CVE `unknown` band and any Dependabot alert
+      // counted in `open` but in no band of `by_severity`. An ungraded finding is still a finding, and leaving it out
+      // would report it as clear.
+      { key: "medium", label: "Medium", state: "amber", holds: (row) => liveButNotSevere(vulnerabilityPosition(row)) },
+      // A MEASURED ZERO: a source that read this repository and found nothing is the finding, and it is not the same
+      // answer as a repository neither source covers.
+      { key: "clear", label: "Clear", state: "green", holds: (row) => vulnerabilityFree(vulnerabilityPosition(row)) },
       // THE SHARPER WORD, and earned: both sources were consulted and neither is reading this repository, so unlike
       // every other slate slice on this page there is no unread answer behind it. See `NOT_STATED`.
-      { key: "unscanned", label: "Unscanned by anything", state: "none", holds: (row) => !vulnerabilityPosition(row).read }
+      { key: "unscanned", label: "Unscanned", state: "none", holds: (row) => !vulnerabilityPosition(row).read }
     ]
   }
 ];
@@ -529,16 +536,41 @@ function hygieneVerdict(row: RepositoryRow): boolean | undefined {
  * clean on everything they read.
  */
 function vulnerabilityPosition(row: RepositoryRow): VulnerabilityPosition {
-  const jenkins = cveEvidence(row)?.live.total;
-  const dependabot = dependabotAlerts(row);
-  return { findings: (jenkins ?? 0) + (dependabot ?? 0), read: jenkins !== undefined || dependabot !== undefined };
+  const jenkins = cveEvidence(row)?.live;
+  const dependabot = row.security?.dependabot;
+  const dependabotOpen = dependabotAlerts(row);
+  // A DEPENDABOT BAND COUNTS ONLY WHERE `open` SAYS DEPENDABOT WAS READ, so `severe` never holds on a row nobody
+  // read and the wheel's slices stay disjoint.
+  const severe =
+    (jenkins !== undefined && hasSevere(jenkins.by_severity)) ||
+    (dependabotOpen !== undefined && dependabot !== undefined && hasSevere(dependabot.by_severity));
+  return {
+    findings: (jenkins?.total ?? 0) + (dependabotOpen ?? 0),
+    read: jenkins !== undefined || dependabotOpen !== undefined,
+    severe
+  };
+}
+
+/** The bands the wheel's red slice is drawn for, shared by both sources' severity scales. */
+const SEVERE_BANDS = ["critical", "high"] as const;
+
+/** Whether a severity breakdown holds anything critical or high. An absent band is a measured nothing — see `severityCount`. */
+function hasSevere(bySeverity: Partial<Record<(typeof SEVERE_BANDS)[number], number>>): boolean {
+  return SEVERE_BANDS.some((band) => (bySeverity[band] ?? 0) > 0);
 }
 
 interface VulnerabilityPosition {
   /** The live findings both sources hold between them — see `vulnerabilityPosition` for why it is only tested for zero. */
   findings: number;
-  /** Whether either source read this repository. `false` is the wheel's third slice and its only real blind spot. */
+  /** Whether either source read this repository. `false` is the wheel's last slice and its only real blind spot. */
   read: boolean;
+  /** Whether either source that read this repository holds a live critical or high finding. */
+  severe: boolean;
+}
+
+/** Live findings with none of them critical or high — the wheel's amber slice, ungraded findings included. */
+function liveButNotSevere(position: VulnerabilityPosition): boolean {
+  return !position.severe && position.findings > 0;
 }
 
 /**
@@ -549,7 +581,7 @@ interface VulnerabilityPosition {
  * report the estate's blind spot as good news — the same error in the opposite direction from the one it fixes.
  */
 function vulnerabilityFree(position: VulnerabilityPosition): boolean {
-  return position.read && position.findings === 0;
+  return position.read && !position.severe && position.findings === 0;
 }
 
 /**
