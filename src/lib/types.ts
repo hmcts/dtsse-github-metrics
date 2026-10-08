@@ -134,6 +134,12 @@ export interface CohortSummary {
   reported?: number;
   excluded_authors: Record<string, number>;
   direct_commits?: number;
+  /**
+   * How many people authored the reported merges and direct commits, bots left out.
+   *
+   * Absent where neither route was read, so an unread window is not drawn as a window nobody worked in.
+   */
+  active_contributors?: number;
 }
 
 export interface PullRequestRule {
@@ -381,18 +387,6 @@ export interface CveReport {
   detail?: string;
 }
 
-export interface CodeownersFile {
-  path: string;
-  size_bytes: number;
-  recognised_by_github: boolean;
-}
-
-export interface CodeownersReport {
-  fetched_at?: string;
-  codeowners?: { files: CodeownersFile[] };
-  detail?: string;
-}
-
 /**
  * OPTIONAL, NOT NULLABLE. Every route is registered `response_model_exclude_none`, and pydantic
  * applies it through nested models too, so an unobserved instant arrives as a MISSING KEY rather
@@ -533,7 +527,6 @@ export interface RepositoryPracticeEvidence {
   merge_gate: MergeGateReport;
   open_pull_requests: OpenPullRequestReport;
   security: SecurityAlertReport;
-  codeowners: CodeownersReport;
   maintenance: MaintenanceReport;
   sonar: SonarReport;
   metrics: BehaviourMetricSummary[];

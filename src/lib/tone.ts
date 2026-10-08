@@ -182,17 +182,6 @@ export function unreviewedMergeTone(merges: number | null | undefined): Tone {
   return counted(merges, "good", "warn");
 }
 
-/**
- * CODEOWNERS: how many files were found, or `undefined` where nobody could look.
- *
- * Three answers, and this keeps them apart the way `repository.codeownersCard` does: a file that was
- * found reads well, no file at any checked location is worth weighing, and a repository whose
- * contents GitHub refused is not graded at all.
- */
-export function codeownersTone(files: number | null | undefined): Tone {
-  return counted(files, "warn", "good");
-}
-
 /** The twelve merge-gate fields, keyed on the field rather than on the words it renders as. */
 export type GateField =
   | "branch"

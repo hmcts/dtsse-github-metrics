@@ -18,7 +18,6 @@ import { getRepository, getRepositoryNotes, getTrend, getWindows, isNotFound } f
 import { instant, span } from "@/lib/format";
 import {
   assuranceRows,
-  codeownersCard,
   cohortCards,
   type LabelledValue,
   maintenanceRows,
@@ -147,12 +146,12 @@ export default async function RepositoryPage({
       {/* The cohort is the page's headline figure rather than a section of it, so it carries the
           panel without a heading: the cards are flat, and four unbounded figures would float.
 
-          The three cohort cards come from `lib/repository` rather than being written here, so an
+          The four cohort cards come from `lib/repository` rather than being written here, so an
           unread merge history reads as a dash and its reason on this page exactly as it does in the
           estate table's Merged column. */}
       <Panel>
         <div className="p-4">
-          <ValueCards values={[...cohortCards(evidence.cohort), codeownersCard(evidence.codeowners)]} />
+          <ValueCards values={cohortCards(evidence.cohort)} />
         </div>
       </Panel>
 

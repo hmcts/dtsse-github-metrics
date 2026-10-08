@@ -1,10 +1,9 @@
 /**
- * CODEOWNERS and maintenance evidence. Ported from `metrics.domain`.
+ * Maintenance evidence. Ported from `metrics.domain`.
  *
  * CURRENTLY UNWIRED, AND KEPT BECAUSE THE PAGE THAT WOULD SHOW IT IS ALREADY BUILT. No entry point imports
- * this module — the collector makes no call for either subject, which `report/repositories.ts` says in the two
- * details it emits instead: `"the CODEOWNERS file is not read for this report"` and `"maintenance windows are
- * not collected"`. `inventory/inventory.test.ts` is its only caller.
+ * this module — the collector makes no call for it, which `report/repository-evidence.ts` says in the detail it
+ * emits instead: `"maintenance windows are not collected"`. `inventory/inventory.test.ts` is its only caller.
  *
  * The repository page nevertheless renders a **Maintenance** section, and it is empty on every repository on
  * the estate: `lib/types.ts` declares `MaintenanceReport`, `MaintenanceEvidence` and
@@ -14,43 +13,13 @@
  *
  * WHAT WOULD REACH IT: a `collect` pass reading each repository's default-branch history — bounded by
  * `HUMAN_MAINTENANCE_SEARCH_DAYS`, which is why that bound is derived from the widest reported window rather
- * than stated — building a `MaintenanceEvidence` through the constructor below, and `report/repositories.ts`
- * calling `maintenanceWindows` at assembly. `CODEOWNERS_LOCATIONS` is the other half: the six paths the
- * minimum-standards request names, three of which GitHub actually reads.
+ * than stated — building a `MaintenanceEvidence` through the constructor below, and the report calling
+ * `maintenanceWindows` at assembly.
  *
- * NOT DUPLICATED BY `org/codeowners.ts`, which is wired: that module PARSES a CODEOWNERS file to answer "who
- * is expected to review", feeding the ownership ladder. This one answers "does the repository have one, at a
- * path that works", which is a different question and is nobody's answer today.
- *
- * WHETHER TO WIRE IT UP OR DROP IT IS AN OPEN PRODUCT DECISION, deliberately not taken here.
+ * The CODEOWNERS presence check that used to live here went on 2026-10-08: the repository page shows active
+ * contributors in its place, and `org/codeowners.ts` — which PARSES a CODEOWNERS file for the ownership
+ * ladder — is unrelated and stays.
  */
-
-/**
- * Each checked CODEOWNERS location: its query alias, its path, and whether GitHub reads it.
- *
- * The minimum-standards request names `CODEOWNERS` or `CODEOWNERS.md` in the repository root, `.github/` or
- * `docs/`; GITHUB ITSELF READS ONLY THE THREE EXTENSIONLESS PATHS. Both facts are carried so the report can
- * say a `.md` variant satisfies the letter of the standard while doing nothing on GitHub.
- */
-export const CODEOWNERS_LOCATIONS: readonly { alias: string; path: string; recognisedByGitHub: boolean }[] = [
-  { alias: "githubCodeowners", path: ".github/CODEOWNERS", recognisedByGitHub: true },
-  { alias: "rootCodeowners", path: "CODEOWNERS", recognisedByGitHub: true },
-  { alias: "docsCodeowners", path: "docs/CODEOWNERS", recognisedByGitHub: true },
-  { alias: "githubCodeownersMd", path: ".github/CODEOWNERS.md", recognisedByGitHub: false },
-  { alias: "rootCodeownersMd", path: "CODEOWNERS.md", recognisedByGitHub: false },
-  { alias: "docsCodeownersMd", path: "docs/CODEOWNERS.md", recognisedByGitHub: false }
-];
-
-/** One CODEOWNERS file that was found. `byteSize` of 0 is found-but-empty, which is not the same as absent. */
-export interface CodeownersFile {
-  path: string;
-  byteSize: number;
-  recognisedByGitHub: boolean;
-}
-
-export interface CodeownersEvidence {
-  files: CodeownersFile[];
-}
 
 /**
  * When one repository's default branch last received a commit, by anyone and by a person.

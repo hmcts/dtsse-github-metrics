@@ -14,7 +14,6 @@ import {
   alertTone,
   assuranceOutcomeTone,
   borderClass,
-  codeownersTone,
   conditionTone,
   coverageTone,
   directCommitTone,
@@ -145,15 +144,6 @@ describe("the cohort", () => {
 
   it("grades an uncounted cohort figure not at all", () => {
     expect(directCommitTone(undefined)).toBe("neutral");
-  });
-});
-
-describe("CODEOWNERS", () => {
-  it("separates found, absent and unreadable", () => {
-    expect(codeownersTone(1)).toBe("good");
-    expect(codeownersTone(3)).toBe("good");
-    expect(codeownersTone(0)).toBe("warn");
-    expect(codeownersTone(undefined)).toBe("neutral");
   });
 });
 

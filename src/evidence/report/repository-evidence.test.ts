@@ -11,9 +11,9 @@ import { builtRepositoryEvidence, type RepositoryEvidenceInput } from "./reposit
 /**
  * One repository's evidence block, section by section.
  *
- * THREE SECTIONS CAN ONLY STATE AN ABSENCE and say so in their own `detail`: open pull requests, CODEOWNERS and
- * maintenance are not collected at all, and reporting them as empty would be indistinguishable from a repository
- * that genuinely has no CODEOWNERS file — which is the one confusion this contract exists to prevent. The Sonar
+ * TWO SECTIONS CAN ONLY STATE AN ABSENCE and say so in their own `detail`: open pull requests and maintenance are
+ * not collected at all, and reporting them as empty would be indistinguishable from a repository that genuinely has
+ * no open pull requests — which is the one confusion this contract exists to prevent. The Sonar
  * section left that group on 2026-09-17, and the two cases about its wording are what replaced it.
  */
 
@@ -119,13 +119,13 @@ describe("one repository's evidence block", () => {
     expect(builtRepositoryEvidence(CONFIGURATION, input()).provenance).toEqual({ offline: true, intervals_fetched: 0 });
   });
 
-  it("should say in each section's own words that three of them are not collected", () => {
+  it("should say in each section's own words that two of them are not collected", () => {
     // An empty section here would read as a repository with nothing to report, so each names the thing that would
     // have collected it.
     const evidence = builtRepositoryEvidence(CONFIGURATION, input());
 
     expect(evidence.open_pull_requests.detail).toBe("open pull-request state is not collected");
-    expect(evidence.codeowners.detail).toContain("the CODEOWNERS file is not read for this report");
+    expect("codeowners" in evidence).toBe(false);
     expect(evidence.maintenance).toEqual({ windows: [], detail: "maintenance windows are not collected" });
   });
 
@@ -194,6 +194,53 @@ describe("the cohort cards on one repository's page", () => {
     expect("merged" in evidence.cohort).toBe(false);
     expect("reported" in evidence.cohort).toBe(false);
     expect("direct_commits" in evidence.cohort).toBe(false);
+    expect("active_contributors" in evidence.cohort).toBe(false);
+  });
+
+  it("should count the people behind the reported merges and direct commits, once each and bots left out", () => {
+    const walked: Merges = {
+      pullRequests: [merge(1, "ada"), merge(2, "Ada"), merge(3, "ignored-human"), { ...merge(4, "dependabot[bot]"), authorType: "Bot" }],
+      directCommits: [
+        {
+          sha: "human",
+          repository: "alpha",
+          committedAt: new Date(Date.UTC(2026, 7, 26)),
+          authorLogin: "alan",
+          authorType: "User",
+          additions: 4,
+          deletions: 1,
+          changedFiles: 1
+        },
+        {
+          sha: "bot",
+          repository: "alpha",
+          committedAt: new Date(Date.UTC(2026, 7, 26)),
+          authorLogin: "renovate[bot]",
+          authorType: "Bot",
+          additions: 2,
+          deletions: 0,
+          changedFiles: 1
+        }
+      ]
+    };
+
+    // ada (in either case) and alan. The excluded author is out of the reported cohort, and a bot's pull request
+    // that the cohort rule kept is still not a person.
+    expect(builtRepositoryEvidence(CONFIGURATION, input({ walked })).cohort.active_contributors).toBe(2);
+  });
+
+  it("should count active contributors where only one route was read", () => {
+    const evidence = builtRepositoryEvidence(CONFIGURATION, input({ measured: { pullRequests: true, directCommits: false } }));
+
+    expect(evidence.cohort.active_contributors).toBe(1);
+    expect("direct_commits" in evidence.cohort).toBe(false);
+  });
+
+  it("should not count the authors of cached pull requests the window's walk did not cover", () => {
+    // Only direct commits were read and there are none, so ada's two cached merges are not evidence of anyone.
+    const evidence = builtRepositoryEvidence(CONFIGURATION, input({ measured: { pullRequests: false, directCommits: true } }));
+
+    expect(evidence.cohort.active_contributors).toBe(0);
   });
 
   it("should still account for the facts in the exclusion map where nothing was measured", () => {

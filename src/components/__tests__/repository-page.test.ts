@@ -69,7 +69,7 @@ function evidence(): RepositoryPracticeEvidence {
     starts_at: "2026-07-06T00:00:00Z",
     ends_at: "2026-08-31T00:00:00Z",
     provenance: { offline: false, intervals_fetched: 2 },
-    cohort: { merged: 12, reported: 9, excluded_authors: { "dependabot[bot]": 3 }, direct_commits: 1 },
+    cohort: { merged: 12, reported: 9, excluded_authors: { "dependabot[bot]": 3 }, direct_commits: 1, active_contributors: 5 },
     assessment: {
       label: "amber",
       blocking: [],
@@ -162,12 +162,6 @@ function evidence(): RepositoryPracticeEvidence {
         { criterion: "patching", outcome: "unknown", detail: "the severe alerts could not be read" },
         { criterion: "maintained", outcome: "met", detail: "pushed to within the last year" }
       ]
-    },
-    codeowners: {
-      fetched_at: "2026-08-31T00:00:00Z",
-      codeowners: {
-        files: [{ path: ".github/CODEOWNERS", size_bytes: 120, recognised_by_github: true }]
-      }
     },
     maintenance: {
       fetched_at: "2026-08-31T00:00:00Z",
@@ -595,6 +589,14 @@ describe("the repository page’s cohort row", () => {
     expect(markup).toContain("dependabot[bot] 3");
   });
 
+  it("should draw active contributors in the place the CODEOWNERS card held", async () => {
+    const markup = await render();
+
+    expect(markup).toContain("Active contributors");
+    expect(markup).toContain("authored the reported merges and direct commits");
+    expect(markup).not.toContain("CODEOWNERS</");
+  });
+
   it("should draw a dash and its reason when nobody read this repository's merges", async () => {
     // THE ROW THIS IS ABOUT: a repository whose merge walk GitHub refused keeps its state row, so the page
     // renders — and until this it drew three zeros and "no author was excluded from this window", which is a
@@ -610,12 +612,13 @@ describe("the repository page’s cohort row", () => {
     // less than a dash does.
     expect(markup).toContain("Merges reported");
     expect(markup).toContain("Direct commits");
+    expect(markup).toContain("Active contributors");
   });
 
   it("should keep a measured zero as a zero, nothing merged being a measurement", async () => {
     const markup = await render((block) => ({
       ...block,
-      cohort: { merged: 4, reported: 0, excluded_authors: { renovate: 4 }, direct_commits: 0 }
+      cohort: { merged: 4, reported: 0, excluded_authors: { renovate: 4 }, direct_commits: 0, active_contributors: 0 }
     }));
 
     // A window whose only merges were Renovate's: read, and holding nothing human.

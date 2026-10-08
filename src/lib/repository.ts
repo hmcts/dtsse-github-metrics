@@ -16,14 +16,13 @@
  * the same figure in `metrics evidence` output are one claim rather than two.
  */
 
-import { ABSENT, count, figure, instant, percent, quantity } from "@/lib/format";
+import { ABSENT, figure, instant, percent, quantity } from "@/lib/format";
 import { ASSURANCE_CRITERIA, ASSURANCE_LABEL } from "@/lib/rows";
 import {
   alertScanTone,
   alertTone,
   assuranceOutcomeTone,
   type ConditionOutcome,
-  codeownersTone,
   directCommitTone,
   gateFieldTone,
   maintenanceTone,
@@ -36,7 +35,6 @@ import {
 import type {
   AssuranceOutcome,
   AssuranceReport,
-  CodeownersReport,
   CohortSummary,
   MaintenanceReport,
   MergeGateEvidence,
@@ -175,9 +173,9 @@ export function excludedDetail(cohort: CohortSummary): string {
 }
 
 /**
- * The three cohort cards: what is counted, what was left out, and what arrived without a pull request.
+ * The four cohort cards: what is counted, what was left out, what arrived without a pull request, and who did it.
  *
- * ASSEMBLED HERE RATHER THAN IN THE PAGE, on the precedent `openPullRequestCards` sets, because each of the three
+ * ASSEMBLED HERE RATHER THAN IN THE PAGE, on the precedent `openPullRequestCards` sets, because each of the four
  * has an absent case and the page had none of them: it read the counts through `String(...)`, which prints
  * `undefined` for a figure nobody measured, and before the counts could be absent at all it printed three zeros
  * and "no author was excluded from this window" for a repository whose merge walk GitHub refused.
@@ -185,7 +183,8 @@ export function excludedDetail(cohort: CohortSummary): string {
  * Every value goes through `quantity`, so an unread source is the dash the whole contract states and never a zero,
  * and each card's detail says which of the two it is. The tones are unchanged: throughput is uncoloured because a
  * busy repository is not a good one, an exclusion is the cohort working rather than a shortfall, and
- * `directCommitTone` already answers neutral for a count nobody made.
+ * `directCommitTone` already answers neutral for a count nobody made. Active contributors is uncoloured for the
+ * throughput reason: more people is not better, and fewer is not worse.
  */
 export function cohortCards(cohort: CohortSummary): LabelledValue[] {
   return [
@@ -206,6 +205,12 @@ export function cohortCards(cohort: CohortSummary): LabelledValue[] {
       value: quantity(cohort.direct_commits),
       detail: cohort.direct_commits === undefined ? UNREAD_MERGES : "landed on the default branch without a pull request",
       tone: directCommitTone(cohort.direct_commits)
+    },
+    {
+      label: "Active contributors",
+      value: quantity(cohort.active_contributors),
+      detail: cohort.active_contributors === undefined ? UNREAD_MERGES : "authored the reported merges and direct commits",
+      tone: "neutral"
     }
   ];
 }
@@ -603,41 +608,6 @@ export function maintenanceSummary(report: MaintenanceReport): string {
   const lastHuman = maintenance.last_human_commit_at == null ? "none found" : instant(maintenance.last_human_commit_at);
   const searched = maintenance.searched_back_to == null ? [] : [`searched back to ${instant(maintenance.searched_back_to)}`];
   return [`branch ${maintenance.branch}`, `last commit ${lastCommit}`, `last human commit ${lastHuman}`, ...searched].join(" · ");
-}
-
-/**
- * CODEOWNERS as one card: how many files were found, or that none was, or why nobody could look.
- *
- * Found-and-empty, absent, and unreadable are three answers and this keeps them apart. The size
- * keeps an empty file visible as found-but-empty, and the recognised flag keeps a `.md` variant —
- * which the minimum standard names and GitHub ignores — apart from a file GitHub actually reads.
- */
-export function codeownersCard(report: CodeownersReport): LabelledValue {
-  const codeowners = report.codeowners;
-  if (codeowners === undefined) {
-    return {
-      label: "CODEOWNERS",
-      value: ABSENT,
-      detail: report.detail ?? "not available",
-      tone: codeownersTone(undefined)
-    };
-  }
-  if (codeowners.files.length === 0) {
-    return {
-      label: "CODEOWNERS",
-      value: "absent",
-      detail: "no CODEOWNERS file at any of the checked locations",
-      tone: codeownersTone(0)
-    };
-  }
-  return {
-    label: "CODEOWNERS",
-    value: count(codeowners.files.length, "file", "files"),
-    tone: codeownersTone(codeowners.files.length),
-    detail: codeowners.files
-      .map((file) => `${file.path} (${file.size_bytes} bytes, ${file.recognised_by_github ? "recognised" : "not recognised"} by GitHub)`)
-      .join(" · ")
-  };
 }
 
 /**

@@ -332,7 +332,6 @@ const PRACTICE_EVIDENCE: Shape<contract.RepositoryPracticeEvidence> = {
     merge_gate: true,
     open_pull_requests: true,
     security: true,
-    codeowners: true,
     maintenance: true,
     sonar: true,
     metrics: true,
@@ -352,7 +351,6 @@ const PRACTICE_EVIDENCE: Shape<contract.RepositoryPracticeEvidence> = {
     merge_gate: true,
     open_pull_requests: true,
     security: true,
-    codeowners: true,
     maintenance: true,
     sonar: true,
     metrics: true,
@@ -366,7 +364,7 @@ const PROVENANCE: Shape<contract.WindowProvenance> = {
 };
 
 const COHORT_SUMMARY: Shape<contract.CohortSummary> = {
-  declared: { merged: true, reported: true, excluded_authors: true, direct_commits: true },
+  declared: { merged: true, reported: true, excluded_authors: true, direct_commits: true, active_contributors: true },
   required: { excluded_authors: true }
 };
 
@@ -488,11 +486,6 @@ const ALERT_RECORD: Shape<contract.SecurityAlertRecord> = {
     html_url: true
   },
   required: { family: true, number: true }
-};
-
-const CODEOWNERS_REPORT: Shape<contract.CodeownersReport> = {
-  declared: { fetched_at: true, codeowners: true, detail: true },
-  required: {}
 };
 
 const MAINTENANCE_REPORT: Shape<contract.MaintenanceReport> = {
@@ -1181,7 +1174,6 @@ enablement:
       }
     }
 
-    assertShape("CodeownersReport", CODEOWNERS_REPORT, evidence.codeowners, "repositoryEvidence.codeowners");
     assertShape("MaintenanceReport", MAINTENANCE_REPORT, evidence.maintenance, "repositoryEvidence.maintenance");
     assertShape("SonarReport", SONAR_REPORT, evidence.sonar, "repositoryEvidence.sonar");
     // The nested blocks, because the section's whole value is in them: a `SonarReport` naming only declared keys

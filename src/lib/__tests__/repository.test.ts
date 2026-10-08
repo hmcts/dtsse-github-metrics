@@ -8,7 +8,6 @@ import {
   alertState,
   alertSubject,
   assuranceRows,
-  codeownersCard,
   cohortCards,
   conditionGroups,
   excludedDetail,
@@ -38,7 +37,7 @@ import type {
 } from "@/lib/types";
 
 function cohort(overrides: Partial<CohortSummary> = {}): CohortSummary {
-  return { merged: 12, reported: 9, excluded_authors: {}, direct_commits: 2, ...overrides };
+  return { merged: 12, reported: 9, excluded_authors: {}, direct_commits: 2, active_contributors: 4, ...overrides };
 }
 
 describe("yesOrNo", () => {
@@ -138,28 +137,34 @@ describe("cohortCards", () => {
     expect(cards.map((card) => [card.label, card.value, card.detail])).toEqual([
       ["Merges reported", "9", "12 merged in the span"],
       ["Merges excluded", "3", "renovate 3"],
-      ["Direct commits", "2", "landed on the default branch without a pull request"]
+      ["Direct commits", "2", "landed on the default branch without a pull request"],
+      ["Active contributors", "4", "authored the reported merges and direct commits"]
     ]);
   });
 
   it("should keep a measured zero as a zero, since nothing merged is a measurement", () => {
-    const cards = cohortCards(cohort({ merged: 0, reported: 0, direct_commits: 0 }));
+    const cards = cohortCards(cohort({ merged: 0, reported: 0, direct_commits: 0, active_contributors: 0 }));
 
-    expect(cards.map((card) => card.value)).toEqual(["0", "0", "0"]);
+    expect(cards.map((card) => card.value)).toEqual(["0", "0", "0", "0"]);
   });
 
   it("should draw a dash and say why when no merge history was read", () => {
     const unread = "no merge history was read for this repository, so this is unmeasured rather than none";
-    const cards = cohortCards(cohort({ merged: undefined, reported: undefined, direct_commits: undefined }));
+    const cards = cohortCards(cohort({ merged: undefined, reported: undefined, direct_commits: undefined, active_contributors: undefined }));
 
-    expect(cards.map((card) => card.value)).toEqual(["-", "-", "-"]);
-    expect(cards.map((card) => card.detail)).toEqual([unread, unread, unread]);
+    expect(cards.map((card) => card.value)).toEqual(["-", "-", "-", "-"]);
+    expect(cards.map((card) => card.detail)).toEqual([unread, unread, unread, unread]);
   });
 
   it("should dash only the source nobody read when the other one answered", () => {
     const cards = cohortCards(cohort({ merged: 12, reported: 9, direct_commits: undefined }));
 
-    expect(cards.map((card) => card.value)).toEqual(["9", "0", "-"]);
+    expect(cards.map((card) => card.value)).toEqual(["9", "0", "-", "4"]);
+  });
+
+  it("should leave active contributors uncoloured, since more people is not a better repository", () => {
+    expect(cohortCards(cohort({ active_contributors: 1 })).at(3)?.tone).toBe("neutral");
+    expect(cohortCards(cohort({ active_contributors: 20 })).at(3)?.tone).toBe("neutral");
   });
 
   it("should colour a direct commit nobody counted neutrally rather than as none", () => {
@@ -672,38 +677,6 @@ describe("maintenance", () => {
   it("gives the reason where the block could not be read at all", () => {
     expect(maintenanceSummary({ windows: [], detail: "the branch was not readable" })).toBe("the branch was not readable");
     expect(maintenanceSummary({ windows: [] })).toBe("not available");
-  });
-});
-
-describe("codeownersCard", () => {
-  it("keeps found-and-empty apart from absent and from unreadable", () => {
-    expect(codeownersCard({ codeowners: { files: [] } }).value).toBe("absent");
-    expect(codeownersCard({ detail: "the contents endpoint was refused" })).toEqual({
-      label: "CODEOWNERS",
-      value: "-",
-      detail: "the contents endpoint was refused",
-      tone: "neutral"
-    });
-    expect(codeownersCard({}).detail).toBe("not available");
-  });
-
-  it("names each file with its size and whether GitHub reads it", () => {
-    const card = codeownersCard({
-      codeowners: {
-        files: [
-          { path: ".github/CODEOWNERS", size_bytes: 240, recognised_by_github: true },
-          { path: "docs/CODEOWNERS.md", size_bytes: 0, recognised_by_github: false }
-        ]
-      }
-    });
-    expect(card.value).toBe("2 files");
-    expect(card.tone).toBe("good");
-    expect(card.detail).toBe(".github/CODEOWNERS (240 bytes, recognised by GitHub) · docs/CODEOWNERS.md (0 bytes, not recognised by GitHub)");
-  });
-
-  it("weighs a repository with no CODEOWNERS and grades one nobody could look in not at all", () => {
-    expect(codeownersCard({ codeowners: { files: [] } }).tone).toBe("warn");
-    expect(codeownersCard({ detail: "the contents endpoint was refused" }).tone).toBe("neutral");
   });
 });
 

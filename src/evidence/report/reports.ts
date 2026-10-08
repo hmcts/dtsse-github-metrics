@@ -39,8 +39,8 @@ import { builtRepositoryTrend, trendWithoutEnablement, trendWithoutWholePeriod }
  * built once and shared.
  *
  * EVERY SHAPE HERE IS DECLARED AS THE CONTRACT'S OWN TYPE, imported as `contract` and never by bare name. The
- * contract is `src/lib/types.ts` and it re-declares nine domain type names identically — `MergeGateEvidence`,
- * `SecurityAlertEvidence`, `Observation`, `SonarRating`, `ReadinessLabel`, `MaintenanceEvidence`, `CodeownersFile`,
+ * contract is `src/lib/types.ts` and it re-declares eight domain type names identically — `MergeGateEvidence`,
+ * `SecurityAlertEvidence`, `Observation`, `SonarRating`, `ReadinessLabel`, `MaintenanceEvidence`,
  * `MaintenanceWindowStatus`, `SonarQualityGate` — plus the latent `TrendMetric`, `TrendDelta`, `TrendThroughput`
  * and `DeltaBasis`. Handing a domain object to a parameter of the same name type-checked cleanly and then threw at
  * `.map`, or rendered `"undefined samples"`; the namespace makes each crossing read `contract.MergeGateEvidence`, so
