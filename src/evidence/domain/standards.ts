@@ -95,12 +95,13 @@ export function humanWindowAnswer(evidence: MaintenanceEvidence, cutoff: Date): 
  * Every window's answer for one repository, against the instant the evidence was observed.
  *
  * `lastPushAt` is the repository's `pushed_at`, absent where the listing did not carry one, which answers
- * `committedWithin` as false: nothing says anyone pushed.
+ * `committedWithin` as false: nothing says anyone pushed. `evidence` is absent where no human answer was collected,
+ * which leaves every window's `humanCommittedWithin` absent: unknown, not no.
  */
-export function maintenanceWindows(evidence: MaintenanceEvidence, lastPushAt: Date | undefined, fetchedAt: Date): MaintenanceWindowStatus[] {
+export function maintenanceWindows(evidence: MaintenanceEvidence | undefined, lastPushAt: Date | undefined, fetchedAt: Date): MaintenanceWindowStatus[] {
   return MAINTENANCE_WINDOWS.map((window) => {
     const cutoff = new Date(fetchedAt.getTime() - window.days * 86_400_000);
-    const humanAnswer = humanWindowAnswer(evidence, cutoff);
+    const humanAnswer = evidence === undefined ? undefined : humanWindowAnswer(evidence, cutoff);
     return {
       months: window.months,
       committedWithin: lastPushAt !== undefined && lastPushAt.getTime() >= cutoff.getTime(),

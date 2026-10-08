@@ -99,7 +99,11 @@ excluded_repositories: []       # removed outright, whatever the graph says
 dropping stale repositories from the report hid exactly the ones an assurance report is most about: 334
 unarchived repositories are a year or more stale, and not one of them had ever been collected. They are
 reported now, carrying the assurance answers that need no merge history and none of the behaviour figures that
-do — so the window still keeps the expensive half of collection as narrow as it was.
+do — so the window still keeps the expensive half of collection as narrow as it was. The one per-repository
+GitHub read a stale repository does get is a bounded search of its default branch for the last human commit
+(`DefaultBranchHumanCommits`, at most 10 pages, back 730 days), which the Maintenance section needs. An active
+repository skips that search when this run's cached merges already hold a human change. A search that fails is
+warned, counted as one failure, and leaves the Maintenance human column "not collected".
 
 Two windows therefore exist and they answer different questions. A repository quiet for six months has no
 behaviour collected AND is not flagged as unmaintained; that is a real third state rather than a gap.

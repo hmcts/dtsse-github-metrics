@@ -170,6 +170,20 @@ export function excludedDetail(cohort: CohortSummary): string {
   return authors.map(([login, merges]) => `${login} ${merges}`).join(" · ");
 }
 
+/** Say which routes the active-contributor count was drawn from, since it is counted from whichever was read. */
+export function activeContributorsDetail(cohort: CohortSummary): string {
+  if (cohort.active_contributors === undefined) {
+    return UNREAD_MERGES;
+  }
+  if (cohort.merged === undefined) {
+    return "authored the reported direct commits; merge history was not read";
+  }
+  if (cohort.direct_commits === undefined) {
+    return "authored the reported merges; direct commits were not read";
+  }
+  return "authored the reported merges and direct commits";
+}
+
 /**
  * The four cohort cards: what is counted, what was left out, what arrived without a pull request, and who did it.
  *
@@ -206,7 +220,7 @@ export function cohortCards(cohort: CohortSummary): LabelledValue[] {
     {
       label: "Active contributors",
       value: quantity(cohort.active_contributors),
-      detail: cohort.active_contributors === undefined ? UNREAD_MERGES : "authored the reported merges and direct commits",
+      detail: activeContributorsDetail(cohort),
       tone: "neutral"
     }
   ];

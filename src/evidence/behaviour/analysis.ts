@@ -183,7 +183,8 @@ export function reportedDirectCommit(commit: DirectCommitFact, excluded: Readonl
  * The newest human change among one window's cached merges, or `undefined` when none of them is a person's.
  *
  * The collector's shortcut past the history walk: a human merge inside the window is a human commit to the
- * default branch, and the window ends at the collection, so nothing newer could be outside it. Pull requests are
+ * default branch, and where the window reaches the collection (which the caller checks) nothing much newer could
+ * be outside it. Pull requests are
  * judged by their author account and direct commits by `isHumanCommitAuthor` with the git author name as well,
  * the same predicate the walk applies to each commit.
  */

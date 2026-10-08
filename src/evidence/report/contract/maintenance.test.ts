@@ -67,6 +67,14 @@ describe("storedMaintenance", () => {
     expect(report.detail).toBe(HUMAN_COMMIT_UNCOLLECTED_DETAIL);
   });
 
+  it("should read a stored instant it cannot parse as uncollected rather than as an empty branch", () => {
+    const report = storedMaintenance(ENTRY, { maintenance: { lastHumanCommitAt: "not a date" } }, FETCHED);
+
+    expect(report.maintenance).toEqual({ last_push_at: "2026-09-01T00:00:00.000Z" });
+    expect(report.windows.every((window) => !("human_committed_within" in window))).toBe(true);
+    expect(report.detail).toBe(HUMAN_COMMIT_UNCOLLECTED_DETAIL);
+  });
+
   it("should answer every push window false where the listing carried no push instant", () => {
     const { pushedAt: _, ...unpushed } = ENTRY;
     const report = storedMaintenance(unpushed, undefined, FETCHED);

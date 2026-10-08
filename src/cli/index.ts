@@ -89,6 +89,7 @@ import { seedProduction } from "../evidence/store/production-override.ts";
 import { pruneCache } from "../evidence/store/prune.ts";
 import { recordRepositoryState } from "../evidence/store/repository-state.ts";
 import { recordSonarMapping, storedSonarMappings } from "../evidence/store/sonar-map.ts";
+import { midnight } from "../evidence/window/instant.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
 import { describeDatabase } from "../platform/database-target.ts";
 import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
@@ -256,9 +257,9 @@ async function collectRepository(
     // exactly the one the Maintenance section most needs an answer about.
     const maintenance = await lastHumanCommit(configuration, client, repository, reference, undefined);
     failures += maintenance.failures;
-    // The shallow path. No gate, no other alert family, and above all no merge walk — which is what keeps
-    // admitting roughly 650 stale repositories from adding a behaviour call. The row they produce carries the
-    // assurance answers and, by the absent-means-unmeasured rule, no behaviour figures at all.
+    // The shallow path. No gate, no other alert family, and above all no merge walk: the one per-repository
+    // GitHub read it makes is the bounded human-commit search above. The row it produces carries the assurance
+    // answers, the maintenance answer and, by the absent-means-unmeasured rule, no behaviour figures at all.
     await recordRepositoryState(organization, repository, {
       defaultBranch,
       fetchedAt: reference,
@@ -275,6 +276,8 @@ async function collectRepository(
   }
 
   const edge = mutableEdge(window, configuration.lookback.mutable_hours, reference);
+  // Whether both fills worked, which is one of the two things the cached human-commit shortcut below depends on.
+  let filled = true;
 
   await fillCachedSource(
     requestedCoverage(organization, repository, EvidenceSource.PullRequests, window),
@@ -286,6 +289,7 @@ async function collectRepository(
     pullRequestCacheWriter()
   ).catch((error: unknown) => {
     failures += 1;
+    filled = false;
     console.warn(`${repository}: merged pull requests were not collected: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   });
@@ -297,13 +301,17 @@ async function collectRepository(
     directCommitCacheWriter()
   ).catch((error: unknown) => {
     failures += 1;
+    filled = false;
     console.warn(`${repository}: direct commits were not collected: ${error instanceof Error ? error.message : String(error)}`);
     return [];
   });
 
-  // AFTER the fills, so the cache holds this run's merges. A cache that cannot be read is not a failure of its
-  // own: the history walk answers the same question.
-  const cached = await loadCachedMerges(organization, repository, window).catch(() => undefined);
+  // AFTER the fills, so the cache holds this run's merges. The newest human change in it is the last human commit
+  // only where both fills worked and the window reaches today: a failed fill leaves older facts standing in for
+  // this run's, and a backfill (`--to` in the past) ends before newer commits. Otherwise the history walk answers.
+  // A cache that cannot be read is not a failure of its own, for the same reason.
+  const current = filled && window.endsAt.getTime() >= midnight(reference).getTime();
+  const cached = current ? await loadCachedMerges(organization, repository, window).catch(() => undefined) : undefined;
   const maintenance = await lastHumanCommit(configuration, client, repository, reference, cached);
   failures += maintenance.failures;
 

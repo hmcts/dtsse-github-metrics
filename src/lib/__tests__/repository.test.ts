@@ -161,6 +161,13 @@ describe("cohortCards", () => {
     expect(cards.map((card) => card.value)).toEqual(["9", "0", "-", "4"]);
   });
 
+  it("should say which route the active contributors were counted from when only one was read", () => {
+    expect(cohortCards(cohort({ merged: undefined, reported: undefined })).at(3)?.detail).toBe(
+      "authored the reported direct commits; merge history was not read"
+    );
+    expect(cohortCards(cohort({ direct_commits: undefined })).at(3)?.detail).toBe("authored the reported merges; direct commits were not read");
+  });
+
   it("should leave active contributors uncoloured, since more people is not a better repository", () => {
     expect(cohortCards(cohort({ active_contributors: 1 })).at(3)?.tone).toBe("neutral");
     expect(cohortCards(cohort({ active_contributors: 20 })).at(3)?.tone).toBe("neutral");

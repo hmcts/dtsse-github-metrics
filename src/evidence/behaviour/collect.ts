@@ -336,7 +336,8 @@ export const HUMAN_COMMIT_PAGE_CAP = 10;
  * Stops at the FIRST commit passing `isHumanCommitAuthor`: history is walked newest first, so that is the answer.
  * Where none is found the two endings are told apart. A walk that ran out of history reached `since`, so that
  * is how far back it looked; a walk that hit `HUMAN_COMMIT_PAGE_CAP` looked only as far as the oldest commit it
- * read, and the report must not read beyond it as "nobody". A branch with no commits returns neither instant.
+ * read, and the report must not read beyond it as "nobody". A branch with no commits returns neither instant. A
+ * repository GitHub omitted, or a capped walk that read no commit at all, throws: neither is an answer.
  */
 export async function findLastHumanCommit(
   client: GitHubClient,
@@ -352,7 +353,12 @@ export async function findLastHumanCommit(
     // `unknown` for the same circularity reason as the pull-request loop above.
     const data: unknown = await client.graphql(humanCommitHistoryQuery(), { organization, repository, since: githubTimestamp(since), cursor });
     const parsed = parseResponse(humanCommitHistorySchema, data, "commit history data");
-    const history = parsed.repository?.defaultBranchRef?.target?.history;
+    if (parsed.repository == null) {
+      // Not an empty branch: a repository GitHub left out is unknown, and reading it as "nobody committed" would
+      // answer every window "no".
+      throw new GitHubError("GitHub omitted the repository while searching for the last human commit", AvailabilityReason.CollectionFailed);
+    }
+    const history = parsed.repository.defaultBranchRef?.target?.history;
     if (history === undefined || history === null) {
       // An empty repository, or one whose default branch nobody has pushed to.
       return maintenanceEvidence({});
@@ -373,7 +379,11 @@ export async function findLastHumanCommit(
     }
     cursor = history.pageInfo.endCursor ?? null;
   }
-  return maintenanceEvidence({ searchedBackTo: oldest ?? since });
+  if (oldest === undefined) {
+    // Every capped page came back without a commit, so nothing was searched; `since` would claim all of it was.
+    throw new GitHubError("GitHub returned no commits on any page while searching for the last human commit", AvailabilityReason.CollectionFailed);
+  }
+  return maintenanceEvidence({ searchedBackTo: oldest });
 }
 
 /**

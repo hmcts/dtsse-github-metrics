@@ -223,9 +223,10 @@ function cohortEntry(repository: string, overrides: Record<string, unknown> = {}
 beforeEach(() => {
   vi.clearAllMocks();
   // `clearAllMocks` clears the CALLS and not the implementations, so anything a case replaces has to be put back
-  // here or it leaks into every case after it. Two below do: one lets `fillCachedSource` run the merge walk it
-  // wraps, and the `evidence` cases state a cached estate.
+  // here or it leaks into every case after it. Three below do: one lets `fillCachedSource` run the merge walk it
+  // wraps, one states cached merges behind a failed fill, and the `evidence` cases state a cached estate.
   fillCachedSource.mockImplementation(async () => []);
+  loadCachedMerges.mockImplementation(async () => ({ pullRequests: [], directCommits: [] }));
   loadCachedFactsForOrganisation.mockResolvedValue(new Map());
   storedRepositoryStates.mockResolvedValue(new Map());
   prevailingCachedCoverage.mockResolvedValue(undefined);
@@ -785,6 +786,30 @@ describe("what collect walks", () => {
     // The one walk is the stale repository's: the shallow path has no cache to consult.
     expect(walks).toHaveLength(1);
     expect(storedMaintenance("stale")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+  });
+
+  it("should walk the history rather than trust the cache where this run's merge fill failed", async () => {
+    // The cache then holds earlier runs' facts, whose newest human change may be older than the real last one.
+    fillCachedSource.mockRejectedValueOnce(new Error("refused"));
+    loadCachedMerges.mockResolvedValue({
+      pullRequests: [{ identifier: 1, mergedAt: new Date("2026-06-02T00:00:00Z"), authorLogin: "alice", authorType: "User", reviews: [], checks: [] }],
+      directCommits: []
+    });
+
+    const walks = await collectWithHistory(async () => HUMAN_HISTORY);
+
+    expect(walks).toHaveLength(2);
+    expect(storedMaintenance("fresh")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+  });
+
+  it("should walk the history where the cached merges cannot be read, without counting it as a failure", async () => {
+    loadCachedMerges.mockRejectedValueOnce(new Error("connection reset"));
+
+    const walks = await collectWithHistory(async () => HUMAN_HISTORY);
+
+    expect(walks).toHaveLength(2);
+    expect(storedMaintenance("fresh")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("the last human commit was not collected"));
   });
 
   it("should walk the history where the cached merges hold no human change", async () => {

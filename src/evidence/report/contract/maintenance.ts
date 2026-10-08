@@ -52,22 +52,27 @@ function storedEvidence(payload: unknown): MaintenanceEvidence | undefined {
     return maintenanceEvidence({ lastHumanCommitAt });
   }
   const searchedBackTo = stored(state.searchedBackTo);
-  return maintenanceEvidence(searchedBackTo === undefined ? {} : { searchedBackTo });
+  if (searchedBackTo !== undefined) {
+    return maintenanceEvidence({ searchedBackTo });
+  }
+  // Only a block with neither key is the empty branch. One whose instants cannot be read is not an answer, and
+  // reading it as one would say "no" for every window.
+  return state.lastHumanCommitAt === undefined && state.searchedBackTo === undefined ? maintenanceEvidence({}) : undefined;
 }
 
 /**
  * The Maintenance section from the cohort entry's push instant and the stored human answer.
  *
  * WITH NO STORED ANSWER the push column is still reported and the human one is left absent, with a `detail`
- * saying why: `maintenanceWindows` would read a missing answer as an empty branch and say "no".
+ * saying why.
  */
 export function storedMaintenance(entry: CohortEntry, payload: unknown, fetched: Date): contract.MaintenanceReport {
   const evidence = storedEvidence(payload);
-  const windows = maintenanceWindows(evidence ?? {}, entry.pushedAt, fetched).map(
+  const windows = maintenanceWindows(evidence, entry.pushedAt, fetched).map(
     (window): contract.MaintenanceWindowStatus => ({
       months: window.months,
       committed_within: window.committedWithin,
-      ...(evidence === undefined || window.humanCommittedWithin === undefined ? {} : { human_committed_within: window.humanCommittedWithin }),
+      ...(window.humanCommittedWithin === undefined ? {} : { human_committed_within: window.humanCommittedWithin }),
       // A search that stopped short of this window's cutoff says where it stopped, which is the reason the answer
       // is unknown rather than no.
       ...(evidence?.searchedBackTo !== undefined && window.humanCommittedWithin === undefined

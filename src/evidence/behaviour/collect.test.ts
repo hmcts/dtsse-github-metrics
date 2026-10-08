@@ -517,6 +517,24 @@ describe("findLastHumanCommit", () => {
     expect(await findLastHumanCommit(client(fetch), "hmcts", "empty", SINCE, NONE, BOTS)).toEqual({});
   });
 
+  it("should treat a repository GitHub omitted as a collection failure rather than an empty branch", async () => {
+    const { fetch } = replying({ repository: null });
+
+    await expect(findLastHumanCommit(client(fetch), "hmcts", "gone", SINCE, NONE, BOTS)).rejects.toMatchObject({
+      reason: AvailabilityReason.CollectionFailed
+    });
+  });
+
+  it("should treat a capped walk that read no commit at all as a collection failure", async () => {
+    // Searching back to `since` would be a claim nothing supports, and it would answer every window "no".
+    const pages = Array.from({ length: HUMAN_COMMIT_PAGE_CAP }, (_, index) => page([null], true, `c${index}`));
+    const { fetch } = replying(...pages);
+
+    await expect(findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).rejects.toMatchObject({
+      reason: AvailabilityReason.CollectionFailed
+    });
+  });
+
   it("should treat an unreadable response as a collection failure", async () => {
     const { fetch } = replying(page([{ committedDate: "not a date", author: null }]));
 
