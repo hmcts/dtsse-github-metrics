@@ -376,10 +376,12 @@ export interface CveReport {
  * OPTIONAL, NOT NULLABLE. Every route is registered `response_model_exclude_none`, and pydantic
  * applies it through nested models too, so an unobserved instant arrives as a MISSING KEY rather
  * than as `null` — `searched_back_to` is absent on the common path, where a human commit was found.
+ *
+ * `last_push_at` is the repository's `pushed_at`, a push to ANY branch, which is the instant the
+ * Maintained assurance criterion is judged against. The human instants describe the default branch.
  */
 export interface MaintenanceEvidence {
-  branch: string;
-  last_commit_at?: string;
+  last_push_at?: string;
   last_human_commit_at?: string;
   searched_back_to?: string;
 }

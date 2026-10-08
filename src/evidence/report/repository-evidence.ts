@@ -11,6 +11,7 @@ import type { ReportingWindow } from "../window/window.ts";
 import { stripAbsent } from "./absent.ts";
 import { contractAssessment } from "./contract/assessment.ts";
 import { reportedAssurance } from "./contract/assurance.ts";
+import { storedMaintenance } from "./contract/maintenance.ts";
 import { contractGate, storedGate } from "./contract/merge-gate.ts";
 import { contractObservation } from "./contract/observation.ts";
 import { securityReport } from "./contract/security.ts";
@@ -20,7 +21,7 @@ import type { MeasuredRow } from "./measured.ts";
 /** Everything one repository's page is assembled from, all of it read by the caller. See `repositoryEvidence`. */
 export interface RepositoryEvidenceInput {
   repository: string;
-  /** The cohort entry, which is where the owning team comes from. */
+  /** The cohort entry, which is where the owning team and the last push come from. */
   entry: CohortEntry;
   /** The collected state, whose payload holds the merge gate and the alert families. */
   state: { fetchedAt: Date; payload: unknown };
@@ -45,12 +46,10 @@ export interface RepositoryEvidenceInput {
  * The page for a repository has been rendering "this span holds no evidence" since the port landed, not because
  * nothing was collected but because nothing assembled this. Every section below it was already written.
  *
- * ONE SECTION CAN ONLY STATE AN ABSENCE, and it says so in its own `detail` rather than being omitted:
- * maintenance is not collected by `collect` at all — no call is made for it. Reporting it as empty would be
- * indistinguishable from a repository with recent commits, which is the one confusion this contract exists to
- * prevent. What IS collected — the
- * merge gate, the three alert families, the merge facts, and since 2026-09-17 the SonarCloud project and its
- * measures — feeds the sections that carry real answers.
+ * A SECTION THAT CANNOT ANSWER says so in its own `detail` rather than being omitted: reporting it as empty would
+ * be indistinguishable from a repository with nothing to report, which is the one confusion this contract exists
+ * to prevent. The sections are fed by the merge gate, the three alert families, the merge facts, the SonarCloud
+ * project and its measures, and since 2026-10-08 the last push and the last human commit.
  *
  * `measured` IS HANDED IN AND NOT READ HERE, exactly as `repositoryRow` is handed its own. `src/lib/api.ts` holds
  * this repository's estate row by the time it calls this, and that row's two counts are absent precisely where a
@@ -90,9 +89,9 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
     merge_gate: contractGate(gate, fetched),
     security: securityReport(payload.securityAlerts, fetched, input.scans),
     metrics: metricSummaries(configuration, merges),
-    // NOT COLLECTED, said in the words of the thing that would have collected it. See this function's header: an
-    // empty section here would read as a repository with nothing to report.
-    maintenance: { windows: [], detail: "maintenance windows are not collected" },
+    // FROM TWO SOURCES: the push column from the cohort entry's `pushedAt`, the human one from what `collect`
+    // stored. See `./contract/maintenance.ts` for why a missing human answer is unknown rather than no.
+    maintenance: storedMaintenance(input.entry, input.state.payload, input.state.fetchedAt),
     // COLLECTED SINCE 2026-09-17, and read out of the same stored payload the merge gate is. `storedSonar` is
     // where "nobody looked" is told apart from "there is no project", which the constant this replaced could not
     // do: it said the second on every page of the estate while the truth was the first.

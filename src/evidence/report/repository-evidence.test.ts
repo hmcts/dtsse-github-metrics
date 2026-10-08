@@ -4,6 +4,7 @@ import { ReviewState } from "../domain/facts.ts";
 import type { CohortEntry } from "../org/cohort.ts";
 import { OwnerKind } from "../org/graph.ts";
 import { parseConfiguration } from "../policy/load.ts";
+import { HUMAN_COMMIT_UNCOLLECTED_DETAIL } from "./contract/maintenance.ts";
 import { SONAR_UNATTEMPTED_DETAIL } from "./contract/sonar.ts";
 import type { MeasuredRow } from "./measured.ts";
 import { builtRepositoryEvidence, type RepositoryEvidenceInput } from "./repository-evidence.ts";
@@ -11,10 +12,10 @@ import { builtRepositoryEvidence, type RepositoryEvidenceInput } from "./reposit
 /**
  * One repository's evidence block, section by section.
  *
- * ONE SECTION CAN ONLY STATE AN ABSENCE and says so in its own `detail`: maintenance is not collected at all, and
- * reporting it as empty would be indistinguishable from a repository with recent commits — which is the one
- * confusion this contract exists to prevent. The Sonar section left that group on 2026-09-17, and the two cases
- * about its wording are what replaced it.
+ * A SECTION THAT CANNOT ANSWER says so in its own `detail`: reporting it as empty would be indistinguishable from
+ * a repository with nothing to report — which is the one confusion this contract exists to prevent. The Sonar
+ * section and the Maintenance section's human column are the two that still can, and the cases about their
+ * wording are below.
  */
 
 const CONFIGURATION = parseConfiguration(`
@@ -119,14 +120,25 @@ describe("one repository's evidence block", () => {
     expect(builtRepositoryEvidence(CONFIGURATION, input()).provenance).toEqual({ offline: true, intervals_fetched: 0 });
   });
 
-  it("should say in the section's own words that maintenance is not collected", () => {
-    // An empty section here would read as a repository with nothing to report, so it names the thing that would
-    // have collected it.
-    const evidence = builtRepositoryEvidence(CONFIGURATION, input());
+  it("should report maintenance from the push instant, saying the human commit was not collected", () => {
+    // An empty human column here would read as nobody having worked on the repository, so it says why it is empty.
+    const evidence = builtRepositoryEvidence(CONFIGURATION, input({ entry: { ...ENTRY, pushedAt: new Date(Date.UTC(2026, 7, 1)) } }));
 
     expect("open_pull_requests" in evidence).toBe(false);
     expect("codeowners" in evidence).toBe(false);
-    expect(evidence.maintenance).toEqual({ windows: [], detail: "maintenance windows are not collected" });
+    expect(evidence.maintenance.maintenance).toEqual({ last_push_at: "2026-08-01T00:00:00.000Z" });
+    expect(evidence.maintenance.windows.map((window) => window.committed_within)).toEqual([true, true, true]);
+    expect(evidence.maintenance.detail).toBe(HUMAN_COMMIT_UNCOLLECTED_DETAIL);
+  });
+
+  it("should report the stored last human commit beside the push", () => {
+    const evidence = builtRepositoryEvidence(
+      CONFIGURATION,
+      input({ state: { fetchedAt: FETCHED, payload: { maintenance: { lastHumanCommitAt: "2026-07-01T00:00:00.000Z" } } } })
+    );
+
+    expect(evidence.maintenance.maintenance).toEqual({ last_human_commit_at: "2026-07-01T00:00:00.000Z" });
+    expect(evidence.maintenance.windows.map((window) => window.human_committed_within)).toEqual([true, true, true]);
   });
 
   it("should distinguish a repository nothing has looked at from one with no SonarCloud project", () => {

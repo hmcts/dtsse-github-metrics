@@ -783,6 +783,22 @@ describe("maintenanceWindows", () => {
     expect(windows.every((window) => !window.committedWithin)).toBe(true);
   });
 
+  it("should hold each window's cutoff at exactly its day count before the observation", () => {
+    const fetchedAt = new Date("2026-08-08T00:00:00Z");
+    const day = 86_400_000;
+    for (const [index, days] of [183, 365, 730].entries()) {
+      const onCutoff = new Date(fetchedAt.getTime() - days * day);
+      const pastCutoff = new Date(onCutoff.getTime() - 1);
+      const evidence = maintenanceEvidence({ lastHumanCommitAt: onCutoff });
+
+      expect(maintenanceWindows(evidence, onCutoff, fetchedAt)[index]).toMatchObject({ committedWithin: true, humanCommittedWithin: true });
+      expect(maintenanceWindows(maintenanceEvidence({ lastHumanCommitAt: pastCutoff }), pastCutoff, fetchedAt)[index]).toMatchObject({
+        committedWithin: false,
+        humanCommittedWithin: false
+      });
+    }
+  });
+
   it("should search back as far as the widest window it reports", () => {
     // A narrower bound would silently turn every exhausted-history answer for that window into unknown.
     expect(HUMAN_MAINTENANCE_SEARCH_DAYS).toBe(730);

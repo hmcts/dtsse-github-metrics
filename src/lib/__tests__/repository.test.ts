@@ -567,9 +567,7 @@ describe("maintenance", () => {
   const report: MaintenanceReport = {
     fetched_at: "2026-08-30T09:15:00Z",
     maintenance: {
-      branch: "main",
-      last_commit_at: "2026-08-28T11:00:00Z",
-      last_human_commit_at: "2026-08-20T08:00:00Z",
+      last_push_at: "2026-08-28T11:00:00Z",
       searched_back_to: "2026-02-01T00:00:00Z"
     },
     windows: [
@@ -603,18 +601,8 @@ describe("maintenance", () => {
     expect(rows.map((row) => row.tone)).toEqual(["warn", "good"]);
   });
 
-  it("states the instants the window answers were derived from", () => {
-    expect(maintenanceSummary(report)).toBe(
-      "branch main · last commit 2026-08-28T11:00Z · last human commit 2026-08-20T08:00Z · searched back to 2026-02-01T00:00Z"
-    );
-  });
-
-  it("distinguishes a branch with no commits from a human one nobody found", () => {
-    // The instants are OMITTED, not null: `response_model_exclude_none` drops an unobserved one
-    // through the nested model, so this is the shape the service actually sends.
-    expect(maintenanceSummary({ ...report, maintenance: { branch: "main" } })).toBe(
-      "branch main · last commit none: the branch has no commits · last human commit none found"
-    );
+  it("states the search bound where no human commit was found, and no branch", () => {
+    expect(maintenanceSummary(report)).toBe("last push 2026-08-28T11:00Z · last human commit none found · searched back to 2026-02-01T00:00Z");
   });
 
   it("states no search bound where the search found a human commit, the common shape", () => {
@@ -623,13 +611,21 @@ describe("maintenance", () => {
     expect(
       maintenanceSummary({
         ...report,
-        maintenance: {
-          branch: "main",
-          last_commit_at: "2026-08-28T11:00:00Z",
-          last_human_commit_at: "2026-08-20T08:00:00Z"
-        }
+        maintenance: { last_push_at: "2026-08-28T11:00:00Z", last_human_commit_at: "2026-08-20T08:00:00Z" }
       })
-    ).toBe("branch main · last commit 2026-08-28T11:00Z · last human commit 2026-08-20T08:00Z");
+    ).toBe("last push 2026-08-28T11:00Z · last human commit 2026-08-20T08:00Z");
+  });
+
+  it("distinguishes a branch with no commits from a human answer nobody collected", () => {
+    // The instants are OMITTED, not null: an unobserved one is dropped from the block.
+    expect(maintenanceSummary({ ...report, maintenance: {} })).toBe("last push none recorded · last human commit none: the branch has no commits");
+    expect(
+      maintenanceSummary({
+        ...report,
+        maintenance: { last_push_at: "2026-08-28T11:00:00Z" },
+        detail: "the last human commit was not collected for this repository"
+      })
+    ).toBe("last push 2026-08-28T11:00Z · the last human commit was not collected for this repository");
   });
 
   it("gives the reason where the block could not be read at all", () => {

@@ -521,7 +521,7 @@ export function alertActionLabel(family: SecurityAlertFamilyScan["family"]): str
 }
 
 /**
- * State one maintenance window's two answers: any commit, and a human one.
+ * State one maintenance window's two answers: a push to any branch, and a human commit.
  *
  * The human answer is three-valued and stays that way. "unknown" is not "no": the search that would
  * have answered it stopped at its own bound, and the reason the block carries is printed with it.
@@ -557,10 +557,16 @@ export function maintenanceSummary(report: MaintenanceReport): string {
   // sending `null`, and a strict `=== null` here would print `searched back to -` on every
   // repository whose search DID find a human commit — the common path, and the one absence this
   // block exists to keep apart from "none within the window".
-  const lastCommit = maintenance.last_commit_at == null ? "none: the branch has no commits" : instant(maintenance.last_commit_at);
-  const lastHuman = maintenance.last_human_commit_at == null ? "none found" : instant(maintenance.last_human_commit_at);
-  const searched = maintenance.searched_back_to == null ? [] : [`searched back to ${instant(maintenance.searched_back_to)}`];
-  return [`branch ${maintenance.branch}`, `last commit ${lastCommit}`, `last human commit ${lastHuman}`, ...searched].join(" · ");
+  const lastPush = `last push ${maintenance.last_push_at == null ? "none recorded" : instant(maintenance.last_push_at)}`;
+  if (maintenance.last_human_commit_at != null) {
+    return [lastPush, `last human commit ${instant(maintenance.last_human_commit_at)}`].join(" · ");
+  }
+  if (maintenance.searched_back_to != null) {
+    return [lastPush, "last human commit none found", `searched back to ${instant(maintenance.searched_back_to)}`].join(" · ");
+  }
+  // Neither instant: either nothing stored a human answer, which the block's `detail` says, or the
+  // search ran over a default branch with no commits on it.
+  return [lastPush, report.detail ?? "last human commit none: the branch has no commits"].join(" · ");
 }
 
 /**

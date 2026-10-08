@@ -156,7 +156,7 @@ function evidence(): RepositoryPracticeEvidence {
     },
     maintenance: {
       fetched_at: "2026-08-31T00:00:00Z",
-      maintenance: { branch: "main", last_commit_at: "2026-08-30T00:00:00Z" },
+      maintenance: { last_push_at: "2026-08-30T00:00:00Z", last_human_commit_at: "2026-08-29T00:00:00Z" },
       windows: [{ months: 3, committed_within: true, human_committed_within: true }]
     },
     sonar: {
@@ -249,6 +249,13 @@ describe("repository page layout", () => {
     expect(heading(markup, "Merge gate")).toBeLessThan(markup.indexOf(`<div ${PAIR}>`));
     expect(security).toContain("Security alerts");
     expect(security).toContain("Maintenance");
+  });
+
+  it("states the last push and the last human commit above the maintenance windows, and no branch", async () => {
+    const markup = await render();
+
+    expect(markup).toContain("last push 2026-08-30T00:00Z · last human commit 2026-08-29T00:00Z");
+    expect(markup).not.toContain("branch main ·");
   });
 
   it("draws no open pull-request section, which this service does not collect", async () => {

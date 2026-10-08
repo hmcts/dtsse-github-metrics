@@ -71,12 +71,12 @@ restore the per-contributor counts in the Contributors table, which needs no new
 - [x] run `yarn test` - must pass before task 4
 
 ### Task 4: Report the Maintenance section from pushed_at and the stored human answer
-- [ ] change the contract `MaintenanceEvidence` in `src/lib/types.ts` to `{ last_push_at?: string; last_human_commit_at?: string; searched_back_to?: string }` (drop `branch` and `last_commit_at`)
-- [ ] rewrite `maintenanceWindows` so `committedWithin` comes from the last push instant (`CohortEntry.pushedAt`) and `humanCommittedWithin` from `humanWindowAnswer` on the stored evidence, both against the state's `fetchedAt`
-- [ ] add `storedMaintenance(entry, payload, fetched)` beside `storedSonar` and use it in `builtRepositoryEvidence` in place of the hardcoded line; with no stored `maintenance` it still reports the push-based column and leaves `human_committed_within` absent, with a `detail` saying the human commit was not collected
-- [ ] update `maintenanceSummary` in `src/lib/repository.ts` to "last push … · last human commit …" (plus "searched back to …" where present), with no "branch <name>" part; update the row labels/details in `maintenanceRows` if they mention the branch
-- [ ] write/update tests: `storedMaintenance` (stored human found, searched-back-to, not stored, no `pushedAt`), `maintenanceWindows` boundaries at 183/365/730 days, `maintenanceSummary` text, and the page test
-- [ ] run `yarn test` - must pass before task 5
+- [x] change the contract `MaintenanceEvidence` in `src/lib/types.ts` to `{ last_push_at?: string; last_human_commit_at?: string; searched_back_to?: string }` (drop `branch` and `last_commit_at`)
+- [x] rewrite `maintenanceWindows` so `committedWithin` comes from the last push instant (`CohortEntry.pushedAt`) and `humanCommittedWithin` from `humanWindowAnswer` on the stored evidence, both against the state's `fetchedAt`
+- [x] add `storedMaintenance(entry, payload, fetched)` beside `storedSonar` and use it in `builtRepositoryEvidence` in place of the hardcoded line; with no stored `maintenance` it still reports the push-based column and leaves `human_committed_within` absent, with a `detail` saying the human commit was not collected
+- [x] update `maintenanceSummary` in `src/lib/repository.ts` to "last push … · last human commit …" (plus "searched back to …" where present), with no "branch <name>" part; update the row labels/details in `maintenanceRows` if they mention the branch
+- [x] write/update tests: `storedMaintenance` (stored human found, searched-back-to, not stored, no `pushedAt`), `maintenanceWindows` boundaries at 183/365/730 days, `maintenanceSummary` text, and the page test
+- [x] run `yarn test` - must pass before task 5
 
 ### Task 5: Restore per-contributor counts in the Contributors table
 - [ ] in `src/evidence/report/repository-evidence.ts`, export `contributorMetrics(configuration, merges)` that splits the reported cohort's pull requests and direct commits by folded `authorLogin` and returns a `Map<string, BehaviourMetricSummary[]>` built with the existing `metricSummaries`
