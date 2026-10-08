@@ -102,7 +102,8 @@ reported now, carrying the assurance answers that need no merge history and none
 do — so the window still keeps the expensive half of collection as narrow as it was. The one per-repository
 GitHub read a stale repository does get is a bounded search of its default branch for the last human commit
 (`DefaultBranchHumanCommits`, at most 10 pages, back 730 days), which the Maintenance section needs. An active
-repository skips that search when this run's cached merges already hold a human change. A search that fails is
+repository skips that search when this run's cached direct commits already hold a human one; merged pull requests
+do not count, because they are cached whatever branch they merged into. A search that fails is
 warned, counted as one failure, and leaves the Maintenance human column "not collected".
 
 Two windows therefore exist and they answer different questions. A repository quiet for six months has no

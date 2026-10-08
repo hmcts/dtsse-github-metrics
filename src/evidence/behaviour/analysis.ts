@@ -180,23 +180,20 @@ export function reportedDirectCommit(commit: DirectCommitFact, excluded: Readonl
 }
 
 /**
- * The newest human change among one window's cached merges, or `undefined` when none of them is a person's.
+ * The newest human direct commit among one window's cached merges, or `undefined` when none of them is a person's.
  *
- * The collector's shortcut past the history walk: a human merge inside the window is a human commit to the
- * default branch, and where the window reaches the collection (which the caller checks) nothing much newer could
- * be outside it. Pull requests are
- * judged by their author account and direct commits by `isHumanCommitAuthor` with the git author name as well,
- * the same predicate the walk applies to each commit.
+ * The collector's shortcut past the history walk: a direct commit is read off `defaultBranchRef`, so a human one
+ * inside the window is a human commit to the default branch, and where the window reaches the collection (which
+ * the caller checks) nothing much newer could be outside it. MERGED PULL REQUESTS ARE NOT READ: the cache walks
+ * every merged pull request whatever its base, so a person's merge into a release or feature branch would answer
+ * for a default branch only automation has touched. Widening the query to carry the base would change
+ * `querySignature` and discard the whole pull-request cache, so the walk answers those repositories instead.
+ * Commits are judged by `isHumanCommitAuthor` with the git author name as well, the same predicate the walk applies.
  */
 export function cachedLastHumanCommit(merges: Merges, excluded: ReadonlySet<string>, bots: ReadonlySet<string>): Date | undefined {
-  const instants = [
-    ...merges.pullRequests
-      .filter((pullRequest) => isHumanCommitAuthor(pullRequest.authorLogin, pullRequest.authorType, undefined, excluded, bots))
-      .map((pullRequest) => pullRequest.mergedAt.getTime()),
-    ...merges.directCommits
-      .filter((commit) => isHumanCommitAuthor(commit.authorLogin, commit.authorType, commit.authorName, excluded, bots))
-      .map((commit) => commit.committedAt.getTime())
-  ];
+  const instants = merges.directCommits
+    .filter((commit) => isHumanCommitAuthor(commit.authorLogin, commit.authorType, commit.authorName, excluded, bots))
+    .map((commit) => commit.committedAt.getTime());
   return instants.length === 0 ? undefined : new Date(Math.max(...instants));
 }
 

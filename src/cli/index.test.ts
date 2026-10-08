@@ -774,10 +774,10 @@ describe("what collect walks", () => {
     }
   };
 
-  it("should answer the last human commit from the cached merges without walking the fresh repository's history", async () => {
+  it("should answer the last human commit from the cached direct commits without walking the fresh repository's history", async () => {
     loadCachedMerges.mockResolvedValueOnce({
-      pullRequests: [{ identifier: 1, mergedAt: new Date("2026-08-02T00:00:00Z"), authorLogin: "alice", authorType: "User", reviews: [], checks: [] }],
-      directCommits: []
+      pullRequests: [],
+      directCommits: [{ sha: "a1", committedAt: new Date("2026-08-02T00:00:00Z"), authorLogin: "alice", authorType: "User" }]
     });
 
     const walks = await collectWithHistory(async () => HUMAN_HISTORY);
@@ -792,7 +792,19 @@ describe("what collect walks", () => {
     // The cache then holds earlier runs' facts, whose newest human change may be older than the real last one.
     fillCachedSource.mockRejectedValueOnce(new Error("refused"));
     loadCachedMerges.mockResolvedValue({
-      pullRequests: [{ identifier: 1, mergedAt: new Date("2026-06-02T00:00:00Z"), authorLogin: "alice", authorType: "User", reviews: [], checks: [] }],
+      pullRequests: [],
+      directCommits: [{ sha: "a1", committedAt: new Date("2026-06-02T00:00:00Z"), authorLogin: "alice", authorType: "User" }]
+    });
+
+    const walks = await collectWithHistory(async () => HUMAN_HISTORY);
+
+    expect(walks).toHaveLength(2);
+    expect(storedMaintenance("fresh")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+  });
+
+  it("should walk the history rather than trust a cached human pull request, which may have merged into another branch", async () => {
+    loadCachedMerges.mockResolvedValueOnce({
+      pullRequests: [{ identifier: 1, mergedAt: new Date("2026-08-02T00:00:00Z"), authorLogin: "alice", authorType: "User", reviews: [], checks: [] }],
       directCommits: []
     });
 

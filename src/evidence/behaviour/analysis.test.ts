@@ -221,10 +221,10 @@ describe("cachedLastHumanCommit", () => {
     expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toBeUndefined();
   });
 
-  it("should answer a person's merged pull request", () => {
+  it("should not answer a person's merged pull request, which may have merged into another branch", () => {
     const merges = { pullRequests: [pullRequest({ mergedAt: new Date("2026-08-03Z") })], directCommits: [] };
 
-    expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toEqual(new Date("2026-08-03Z"));
+    expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toBeUndefined();
   });
 
   it("should answer a person's direct commit, judged by the git author name where no account is linked", () => {
@@ -236,9 +236,9 @@ describe("cachedLastHumanCommit", () => {
     expect(cachedLastHumanCommit(merges, EXCLUDED, BOTS)).toEqual(new Date("2026-08-04Z"));
   });
 
-  it("should answer the latest human change across both routes", () => {
+  it("should answer the latest human direct commit, ignoring a newer merged pull request", () => {
     const merges = {
-      pullRequests: [pullRequest({ mergedAt: new Date("2026-08-03Z") }), pullRequest({ authorLogin: "renovate", mergedAt: new Date("2026-08-09Z") })],
+      pullRequests: [pullRequest({ mergedAt: new Date("2026-08-09Z") })],
       directCommits: [commit({ committedAt: new Date("2026-08-05Z") }), commit({ committedAt: new Date("2026-08-01Z") })]
     };
 
