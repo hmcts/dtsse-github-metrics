@@ -86,8 +86,8 @@ restore the per-contributor counts in the Contributors table, which needs no new
 - [x] run `yarn test` - must pass before task 6
 
 ### Task 6: Verify acceptance criteria
-- [ ] run `yarn test`
-- [ ] run `yarn typecheck`
-- [ ] run `yarn lint`
-- [ ] run `yarn test:integration` if a database is reachable, otherwise confirm the edited integration tests compile under `yarn typecheck`
-- [ ] update README.md if it mentions CODEOWNERS, open pull requests or the maintenance section
+- [x] run `yarn test`
+- [x] run `yarn typecheck` (clean once the untracked previous-metrics/ reference copy is set aside)
+- [x] run `yarn lint` (clean once the untracked previous-metrics/ reference copy is set aside)
+- [x] run `yarn test:integration` if a database is reachable, otherwise confirm the edited integration tests compile under `yarn typecheck` (ran against local compose Postgres: 14/15 files pass; the only failures are the existing same-millisecond `updated_at` flake in notes.test.ts, which this branch does not touch)
+- [x] update README.md if it mentions CODEOWNERS, open pull requests or the maintenance section
