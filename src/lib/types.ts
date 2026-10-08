@@ -188,21 +188,6 @@ export interface MergeGateReport {
   detail?: string;
 }
 
-export interface OpenPullRequestSummary {
-  opened_in_window: number;
-  closed_without_merge: number;
-  currently_open: number;
-  stale_open: number;
-}
-
-export interface OpenPullRequestReport {
-  fetched_at?: string;
-  starts_at?: string;
-  ends_at?: string;
-  summary?: OpenPullRequestSummary;
-  detail?: string;
-}
-
 export interface OpenAlertCount {
   open?: number;
   by_severity: Partial<Record<AlertSeverity, number>>;
@@ -525,7 +510,6 @@ export interface RepositoryPracticeEvidence {
   assurance: AssuranceReport;
   unreviewed_substantial?: UnreviewedSubstantialOutcome;
   merge_gate: MergeGateReport;
-  open_pull_requests: OpenPullRequestReport;
   security: SecurityAlertReport;
   maintenance: MaintenanceReport;
   sonar: SonarReport;
@@ -795,26 +779,27 @@ export const UNCOLLECTED_DETAIL = "nothing has been collected for this repositor
  * block carries a reason instead of alerts. None is zero by default — an unprotected default branch is
  * the one thing that reads as a real `0`, because the gate was read and it requires nothing.
  *
- * SEVEN OF THESE ARE NEITHER SENT NOR READ, and are kept on the contract rather than deleted:
- * `currently_open`, `stale_open`, `finding_occurrences`, `sonar_coverage`, `sonar_reported`,
- * `sonar_security_rating` and `sonar_security_issues`. The report layer emits none of them, so every
- * `/repositories` column keyed on one rendered a dash for the whole estate and those columns have gone.
- * The reasons now DIFFER between the two groups, and the difference is what to read before reviving
- * either. The open pull-request summary and the practice findings have no producer at all. The four Sonar
- * fields do: `collect` resolves a project and reads its measures per repository since 2026-09-17, and the
- * repository page renders them — what is missing is the ESTATE aggregation, which means carrying one
- * repository's measures into `estate.ts`'s row and giving `/repositories` its columns back.
+ * FIVE OF THESE ARE NEITHER SENT NOR READ, and are kept on the contract rather than deleted:
+ * `finding_occurrences`, `sonar_coverage`, `sonar_reported`, `sonar_security_rating` and
+ * `sonar_security_issues`. The report layer emits none of them, so every `/repositories` column keyed on
+ * one rendered a dash for the whole estate and those columns have gone. The reasons DIFFER between the two
+ * groups, and the difference is what to read before reviving either. The practice findings have no
+ * producer at all. The four Sonar fields do: `collect` resolves a project and reads its measures per
+ * repository since 2026-09-17, and the repository page renders them — what is missing is the ESTATE
+ * aggregation, which means carrying one repository's measures into `estate.ts`'s row and giving
+ * `/repositories` its columns back.
  *
- * NOTHING READS THESE SEVEN OFF A `RepositoryRow`, and the near-miss is worth naming because it has been
- * mistaken for a reader twice. `lib/repository.ts` does render `currently_open` and `stale_open` — but off
- * `OpenPullRequestSummary`, a DIFFERENT interface where the two are required rather than optional, reached
- * through `OpenPullRequestReport.summary` and never through a row. It renders coverage and the security
- * measures too, off `SonarMeasures`, whose fields are spelled `coverage`, `security_rating` and
- * `security_issues` — not the `sonar_`-prefixed ones here. Same words, different contracts. Deleting a
- * field from this list will not break a render, so do not use a passing build as evidence that one is read.
+ * NOTHING READS THESE FIVE OFF A `RepositoryRow`, and the near-miss is worth naming because it has been
+ * mistaken for a reader before. `lib/repository.ts` renders coverage and the security measures off
+ * `SonarMeasures`, whose fields are spelled `coverage`, `security_rating` and `security_issues` — not the
+ * `sonar_`-prefixed ones here. Same words, different contracts. Deleting a field from this list will not
+ * break a render, so do not use a passing build as evidence that one is read.
  *
  * What keeps them is that each is the display half of an assembly that is not finished, so the work to do is
  * an assembly rather than a contract change.
+ *
+ * `currently_open` and `stale_open` DID go, with the open pull-request section and its unwired collector:
+ * the queue is not something this service reports, so there was no assembly left to finish.
  *
  * `codeowners_files` DID go, along with `codeownersPresent` in `lib/rows.ts`. It was in the same state and
  * differs in one way that matters: nothing anywhere else reads it, and `owner_kind` answers the question
@@ -893,8 +878,6 @@ export interface RepositoryRow {
   readiness?: ReadinessLabel;
   merged_pull_requests?: number;
   direct_commits?: number;
-  currently_open?: number;
-  stale_open?: number;
   finding_occurrences?: number;
   required_approving_reviews?: number;
   required_status_checks?: number;

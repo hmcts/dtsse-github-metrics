@@ -11,10 +11,10 @@ import { builtRepositoryEvidence, type RepositoryEvidenceInput } from "./reposit
 /**
  * One repository's evidence block, section by section.
  *
- * TWO SECTIONS CAN ONLY STATE AN ABSENCE and say so in their own `detail`: open pull requests and maintenance are
- * not collected at all, and reporting them as empty would be indistinguishable from a repository that genuinely has
- * no open pull requests — which is the one confusion this contract exists to prevent. The Sonar
- * section left that group on 2026-09-17, and the two cases about its wording are what replaced it.
+ * ONE SECTION CAN ONLY STATE AN ABSENCE and says so in its own `detail`: maintenance is not collected at all, and
+ * reporting it as empty would be indistinguishable from a repository with recent commits — which is the one
+ * confusion this contract exists to prevent. The Sonar section left that group on 2026-09-17, and the two cases
+ * about its wording are what replaced it.
  */
 
 const CONFIGURATION = parseConfiguration(`
@@ -119,12 +119,12 @@ describe("one repository's evidence block", () => {
     expect(builtRepositoryEvidence(CONFIGURATION, input()).provenance).toEqual({ offline: true, intervals_fetched: 0 });
   });
 
-  it("should say in each section's own words that two of them are not collected", () => {
-    // An empty section here would read as a repository with nothing to report, so each names the thing that would
+  it("should say in the section's own words that maintenance is not collected", () => {
+    // An empty section here would read as a repository with nothing to report, so it names the thing that would
     // have collected it.
     const evidence = builtRepositoryEvidence(CONFIGURATION, input());
 
-    expect(evidence.open_pull_requests.detail).toBe("open pull-request state is not collected");
+    expect("open_pull_requests" in evidence).toBe(false);
     expect("codeowners" in evidence).toBe(false);
     expect(evidence.maintenance).toEqual({ windows: [], detail: "maintenance windows are not collected" });
   });

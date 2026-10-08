@@ -16,7 +16,6 @@ import {
   maintenanceSummary,
   mergeGateRows,
   openAlerts,
-  openPullRequestCards,
   ratingLetter,
   securityCards,
   severityDetail,
@@ -342,47 +341,6 @@ describe("mergeGateRows", () => {
     expect(tone(rows, "Rules not interpreted")).toBe("neutral");
     // Cautioned by `assessment.force_pushes`, unnamed by the tone table, so neutral by its default.
     expect(tone(rows, "Blocks force pushes")).toBe("neutral");
-  });
-});
-
-describe("openPullRequestCards", () => {
-  const summary = {
-    opened_in_window: 7,
-    closed_without_merge: 2,
-    currently_open: 4,
-    stale_open: 1
-  };
-
-  it("has no cards to draw when the state was never collected", () => {
-    expect(openPullRequestCards({ detail: "not collected" })).toEqual([]);
-  });
-
-  it("dates the two windowed counts by the window they were measured over", () => {
-    const cards = openPullRequestCards({
-      summary,
-      fetched_at: "2026-08-30T09:15:00Z",
-      starts_at: "2026-08-01T00:00:00Z",
-      ends_at: "2026-08-29T00:00:00Z"
-    });
-    expect(cards.map((card) => card.value)).toEqual(["7", "2", "4", "1"]);
-    expect(cards[0]?.detail).toBe("2026-08-01T00:00Z to 2026-08-29T00:00Z");
-    expect(cards[1]?.detail).toBe("2026-08-01T00:00Z to 2026-08-29T00:00Z");
-  });
-
-  it("dates the two standing counts by when the queue was read", () => {
-    const cards = openPullRequestCards({ summary, fetched_at: "2026-08-30T09:15:00Z" });
-    expect(cards[2]?.detail).toBe("as at 2026-08-30T09:15Z");
-    expect(cards[3]?.detail).toBe("as at 2026-08-30T09:15Z");
-  });
-
-  it("claims no period at all where the block carries none", () => {
-    const cards = openPullRequestCards({ summary });
-    expect(cards.every((card) => card.detail === undefined)).toBe(true);
-  });
-
-  it("colours the one count that ages and leaves throughput uncoloured", () => {
-    expect(openPullRequestCards({ summary }).map((card) => card.tone)).toEqual(["neutral", "neutral", "neutral", "warn"]);
-    expect(openPullRequestCards({ summary: { ...summary, stale_open: 0 } })[3]?.tone).toBe("good");
   });
 });
 

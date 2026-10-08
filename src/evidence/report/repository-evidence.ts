@@ -45,10 +45,10 @@ export interface RepositoryEvidenceInput {
  * The page for a repository has been rendering "this span holds no evidence" since the port landed, not because
  * nothing was collected but because nothing assembled this. Every section below it was already written.
  *
- * TWO SECTIONS CAN ONLY STATE AN ABSENCE, and they say so in their own `detail` rather than being omitted:
- * open pull requests and maintenance are not collected by `collect` at all — no call is made for either of them.
- * Reporting them as empty would be indistinguishable from a repository with no open pull requests and recent
- * commits, which is the one confusion this contract exists to prevent. What IS collected — the
+ * ONE SECTION CAN ONLY STATE AN ABSENCE, and it says so in its own `detail` rather than being omitted:
+ * maintenance is not collected by `collect` at all — no call is made for it. Reporting it as empty would be
+ * indistinguishable from a repository with recent commits, which is the one confusion this contract exists to
+ * prevent. What IS collected — the
  * merge gate, the three alert families, the merge facts, and since 2026-09-17 the SonarCloud project and its
  * measures — feeds the sections that carry real answers.
  *
@@ -90,9 +90,8 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
     merge_gate: contractGate(gate, fetched),
     security: securityReport(payload.securityAlerts, fetched, input.scans),
     metrics: metricSummaries(configuration, merges),
-    // NOT COLLECTED, each said in the words of the thing that would have collected it. See this function's header:
-    // an empty section here would read as a repository with nothing to report.
-    open_pull_requests: { detail: "open pull-request state is not collected" },
+    // NOT COLLECTED, said in the words of the thing that would have collected it. See this function's header: an
+    // empty section here would read as a repository with nothing to report.
     maintenance: { windows: [], detail: "maintenance windows are not collected" },
     // COLLECTED SINCE 2026-09-17, and read out of the same stored payload the merge gate is. `storedSonar` is
     // where "nobody looked" is told apart from "there is no project", which the constant this replaced could not

@@ -102,20 +102,6 @@ export const commitHistorySchema = z.object({
     .nullish()
 });
 
-export const openPullRequestSchema = z.object({
-  repository: z.object({ pullRequests: z.object({ totalCount: z.number(), pageInfo, nodes: z.array(z.object({ updatedAt: instant }).nullish()) }) }).nullish()
-});
-
-export const createdPullRequestSchema = z.object({
-  repository: z.object({ pullRequests: z.object({ pageInfo, nodes: z.array(z.object({ createdAt: instant }).nullish()) }) }).nullish()
-});
-
-export const abandonedPullRequestSchema = z.object({
-  repository: z
-    .object({ pullRequests: z.object({ pageInfo, nodes: z.array(z.object({ updatedAt: instant, closedAt: instant.nullish() }).nullish()) }) })
-    .nullish()
-});
-
 /**
  * Parses one GraphQL body, reporting a rejected shape as a collection failure.
  *

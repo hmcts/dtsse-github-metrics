@@ -253,25 +253,6 @@ export function gateFieldTone(field: GateField, value?: GateValue): Tone {
   return GATE_TONE[field](value);
 }
 
-/** The four open pull-request counts, keyed as the service's own summary fields. */
-export type OpenPullRequestField = "opened_in_window" | "closed_without_merge" | "currently_open" | "stale_open";
-
-const OPEN_PULL_REQUEST_TONE: Record<OpenPullRequestField, (value: number | null | undefined) => Tone> = {
-  // Throughput, not a verdict: a repository that opened forty pull requests is busier than one that
-  // opened four, and neither figure is better. Closing without merging is how a proposal is
-  // declined, and how many are open now is a queue depth rather than a shortfall.
-  opened_in_window: () => "neutral",
-  closed_without_merge: () => "neutral",
-  currently_open: () => "neutral",
-  // The one that ages: a pull request open past the staleness bound is work nobody is finishing.
-  // No assessment condition grades it, which is why the threshold is stated here.
-  stale_open: (value) => counted(value, "good", "warn")
-};
-
-export function openPullRequestTone(field: OpenPullRequestField, value: number | null | undefined): Tone {
-  return OPEN_PULL_REQUEST_TONE[field](value);
-}
-
 /** The severities that make an open alert family read badly rather than merely warrant weighing. */
 const SEVERE = ["critical", "high"] as const;
 

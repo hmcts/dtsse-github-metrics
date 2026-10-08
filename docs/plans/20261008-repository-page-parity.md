@@ -55,11 +55,11 @@ restore the per-contributor counts in the Contributors table, which needs no new
 - [x] run `yarn test` - must pass before task 2
 
 ### Task 2: Remove the Open pull requests section and its dormant collector
-- [ ] remove the Open pull requests `Section` from `page.tsx`; render the Merge gate as a full-width `Section` (no longer in a `SectionPair`) and fix the comment above it
-- [ ] remove `openPullRequestCards` from `src/lib/repository.ts`, `openPullRequestTone` from `src/lib/tone.ts`, `OpenPullRequestReport` / `OpenPullRequestSummary` and the `open_pull_requests` field from `src/lib/types.ts`, and the hardcoded `open_pull_requests` line from `builtRepositoryEvidence`
-- [ ] remove `collectOpenPullRequestState`, `countWithin`, `openPullRequestQuery`, `createdPullRequestQuery`, `abandonedPullRequestQuery` and their response schemas from `src/evidence/behaviour/`, along with any other now-unused exports (check with `yarn typecheck`/`yarn lint`)
-- [ ] remove the corresponding tests (`collectOpenPullRequestState` describe block and open-PR assertions in the listed test files)
-- [ ] run `yarn test` - must pass before task 3
+- [x] remove the Open pull requests `Section` from `page.tsx`; render the Merge gate as a full-width `Section` (no longer in a `SectionPair`) and fix the comment above it
+- [x] remove `openPullRequestCards` from `src/lib/repository.ts`, `openPullRequestTone` from `src/lib/tone.ts`, `OpenPullRequestReport` / `OpenPullRequestSummary` and the `open_pull_requests` field from `src/lib/types.ts`, and the hardcoded `open_pull_requests` line from `builtRepositoryEvidence`
+- [x] remove `collectOpenPullRequestState`, `countWithin`, `openPullRequestQuery`, `createdPullRequestQuery`, `abandonedPullRequestQuery` and their response schemas from `src/evidence/behaviour/`, along with any other now-unused exports (check with `yarn typecheck`/`yarn lint`)
+- [x] remove the corresponding tests (`collectOpenPullRequestState` describe block and open-PR assertions in the listed test files)
+- [x] run `yarn test` - must pass before task 3
 
 ### Task 3: Collect the last human commit
 - [ ] reshape `MaintenanceEvidence` in `src/evidence/domain/standards.ts` to the stored human answer only: `{ lastHumanCommitAt?: Date; searchedBackTo?: Date }` (exactly one present, or neither for an empty branch); update `maintenanceEvidence` validation accordingly

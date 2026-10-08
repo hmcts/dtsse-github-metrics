@@ -4,26 +4,15 @@ import type { GitHubClient } from "../github/client.ts";
 import type { TraceabilityConfiguration } from "../policy/schema.ts";
 import { githubTimestamp } from "../window/instant.ts";
 import type { ReportingWindow } from "../window/window.ts";
+import { checkQuery, commitHistoryQuery, mergedPullRequestQuery, reviewQuery } from "./queries.ts";
 import {
-  abandonedPullRequestQuery,
-  checkQuery,
-  commitHistoryQuery,
-  createdPullRequestQuery,
-  mergedPullRequestQuery,
-  openPullRequestQuery,
-  reviewQuery
-} from "./queries.ts";
-import {
-  abandonedPullRequestSchema,
   type CheckConnection,
   type CheckContext,
   type CommitConnection,
   type CommitNode,
   checkPageSchema,
   commitHistorySchema,
-  createdPullRequestSchema,
   mergedPullRequestSchema,
-  openPullRequestSchema,
   type PullRequestNode,
   parseResponse,
   type ReviewConnection,
@@ -34,14 +23,6 @@ import {
 /**
  * Collecting behaviour facts from GitHub. Ported from `metrics.behaviour`'s collection half.
  */
-
-/** Open pull-request counts for one window, never cached. */
-export interface OpenPullRequestSummary {
-  openedInWindow: number;
-  closedWithoutMerge: number;
-  currentlyOpen: number;
-  staleOpen: number;
-}
 
 /** Maps a legacy commit-status state onto a check conclusion. */
 export function statusConclusion(state: string): CheckConclusion | undefined {
@@ -341,124 +322,6 @@ export async function collectDirectCommits(
     cursor = history.pageInfo.endCursor ?? null;
   }
   return [...facts.values()].sort((left, right) => left.committedAt.getTime() - right.committedAt.getTime() || left.sha.localeCompare(right.sha));
-}
-
-/**
- * Fetches open pull-request counts in one call, fresh every time.
- *
- * What a collection stores is a snapshot of this state on the repository's row, which every other run
- * reports from; this is the observation itself, and its answer is never read back out of the windowed fact
- * cache.
- *
- * `staleOpen` is measured from each pull request's LAST UPDATE, not from when it was opened.
- */
-export async function collectOpenPullRequestState(
-  client: GitHubClient,
-  organization: string,
-  repository: string,
-  window: ReportingWindow,
-  staleOpenDays: number,
-  reference: Date
-): Promise<OpenPullRequestSummary> {
-  const staleCutoff = new Date(reference.getTime() - staleOpenDays * 86_400_000);
-  const variables = { organization, repository };
-
-  let currentlyOpen = 0;
-  let staleOpen = 0;
-  let cursor: string | null = null;
-  for (;;) {
-    const data: unknown = await client.graphql(openPullRequestQuery(), { ...variables, cursor });
-    const connection = parseResponse(openPullRequestSchema, data, "open pull-request data").repository?.pullRequests;
-    if (connection === undefined || connection === null) {
-      throw new GitHubError("GitHub omitted the repository while collecting open pull requests", AvailabilityReason.CollectionFailed);
-    }
-    currentlyOpen = connection.totalCount;
-    // Ascending, so the first pull request touched since the cutoff ends the walk: nothing after it is stale.
-    const quiet = connection.nodes.filter((node) => node != null).filter((node) => node.updatedAt.getTime() < staleCutoff.getTime());
-    staleOpen += quiet.length;
-    if (quiet.length < connection.nodes.filter((node) => node != null).length || !connection.pageInfo.hasNextPage) {
-      break;
-    }
-    cursor = connection.pageInfo.endCursor ?? null;
-  }
-
-  const openedInWindow = await countWithin(
-    client,
-    createdPullRequestQuery(),
-    variables,
-    (data) => {
-      const connection = parseResponse(createdPullRequestSchema, data, "created pull-request data").repository?.pullRequests;
-      if (connection === undefined || connection === null) {
-        throw new GitHubError("GitHub omitted the repository while collecting created pull requests", AvailabilityReason.CollectionFailed);
-      }
-      return {
-        pageInfo: connection.pageInfo,
-        instants: connection.nodes.filter((node) => node != null).map((node) => ({ ordered: node.createdAt, counted: node.createdAt }))
-      };
-    },
-    window
-  );
-
-  const closedWithoutMerge = await countWithin(
-    client,
-    abandonedPullRequestQuery(),
-    variables,
-    (data) => {
-      const connection = parseResponse(abandonedPullRequestSchema, data, "abandoned pull-request data").repository?.pullRequests;
-      if (connection === undefined || connection === null) {
-        throw new GitHubError("GitHub omitted the repository while collecting abandoned pull requests", AvailabilityReason.CollectionFailed);
-      }
-      return {
-        pageInfo: connection.pageInfo,
-        instants: connection.nodes
-          .filter((node) => node != null)
-          .filter((node) => node.closedAt != null)
-          .map((node) => ({ ordered: node.updatedAt, counted: node.closedAt as Date }))
-      };
-    },
-    window
-  );
-
-  return { openedInWindow, closedWithoutMerge, currentlyOpen, staleOpen };
-}
-
-/**
- * Walks a descending connection counting the instants inside a window, and stops once it has passed the window.
- *
- * `ordered` is the field the connection is sorted by and `counted` is the one being tested, because they are not
- * always the same: closed-without-merge is ordered by last touch and counted by close time. The walk terminates on
- * `ordered`, which is sound as long as `counted <= ordered` — true for both callers.
- */
-async function countWithin(
-  client: GitHubClient,
-  query: string,
-  variables: Record<string, unknown>,
-  read: (data: unknown) => { pageInfo: { hasNextPage: boolean; endCursor?: string | null }; instants: { ordered: Date; counted: Date }[] },
-  window: ReportingWindow
-): Promise<number> {
-  let total = 0;
-  let cursor: string | null = null;
-
-  for (;;) {
-    const data: unknown = await client.graphql(query, { ...variables, cursor });
-    const { pageInfo, instants } = read(data);
-
-    let passed = false;
-    for (const { ordered, counted } of instants) {
-      if (ordered.getTime() < window.startsAt.getTime()) {
-        passed = true;
-        break;
-      }
-      if (counted.getTime() >= window.startsAt.getTime() && counted.getTime() < window.endsAt.getTime()) {
-        total += 1;
-      }
-    }
-
-    if (passed || !pageInfo.hasNextPage) {
-      return total;
-    }
-    cursor = pageInfo.endCursor ?? null;
-  }
 }
 
 /**

@@ -26,7 +26,6 @@ import {
   directCommitTone,
   gateFieldTone,
   maintenanceTone,
-  openPullRequestTone,
   sonarGateTone,
   sonarMeasureTone,
   sonarRatingTone,
@@ -39,7 +38,6 @@ import type {
   MaintenanceReport,
   MergeGateEvidence,
   OpenAlertCount,
-  OpenPullRequestReport,
   ReadinessAssessment,
   ReadinessCondition,
   SecurityAlertEvidence,
@@ -175,9 +173,8 @@ export function excludedDetail(cohort: CohortSummary): string {
 /**
  * The four cohort cards: what is counted, what was left out, what arrived without a pull request, and who did it.
  *
- * ASSEMBLED HERE RATHER THAN IN THE PAGE, on the precedent `openPullRequestCards` sets, because each of the four
- * has an absent case and the page had none of them: it read the counts through `String(...)`, which prints
- * `undefined` for a figure nobody measured, and before the counts could be absent at all it printed three zeros
+ * ASSEMBLED HERE RATHER THAN IN THE PAGE, because each of the four has an absent case and the page had none of
+ * them: it read the counts through `String(...)`, which prints `undefined` for a figure nobody measured, and before the counts could be absent at all it printed three zeros
  * and "no author was excluded from this window" for a repository whose merge walk GitHub refused.
  *
  * Every value goes through `quantity`, so an unread source is the dash the whole contract states and never a zero,
@@ -298,50 +295,6 @@ export function mergeGateRows(gate: MergeGateEvidence): LabelledValue[] {
       label: "Rules not interpreted",
       value: gate.unmodelled_rules.join(", ") || "none",
       tone: gateFieldTone("unmodelled_rules")
-    }
-  ];
-}
-
-/**
- * The four open pull-request counts, each beside the period it actually describes.
- *
- * Two of them are bounded by the window the COLLECTION measured, which is not the window this page
- * is being read at, and two describe the queue as it stood when the state was read. Saying so on
- * each card is the whole point: a stale count under this page's own dates would be a wrong claim
- * about when it was true. No summary means no cards — the block carries a reason instead, and the
- * page prints that rather than four dashes.
- */
-export function openPullRequestCards(report: OpenPullRequestReport): LabelledValue[] {
-  const summary = report.summary;
-  if (summary === undefined) {
-    return [];
-  }
-  const measured = report.starts_at === undefined || report.ends_at === undefined ? undefined : `${instant(report.starts_at)} to ${instant(report.ends_at)}`;
-  const read = report.fetched_at === undefined ? undefined : `as at ${instant(report.fetched_at)}`;
-  return [
-    {
-      label: "Opened in window",
-      value: String(summary.opened_in_window),
-      detail: measured,
-      tone: openPullRequestTone("opened_in_window", summary.opened_in_window)
-    },
-    {
-      label: "Closed without merge",
-      value: String(summary.closed_without_merge),
-      detail: measured,
-      tone: openPullRequestTone("closed_without_merge", summary.closed_without_merge)
-    },
-    {
-      label: "Currently open",
-      value: String(summary.currently_open),
-      detail: read,
-      tone: openPullRequestTone("currently_open", summary.currently_open)
-    },
-    {
-      label: "Stale open",
-      value: String(summary.stale_open),
-      detail: read,
-      tone: openPullRequestTone("stale_open", summary.stale_open)
     }
   ];
 }

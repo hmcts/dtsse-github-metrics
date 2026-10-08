@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { GateField, OpenPullRequestField, SonarMeasure } from "@/lib/tone";
+import type { GateField, SonarMeasure } from "@/lib/tone";
 import {
   alertScanTone,
   alertTone,
@@ -19,7 +19,6 @@ import {
   directCommitTone,
   gateFieldTone,
   maintenanceTone,
-  openPullRequestTone,
   sonarGateTone,
   sonarMeasureTone,
   sonarRatingTone,
@@ -205,25 +204,6 @@ describe("the merge gate", () => {
     // Unnamed by the tone table, so neutral by that table's default — its `force-pushes-not-blocked`
     // counterpart is a caution, and this is the one field where the two do not line up.
     expect(gateFieldTone("blocks_force_pushes", false)).toBe("neutral");
-  });
-});
-
-describe("open pull requests", () => {
-  it("cautions on a stale pull request and on nothing else", () => {
-    expect(openPullRequestTone("stale_open", 0)).toBe("good");
-    expect(openPullRequestTone("stale_open", 1)).toBe("warn");
-  });
-
-  it("grades throughput and queue depth not at all", () => {
-    const plain: OpenPullRequestField[] = ["opened_in_window", "closed_without_merge", "currently_open"];
-    for (const field of plain) {
-      expect(openPullRequestTone(field, 0)).toBe("neutral");
-      expect(openPullRequestTone(field, 87)).toBe("neutral");
-    }
-  });
-
-  it("grades an uncounted figure not at all", () => {
-    expect(openPullRequestTone("stale_open", undefined)).toBe("neutral");
   });
 });
 

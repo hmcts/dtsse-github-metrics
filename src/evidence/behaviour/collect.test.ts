@@ -5,7 +5,7 @@ import { CheckConclusion } from "../domain/facts.ts";
 import { createGitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
 import type { TraceabilityConfiguration } from "../policy/schema.ts";
-import { checkFact, collectDirectCommits, collectMergedPullRequests, collectOpenPullRequestState, mutableEdge, statusConclusion } from "./collect.ts";
+import { checkFact, collectDirectCommits, collectMergedPullRequests, mutableEdge, statusConclusion } from "./collect.ts";
 import { deserialise } from "./fill.ts";
 import { commitQuerySignature, querySignature, sourceSignature } from "./queries.ts";
 
@@ -449,84 +449,6 @@ describe("collectDirectCommits", () => {
 
     expect(facts[0]).toMatchObject({ authorName: "Unlinked Person" });
     expect(facts[0]?.authorLogin).toBeUndefined();
-  });
-});
-
-describe("collectOpenPullRequestState", () => {
-  const WINDOW = { startsAt: new Date("2026-08-01Z"), endsAt: new Date("2026-08-31Z") };
-  const REFERENCE = new Date("2026-08-31T00:00:00Z");
-
-  /** The three walks the summary is built from, in the order they are issued. */
-  function replyingWithState(open: unknown, created: unknown, abandoned: unknown) {
-    return replying(open, created, abandoned);
-  }
-
-  function openPage(totalCount: number, updatedAt: string[], hasNextPage = false) {
-    return {
-      repository: {
-        pullRequests: { totalCount, pageInfo: { hasNextPage, endCursor: hasNextPage ? "MORE" : null }, nodes: updatedAt.map((at) => ({ updatedAt: at })) }
-      }
-    };
-  }
-
-  function createdPage(createdAt: string[]) {
-    return { repository: { pullRequests: { pageInfo: PAGE_END, nodes: createdAt.map((at) => ({ createdAt: at })) } } };
-  }
-
-  function abandonedPage(nodes: { updatedAt: string; closedAt: string | null }[]) {
-    return { repository: { pullRequests: { pageInfo: PAGE_END, nodes } } };
-  }
-
-  it("should read the four counts off the repository rather than out of search", async () => {
-    const { fetch } = replyingWithState(
-      openPage(7, ["2026-08-01T00:00:00Z", "2026-08-30T00:00:00Z"]),
-      createdPage(["2026-08-10T00:00:00Z", "2026-08-05T00:00:00Z", "2026-07-01T00:00:00Z"]),
-      abandonedPage([
-        { updatedAt: "2026-08-20T00:00:00Z", closedAt: "2026-08-20T00:00:00Z" },
-        { updatedAt: "2026-07-01T00:00:00Z", closedAt: "2026-07-01T00:00:00Z" }
-      ])
-    );
-
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
-
-    // currentlyOpen is the connection total; the other three are counted from the nodes.
-    expect(summary).toEqual({ currentlyOpen: 7, staleOpen: 1, openedInWindow: 2, closedWithoutMerge: 1 });
-  });
-
-  it("should measure staleness from the last update, against the cutoff the reference implies", async () => {
-    // 14 days before 2026-08-31 is 2026-08-17: the first is stale, the second is not.
-    const { fetch } = replyingWithState(openPage(2, ["2026-08-16T23:59:59Z", "2026-08-17T00:00:01Z"]), createdPage([]), abandonedPage([]));
-
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
-
-    expect(summary.staleOpen).toBe(1);
-  });
-
-  it("should stop walking open pull requests at the first one touched since the cutoff", async () => {
-    // Ascending order, so a page whose last node is recent settles the answer and the next page is never asked for.
-    const { fetch, sent } = replyingWithState(openPage(50, ["2026-08-01T00:00:00Z", "2026-08-30T00:00:00Z"], true), createdPage([]), abandonedPage([]));
-
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
-
-    expect(summary.staleOpen).toBe(1);
-    // Three calls: one open page, then the created and abandoned walks. Not a second open page.
-    expect(sent).toHaveLength(3);
-  });
-
-  it("should ignore a closed pull request GitHub gave no close instant", async () => {
-    const { fetch } = replyingWithState(openPage(0, []), createdPage([]), abandonedPage([{ updatedAt: "2026-08-20T00:00:00Z", closedAt: null }]));
-
-    const summary = await collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE);
-
-    expect(summary.closedWithoutMerge).toBe(0);
-  });
-
-  it("should fail loudly when GitHub omits the repository", async () => {
-    const { fetch } = replying({ repository: null });
-
-    const error = await failing(collectOpenPullRequestState(client(fetch), "hmcts", "cath-service", WINDOW, 14, REFERENCE));
-
-    expect(error.message).toMatch(/omitted the repository while collecting open pull requests/);
   });
 });
 
