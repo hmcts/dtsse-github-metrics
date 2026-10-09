@@ -21,7 +21,7 @@ export default defineConfig({
     exclude: ["node_modules", "dist", ".next", "test", "**/__fixtures__/**"],
     coverage: {
       provider: "v8",
-      include: ["src/**"],
+      include: ["src/**/*.{ts,tsx}"],
       exclude: [
         "src/evidence/store/generated/**",
         // Covered against a real database by `vitest.integration.config.mts`.
