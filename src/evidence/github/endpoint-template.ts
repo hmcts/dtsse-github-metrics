@@ -49,7 +49,7 @@ export const PAGINATION_PARAMETERS = new Set(["page", "after", "before", "cursor
  * counted at the bare address, which is what every GraphQL call was counted at before.
  */
 export function graphqlOperationName(document: string): string | undefined {
-  return /\b(?:query|mutation|subscription)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(document)?.[1];
+  return /\b(?:query|mutation|subscription)\s+([A-Za-z_]\w*)/.exec(document)?.[1];
 }
 
 /**

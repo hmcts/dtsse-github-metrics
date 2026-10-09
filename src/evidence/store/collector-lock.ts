@@ -46,7 +46,7 @@ import { resolveDatabaseUrl } from "./database-url.ts";
  * A pod boots `migrate` and then serves; a CronJob collects. Sharing one key would make a long collection block
  * a deployment's migration step, which is a different problem than the one this solves.
  */
-const COLLECTOR_LOCK_KEY = 0x636f_6c6c_6563_746fn;
+const COLLECTOR_LOCK_KEY = 0x63_6f_6c_6c_65_63_74_6fn;
 
 /** What a run learns when it asks to be the collector. */
 export interface CollectorLock {

@@ -17,7 +17,7 @@
  * `/_next` carries the compiled bundles and the stylesheet. They hold no estate data — the figures arrive
  * server-rendered in the document, which IS protected — and nothing renders without them.
  */
-const EXEMPT_PATHS = ["/health", "/liveness", "/readiness", "/favicon.ico"];
+const EXEMPT_PATHS = new Set(["/health", "/liveness", "/readiness", "/favicon.ico"]);
 
 /**
  * Every prefix ends in `/`, which is the point of writing them this way.
@@ -29,7 +29,7 @@ const EXEMPT_PATHS = ["/health", "/liveness", "/readiness", "/favicon.ico"];
 const EXEMPT_PREFIXES = ["/health/", "/auth/", "/_next/"];
 
 export function exempt(pathname: string): boolean {
-  return EXEMPT_PATHS.includes(pathname) || EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  return EXEMPT_PATHS.has(pathname) || EXEMPT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 /**

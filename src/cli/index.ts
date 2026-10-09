@@ -1312,12 +1312,13 @@ function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
   const lines = ["teams:"];
   for (const key of [...grouped.keys()].sort((left, right) => (left === UnknownIdentifier ? 1 : right === UnknownIdentifier ? -1 : byCodePoint(left, right)))) {
     const group = grouped.get(key) as { repositories: string[]; rungs: Set<string> };
-    lines.push(`  # attributed by ${[...group.rungs].sort(byCodePoint).join(", ")}`);
-    lines.push(`  - identifier: ${key}`);
-    lines.push(`    display_name: ${key === UnknownIdentifier ? "Unknown (team not established)" : key}`);
+    lines.push(
+      `  # attributed by ${[...group.rungs].sort(byCodePoint).join(", ")}`,
+      `  - identifier: ${key}`,
+      `    display_name: ${key === UnknownIdentifier ? "Unknown (team not established)" : key}`
+    );
     if (key !== UnknownIdentifier) {
-      lines.push("    github_team_slugs:");
-      lines.push(`      - ${key}`);
+      lines.push("    github_team_slugs:", `      - ${key}`);
     }
     lines.push("    repositories:");
     for (const repository of [...new Set(group.repositories)].sort(byCodePoint)) {

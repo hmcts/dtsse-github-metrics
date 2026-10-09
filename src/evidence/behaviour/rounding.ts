@@ -14,9 +14,7 @@ export function roundHalfEven(value: number, digits: number): number {
 
   const twiceRemainder = remainder * 2n;
   let rounded = quotient;
-  if (twiceRemainder > denominator) {
-    rounded = quotient + 1n;
-  } else if (twiceRemainder === denominator && quotient % 2n === 1n) {
+  if (twiceRemainder > denominator || (twiceRemainder === denominator && quotient % 2n === 1n)) {
     rounded = quotient + 1n;
   }
 

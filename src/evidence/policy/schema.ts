@@ -308,7 +308,7 @@ const traceability = z
     minimum_description: positiveInt.default(30),
     reference_patterns: z
       .array(z.string())
-      .default(["#\\d+", "[A-Z][A-Z0-9]+-\\d+"])
+      .default([String.raw`#\d+`, String.raw`[A-Z][A-Z0-9]+-\d+`])
       // Rejected at load time rather than at every pull request the pattern scans.
       .superRefine((patterns, ctx) => {
         for (const pattern of patterns) {

@@ -64,7 +64,7 @@ function required(env: Environment, name: string): string {
  */
 export function sessionSecret(env: Environment = process.env): string | undefined {
   const value = env.SESSION_SECRET?.trim();
-  return value ? value : undefined;
+  return value === "" ? undefined : value;
 }
 
 export function authSettings(env: Environment = process.env): AuthSettings {

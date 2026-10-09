@@ -116,7 +116,7 @@ export function resolveWindow(options: WindowOptions): ReportingWindow {
     throw new RangeError("give at most two of --from, --to, and --days");
   }
 
-  const span = days(spanDays === undefined ? defaultDays : spanDays);
+  const span = days(spanDays ?? defaultDays);
   const anchor = midnight(reference);
 
   if (startsAt !== undefined && endsAt !== undefined) {

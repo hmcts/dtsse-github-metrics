@@ -19,7 +19,7 @@ const LEDGER = `
   )
 `;
 
-const LOCK_KEY = 0x67686d65_74726963n;
+const LOCK_KEY = 0x67_68_6d_65_74_72_69_63n;
 
 interface Migration {
   readonly name: string;

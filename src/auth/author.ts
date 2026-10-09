@@ -1,4 +1,4 @@
-import { readSession, SESSION_COOKIE } from "./session.ts";
+import { readSession } from "./session.ts";
 import { authRequired, type Environment, sessionSecret } from "./settings.ts";
 
 /**
@@ -82,4 +82,4 @@ export async function writingAuthor(cookie: string | undefined, env: Environment
 }
 
 /** The cookie name a caller reads before calling `writingAuthor`, re-exported so it imports one module. */
-export { SESSION_COOKIE };
+export { SESSION_COOKIE } from "./session.ts";
