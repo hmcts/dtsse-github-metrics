@@ -10,7 +10,7 @@ export function EmptyState({ message, detail }: { message: string; detail?: stri
   return (
     <div className="bg-slate-900 border border-dashed border-slate-800 rounded-lg p-5">
       <p className="text-sm text-slate-400">{message}</p>
-      {detail ? <p className="text-xs text-slate-500 mt-1">{detail}</p> : null}
+      {detail ? <p className="text-xs text-slate-400 mt-1">{detail}</p> : null}
     </div>
   );
 }

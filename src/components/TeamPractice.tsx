@@ -29,7 +29,7 @@ export function TeamPractice({ practice }: { practice: TeamPracticeFigures }) {
           <dd className="text-sm text-slate-100 tabular-nums">{figure.value}</dd>
           {/* Unconditional, because `PracticeFigure.detail` is required — every figure has something that
               qualifies it, and where one was not measured the detail is what says why. */}
-          <p className="text-xs text-slate-500">{figure.detail}</p>
+          <p className="text-xs text-slate-400">{figure.detail}</p>
         </div>
       ))}
     </dl>
@@ -39,7 +39,7 @@ export function TeamPractice({ practice }: { practice: TeamPracticeFigures }) {
 /** The throughput the figures above are read against, as one line under them. */
 export function TeamThroughput({ practice }: { practice: TeamPracticeFigures }) {
   return (
-    <p className="px-4 pb-4 text-xs text-slate-500">
+    <p className="px-4 pb-4 text-xs text-slate-400">
       {`${count(practice.merged_pull_requests, "merged pull request", "merged pull requests")} and ${count(
         practice.direct_commits,
         "direct commit",

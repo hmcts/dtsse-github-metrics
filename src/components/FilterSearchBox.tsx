@@ -101,7 +101,7 @@ export function FilterSearchBox({
         onChange={change}
         placeholder={placeholder}
         aria-label={placeholder}
-        className="w-full pl-9 pr-8 py-2 rounded-md bg-slate-900 border border-slate-700 text-sm text-slate-100 placeholder-slate-500 transition-colors focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
+        className="w-full pl-9 pr-8 py-2 rounded-md bg-slate-900 border border-slate-700 text-sm text-slate-100 placeholder-slate-400 transition-colors focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500"
       />
       {value ? (
         <button

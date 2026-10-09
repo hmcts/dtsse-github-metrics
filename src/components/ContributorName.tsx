@@ -25,6 +25,9 @@ import { withWeeks } from "@/lib/weeks";
  *
  * THE LINK IS ON THE PRIMARY LINE ONLY, as the Repository cell's is. One target per row, whichever value is
  * leading it, so a reader clicking what they can see always reaches the same page.
+ *
+ * UNDERLINED, because the login beneath it puts the link in a block of text, and colour alone does not tell a
+ * link from the text around it (WCAG 1.4.1, axe's `link-in-text-block`).
  */
 export function ContributorName({ person, weeks }: { person: Contributor; weeks: number }) {
   const label = contributorLabel(person);
@@ -32,11 +35,11 @@ export function ContributorName({ person, weeks }: { person: Contributor; weeks:
     <>
       <Link
         href={withWeeks(`/contributors/${encodeURIComponent(person.login)}`, weeks)}
-        className={clsx("text-indigo-400 hover:text-indigo-300 break-all", person.name === undefined && "font-mono")}
+        className={clsx("text-indigo-400 underline underline-offset-2 hover:text-indigo-300 break-all", person.name === undefined && "font-mono")}
       >
         {label}
       </Link>
-      {person.name === undefined ? null : <p className="font-mono text-slate-500 mt-0.5 break-all">{person.login}</p>}
+      {person.name === undefined ? null : <p className="font-mono text-slate-400 mt-0.5 break-all">{person.login}</p>}
     </>
   );
 }

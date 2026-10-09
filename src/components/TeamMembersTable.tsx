@@ -44,7 +44,7 @@ export function TeamMembersTable({ rows }: { rows: readonly TeamMemberRow[] }) {
                     identifier and a proper-case line in the body font is a person's name, so a mixed column is
                     never ambiguous about which of the two a row is showing. */}
                 <p className={row.name === undefined ? "font-mono text-slate-300 break-all" : "text-slate-300 break-all"}>{contributorLabel(row)}</p>
-                {row.name === undefined ? null : <p className="font-mono text-slate-500 mt-0.5 break-all">{row.login}</p>}
+                {row.name === undefined ? null : <p className="font-mono text-slate-400 mt-0.5 break-all">{row.login}</p>}
               </td>
               <td className="py-2 pr-3 text-right text-slate-300">{memberRole(row)}</td>
             </tr>

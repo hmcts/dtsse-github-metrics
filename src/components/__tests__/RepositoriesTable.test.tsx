@@ -506,7 +506,7 @@ describe("RepositoriesTable columns", () => {
     expect(cellOf("web", "Code owner")?.outerHTML).toContain("text-rag-green");
     expect(cellOf("docs", "Code owner")?.outerHTML).toContain("text-rag-amber");
     // An unreadable criterion stays slate: a missing permission is not a bad result.
-    expect(cellOf("api", "Code owner")?.outerHTML).toContain("text-slate-500");
+    expect(cellOf("api", "Code owner")?.outerHTML).toContain("text-slate-400");
   });
 
   // Read off the whole cell rather than its own class list: the readiness cell three columns to the
@@ -1258,7 +1258,7 @@ describe("RepositoriesTable hygiene expansion", () => {
     url("weeks=12&hygiene=true");
     mount(SIGNALLED);
 
-    expect(cellOf("scanned", "Vulnerability alerts")?.outerHTML).toContain("text-slate-500");
+    expect(cellOf("scanned", "Vulnerability alerts")?.outerHTML).toContain("text-slate-400");
     expect(cellOf("scanned", "Vulnerability alerts")?.outerHTML).not.toMatch(/amber|rose|rag-/);
     expect(cellOf("scanned", "Secret scanning")?.outerHTML).toContain("text-rag-green");
     expect(cellOf("scanned", "Push protection")?.outerHTML).toContain("text-rag-amber");

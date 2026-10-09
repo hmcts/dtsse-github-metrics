@@ -66,7 +66,7 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
                 has — see `members`, which is absent where no membership was read. */}
             {membership === undefined ? null : <span>{membership}</span>}
             <span>{contributors(detail)}</span>
-            {missing ? <span className="text-slate-500">{missing}</span> : null}
+            {missing ? <span className="text-slate-400">{missing}</span> : null}
           </>
         }
       />

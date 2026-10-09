@@ -428,7 +428,7 @@ export function RepositoriesTable({
             <span className={clsx("shrink-0 w-2 h-2 rounded-full", PRODUCTION_DOT)} aria-hidden="true" />
             {PRODUCTION_LABEL}
             <ToggleTick on={production} />
-            <span className="tabular-nums text-slate-500">{produced}</span>
+            <span className="tabular-nums text-slate-400">{produced}</span>
           </button>
 
           {/* THREE INDEPENDENT TOGGLES rather than one tri-state, so "public and internal but not private" is
@@ -445,12 +445,12 @@ export function RepositoriesTable({
               className={clsx(
                 "flex items-center gap-1.5 rounded px-2 py-1 text-xs capitalize transition-colors",
                 "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
-                visibilities.has(visibility) ? "bg-slate-700 text-slate-100" : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
+                visibilities.has(visibility) ? "bg-slate-700 text-slate-100" : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-300"
               )}
             >
               {visibility}
               <ToggleTick on={visibilities.has(visibility)} />
-              <span className="tabular-nums text-slate-500">{rows.filter((row) => row.visibility === visibility).length}</span>
+              <span className="tabular-nums text-slate-400">{rows.filter((row) => row.visibility === visibility).length}</span>
             </button>
           ))}
         </div>
@@ -467,7 +467,7 @@ export function RepositoriesTable({
             className={clsx(
               "flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors",
               "focus:outline-none focus-visible:ring-1 focus-visible:ring-indigo-500",
-              expanded ? "bg-slate-700 text-slate-100" : "bg-slate-800 text-slate-500 hover:bg-slate-700 hover:text-slate-300"
+              expanded ? "bg-slate-700 text-slate-100" : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-300"
             )}
           >
             {EXPAND_LABEL}
@@ -624,7 +624,7 @@ function Finding({ result }: { result?: { outcome: AssuranceOutcome; detail: str
   return (
     <td className="py-2 pr-3 text-center" title={result?.detail}>
       <span
-        className={clsx(found === true ? "text-rag-amber" : null, found === false ? "text-rag-green" : null, found === undefined ? "text-slate-500" : null)}
+        className={clsx(found === true ? "text-rag-amber" : null, found === false ? "text-rag-green" : null, found === undefined ? "text-slate-400" : null)}
       >
         {answerWord(found)}
       </span>
@@ -640,7 +640,7 @@ function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: str
         className={clsx(
           outcome === "met" ? "text-rag-green" : null,
           outcome === "unmet" ? "text-rag-amber" : null,
-          outcome === undefined || outcome === "unknown" ? "text-slate-500" : null
+          outcome === undefined || outcome === "unknown" ? "text-slate-400" : null
         )}
       >
         {answerWord(metOutcome(outcome))}
@@ -692,7 +692,7 @@ function Signal({ value }: { value?: boolean }) {
   return (
     <td className="py-2 pr-3 text-center">
       <span
-        className={clsx(value === true ? "text-rag-green" : null, value === false ? "text-rag-amber" : null, value === undefined ? "text-slate-500" : null)}
+        className={clsx(value === true ? "text-rag-green" : null, value === false ? "text-rag-amber" : null, value === undefined ? "text-slate-400" : null)}
       >
         {answerWord(value)}
       </span>

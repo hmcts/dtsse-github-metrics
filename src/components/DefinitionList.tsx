@@ -37,7 +37,7 @@ export function DefinitionList({ values }: { values: readonly DefinitionRow[] })
           <dd className={clsx("ml-auto text-sm font-medium text-right", numeric(row.value) && "tabular-nums", valueClass(row.tone))}>{row.value}</dd>
           {/* Its own line under the pair, because a detail is a sentence: the severity breakdown
               behind an alert count, when a maintenance answer was last true. */}
-          {row.detail ? <dd className="w-full text-xs text-slate-500">{row.detail}</dd> : null}
+          {row.detail ? <dd className="w-full text-xs text-slate-400">{row.detail}</dd> : null}
         </div>
       ))}
     </dl>

@@ -48,7 +48,7 @@ export const RAG_BADGE: Record<RAGState, string> = {
   amber: "bg-amber-950 text-amber-300 border border-amber-800",
   red: "bg-red-950 text-red-300 border border-red-800",
   cannot_assess: "bg-slate-800 text-slate-400 border border-slate-700",
-  none: "bg-slate-800 text-slate-500 border border-slate-700"
+  none: "bg-slate-800 text-slate-400 border border-slate-700"
 };
 
 export const RAG_DOT: Record<RAGState, string> = {

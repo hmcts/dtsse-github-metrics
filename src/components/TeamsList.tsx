@@ -56,7 +56,7 @@ export function TeamsList({ rows, weeks }: { rows: readonly TeamRow[]; weeks: nu
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
             <span className="tabular-nums">{count(row.repositories, "repository", "repositories")}</span>
             <span className="tabular-nums">{count(row.actors, "contributor", "contributors")}</span>
-            {row.unavailable > 0 ? <span className="tabular-nums text-slate-500">{row.unavailable} not reported</span> : null}
+            {row.unavailable > 0 ? <span className="tabular-nums text-slate-400">{row.unavailable} not reported</span> : null}
           </div>
 
           <dl className="flex flex-wrap gap-x-3 gap-y-1.5">

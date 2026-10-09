@@ -40,7 +40,7 @@ export function MetricCard({
     <div>
       <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">{label}</p>
       <p className={`text-2xl font-semibold tabular-nums ${valueClass(tone)}`}>{value}</p>
-      {detail ? <p className="text-xs text-slate-500 mt-1">{detail}</p> : null}
+      {detail ? <p className="text-xs text-slate-400 mt-1">{detail}</p> : null}
     </div>
   );
 }

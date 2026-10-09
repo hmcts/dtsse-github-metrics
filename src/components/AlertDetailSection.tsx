@@ -68,7 +68,7 @@ function FamilyBlock({ summary }: { summary: AlertScanSummary }) {
         <h3 className="text-sm font-medium text-slate-200">{summary.family}</h3>
         <span className={clsx("text-xs", valueClass(summary.tone))}>{summary.state}</span>
       </div>
-      <p className="text-xs text-slate-500 mt-0.5">{summary.detail}</p>
+      <p className="text-xs text-slate-400 mt-0.5">{summary.detail}</p>
       <div className="mt-3">{summary.alerts.length === 0 ? <EmptyState message={summary.empty} /> : <AlertTable summary={summary} />}</div>
     </div>
   );
@@ -122,7 +122,7 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
                 <span className="font-mono text-slate-200 break-all">{alertSubject(alert)}</span>
                 {/* The advisory identifier under the package it is about, which is the Dependabot shape: the subject
                     is what a reader acts on and the identifier is what they look up. */}
-                {alertIdentifier(alert) ? <p className="font-mono text-slate-500 mt-0.5 break-all">{alertIdentifier(alert)}</p> : null}
+                {alertIdentifier(alert) ? <p className="font-mono text-slate-400 mt-0.5 break-all">{alertIdentifier(alert)}</p> : null}
               </td>
               <td className={clsx("py-2 pr-3 align-top whitespace-nowrap", valueClass(alertRecordTone(alert)))}>{alertLevel(alert)}</td>
               <td className="py-2 pr-3 align-top font-mono text-slate-300 break-all">{alertLocation(alert)}</td>
@@ -132,7 +132,7 @@ function AlertTable({ summary }: { summary: AlertScanSummary }) {
                 {alert.html_url === undefined ? (
                   // Never a dead link and never an empty cell: an alert whose URL was not stored is still an alert,
                   // and a blank cell here would read as one that needs no attention.
-                  <span className="text-slate-500">no link was stored</span>
+                  <span className="text-slate-400">no link was stored</span>
                 ) : (
                   <a href={alert.html_url} className="text-indigo-400 hover:text-indigo-300 whitespace-nowrap">
                     {alertActionLabel(summary.family)}

@@ -93,7 +93,7 @@ describe("MetricCard", () => {
     expect(markup).toContain(`tabular-nums ${TONE_VALUE.bad}`);
     // The name over the figure and the line under it stay slate: one figure is coloured per card.
     expect(markup).toContain("text-xs text-slate-400 uppercase");
-    expect(markup).toContain("text-xs text-slate-500 mt-1");
+    expect(markup).toContain("text-xs text-slate-400 mt-1");
     expect(markup.match(/rag-/g)).toHaveLength(1);
     expect(markup).not.toContain("border");
   });
@@ -171,7 +171,7 @@ describe("DefinitionList", () => {
     expect(markup).toContain(TONE_VALUE.bad);
     // The label and the sentence under it stay slate: one value is coloured per row.
     expect(markup).toContain('<dt class="text-sm text-slate-400">secret-scanning</dt>');
-    expect(markup).toContain('class="w-full text-xs text-slate-500"');
+    expect(markup).toContain('class="w-full text-xs text-slate-400"');
     expect(markup.match(/rag-/g)).toHaveLength(1);
   });
 
@@ -212,7 +212,7 @@ describe("EmptyState", () => {
   it("renders the message alone when there is no instruction to give", () => {
     const markup = renderToStaticMarkup(createElement(EmptyState, { message: "No findings in this window." }));
     expect(markup).toContain("No findings in this window.");
-    expect(markup).not.toContain("text-slate-500");
+    expect(markup).not.toContain("text-xs");
   });
 });
 
