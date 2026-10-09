@@ -70,12 +70,12 @@ export async function migrationNames(directory: string): Promise<string[]> {
 
 async function readMigrations(directory: string): Promise<Migration[]> {
   const names = await migrationNames(directory);
-  const migrations: Migration[] = [];
-  for (const name of names) {
-    const sql = await readFile(path.join(directory, name, "migration.sql"), "utf8");
-    migrations.push({ name, sql, checksum: createHash("sha256").update(sql).digest("hex") });
-  }
-  return migrations;
+  return Promise.all(
+    names.map(async (name) => {
+      const sql = await readFile(path.join(directory, name, "migration.sql"), "utf8");
+      return { name, sql, checksum: createHash("sha256").update(sql).digest("hex") };
+    })
+  );
 }
 
 /** What the ledger says is applied: finished, and not rolled back. */
