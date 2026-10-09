@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AvailabilityReason } from "../domain/availability.ts";
 import { AlertSeverity } from "../domain/security-alerts.ts";
 import { HUMAN_MAINTENANCE_SEARCH_DAYS, humanWindowAnswer, maintenanceEvidence, maintenanceWindows } from "../domain/standards.ts";
 import { createGitHubClient, type GitHubClient } from "../github/client.ts";
@@ -164,7 +165,7 @@ describe("collectMergeGate", () => {
     const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
 
     expect(report.gate).toBeUndefined();
-    expect(report.detail).toBeTruthy();
+    expect(report.detail).toBe("GitHub returned HTTP 500");
   });
 
   it("should name a rule type it does not model rather than dropping it", async () => {
@@ -257,7 +258,7 @@ describe("collectMergeGate", () => {
     const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
 
     expect(report.gate).toBeUndefined();
-    expect(report.detail).toBeTruthy();
+    expect(report.detail).toBe("GitHub returned HTTP 500");
     expect(report.detail).not.toMatch(/invalid branch rules/);
   });
 
@@ -449,7 +450,7 @@ describe("openAlerts failures", () => {
     });
 
     expect(result.count.detail).toBe("GitHub returned invalid code-scanning/alerts records: ungradable");
-    expect(result.reason).toBeDefined();
+    expect(result.reason).toBe(AvailabilityReason.CollectionFailed);
   });
 });
 
@@ -470,7 +471,7 @@ describe("countFromSource", () => {
     });
 
     expect(result.count.detail).toBe("GitHub returned invalid dependabot/alerts records: ungradable");
-    expect(result.reason).toBeDefined();
+    expect(result.reason).toBe(AvailabilityReason.CollectionFailed);
   });
 });
 

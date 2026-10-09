@@ -96,8 +96,8 @@ withPipeline(type, product, component) {
     ).trim()
 
     // Runs here rather than in its own stage because this is where the database is: the suite is the only gate
-    // on `src/evidence/store/**` and `report/repositories.ts`, both of which the unit config exempts. It also
-    // has to precede the sonar scan, which reads `coverage-integration/lcov.info`.
+    // on the Postgres-backed modules listed in `vitest.integration-owned.mts`, which the unit config excludes. It
+    // also has to precede the sonar scan, which reads `coverage-integration/lcov.info`.
     withEnv(["DATABASE_URL=postgresql://hmcts@localhost:${postgresPort}/github_metrics"]) {
       yarnBuilder.yarn('db:migrate')
       yarnBuilder.yarn('test:integration')

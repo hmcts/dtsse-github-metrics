@@ -1,5 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
+import { INTEGRATION_OWNED } from "./vitest.integration-owned.mts";
 
 export default defineConfig({
   resolve: {
@@ -26,28 +27,8 @@ export default defineConfig({
       provider: "v8",
       reporter: ["lcov", "text"],
       reportsDirectory: "coverage-integration",
-      // The modules that talk to Postgres. `vitest.config.mts` excludes exactly these from the unit run.
-      include: [
-        "src/evidence/store/alerts.ts",
-        "src/evidence/store/collection-state.ts",
-        "src/evidence/store/collector-lock.ts",
-        "src/evidence/store/coverage.ts",
-        "src/evidence/store/cve.ts",
-        "src/evidence/store/descriptions.ts",
-        "src/evidence/store/facts.ts",
-        "src/evidence/store/migrate.ts",
-        "src/evidence/store/notes.ts",
-        "src/evidence/store/org-graph.ts",
-        "src/evidence/store/prisma.ts",
-        "src/evidence/store/production-override.ts",
-        "src/evidence/store/prune.ts",
-        "src/evidence/store/repository-state.ts",
-        "src/evidence/store/sonar-map.ts",
-        "src/evidence/report/estate.ts",
-        "src/evidence/report/reports.ts",
-        "src/evidence/behaviour/fill.ts",
-        "src/preview/database.ts"
-      ],
+      // The modules that talk to Postgres, which `vitest.config.mts` excludes from the unit run.
+      include: INTEGRATION_OWNED,
       thresholds: { statements: 100, lines: 100, branches: 100, functions: 100 }
     }
   }

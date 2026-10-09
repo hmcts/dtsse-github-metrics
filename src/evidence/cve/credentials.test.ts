@@ -4,9 +4,8 @@ import { CVE_ACCOUNT_VARIABLE, CVE_KEY_VARIABLE, cveCredentials } from "./creden
 /**
  * Whether this process was given a Cosmos account to read.
  *
- * WHERE A MISCONFIGURATION IS CAUGHT OR TURNED INTO A SILENT NO-OP, which is why it is a module of its own. It
- * used to live inside `./cosmos.ts`, excluded from coverage because that file is a driver call — so the one
- * decision in it that a test can reach was hidden along with the part that cannot be.
+ * WHERE A MISCONFIGURATION IS CAUGHT OR TURNED INTO A SILENT NO-OP, which is why it is a module of its own
+ * rather than part of the driver call in `./cosmos.ts`: it is tested here with no driver to mock.
  */
 
 describe("resolving the Cosmos credential", () => {

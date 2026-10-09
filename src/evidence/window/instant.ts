@@ -92,18 +92,19 @@ function fromParts(year: string, month: string, day: string, hour: string, minut
   // one up could move an instant past a half-open window's exclusive edge.
   const micros = fraction.padEnd(6, "0");
   const millis = Number(micros.slice(0, 3));
-  const utc = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), millis);
-  // Never an invalid date: every part is at most four digits and the offset at most 99:99, which keeps the
-  // instant well inside the range a `Date` can hold.
-  const instant = new Date(utc - offset * 60_000);
-  // `Date.UTC` rolls a month-13 or day-32 over into the next month rather than refusing it, so an
-  // impossible date such as 2026-13-05 would parse as 2027-01-05. Reject it: PyYAML raises for that
-  // value before pydantic sees it, and a configuration naming a date that does not exist is a
-  // mistake to report, not one to normalise.
-  if (instant.getTime() === utc - offset * 60_000 && offset === 0 && !sameCalendarDate(instant, year, month, day)) {
+  const local = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second), millis));
+  // `Date.UTC` rolls an hour of 24, a minute of 99 or a day of 32 over into the next unit rather than refusing
+  // it, so an impossible value such as 2026-13-05 would parse as 2027-01-05. Reject it, and before the offset is
+  // applied, because afterwards the rolled-over parts no longer line up with the text: PyYAML raises for that
+  // value before pydantic sees it, and a configuration naming an instant that does not exist is a mistake to
+  // report, not one to normalise. The time is checked first because a rolled-over hour also moves the date.
+  if (local.getUTCHours() !== Number(hour) || local.getUTCMinutes() !== Number(minute) || local.getUTCSeconds() !== Number(second)) {
+    throw new RangeError(`no such time: ${hour}:${minute}${second === "" ? "" : `:${second}`}`);
+  }
+  if (!sameCalendarDate(local, year, month, day)) {
     throw new RangeError(`no such date: ${year}-${month}-${day}`);
   }
-  return instant;
+  return new Date(local.getTime() - offset * 60_000);
 }
 
 function sameCalendarDate(instant: Date, year: string, month: string, day: string): boolean {
@@ -116,5 +117,11 @@ function offsetMinutes(designator: string): number {
   }
   const sign = designator.startsWith("-") ? -1 : 1;
   const digits = designator.slice(1).replace(":", "");
-  return sign * (Number(digits.slice(0, 2)) * 60 + Number(digits.slice(2, 4)));
+  const hours = Number(digits.slice(0, 2));
+  const minutes = Number(digits.slice(2, 4));
+  // Python's `fromisoformat` refuses an offset of a day or more, and a minute part of 60 or more is a typo.
+  if (hours > 23 || minutes > 59) {
+    throw new RangeError(`no such offset: ${designator}`);
+  }
+  return sign * (hours * 60 + minutes);
 }

@@ -131,6 +131,9 @@ describe("the pass-through getters", () => {
     expect(await getActors(12)).toHaveLength(2);
     expect(await getTeams(12)).toEqual([]);
     expect(await getTrend("api", 6)).toEqual({ periods: [] });
+    expect(mocks.repositoryRows).toHaveBeenCalledWith(CONFIGURATION, 12);
+    expect(mocks.actorRows).toHaveBeenCalledWith(CONFIGURATION, 12);
+    expect(mocks.teamRows).toHaveBeenCalledWith(CONFIGURATION, 12);
     expect(mocks.repositoryTrend).toHaveBeenCalledWith(CONFIGURATION, "api", 6);
   });
 });

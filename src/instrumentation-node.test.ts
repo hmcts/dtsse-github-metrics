@@ -53,6 +53,25 @@ describe("registerNode", () => {
     expect(startReportWarmer).toHaveBeenCalledWith({ teams: [] });
   });
 
+  it("should start the warmer only once the secrets are in the environment", async () => {
+    // The warmer reaches Prisma, which resolves its connection string once; before the secrets it takes the
+    // compose default. Stubbed first so that the value the secrets set is restored afterwards.
+    vi.stubEnv("POSTGRES_HOST", undefined);
+    vi.stubEnv("APPLICATIONINSIGHTS_CONNECTION_STRING", "");
+    let seen: string | undefined;
+    loadSecrets.mockImplementationOnce(async () => {
+      process.env.POSTGRES_HOST = "from-vault";
+    });
+    loadConfiguration.mockImplementationOnce(async () => {
+      seen = process.env.POSTGRES_HOST;
+      return { teams: [] };
+    });
+
+    await registerNode();
+
+    expect(seen).toBe("from-vault");
+  });
+
   it("should skip monitoring without a connection string and default the configuration file", async () => {
     vi.stubEnv("APPLICATIONINSIGHTS_CONNECTION_STRING", "");
     vi.stubEnv("METRICS_CONFIG", undefined);

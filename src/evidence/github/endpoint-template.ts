@@ -15,10 +15,10 @@
  * Every one of them is a value rather than a route, so counting them apart turns one endpoint read for
  * 1850 repositories into 1850 endpoints nobody can read a total from.
  */
-const OWNED_PREFIXES: Record<string, readonly string[]> = {
-  repos: ["{organization}", "{repository}"],
-  orgs: ["{organization}"]
-};
+const OWNED_PREFIXES: ReadonlyMap<string | undefined, readonly string[]> = new Map([
+  ["repos", ["{organization}", "{repository}"]],
+  ["orgs", ["{organization}"]]
+]);
 
 /**
  * The path segments whose SUCCESSOR is a value, and the placeholder each one's value takes.
@@ -68,7 +68,7 @@ export function endpointTemplate(target: string, operation?: string): string {
     return operation === undefined ? `${url.origin}/graphql` : `${url.origin}/graphql ${operation}`;
   }
 
-  const owned = Object.entries(OWNED_PREFIXES).find(([prefix]) => prefix === segments[0])?.[1] ?? [];
+  const owned = OWNED_PREFIXES.get(segments[0]) ?? [];
   const templated = segments.map((segment, position) => {
     if (position > 0 && position <= owned.length) {
       return owned[position - 1] as string;

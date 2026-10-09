@@ -968,7 +968,10 @@ describe("what collect walks", () => {
   }
 
   /** A collect run over one fresh and one stale repository, with every GraphQL call answered by `graphql`. */
-  async function collectWithHistory(graphql: (query: string) => Promise<unknown>): Promise<string[]> {
+  async function collectWithHistory(
+    graphql: (query: string) => Promise<unknown>,
+    argv = ["collect", "--config", "m.yaml", "--tolerate-partial"]
+  ): Promise<string[]> {
     loadConfiguration.mockResolvedValue(CONFIG);
     readCohort.mockResolvedValue([cohortEntry("fresh"), cohortEntry("stale", { behaviourCollectable: false, unmaintained: true })]);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
@@ -993,9 +996,12 @@ describe("what collect walks", () => {
       rateLimitWaits: () => []
     });
 
-    await main(["collect", "--config", "m.yaml", "--tolerate-partial"]);
+    historyStatus = await main(argv);
     return queries.filter((query) => query.includes("DefaultBranchHumanCommits"));
   }
+
+  /** What the last `collectWithHistory` run exited with. */
+  let historyStatus: number;
 
   const HUMAN_HISTORY = {
     repository: {
@@ -1036,6 +1042,45 @@ describe("what collect walks", () => {
 
     expect(walks).toHaveLength(2);
     expect(storedMaintenance("fresh")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+  });
+
+  it("should walk the history rather than trust the cache where this run's direct-commit fill failed", async () => {
+    // The same holds for the second fill: the merges landed, but the cached direct commits are earlier runs'.
+    fillCachedSource.mockImplementationOnce(async () => []).mockRejectedValueOnce(new Error("refused"));
+    loadCachedMerges.mockResolvedValue({
+      pullRequests: [],
+      directCommits: [{ sha: "a1", committedAt: new Date("2026-06-02T00:00:00Z"), authorLogin: "alice", authorType: "User" }]
+    });
+
+    const walks = await collectWithHistory(async () => HUMAN_HISTORY);
+
+    expect(walks).toHaveLength(2);
+    expect(storedMaintenance("fresh")).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+  });
+
+  it("should complete a run whose fills and history walks all worked", async () => {
+    // The control for the two cases below: without a failed fill, the same run is not partial.
+    await collectWithHistory(async () => HUMAN_HISTORY, ["collect", "--config", "m.yaml"]);
+
+    expect(historyStatus).toBe(EXIT_COMPLETE);
+  });
+
+  it("should leave a run incomplete when a merged pull request fill failed", async () => {
+    fillCachedSource.mockRejectedValueOnce(new Error("statement timeout"));
+
+    await collectWithHistory(async () => HUMAN_HISTORY, ["collect", "--config", "m.yaml"]);
+
+    expect(historyStatus).toBe(EXIT_INCOMPLETE);
+    expect(console.warn).toHaveBeenCalledWith("fresh: merged pull requests were not collected: statement timeout");
+  });
+
+  it("should leave a run incomplete when a direct-commit fill failed", async () => {
+    fillCachedSource.mockImplementationOnce(async () => []).mockRejectedValueOnce(new Error("statement timeout"));
+
+    await collectWithHistory(async () => HUMAN_HISTORY, ["collect", "--config", "m.yaml"]);
+
+    expect(historyStatus).toBe(EXIT_INCOMPLETE);
+    expect(console.warn).toHaveBeenCalledWith("fresh: direct commits were not collected: statement timeout");
   });
 
   it("should walk the history rather than trust a cached human pull request, which may have merged into another branch", async () => {

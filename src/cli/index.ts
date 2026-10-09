@@ -483,7 +483,8 @@ async function sonarSource(configuration: Configuration, githubClient: ReturnTyp
         now
       });
       const mapping = resolved.mapping;
-      // No note and no refusal can come back here: both are answers about a declaration, and none is passed.
+      // No note and no refusal can come back here: both are answers about a declaration, none is passed, and
+      // `resolveRepositoryProject`'s overload types the result accordingly.
       if (mapping === undefined) {
         return { state: { detail: `no SonarCloud project in ${sonarOrganization} analyses this repository` }, failures: 0 };
       }

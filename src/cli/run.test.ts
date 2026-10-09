@@ -29,19 +29,31 @@ vi.mock("@hmcts-cft/cloud-native-platform", () => ({
   }
 }));
 vi.mock("../platform/secrets.ts", () => ({ loadSecrets }));
-vi.mock("./index.ts", () => ({ main }));
+
+/**
+ * The command's module, recording the `POSTGRES_HOST` it saw when it was evaluated — which is when
+ * `store/prisma.ts` would resolve its connection string. Registered with `vi.doMock` in `runCli` rather than
+ * `vi.mock`, whose factory result outlives `vi.resetModules` and so would be evaluated once for the whole file.
+ */
+const index = { evaluatedWith: undefined as string | undefined };
+function indexModule() {
+  index.evaluatedWith = process.env.POSTGRES_HOST;
+  return { main };
+}
 
 const originalArgv = process.argv;
 
 async function runCli(): Promise<number> {
   const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
   vi.resetModules();
+  vi.doMock("./index.ts", indexModule);
   await import("./run.ts");
   await vi.waitFor(() => expect(exit).toHaveBeenCalled());
   return exit.mock.calls[0]?.[0] as number;
 }
 
 beforeEach(() => {
+  index.evaluatedWith = undefined;
   monitoring.constructed = [];
   monitoring.fail = undefined;
   process.argv = ["node", "run.ts", "collect"];
@@ -62,6 +74,21 @@ describe("run", () => {
     expect(await runCli()).toBe(EXIT_COMPLETE);
     expect(getPropertiesVolumeSecrets).toHaveBeenCalledWith({ chartPath: "/chart", failOnError: false });
     expect(monitoring.constructed).toEqual([]);
+  });
+
+  it("should load the command's module only once the secrets are in the environment", async () => {
+    // A static import would evaluate it during run.ts's own imports, and Prisma would take the fallback connection
+    // string. Stubbed first so that the value the secrets set is restored afterwards.
+    vi.stubEnv("POSTGRES_HOST", undefined);
+    vi.stubEnv("APPLICATIONINSIGHTS_CONNECTION_STRING", "");
+    loadSecrets.mockImplementationOnce(async () => {
+      process.env.POSTGRES_HOST = "from-vault";
+    });
+    main.mockResolvedValue(EXIT_COMPLETE);
+
+    await runCli();
+
+    expect(index.evaluatedWith).toBe("from-vault");
   });
 
   it("should report the exit status and duration of a complete run", async () => {
