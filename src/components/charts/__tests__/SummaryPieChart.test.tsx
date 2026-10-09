@@ -350,6 +350,13 @@ describe("the summary wheel's focus on the selected slice", () => {
     expect(wedgeOpacity(container, "#f87171")).toBe("0.35");
   });
 
+  it("should fade a wedge once, through its fill, rather than again through the path's own opacity", async () => {
+    url("weeks=12&owner=team");
+    const container = await drawn();
+
+    expect(wedge(container, "#f87171").querySelector("path")?.hasAttribute("opacity")).toBe(false);
+  });
+
   it("should fade the unselected legend entries and keep the selected one at full opacity", async () => {
     url("weeks=12&owner=team");
     await drawn();

@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { usePathname, useSearchParams } from "next/navigation";
-import type { CSSProperties } from "react";
+import type { CSSProperties, Key } from "react";
 import { Pie, PieChart, type PieSectorShapeProps, ResponsiveContainer, Sector, Tooltip, type TooltipContentProps } from "recharts";
 import { InfoTooltip } from "@/components/InfoTooltip";
 import { ToggleTick } from "@/components/ToggleTick";
@@ -136,7 +136,7 @@ export function SummaryPieChart({
         <ResponsiveContainer width="100%" height={height}>
           <PieChart>
             <Pie
-              data={wedges.map((wedge) => ({ ...wedge, opacity: unselected(wedge.key) ? UNSELECTED_OPACITY : 1 }))}
+              data={wedges.map((wedge) => ({ ...wedge, fade: unselected(wedge.key) ? UNSELECTED_OPACITY : 1 }))}
               cx="50%"
               cy="50%"
               innerRadius={48}
@@ -195,10 +195,17 @@ export function SummaryPieChart({
  * array, which is a position two things have to agree on and a lookup that can miss. The cast is
  * because the sector's declared type describes the geometry and not what was plotted.
  */
-/** A wedge as a slice has it drawn: its own colour, faded where it sits outside the active filter. */
-function Wedge(props: PieSectorShapeProps) {
-  const wedge = props.payload as PieSlice & { opacity: number };
-  return <Sector {...props} fill={wedge.color} fillOpacity={wedge.opacity} />;
+/**
+ * A wedge as a slice has it drawn: its own colour, faded where it sits outside the active filter.
+ *
+ * The fade travels in the data as `fade` and not `opacity`, because recharts copies every data field onto these
+ * props and `Sector` writes an `opacity` through to the path, which would fade the wedge a second time on top of
+ * `fillOpacity`. The `key` recharts includes is passed on directly, as React requires, rather than in the spread.
+ */
+function Wedge(shape: PieSectorShapeProps) {
+  const { key, ...props } = shape as PieSectorShapeProps & { key?: Key };
+  const wedge = props.payload as PieSlice & { fade: number };
+  return <Sector key={key} {...props} fill={wedge.color} fillOpacity={wedge.fade} />;
 }
 
 /** The hover card over one wedge: its word, its count and its share of `total`. */
