@@ -39,7 +39,14 @@ export default defineConfig({
       ],
       // `**/*.test.ts` because `src/evidence/store/**` matches the unit tests sitting beside the store, which
       // this run does not execute: they were being reported at 0% and pulling the aggregate down.
-      exclude: ["src/evidence/store/generated/**", "src/evidence/store/prisma.ts", "**/*.test.ts"],
+      // The three pure store modules are the unit run's, which covers them without a database.
+      exclude: [
+        "src/evidence/store/generated/**",
+        "src/evidence/store/database-url.ts",
+        "src/evidence/store/intervals.ts",
+        "src/evidence/store/storage-error.ts",
+        "**/*.test.ts"
+      ],
       // Set just below what the suite achieves today, so the numbers hold without being raised past what the
       // code reaches: 89.11/89.60/84.71/94.24 overall, `estate.ts` at 100/100/100/100 and `reports.ts` at
       // 97.67/97.56/95.65/100 — the two files whose only gate is this run, since the unit config exempts them.
@@ -49,10 +56,6 @@ export default defineConfig({
       // `report/repositories.ts` was measured here at 78.96/78.20/68.00/79.56 because two thirds of it was pure
       // aggregation this run reaches only incidentally. That two thirds is now unit-tested at 95/90, and what is
       // left is the reading, which these cases were always about.
-      //
-      // The branch floor has the most room of the four deliberately: `database-url.ts` takes a different arm
-      // depending on whether `DATABASE_URL` is set, so the aggregate moves by about a third of a point between a
-      // laptop and the pipeline, which sets one.
       thresholds: {
         "src/evidence/store/coverage.ts": { statements: 85, lines: 85, branches: 80, functions: 95 },
         "src/evidence/report/estate.ts": { statements: 98, lines: 98, branches: 95, functions: 100 },

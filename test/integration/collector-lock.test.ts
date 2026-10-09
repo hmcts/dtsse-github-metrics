@@ -1,4 +1,5 @@
-import { afterAll, describe, expect, it } from "vitest";
+import pg from "pg";
+import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { asSoleCollector, takeCollectorLock } from "../../src/evidence/store/collector-lock.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
 
@@ -7,9 +8,26 @@ import { prisma } from "../../src/evidence/store/prisma.ts";
 // database and one GitHub App installation, so "two collectors at once" is the normal case rather than an
 // exotic one, and it used to be prevented by suspending a CronJob by hand where nothing recorded why.
 
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
 afterAll(async () => {
   await prisma.$disconnect();
 });
+
+/**
+ * Makes the next `end()` close the connection and then report a failure, as a socket that dropped mid-close does.
+ *
+ * The connection really is closed first, so a case exercising the failure leaves no session holding the lock.
+ */
+function failNextEnd(): void {
+  const end = pg.Client.prototype.end as (this: pg.Client) => Promise<void>;
+  vi.spyOn(pg.Client.prototype, "end").mockImplementationOnce(async function (this: pg.Client) {
+    await end.call(this);
+    throw new Error("the connection was already gone");
+  });
+}
 
 describe("takeCollectorLock", () => {
   it("should grant the lock when nobody holds it", async () => {
@@ -63,6 +81,33 @@ describe("takeCollectorLock", () => {
       })
     ).rejects.toThrow("the walk failed");
 
+    const after = await takeCollectorLock();
+    try {
+      expect(after.held).toBe(true);
+    } finally {
+      await after.release();
+    }
+  });
+});
+
+describe("a connection that fails part-way", () => {
+  it("should close the connection and report the failure when the lock cannot be asked for", async () => {
+    vi.spyOn(pg.Client.prototype, "query").mockRejectedValueOnce(new Error("the server went away"));
+    failNextEnd();
+
+    await expect(takeCollectorLock()).rejects.toThrow("the server went away");
+
+    expect(pg.Client.prototype.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("should release without throwing when the unlock and the close both fail, since ending the session frees the lock", async () => {
+    const lock = await takeCollectorLock();
+    vi.spyOn(pg.Client.prototype, "query").mockRejectedValueOnce(new Error("the server went away"));
+    failNextEnd();
+
+    await expect(lock.release()).resolves.toBeUndefined();
+
+    vi.restoreAllMocks();
     const after = await takeCollectorLock();
     try {
       expect(after.held).toBe(true);

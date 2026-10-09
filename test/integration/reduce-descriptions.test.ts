@@ -3,6 +3,7 @@ import { describedBy, referencePatterns } from "../../src/evidence/behaviour/col
 import { loadConfiguration } from "../../src/evidence/policy/load.ts";
 import { censusOfDescriptions, reduceStoredDescriptions } from "../../src/evidence/store/descriptions.ts";
 import { prisma } from "../../src/evidence/store/prisma.ts";
+import { StorageError } from "../../src/evidence/store/storage-error.ts";
 
 /**
  * The one-off that reduces descriptions cached before they were reduced, against a real table.
@@ -187,5 +188,22 @@ describe("reducing the descriptions of rows cached before the answers existed", 
     await insert(303, { title: "Title but no body key" });
 
     expect(await censusOfDescriptions()).toEqual({ rows: 3, carryingDescription: 2, derived: 1, unmeasurable: 0 });
+  });
+
+  it("should report a storage failure when the rows it read cannot be written back", async () => {
+    // A trigger refusing the update stands in for anything that fails after the read succeeded: a lock timeout, a
+    // dropped connection, a constraint added since. Dropped in `finally` so no later case meets it.
+    await insert(401, { title: "Old", body: "Still carrying its description." });
+    await prisma.$executeRawUnsafe(
+      "CREATE OR REPLACE FUNCTION refuse_update() RETURNS trigger AS $refuse$ BEGIN RAISE EXCEPTION 'refused'; END; $refuse$ LANGUAGE plpgsql"
+    );
+    await prisma.$executeRawUnsafe("CREATE TRIGGER refuse_update BEFORE UPDATE ON pull_request_facts FOR EACH ROW EXECUTE FUNCTION refuse_update()");
+    try {
+      await expect(reduce()).rejects.toThrow(StorageError);
+      expect(await stored(401)).toHaveProperty("body");
+    } finally {
+      await prisma.$executeRawUnsafe("DROP TRIGGER IF EXISTS refuse_update ON pull_request_facts");
+      await prisma.$executeRawUnsafe("DROP FUNCTION IF EXISTS refuse_update()");
+    }
   });
 });

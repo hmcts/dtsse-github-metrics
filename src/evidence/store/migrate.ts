@@ -3,6 +3,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
 import { messageOf } from "../../platform/error-message.ts";
+import { byCodePoint } from "../org/graph.ts";
 import { resolveDatabaseUrl } from "./database-url.ts";
 
 const LEDGER = `
@@ -64,7 +65,7 @@ export async function migrationNames(directory: string): Promise<string[]> {
   return entries
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
-    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
+    .sort(byCodePoint);
 }
 
 async function readMigrations(directory: string): Promise<Migration[]> {

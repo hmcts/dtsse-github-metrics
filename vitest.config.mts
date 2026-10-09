@@ -25,7 +25,23 @@ export default defineConfig({
       exclude: [
         "src/evidence/store/generated/**",
         "src/lib/types.ts",
-        "src/evidence/store/**",
+        // The store modules that talk to Postgres, which `vitest.integration.config.mts` covers against a real
+        // database. `database-url.ts`, `intervals.ts` and `storage-error.ts` are pure and stay here.
+        "src/evidence/store/alerts.ts",
+        "src/evidence/store/collection-state.ts",
+        "src/evidence/store/collector-lock.ts",
+        "src/evidence/store/coverage.ts",
+        "src/evidence/store/cve.ts",
+        "src/evidence/store/descriptions.ts",
+        "src/evidence/store/facts.ts",
+        "src/evidence/store/migrate.ts",
+        "src/evidence/store/notes.ts",
+        "src/evidence/store/org-graph.ts",
+        "src/evidence/store/prisma.ts",
+        "src/evidence/store/production-override.ts",
+        "src/evidence/store/prune.ts",
+        "src/evidence/store/repository-state.ts",
+        "src/evidence/store/sonar-map.ts",
         // The two modules of `report/**` that read Postgres, and the only two left after VIBE-569 split the
         // aggregation layer out of `report/repositories.ts`. `estate.ts` is the one read every span is derived
         // from and `reports.ts` is the orchestration above it; everything else under `report/**` — `spans.ts`,
