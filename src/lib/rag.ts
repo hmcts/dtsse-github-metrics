@@ -14,6 +14,7 @@
  * nothing for, so a lookup can never miss and no component needs a fallback of its own.
  */
 
+import { byCodePoint } from "@/evidence/org/graph";
 import type { ReadinessLabel } from "@/lib/types";
 
 /** The five presentation states: the report's four labels, and "nothing was graded". */
@@ -150,7 +151,7 @@ export function combinationKey(labels: readonly ReadinessLabel[] | undefined): s
       digits.add(digit);
     }
   }
-  return digits.size === 0 ? undefined : [...digits].sort().join("");
+  return digits.size === 0 ? undefined : [...digits].sort(byCodePoint).join("");
 }
 
 /**
