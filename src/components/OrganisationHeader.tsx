@@ -50,7 +50,7 @@ export function OrganisationHeader({
   return (
     <header className="bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">organization</span>
+        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">organization</span>
         <h1 className="font-mono text-xl text-slate-100 break-all">{overview.organization}</h1>
         {action ? <div className="ml-auto">{action}</div> : null}
       </div>
@@ -66,8 +66,8 @@ export function OrganisationHeader({
             and when this bundle was assembled from them. On a snapshot page these two are the whole
             provenance, which is why they are outside the branch above. */}
         {collected ? <span>{collected}</span> : null}
-        <span className="text-slate-500">Report built {instant(overview.built_at)}</span>
-        {unreported ? <span className="text-slate-500">{unreported}</span> : null}
+        <span className="text-slate-400">Report built {instant(overview.built_at)}</span>
+        {unreported ? <span className="text-slate-400">{unreported}</span> : null}
       </div>
     </header>
   );

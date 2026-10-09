@@ -129,7 +129,7 @@ export function SummaryPieChart({
       </div>
 
       {total === 0 ? (
-        <div className="flex items-center justify-center text-slate-600 text-sm" style={{ height }}>
+        <div className="flex items-center justify-center text-slate-400 text-sm" style={{ height }}>
           No data
         </div>
       ) : (
@@ -197,11 +197,11 @@ export function SummaryPieChart({
           >
             <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
             <span className="text-xs text-slate-400 group-hover:text-slate-200">{slice.name}</span>
-            {/* `slate-500` and `tabular-nums`, which is what the estate table's own filter toggles set their counts
-                in — these sit a few centimetres above those and a reader compares the two. One step lighter than
-                the upstream legend's `slate-600` for that reason, and because a count is the half of an entry a
-                reader is actually reading. */}
-            <span className="text-xs text-slate-500 tabular-nums">{slice.value}</span>
+            {/* `slate-400` and `tabular-nums`, which is what the estate table's own filter toggles set their counts
+                in — these sit a few centimetres above those and a reader compares the two. Not the upstream
+                legend's `slate-600` nor the `slate-500` this once was: neither reaches WCAG AA's 4.5:1 on this
+                background, and a count is the half of an entry a reader is actually reading. */}
+            <span className="text-xs text-slate-400 tabular-nums">{slice.value}</span>
             {/* The estate table's four toggles' own affordance, and here for their reason: a slate fill cannot be
                 the only thing telling a sighted reader which slice the list is narrowed to. */}
             <ToggleTick on={slice.key === active} />

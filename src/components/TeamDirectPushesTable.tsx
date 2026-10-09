@@ -84,7 +84,7 @@ export function TeamDirectPushesTable({ rows, weeks }: { rows: readonly TeamDire
                   not a login and has no contributor page. See `directPushRows` for the fallback. */}
               <td className="py-2 pr-3 font-mono text-slate-400 break-all">{row.author ?? ABSENT}</td>
               <td className="py-2 pr-3 text-center">
-                <span className={row.ci === undefined ? "text-slate-500" : row.ci ? "text-rag-green" : "text-rag-amber"}>
+                <span className={row.ci === undefined ? "text-slate-400" : row.ci ? "text-rag-green" : "text-rag-amber"}>
                   {row.ci === undefined ? ABSENT : row.ci ? "Yes" : "No"}
                 </span>
               </td>

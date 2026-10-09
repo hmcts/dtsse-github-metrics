@@ -124,7 +124,7 @@ export function TeamMergesTable({ rows, weeks }: { rows: readonly TeamMergeRow[]
 function Judgement({ value }: { value?: boolean }) {
   return (
     <td className="py-2 pr-3 text-center">
-      <span className={value === undefined ? "text-slate-500" : value ? "text-rag-green" : "text-rag-amber"}>
+      <span className={value === undefined ? "text-slate-400" : value ? "text-rag-green" : "text-rag-amber"}>
         {value === undefined ? ABSENT : value ? "Yes" : "No"}
       </span>
     </td>

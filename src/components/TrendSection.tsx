@@ -75,10 +75,10 @@ export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: nu
           </div>
         )}
 
-        {series.delta_detail === undefined ? null : <p className="text-xs text-slate-500">No period was compared: {series.delta_detail}</p>}
+        {series.delta_detail === undefined ? null : <p className="text-xs text-slate-400">No period was compared: {series.delta_detail}</p>}
 
         {reasons.length === 0 ? null : (
-          <ul className="text-xs text-slate-500 space-y-1">
+          <ul className="text-xs text-slate-400 space-y-1">
             {reasons.map((reason) => (
               <li key={reason}>{reason}</li>
             ))}
@@ -109,7 +109,7 @@ function ChartCard({ title, detail, children }: { title: string; detail: string;
     <div className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-2">
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wide font-mono">{title}</h3>
-        <span className="text-xs text-slate-500">{detail}</span>
+        <span className="text-xs text-slate-400">{detail}</span>
       </div>
       {children}
     </div>

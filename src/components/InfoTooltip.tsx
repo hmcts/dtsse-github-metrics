@@ -15,7 +15,7 @@ export function InfoTooltip({ text }: { text: string }) {
       <button
         type="button"
         aria-label={text}
-        className="cursor-help text-slate-600 transition-colors hover:text-slate-300 focus:outline-none focus-visible:text-slate-300"
+        className="cursor-help text-slate-500 transition-colors hover:text-slate-300 focus:outline-none focus-visible:text-slate-300"
       >
         <Info className="w-3 h-3" aria-hidden="true" />
       </button>

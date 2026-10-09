@@ -25,18 +25,24 @@ import { withWeeks } from "@/lib/weeks";
  *
  * THE LINK IS ON THE PRIMARY LINE ONLY, as the Repository cell's is. One target per row, whichever value is
  * leading it, so a reader clicking what they can see always reaches the same page.
+ *
+ * THE LINK IS A BLOCK OF ITS OWN, in a `<div>`, rather than inline beside the login. It already reads as its own
+ * line, so nothing moves; what changes is that it is no longer a link inside a block of text, which is the case
+ * WCAG 1.4.1 (axe's `link-in-text-block`) would otherwise want an underline for.
  */
 export function ContributorName({ person, weeks }: { person: Contributor; weeks: number }) {
   const label = contributorLabel(person);
   return (
     <>
-      <Link
-        href={withWeeks(`/contributors/${encodeURIComponent(person.login)}`, weeks)}
-        className={clsx("text-indigo-400 hover:text-indigo-300 break-all", person.name === undefined && "font-mono")}
-      >
-        {label}
-      </Link>
-      {person.name === undefined ? null : <p className="font-mono text-slate-500 mt-0.5 break-all">{person.login}</p>}
+      <div>
+        <Link
+          href={withWeeks(`/contributors/${encodeURIComponent(person.login)}`, weeks)}
+          className={clsx("text-indigo-400 hover:text-indigo-300 break-all", person.name === undefined && "font-mono")}
+        >
+          {label}
+        </Link>
+      </div>
+      {person.name === undefined ? null : <p className="font-mono text-slate-400 mt-0.5 break-all">{person.login}</p>}
     </>
   );
 }

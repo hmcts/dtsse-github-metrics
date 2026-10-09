@@ -50,7 +50,7 @@ export function FindingsTable({ findings, weeks }: { findings: readonly Practice
             <tr key={`${finding.rule}/${finding.actor_login}`} className="hover:bg-slate-800/30">
               <td className="py-2 pl-3 pr-3 align-top">
                 <span className="text-slate-200">{finding.rule}</span>
-                <p className="text-slate-500 mt-0.5">{finding.message}</p>
+                <p className="text-slate-400 mt-0.5">{finding.message}</p>
               </td>
               <td className="py-2 pr-3 align-top uppercase tracking-wide text-slate-400">{finding.severity}</td>
               <td className="py-2 pr-3 align-top">

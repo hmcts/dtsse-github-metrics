@@ -69,7 +69,7 @@ export function EntityHeader({
   return (
     <header className={clsx("bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2", label === undefined ? null : borderClass(label))}>
       <div className="flex flex-wrap items-center gap-3">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">{kind}</span>
+        <span className="text-xs font-semibold text-slate-400 uppercase tracking-wide">{kind}</span>
         <h1 className={clsx("text-xl text-slate-100 break-all", identifier && "font-mono")}>{name}</h1>
         {label ? <RAGLabel label={label} /> : null}
         <ProductionBadge production={production} />

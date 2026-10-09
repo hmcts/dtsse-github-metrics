@@ -114,7 +114,7 @@ function deploys(production: readonly string[] | undefined, repository: string):
 /** The owning team as a link, or a stated absence where the service named none. */
 function TeamCell({ team: owner, weeks }: { team: string | undefined; weeks: number }) {
   if (owner === undefined) {
-    return <span className="text-slate-500">no owning team was reported</span>;
+    return <span className="text-slate-400">no owning team was reported</span>;
   }
   return (
     <Link href={withWeeks(`/teams/${encodeURIComponent(owner)}`, weeks)} className="text-indigo-400 hover:text-indigo-300">

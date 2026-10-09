@@ -53,7 +53,7 @@ export function RepositoryNotes({ repository, notes, create, edit, remove }: Rep
           <Submit label="Add note" />
           {/* The cap stated where a writer can see it before they hit it, rather than only in the refusal.
               `maxLength` above stops a browser exceeding it; this is for somebody planning a long note. */}
-          <span className="text-xs text-slate-500">at most {NOTE_BODY_LIMIT} characters</span>
+          <span className="text-xs text-slate-400">at most {NOTE_BODY_LIMIT} characters</span>
         </div>
       </form>
     </div>
@@ -92,7 +92,7 @@ function Note({ repository, note, edit, remove }: { repository: string; note: Re
           with no spaces in it wraps instead of widening the panel past the viewport. */}
       <p className="text-sm text-slate-200 whitespace-pre-wrap break-words">{note.body}</p>
 
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-slate-400">
         {note.author_name} — {instant(note.created_at)}
         {note.updated_at === note.created_at ? null : <span> (edited {instant(note.updated_at)})</span>}
       </p>
@@ -148,7 +148,7 @@ function Body({ id, value }: { id: string; value?: string }) {
       required
       maxLength={NOTE_BODY_LIMIT}
       defaultValue={value}
-      className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm text-slate-200 placeholder:text-slate-600"
+      className="w-full bg-slate-950 border border-slate-800 rounded-md px-3 py-2 text-sm text-slate-200 placeholder:text-slate-400"
       placeholder="Context that is not derivable from GitHub"
     />
   );

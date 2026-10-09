@@ -19,7 +19,7 @@ export function Section({ heading, detail, action, children }: { heading: string
     <Panel>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-slate-800 px-4 py-3">
         <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wide">{heading}</h2>
-        {detail ? <span className="text-xs text-slate-500">{detail}</span> : null}
+        {detail ? <span className="text-xs text-slate-400">{detail}</span> : null}
         {action ? <div className="ml-auto">{action}</div> : null}
       </div>
       {/* No body at all rather than an empty padded one: a panel with a heading and nothing under it
