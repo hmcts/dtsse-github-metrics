@@ -120,12 +120,14 @@ function gate(value: unknown): contract.SonarQualityGate | undefined {
     level: verdict,
     conditions: conditions.map((condition) => {
       const entry = (typeof condition === "object" && condition !== null ? condition : {}) as StoredGateCondition;
+      const threshold = text(entry.errorThreshold);
+      const actual = text(entry.actual);
       return {
         metric: text(entry.metric) ?? "",
         level: text(entry.level) ?? "",
         comparator: text(entry.comparator) ?? "",
-        ...(text(entry.errorThreshold) === undefined ? {} : { threshold: text(entry.errorThreshold) as string }),
-        ...(text(entry.actual) === undefined ? {} : { actual: text(entry.actual) as string })
+        ...(threshold === undefined ? {} : { threshold }),
+        ...(actual === undefined ? {} : { actual })
       };
     })
   };
@@ -177,12 +179,14 @@ function mapping(value: StoredMapping | undefined): contract.SonarProjectMapping
   if (projectKey === undefined || repository === undefined) {
     return undefined;
   }
+  const analysisAt = text(value.analysisAt);
+  const revision = text(value.revision);
   return {
     project_key: projectKey,
     repository,
     method: text(value.method) ?? "",
-    ...(text(value.analysisAt) === undefined ? {} : { analysis_at: text(value.analysisAt) as string }),
-    ...(text(value.revision) === undefined ? {} : { revision: text(value.revision) as string })
+    ...(analysisAt === undefined ? {} : { analysis_at: analysisAt }),
+    ...(revision === undefined ? {} : { revision })
   };
 }
 
@@ -207,12 +211,13 @@ export function storedSonar(payload: unknown, fetched: string): contract.SonarRe
     return { fetched_at: fetched, detail: text(state.detail) ?? SONAR_UNATTEMPTED_DETAIL };
   }
   const measured = state.measures === undefined ? undefined : measures(state.measures);
+  const detail = text(state.detail);
   return {
     fetched_at: fetched,
     mapping: attributed,
     ...(measured === undefined ? {} : { measures: measured }),
     // A project that resolved and could not be measured keeps its reason beside the project it is about, which is
     // what `sonarGateCard` prints under the gate: the project name is the first thing needed to chase it.
-    ...(text(state.detail) === undefined ? {} : { detail: text(state.detail) as string })
+    ...(detail === undefined ? {} : { detail })
   };
 }

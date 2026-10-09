@@ -12,7 +12,8 @@ export interface RepositoryIdentity {
   repository: string;
 }
 
-const HTTPS_GITHUB = /^https:\/\/github\.com\/([^/]+)\/([^/]+)$/;
+const HTTPS_GITHUB_PREFIX = "https://github.com/";
+const HTTPS_GITHUB = /^https:\/\/github\.com\/[^/]+\/[^/]+$/;
 
 /**
  * One `build.git_url` read as an owner and a repository, or nothing for a URL this cannot attribute.
@@ -43,12 +44,13 @@ export function repositoryFromGitUrl(gitUrl: unknown): RepositoryIdentity | unde
     .replace(/^git:\/\/github\.com\//, "https://github.com/")
     .replace(/\.git$/, "")
     .toLowerCase();
-  const matched = HTTPS_GITHUB.exec(normalised);
-  if (matched === null) {
+  if (!HTTPS_GITHUB.test(normalised)) {
     return undefined;
   }
-  // Both groups are present whenever the pattern matched, and `noUncheckedIndexedAccess` cannot see that; an
-  // empty segment cannot match `[^/]+`, so the guard is about the compiler rather than about the data.
-  const [, organization, repository] = matched;
-  return organization === undefined || repository === undefined ? undefined : { organization, repository };
+  // The pattern admits exactly one slash after the prefix, between two non-empty segments, so the owner is
+  // everything before it and the repository everything after. Slicing rather than reading capture groups keeps
+  // both typed as strings without a guard for a group that cannot be missing.
+  const path = normalised.slice(HTTPS_GITHUB_PREFIX.length);
+  const slash = path.indexOf("/");
+  return { organization: path.slice(0, slash), repository: path.slice(slash + 1) };
 }

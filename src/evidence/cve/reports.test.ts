@@ -262,6 +262,24 @@ describe("deduplicating one report's findings", () => {
     ).toEqual([{ identifier: "CVE-1", package: "a.jar", suppressed: false, severity: "low" }]);
   });
 
+  it("should keep the graded listing when a later one states no severity", () => {
+    expect(
+      distinctFindings([
+        { identifier: "CVE-1", package: "a.jar", suppressed: false, severity: "medium" },
+        { identifier: "CVE-1", package: "a.jar", suppressed: false }
+      ])
+    ).toEqual([{ identifier: "CVE-1", package: "a.jar", suppressed: false, severity: "medium" }]);
+  });
+
+  it("should keep a suppression's justification when the worse-graded listing carries none", () => {
+    expect(
+      distinctFindings([
+        { identifier: "CVE-1", package: "a.jar", suppressed: true, severity: "low", notes: "not reachable from our code" },
+        { identifier: "CVE-1", package: "a.jar", suppressed: true, severity: "high" }
+      ])
+    ).toEqual([{ identifier: "CVE-1", package: "a.jar", suppressed: true, severity: "high", notes: "not reachable from our code" }]);
+  });
+
   it("should keep the live and the suppressed listing apart when one CVE appears as both", () => {
     // `suppressed` is part of the key, which is what keeps a suppressed finding out of the live figure.
     expect(

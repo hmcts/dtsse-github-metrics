@@ -146,6 +146,14 @@ describe("an unreadable gate", () => {
     expect(assessment.blocking.map((condition) => condition.condition)).toEqual(["merge-gate-not-collected"]);
   });
 
+  it("should say the gate was not collected when the report carries no detail of its own", () => {
+    const assessment = policy().assess(healthy(), {});
+
+    expect(assessment.blocking).toEqual([
+      { condition: "merge-gate-not-collected", label: ReadinessLabel.CannotAssess, detail: "the merge gate has not been collected" }
+    ]);
+  });
+
   it("should report cannot-assess when GitHub withheld the rules of a protected branch", () => {
     // A protected branch whose rules GitHub withheld must not be read as a gate that requires no review.
     const assessment = policy().assess(healthy(), report({ gate: gate({ rulesObserved: false }) }));
@@ -367,8 +375,11 @@ describe("the neutral merge-gate rules", () => {
   it.each([
     ["branch-deletion-not-restricted", { restrictsDeletions: false }],
     ["linear-history-not-required", {}],
-    ["branch-names-not-restricted", {}]
-  ])("should report %s as clear and informational even when absent", (condition, overrides) => {
+    ["branch-names-not-restricted", {}],
+    ["branch-deletion-restricted", {}],
+    ["linear-history-required", { requiresLinearHistory: true }],
+    ["branch-names-restricted", { restrictsBranchNames: true }]
+  ])("should report %s as clear and informational whether configured or absent", (condition, overrides) => {
     // Each bears on none of the decision questions, so an absent one is not a shortfall — but a check that
     // is never reported cannot be argued with, so it is reported.
     const assessment = policy().assess(healthy(), report({ gate: gate(overrides) }));
@@ -392,6 +403,19 @@ describe("createPolicy", () => {
 
     expect(readinessPolicy(disabled).enabled).toBe(false);
     expect(policy().enabled).toBe(true);
+  });
+
+  it("should report a rate with no denominator as not graded rather than as a pass", () => {
+    // Only reachable through a hand-built configuration: the schema requires at least one merge, so an
+    // empty cohort is never sufficient when the minimum is loaded from YAML.
+    const lenient = createPolicy({ ...CONFIGURATION.assessment, minimum_merges: 0 }, CONFIGURATION.triviality);
+
+    const assessment = lenient.assess(cohort([]), report());
+
+    expect(assessment.caution.map((condition) => condition.condition)).toEqual(
+      expect.arrayContaining(["independent-review-coverage-not-observed", "approval-coverage-not-observed", "checks-passing-at-merge-not-observed"])
+    );
+    expect(assessment.blocking).toEqual([]);
   });
 
   it("should honour a configured minimum cohort", () => {

@@ -106,6 +106,12 @@ describe("metricComparison", () => {
       percentile: Percentile.Percentile75
     });
   });
+
+  it("should leave the percentile off a distribution that names none", () => {
+    const summary = { status: ObservationStatus.Observed, sampleSize: 4, unit: "lines", median: 100, percentile75: 400, percentile90: 900 };
+
+    expect(metricComparison({ metric: "pull-request-size", summary, value: 100 })).toEqual({ basis: DeltaBasis.PercentageChange, unit: "lines" });
+  });
 });
 
 describe("metricDelta", () => {

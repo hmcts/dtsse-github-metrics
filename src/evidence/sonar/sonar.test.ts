@@ -304,10 +304,10 @@ describe("createSonarClient", () => {
   });
 
   it("should keep an analysis that carries no date, and a measure sent as null, as absences", async () => {
-    const analyses = await createSonarClient({ organization: "hmcts", fetch: replying({ body: { analyses: [{ revision: REVISION, date: null }] } }) }).projectAnalyses(
-      "hmcts.cath",
-      1
-    );
+    const analyses = await createSonarClient({
+      organization: "hmcts",
+      fetch: replying({ body: { analyses: [{ revision: REVISION, date: null }] } })
+    }).projectAnalyses("hmcts.cath", 1);
     const measures = await createSonarClient({
       organization: "hmcts",
       fetch: replying({ body: { component: { measures: [{ metric: "coverage", value: null }] } } })
@@ -345,7 +345,9 @@ describe("createSonarClient", () => {
   });
 
   it("should carry a body of the wrong shape as a collection failure", async () => {
-    const error = await failing(createSonarClient({ organization: "hmcts", fetch: replying({ body: { component: "none" } }) }).measures("hmcts.cath", undefined));
+    const error = await failing(
+      createSonarClient({ organization: "hmcts", fetch: replying({ body: { component: "none" } }) }).measures("hmcts.cath", undefined)
+    );
 
     expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
     expect(error.message).toMatch(/cannot accept/);
@@ -679,7 +681,9 @@ describe("confirmByCommit", () => {
   });
 
   it("should raise an analyses read that failed for a reason SonarCloud did not give", async () => {
-    await expect(confirmByCommit(refusingSonar(new Error("boom")), githubClient(replying()), "hmcts", "cath-service", "hmcts.cath", now)).rejects.toThrow("boom");
+    await expect(confirmByCommit(refusingSonar(new Error("boom")), githubClient(replying()), "hmcts", "cath-service", "hmcts.cath", now)).rejects.toThrow(
+      "boom"
+    );
   });
 });
 
@@ -896,7 +900,14 @@ describe("attributeProject", () => {
 
   it("should raise an analyses read that failed for a reason SonarCloud did not give", async () => {
     await expect(
-      attributeProject({ sonarClient: refusingSonar(new Error("boom")), githubClient: githubClient(replying()), organization: "hmcts", projectKey: "hmcts.cath", pacer: IDLE_PACER, now })
+      attributeProject({
+        sonarClient: refusingSonar(new Error("boom")),
+        githubClient: githubClient(replying()),
+        organization: "hmcts",
+        projectKey: "hmcts.cath",
+        pacer: IDLE_PACER,
+        now
+      })
     ).rejects.toThrow("boom");
   });
 
@@ -918,7 +929,13 @@ describe("attributeProject", () => {
       github: replying({ body: { items: [{ repository: { full_name: "hmcts/cath-service" } }] } })
     });
 
-    expect(attempt.mapping).toEqual({ projectKey: "hmcts.cath", repository: "cath-service", method: SonarResolutionMethod.AnalysisRevision, revision: REVISION, resolvedAt: now });
+    expect(attempt.mapping).toEqual({
+      projectKey: "hmcts.cath",
+      repository: "cath-service",
+      method: SonarResolutionMethod.AnalysisRevision,
+      revision: REVISION,
+      resolvedAt: now
+    });
   });
 
   it("should raise a spent search quota rather than recording it as the project's dead end", async () => {

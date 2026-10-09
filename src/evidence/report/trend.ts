@@ -1,6 +1,6 @@
 import type * as contract from "../../lib/types.ts";
 import { botAccounts, contributorLogins, excludedAuthors, ratePercentage, reportedCohort } from "../behaviour/analysis.ts";
-import { type BehaviourMetric, behaviourMetrics, Percentile } from "../behaviour/metrics.ts";
+import { type BehaviourMetric, behaviourMetrics, type Percentile, percentileValue } from "../behaviour/metrics.ts";
 import { roundHalfEven } from "../behaviour/rounding.ts";
 import { EvidenceSource, type Interval } from "../domain/coverage.ts";
 import { type DistributionObservation, type Merges, ObservationStatus, type RateObservation } from "../domain/facts.ts";
@@ -93,17 +93,6 @@ function isDistribution(summary: RateObservation | DistributionObservation): sum
   return "unit" in summary;
 }
 
-/** The value a distribution is compared at, read from the percentile the metric declares. */
-function percentileValue(metric: BehaviourMetric, observation: DistributionObservation): number | undefined {
-  if (metric.percentile === Percentile.Percentile75) {
-    return observation.percentile75;
-  }
-  if (metric.percentile === Percentile.Percentile90) {
-    return observation.percentile90;
-  }
-  return observation.median;
-}
-
 /**
  * One metric's observation beside the number a series compares windows on.
  *
@@ -187,26 +176,23 @@ export interface TrendThroughput {
   /**
    * How many people landed a change in the window, counted over both routes.
    *
-   * REPORTED AND NOT COMPARED. `throughputMeasures` below names the three measures a series moves on and this is
+   * REPORTED AND NOT COMPARED. `THROUGHPUT_MEASURES` below names the three measures a series moves on and this is
    * deliberately not one of them: a change in the number of people is a change in the team rather than in its
    * practice, and a delta on it would read as a movement in how the repository is worked.
    */
   activeContributors: number;
 }
 
-/** The measures a throughput comparison names, spelled once so deltas and rendered rows cannot disagree. */
-export function throughputMeasures(throughput: TrendThroughput): [string, number][] {
-  return [
-    ["merged pull requests", throughput.mergedPullRequests],
-    ["direct commits", throughput.directCommits],
-    ["merges", throughput.merges]
-  ];
-}
+/** The measures a throughput comparison names, each beside how it is read from one window. */
+const THROUGHPUT_MEASURES: readonly (readonly [string, (throughput: TrendThroughput) => number])[] = [
+  ["merged pull requests", (throughput) => throughput.mergedPullRequests],
+  ["direct commits", (throughput) => throughput.directCommits],
+  ["merges", (throughput) => throughput.merges]
+];
 
 /** Compares what the two windows put onto the default branch. */
 export function throughputDeltas(baseline: TrendThroughput, period: TrendThroughput): TrendDelta[] {
-  const counts = new Map(throughputMeasures(baseline));
-  return throughputMeasures(period).map(([measure, value]) => delta(measure, COUNT, counts.get(measure) ?? 0, value));
+  return THROUGHPUT_MEASURES.map(([measure, read]) => delta(measure, COUNT, read(baseline), read(period)));
 }
 
 /**
@@ -290,7 +276,6 @@ export function builtRepositoryTrend(configuration: Configuration, input: TrendS
   // A BASELINE THAT OBSERVED NO THROUGHPUT COMPARES NOTHING, and the series says which window let it down rather
   // than leaving every period's `deltas` empty for a reader to guess at. A baseline that was READ but is merely
   // thin still compares its counts: `metricDeltas` drops the metrics it has no baseline value for on its own.
-  const comparable = baseline.throughput;
 
   return stripAbsent<contract.RepositoryTrend>({
     repository: input.repository,
@@ -302,10 +287,10 @@ export function builtRepositoryTrend(configuration: Configuration, input: TrendS
       // series still names its periods the way an uncut one does, which is what `lib/trend.ts` labels `P1`
       // onwards from.
       index: index + 1,
-      deltas: comparable === undefined ? [] : periodDeltas(comparable, baseline.metrics, period)
+      deltas: baseline.throughput === undefined ? [] : periodDeltas(baseline.throughput, baseline.metrics, period)
     })),
     alert_observations: noAlertHistory(),
-    ...(comparable === undefined ? { delta_detail: noBaselineDelta(baseline.detail ?? NOT_READ) } : {})
+    ...(baseline.throughput === undefined ? { delta_detail: noBaselineDelta(baseline.detail) } : {})
   });
 }
 
@@ -338,18 +323,30 @@ export function trendWithoutWholePeriod(repository: string, enablement: Date, pe
   };
 }
 
-/** What the series says when its baseline was never read, which has no `detail` of its own to quote. */
-const NOT_READ = "no collection covered the baseline window";
+/**
+ * One window of a series as the arithmetic sees it, before the contract's own spelling of it.
+ *
+ * TWO SHAPES, because an unread window always says which source went unread: a window with no throughput carries
+ * the `detail` naming why, which is the reason a baseline that compares nothing quotes.
+ */
+type ResolvedWindow = ReadWindow | UnreadWindow;
 
-/** One window of a series as the arithmetic sees it, before the contract's own spelling of it. */
-interface ResolvedWindow {
+interface ResolvedWindowBase {
   window: ReportingWindow;
   cohort: contract.CohortSummary;
-  /** Absent where either source went unread, because a total of one measured half and one absent half is a lie. */
-  throughput?: TrendThroughput;
   /** Empty where the window was unread or too thin to read a pattern from. */
   metrics: TrendMetric[];
+}
+
+interface ReadWindow extends ResolvedWindowBase {
+  throughput: TrendThroughput;
   detail?: string;
+}
+
+/** Either source went unread, so there is no throughput: a total of one measured half and one absent half is a lie. */
+interface UnreadWindow extends ResolvedWindowBase {
+  throughput?: undefined;
+  detail: string;
 }
 
 interface WindowFacts {
@@ -454,7 +451,7 @@ function contractWindow(resolved: ResolvedWindow): contract.TrendWindow {
  * One window's throughput as the contract spells it, plus the one figure the comparison does not name.
  *
  * `active_contributors` IS REPORTED AND NOT COMPARED, which is upstream's split rather than an omission:
- * `throughputMeasures` names the three measures a series moves on, and a change in the number of people is a
+ * `THROUGHPUT_MEASURES` names the three measures a series moves on, and a change in the number of people is a
  * change in the team rather than in its practice. It is counted over both routes, so a person who only pushed
  * directly is still someone who put work on the default branch.
  */

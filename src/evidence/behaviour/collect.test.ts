@@ -12,6 +12,7 @@ import {
   findLastHumanCommit,
   HUMAN_COMMIT_PAGE_CAP,
   mutableEdge,
+  reviewFact,
   statusConclusion
 } from "./collect.ts";
 import { deserialise } from "./fill.ts";
@@ -333,6 +334,25 @@ describe("collectMergedPullRequests", () => {
     expect(facts[0]?.checks.map((c) => c.name)).toEqual(["build", "lint"]);
   });
 
+  it("should page review and status-check follow-ups that report no cursor", async () => {
+    const review = { databaseId: 1, submittedAt: "2026-08-01T06:00:00Z", state: "APPROVED", author: null, comments: { totalCount: 0 } };
+    const run = { __typename: "CheckRun", name: "build", status: "COMPLETED", conclusion: "SUCCESS", completedAt: "2026-08-01T09:00:00Z" };
+    const rollup = (hasNextPage: boolean) => ({
+      nodes: [{ commit: { statusCheckRollup: { contexts: { pageInfo: { hasNextPage, endCursor: null }, nodes: [run] } } } }]
+    });
+    const { fetch, sent } = replying(
+      merged([pullRequestNode({ reviews: { pageInfo: { hasNextPage: true, endCursor: null }, nodes: [review] }, commits: rollup(true) })]),
+      { repository: { pullRequest: { reviews: { pageInfo: PAGE_END, nodes: [{ ...review, databaseId: 2 }] } } } },
+      { repository: { pullRequest: { commits: rollup(false) } } }
+    );
+
+    const facts = await collectMergedPullRequests(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"), TRACEABILITY);
+
+    expect(facts[0]?.reviews.map((r) => r.identifier)).toEqual([1, 2]);
+    expect(facts[0]?.checks).toHaveLength(2);
+    expect(sent.slice(1).map((request) => request.variables.cursor)).toEqual([null, null]);
+  });
+
   it("should report an unreadable body as a collection failure rather than crashing the run", async () => {
     const { fetch } = replying({ search: { issueCount: "not a number" } });
 
@@ -341,6 +361,19 @@ describe("collectMergedPullRequests", () => {
     );
 
     expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
+  });
+});
+
+describe("reviewFact", () => {
+  const node = { databaseId: 1, submittedAt: new Date("2026-08-01T06:00:00Z"), state: "COMMENTED", author: null, comments: { totalCount: 0 } };
+
+  it("should keep a review's written body", () => {
+    expect(reviewFact({ ...node, body: "looks good" }).body).toBe("looks good");
+  });
+
+  it("should leave out a body GitHub returned as null or as whitespace", () => {
+    expect(reviewFact({ ...node, body: null })).not.toHaveProperty("body");
+    expect(reviewFact({ ...node, body: "  " })).not.toHaveProperty("body");
   });
 });
 
@@ -458,6 +491,18 @@ describe("collectDirectCommits", () => {
     expect(facts[0]).toMatchObject({ authorName: "Unlinked Person" });
     expect(facts[0]?.authorLogin).toBeUndefined();
   });
+
+  it("should follow history pages, cursor or none, and sort by commit instant and then sha", async () => {
+    const { fetch, sent } = replying(
+      history([commitNode({ oid: "ccc333", committedDate: "2026-08-03T00:00:00Z" })], { pageInfo: { hasNextPage: true, endCursor: null } }),
+      history([commitNode({ oid: "bbb222" }), commitNode({ oid: "aaa111" })])
+    );
+
+    const facts = await collectDirectCommits(client(fetch), "hmcts", "cath-service", new Date("2026-08-01Z"), new Date("2026-08-31Z"));
+
+    expect(facts.map((fact) => fact.sha)).toEqual(["aaa111", "bbb222", "ccc333"]);
+    expect(sent[1]?.variables.cursor).toBeNull();
+  });
 });
 
 describe("findLastHumanCommit", () => {
@@ -490,6 +535,34 @@ describe("findLastHumanCommit", () => {
 
     expect(evidence).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
     expect(sent[1]?.variables).toMatchObject({ cursor: "c1" });
+  });
+
+  it("should follow a page that reports no cursor with its next page", async () => {
+    const { fetch, sent } = replying(page([node("2026-08-05T00:00:00Z", "fluxcdbot")], true, null), page([node("2026-07-01T00:00:00Z", "alice")]));
+
+    const evidence = await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS);
+
+    expect(evidence).toEqual({ lastHumanCommitAt: new Date("2026-07-01T00:00:00Z") });
+    expect(sent[1]?.variables).toMatchObject({ cursor: null });
+  });
+
+  it("should judge a commit by its linked account when git recorded no author name", async () => {
+    const { fetch } = replying(page([{ committedDate: "2026-08-05T00:00:00Z", author: { name: null, user: { login: "alice", __typename: "User" } } }]));
+
+    expect(await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).toEqual({
+      lastHumanCommitAt: new Date("2026-08-05T00:00:00Z")
+    });
+  });
+
+  it("should report the oldest commit read at the cap even when a page arrives out of order", async () => {
+    const pages = Array.from({ length: HUMAN_COMMIT_PAGE_CAP }, (_, index) =>
+      page([node("2026-08-10T00:00:00Z", "renovate[bot]"), node("2026-08-12T00:00:00Z", "renovate[bot]")], true, `c${index}`)
+    );
+    const { fetch } = replying(...pages);
+
+    expect(await findLastHumanCommit(client(fetch), "hmcts", "cath-service", SINCE, NONE, BOTS)).toEqual({
+      searchedBackTo: new Date("2026-08-10T00:00:00Z")
+    });
   });
 
   it("should say it searched back to the bound when history ran out with no human commit", async () => {

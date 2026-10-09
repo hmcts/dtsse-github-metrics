@@ -53,6 +53,11 @@ describe("stripAbsent", () => {
     expect(() => stripAbsent({ rows: [{ a: 1 }, null] })).toThrow(/rows\[1\]/);
   });
 
+  it("should read a null or undefined root as absent", () => {
+    expect(stripAbsent(null)).toBeUndefined();
+    expect(stripAbsent(undefined)).toBeUndefined();
+  });
+
   it("should pass a Date through rather than walking it into an empty object", () => {
     const instant = new Date("2026-08-08T00:00:00Z");
 
