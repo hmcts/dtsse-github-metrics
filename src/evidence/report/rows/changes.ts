@@ -46,7 +46,9 @@ export function builtMergeRows(facts: ReadonlyMap<string, Merges>): contract.Tea
     }
   }
   return stripAbsent(
-    rows.sort((left, right) => right.merged_at.localeCompare(left.merged_at) || left.repository.localeCompare(right.repository) || left.number - right.number)
+    rows.toSorted(
+      (left, right) => right.merged_at.localeCompare(left.merged_at) || left.repository.localeCompare(right.repository) || left.number - right.number
+    )
   );
 }
 
@@ -71,7 +73,7 @@ export function builtDirectPushRows(facts: ReadonlyMap<string, Merges>): contrac
   // — `GAPS2` and `GAPS2-archive` hold the same commit — so ordering on the sha alone would still leave the pair
   // to the map's iteration order.
   return stripAbsent(
-    rows.sort(
+    rows.toSorted(
       (left, right) =>
         right.committed_at.localeCompare(left.committed_at) || left.repository.localeCompare(right.repository) || left.sha.localeCompare(right.sha)
     )

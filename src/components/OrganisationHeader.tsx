@@ -24,7 +24,7 @@ export function OrganisationHeader({
   action,
   snapshot = false,
   unavailable
-}: {
+}: Readonly<{
   overview: OverviewSummary;
   /** The header's own control — the week selector, on the pages that have a window to select. */
   action?: React.ReactNode;
@@ -43,7 +43,7 @@ export function OrganisationHeader({
    * `OverviewSummary.unavailable`, which is what the windowed pages mean by it.
    */
   unavailable?: number;
-}) {
+}>) {
   const collected = collectedLabel(overview.collected_through);
   const unreported = unreportedLabel(unavailable ?? overview.unavailable, snapshot);
 

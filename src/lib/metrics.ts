@@ -75,9 +75,9 @@ const OUTCOMES: readonly ConditionOutcome[] = ["blocking", "caution", "clear"];
 
 /** The assessment condition that graded one metric, or nothing where no condition names it. */
 function graded(metric: string, assessment: ReadinessAssessment): { outcome: ConditionOutcome; condition: ReadinessCondition } | undefined {
-  const names: readonly string[] = GRADED_SUFFIXES.map((suffix) => `${metric}-${suffix}`);
+  const names: ReadonlySet<string> = new Set(GRADED_SUFFIXES.map((suffix) => `${metric}-${suffix}`));
   for (const outcome of OUTCOMES) {
-    const condition = assessment[outcome].find((each) => names.includes(each.condition));
+    const condition = assessment[outcome].find((each) => names.has(each.condition));
     if (condition !== undefined) {
       return { outcome, condition };
     }
@@ -94,7 +94,7 @@ function graded(metric: string, assessment: ReadinessAssessment): { outcome: Con
  * wrote: there is no condition to read, and complete is the one verdict that needs no target to be
  * worth stating.
  */
-const COMPLETENESS_RATES: readonly string[] = ["description-quality", "traceability-reference"];
+const COMPLETENESS_RATES: ReadonlySet<string> = new Set(["description-quality", "traceability-reference"]);
 
 /**
  * Whether one of those two rates is complete: every eligible merge counted, none missed.
@@ -137,7 +137,7 @@ function complete(observation: Observation): boolean {
  * contributor page, where no assessment arrives and every other card on the grid is colourless.
  */
 export function metricTone(summary: BehaviourMetricSummary, assessment: ReadinessAssessment | undefined): Tone {
-  if (COMPLETENESS_RATES.includes(summary.metric)) {
+  if (COMPLETENESS_RATES.has(summary.metric)) {
     return complete(summary.summary) ? "good" : "neutral";
   }
   // `== null` per the missing-key rule, for the two cases above: a contributor page passes none, and

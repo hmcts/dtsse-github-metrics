@@ -12,7 +12,8 @@
 
 const BARE_DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 const NAIVE_DATETIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?$/;
-const ZONED_DATETIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,6}))?)?(Z|[+-]\d{2}:?\d{2})$/i;
+/** A trailing offset designator. What precedes it is a zoned datetime when it is a naive one. */
+const OFFSET = /(Z|[+-]\d{2}:?\d{2})$/i;
 
 /** Parses an ISO 8601 date or datetime as a UTC instant. */
 export function parseInstant(value: string): Date {
@@ -30,9 +31,10 @@ export function parseInstant(value: string): Date {
     return fromParts(naive, 0);
   }
 
-  const zoned = ZONED_DATETIME.exec(text);
-  if (zoned) {
-    return fromParts(zoned, offsetMinutes(group(zoned, 8)));
+  const offset = OFFSET.exec(text);
+  const zoned = offset ? NAIVE_DATETIME.exec(text.slice(0, offset.index)) : null;
+  if (offset && zoned) {
+    return fromParts(zoned, offsetMinutes(group(offset, 1)));
   }
 
   throw new RangeError(`expected a date or datetime such as 2026-08-01, 2026-08-01T14:30 or 2026-08-01T14:30:00Z: ${value}`);

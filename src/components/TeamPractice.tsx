@@ -20,7 +20,7 @@ import type { TeamPractice as TeamPracticeFigures } from "@/lib/types";
  * carries its verdict; colouring them again here would be a second opinion on a judgement already given, and
  * colouring them per TEAM would be the team score this page does not have.
  */
-export function TeamPractice({ practice }: { practice: TeamPracticeFigures }) {
+export function TeamPractice({ practice }: Readonly<{ practice: TeamPracticeFigures }>) {
   return (
     <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-3 p-4">
       {practiceFigures(practice).map((figure) => (
@@ -37,7 +37,7 @@ export function TeamPractice({ practice }: { practice: TeamPracticeFigures }) {
 }
 
 /** The throughput the figures above are read against, as one line under them. */
-export function TeamThroughput({ practice }: { practice: TeamPracticeFigures }) {
+export function TeamThroughput({ practice }: Readonly<{ practice: TeamPracticeFigures }>) {
   return (
     <p className="px-4 pb-4 text-xs text-slate-400">
       {`${count(practice.merged_pull_requests, "merged pull request", "merged pull requests")} and ${count(

@@ -60,7 +60,7 @@ describe("the root layout", () => {
   it("draws the page it was handed inside the one main element", () => {
     expect(markup).toContain('<main class="max-w-full mx-auto px-6 py-8">');
     expect(markup).toContain("the page itself");
-    expect(markup.split("<main").length).toBe(2);
+    expect(markup.split("<main")).toHaveLength(2);
     // The bar comes first: a page rendered above its own navigation would read as a page with none.
     expect(markup.indexOf("<nav")).toBeLessThan(markup.indexOf("<main"));
   });

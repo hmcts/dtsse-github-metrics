@@ -20,7 +20,7 @@ import type { TeamMemberRow } from "@/lib/types";
  * graph holds one, the login where it does not, and the login shown underneath either way — see `ContributorName`,
  * whose two-line shape this follows without its anchor.
  */
-export function TeamMembersTable({ rows }: { rows: readonly TeamMemberRow[] }) {
+export function TeamMembersTable({ rows }: Readonly<{ rows: readonly TeamMemberRow[] }>) {
   return (
     // No border of its own: the table sits inside a `Section` panel that already draws one.
     <div className="overflow-x-auto">

@@ -23,7 +23,7 @@ import type { RepositoryNote } from "@/lib/types";
  * appear here for any reason, including rendering a link somebody pasted. `whitespace-pre-wrap` is what makes
  * the paragraph breaks a writer typed survive, which is the reason the temptation to render markup arises.
  */
-export function RepositoryNotes({ repository, notes, create, edit, remove }: RepositoryNotesProps) {
+export function RepositoryNotes({ repository, notes, create, edit, remove }: Readonly<RepositoryNotesProps>) {
   return (
     <div className="space-y-4">
       {/* AN EMPTY LIST IS AN ANSWER AND NOT A GAP. A repository nobody has written about has no notes, so
@@ -84,7 +84,7 @@ export type NoteAction = (form: FormData) => void | Promise<void>;
  * written. The comparison is on the strings because they are both UTC ISO-8601 from the same column type —
  * `lib/api.ts` converts them together — so equal instants are equal text.
  */
-function Note({ repository, note, edit, remove }: { repository: string; note: RepositoryNote; edit: NoteAction; remove: NoteAction }) {
+function Note({ repository, note, edit, remove }: Readonly<{ repository: string; note: RepositoryNote; edit: NoteAction; remove: NoteAction }>) {
   const editId = `note-${note.id}`;
   return (
     <li className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
@@ -139,7 +139,7 @@ function Note({ repository, note, edit, remove }: { repository: string; note: Re
  *
  * `required` likewise: it spares a reader an empty submission and decides nothing.
  */
-function Body({ id, value }: { id: string; value?: string }) {
+function Body({ id, value }: Readonly<{ id: string; value?: string }>) {
   return (
     <textarea
       id={id}
@@ -155,7 +155,7 @@ function Body({ id, value }: { id: string; value?: string }) {
 }
 
 /** The one submit button style, so the add and save controls cannot drift apart. */
-function Submit({ label }: { label: string }) {
+function Submit({ label }: Readonly<{ label: string }>) {
   return (
     <button type="submit" className="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-md px-3 py-1.5">
       {label}

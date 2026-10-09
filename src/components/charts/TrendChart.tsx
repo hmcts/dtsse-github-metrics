@@ -52,13 +52,13 @@ export function TrendChart({
   series,
   shape = "line",
   unit
-}: {
+}: Readonly<{
   data: readonly Record<string, unknown>[];
   series: readonly TrendSeries[];
   shape?: "line" | "bar";
   /** Suffix for the value axis, e.g. `%` or ` h`. */
   unit?: string;
-}) {
+}>) {
   const rows = [...data];
 
   if (shape === "bar") {

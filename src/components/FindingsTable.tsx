@@ -15,7 +15,7 @@ import { withWeeks } from "@/lib/weeks";
  * assertion until the six merges are reachable; the links are what make a finding arguable, and a
  * finding nobody can check is one nobody should be asked to act on.
  */
-export function FindingsTable({ findings, weeks }: { findings: readonly PracticeFinding[]; weeks: number }) {
+export function FindingsTable({ findings, weeks }: Readonly<{ findings: readonly PracticeFinding[]; weeks: number }>) {
   return (
     // No border of its own: the table sits inside a `Section` panel that already draws one.
     <div className="overflow-x-auto">

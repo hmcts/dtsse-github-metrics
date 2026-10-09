@@ -272,11 +272,9 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
 
   /** Runs one exchange at a time, so concurrent callers await the same mint rather than starting two. */
   async function once(work: () => Promise<string>): Promise<string> {
-    if (inFlight === undefined) {
-      inFlight = work().finally(() => {
-        inFlight = undefined;
-      });
-    }
+    inFlight ??= work().finally(() => {
+      inFlight = undefined;
+    });
     return inFlight;
   }
 

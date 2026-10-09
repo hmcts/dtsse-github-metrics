@@ -49,7 +49,7 @@ export function Navigation() {
   );
 }
 
-function NavigationLink({ href, icon, label }: { href: string; icon: React.ReactNode; label: string }) {
+function NavigationLink({ href, icon, label }: Readonly<{ href: string; icon: React.ReactNode; label: string }>) {
   return (
     <Link
       href={href}

@@ -9,7 +9,7 @@ import { Info } from "lucide-react";
  * plain CSS on hover and on focus. The bubble itself is `aria-hidden` so the same sentence is not
  * announced twice.
  */
-export function InfoTooltip({ text }: { text: string }) {
+export function InfoTooltip({ text }: Readonly<{ text: string }>) {
   return (
     <span className="relative inline-flex group">
       <button

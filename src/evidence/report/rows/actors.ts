@@ -110,5 +110,5 @@ export function builtActorRows(
   });
 
   // Alphabetical, case-insensitively, which is the order `ActorsTable` documents it receives and keeps for ties.
-  return stripAbsent(actors.sort((left, right) => left.login.toLowerCase().localeCompare(right.login.toLowerCase())));
+  return stripAbsent(actors.toSorted((left, right) => left.login.toLowerCase().localeCompare(right.login.toLowerCase())));
 }

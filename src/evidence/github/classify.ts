@@ -1,4 +1,5 @@
 import { AvailabilityReason } from "../domain/availability.ts";
+import { jsonText } from "../domain/json-text.ts";
 
 /**
  * Reading what GitHub actually meant by a failure. Ported from `metrics.github`'s classification half.
@@ -88,7 +89,7 @@ export function failureMessage(body: string): string {
     const payload: unknown = JSON.parse(body);
     if (typeof payload === "object" && payload !== null) {
       const message = (payload as { message?: unknown }).message;
-      return message === undefined ? "no message" : String(message);
+      return message === undefined ? "no message" : jsonText(message);
     }
   } catch {
     // Not JSON, so there is no message to prefer.
@@ -117,8 +118,8 @@ export function graphqlRateLimited(body: string): boolean {
     return false;
   }
   return errors.some((error) => {
-    const message = String((error as { message?: unknown })?.message ?? "").toLowerCase();
-    const type = String((error as { type?: unknown })?.type ?? "").toLowerCase();
+    const message = jsonText((error as { message?: unknown })?.message ?? "").toLowerCase();
+    const type = jsonText((error as { type?: unknown })?.type ?? "").toLowerCase();
     return message.includes("rate limit") || type.includes("rate_limit");
   });
 }
@@ -140,7 +141,7 @@ export function graphqlErrorSummary(errors: readonly unknown[]): string {
   for (const error of errors) {
     const text =
       typeof error === "object" && error !== null
-        ? `${String((error as { type?: unknown }).type ?? "UNKNOWN")}: ${String((error as { message?: unknown }).message ?? "")}`
+        ? `${jsonText((error as { type?: unknown }).type ?? "UNKNOWN")}: ${jsonText((error as { message?: unknown }).message ?? "")}`
         : String(error);
     counted.set(text, (counted.get(text) ?? 0) + 1);
   }
@@ -153,8 +154,8 @@ export function graphqlErrorReason(errors: readonly unknown[]): AvailabilityReas
     if (typeof error !== "object" || error === null) {
       return false;
     }
-    const type = String((error as { type?: unknown }).type ?? "").toUpperCase();
-    const message = String((error as { message?: unknown }).message ?? "").toLowerCase();
+    const type = jsonText((error as { type?: unknown }).type ?? "").toUpperCase();
+    const message = jsonText((error as { message?: unknown }).message ?? "").toLowerCase();
     return type === "FORBIDDEN" || message.includes("not accessible");
   });
   return refused ? AvailabilityReason.PermissionDenied : AvailabilityReason.CollectionFailed;
@@ -211,7 +212,7 @@ export function graphqlErrorsByAlias(errors: readonly unknown[]): Map<string, st
     if (typeof alias !== "string" || byAlias.has(alias)) {
       continue;
     }
-    byAlias.set(alias, `${String((error as { type?: unknown }).type ?? "UNKNOWN")}: ${String((error as { message?: unknown }).message ?? "")}`);
+    byAlias.set(alias, `${jsonText((error as { type?: unknown }).type ?? "UNKNOWN")}: ${jsonText((error as { message?: unknown }).message ?? "")}`);
   }
   return byAlias;
 }

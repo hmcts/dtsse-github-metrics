@@ -16,6 +16,7 @@
  * the same figure in `metrics evidence` output are one claim rather than two.
  */
 
+import { byCodePoint } from "@/evidence/org/graph";
 import { ABSENT, figure, instant, percent, quantity } from "@/lib/format";
 import { ASSURANCE_CRITERIA, ASSURANCE_LABEL } from "@/lib/rows";
 import {
@@ -273,7 +274,7 @@ export function mergeGateRows(gate: MergeGateEvidence): LabelledValue[] {
     },
     {
       label: "Required status checks",
-      value: [...contexts].sort().join(", ") || "none",
+      value: [...contexts].sort(byCodePoint).join(", ") || "none",
       tone: gateFieldTone("required_status_checks", withheld ? undefined : contexts.length)
     },
     {

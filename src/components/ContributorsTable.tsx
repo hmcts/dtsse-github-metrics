@@ -29,7 +29,7 @@ import type { ContributorRow } from "@/lib/types";
  * a direct push or an unreviewed merge is a fact to weigh, and the assessment above the table is
  * what grades the repository. Contributions and median size stay plain — neither has a better value.
  */
-export function ContributorsTable({ rows, weeks }: { rows: readonly ContributorRow[]; weeks: number }) {
+export function ContributorsTable({ rows, weeks }: Readonly<{ rows: readonly ContributorRow[]; weeks: number }>) {
   return (
     // No border of its own: the table sits inside a `Section` panel that already draws one.
     <div className="overflow-x-auto">

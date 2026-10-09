@@ -6,7 +6,7 @@
  * `message` states which, and `detail` carries the instruction if there is one to give (typically
  * running `metrics collect` for the span being asked for).
  */
-export function EmptyState({ message, detail }: { message: string; detail?: string }) {
+export function EmptyState({ message, detail }: Readonly<{ message: string; detail?: string }>) {
   return (
     <div className="bg-slate-900 border border-dashed border-slate-800 rounded-lg p-5">
       <p className="text-sm text-slate-400">{message}</p>

@@ -60,10 +60,10 @@ export const dynamic = "force-dynamic";
 export default async function RepositoryPage({
   params,
   searchParams
-}: {
+}: Readonly<{
   params: Promise<{ repository: string }>;
   searchParams?: Promise<{ weeks?: SearchValue }>;
-}) {
+}>) {
   const windows = await getWindows();
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const detail = await readRepository((await params).repository, weeks);
@@ -288,7 +288,7 @@ function sonarMeasures(report: SonarReport): LabelledValue[] {
  * The tone rides on the row rather than being decided here, so the threshold behind a colour is in
  * `lib/tone.ts` where a test can reach it and this stays the page drawing what it was handed.
  */
-function ValueCards({ values }: { values: readonly LabelledValue[] }) {
+function ValueCards({ values }: Readonly<{ values: readonly LabelledValue[] }>) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
       {values.map((value) => (

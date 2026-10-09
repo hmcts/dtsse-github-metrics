@@ -33,7 +33,7 @@ import type { SecurityAlertFamilyScan } from "@/lib/types";
  * about it every time is a page they learn to skip. What a colour is spent on is the one thing it can honestly grade:
  * green for a family read and clean, amber or red for one with alerts open.
  */
-export function AlertDetailSection({ scans }: { scans: readonly SecurityAlertFamilyScan[] }) {
+export function AlertDetailSection({ scans }: Readonly<{ scans: readonly SecurityAlertFamilyScan[] }>) {
   return (
     <Section heading="Alert detail" detail="open alerts, longest-exposed first">
       <div className="space-y-6">
@@ -61,7 +61,7 @@ export function AlertDetailSection({ scans }: { scans: readonly SecurityAlertFam
  * draw, each carries its own bar and the block's stays slate; with none, the block's bar is the only verdict there
  * is — green for read and clean, slate for an absence — and keeps the family's tone.
  */
-function FamilyBlock({ summary }: { summary: AlertScanSummary }) {
+function FamilyBlock({ summary }: Readonly<{ summary: AlertScanSummary }>) {
   return (
     <div className={clsx("bg-slate-900/50 rounded-r py-3 pl-3 pr-4", borderClass(summary.alerts.length === 0 ? summary.tone : "neutral"))}>
       <div className="flex flex-wrap items-baseline gap-x-3">
@@ -86,7 +86,7 @@ function FamilyBlock({ summary }: { summary: AlertScanSummary }) {
  * GitHub, our count follows at the next collection, and there is deliberately nothing here to click instead. See
  * `alertActionLabel`.
  */
-function AlertTable({ summary }: { summary: AlertScanSummary }) {
+function AlertTable({ summary }: Readonly<{ summary: AlertScanSummary }>) {
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs">

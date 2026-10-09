@@ -238,7 +238,7 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
 
   const folded = login.toLowerCase();
   const landed = [...merges, ...pushes].flatMap((change) =>
-    change.author === undefined || change.author.toLowerCase() !== folded ? [] : [{ author: change.author, repository: change.repository }]
+    change.author?.toLowerCase() !== folded ? [] : [{ author: change.author, repository: change.repository }]
   );
 
   // The same refusal an unknown repository gets, and by the same rule: a login that landed nothing in the window

@@ -90,12 +90,12 @@ export function EstateSummary({
   rows,
   weeks,
   dimensions = ESTATE_DIMENSIONS
-}: {
+}: Readonly<{
   rows: readonly RepositoryRow[];
   /** The span the rows were reported at, which a `windowed` wheel names in its title. */
   weeks: number;
   dimensions?: readonly EstateDimension[];
-}) {
+}>) {
   return (
     <>
       {GROUPS.map((group) => (
@@ -116,12 +116,12 @@ function EstateGroup({
   rows,
   weeks,
   dimensions
-}: {
+}: Readonly<{
   group: Group;
   rows: readonly RepositoryRow[];
   weeks: number;
   dimensions: readonly EstateDimension[];
-}) {
+}>) {
   if (dimensions.length === 0) {
     return null;
   }

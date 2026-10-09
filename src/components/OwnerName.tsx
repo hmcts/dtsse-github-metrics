@@ -32,7 +32,7 @@ import { withWeeks } from "@/lib/weeks";
 export function OwnerName({
   row,
   weeks
-}: {
+}: Readonly<{
   row: Pick<RepositoryRow, "team" | "owner_kind">;
   /**
    * The span to carry to the team page, or nothing from a page that states no window.
@@ -41,7 +41,7 @@ export function OwnerName({
    * would reset the reader's remembered preference.
    */
   weeks?: number;
-}) {
+}>) {
   if (ownedByIndividual(row)) {
     return (
       <span className="inline-flex flex-wrap items-center gap-1.5">

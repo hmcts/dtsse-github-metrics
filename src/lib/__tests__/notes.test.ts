@@ -79,7 +79,7 @@ describe("noteBody", () => {
     // same note. Counting code points is what keeps the cap the reader is told the cap they meet.
     const emoji = "\u{1F600}".repeat(NOTE_BODY_LIMIT);
 
-    expect(emoji.length).toBe(NOTE_BODY_LIMIT * 2);
+    expect(emoji).toHaveLength(NOTE_BODY_LIMIT * 2);
     expect(accepted(emoji)).toBe(emoji);
   });
 

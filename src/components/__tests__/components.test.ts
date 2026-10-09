@@ -780,7 +780,7 @@ describe("the loading skeletons", () => {
 
   it("says it is loading in words, and hides the bars from a screen reader", () => {
     const markup = renderToStaticMarkup(createElement(LoadingRepositories));
-    expect(markup).toContain('<p role="status" class="sr-only">Loading</p>');
+    expect(markup).toContain('<output class="sr-only">Loading</output>');
     expect(markup).toContain('aria-hidden="true"');
   });
 
@@ -831,8 +831,8 @@ describe("the loading skeletons", () => {
     const contributors = renderToStaticMarkup(createElement(LoadingContributors));
     const teams = renderToStaticMarkup(createElement(LoadingTeams));
 
-    expect(contributors).toContain('<p role="status" class="sr-only">Loading</p>');
-    expect(teams).toContain('<p role="status" class="sr-only">Loading</p>');
+    expect(contributors).toContain('<output class="sr-only">Loading</output>');
+    expect(teams).toContain('<output class="sr-only">Loading</output>');
     // A row each, and the two pages ask for different counts: twelve people against six teams.
     expect(contributors.match(/h-4 w-full/g)).toHaveLength(12);
     expect(teams.match(/h-4 w-full/g)).toHaveLength(6);
@@ -852,7 +852,7 @@ describe("the loading skeletons", () => {
     const contributor = renderToStaticMarkup(createElement(LoadingContributor));
 
     for (const markup of [repository, team, contributor]) {
-      expect(markup).toContain('<p role="status" class="sr-only">Loading</p>');
+      expect(markup).toContain('<output class="sr-only">Loading</output>');
       expect(markup).toContain('aria-hidden="true"');
       expect(markup).toContain("animate-pulse");
     }

@@ -30,7 +30,7 @@ export function ActorRepositoriesTable({
   teams,
   production,
   weeks
-}: {
+}: Readonly<{
   rows: readonly ActorRepositoryReadiness[];
   /** Repository to owning team, so a row can link its team without a second request. */
   teams: Record<string, string>;
@@ -43,7 +43,7 @@ export function ActorRepositoriesTable({
    */
   production?: readonly string[];
   weeks: number;
-}) {
+}>) {
   return (
     // No border of its own: the table sits inside a `Section` panel that already draws one.
     <div className="overflow-x-auto">
@@ -112,7 +112,7 @@ function deploys(production: readonly string[] | undefined, repository: string):
 }
 
 /** The owning team as a link, or a stated absence where the service named none. */
-function TeamCell({ team: owner, weeks }: { team: string | undefined; weeks: number }) {
+function TeamCell({ team: owner, weeks }: Readonly<{ team: string | undefined; weeks: number }>) {
   if (owner === undefined) {
     return <span className="text-slate-400">no owning team was reported</span>;
   }

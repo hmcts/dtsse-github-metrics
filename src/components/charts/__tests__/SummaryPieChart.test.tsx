@@ -336,7 +336,7 @@ describe("the summary wheel as a filter control", () => {
   });
 });
 
-/** The opacity a wedge's path was filled at, which recharts writes as an attribute from the cell. */
+/** The opacity a wedge's path was filled at, which `Wedge` writes as an attribute. */
 function wedgeOpacity(container: HTMLElement, colour: string): string | null {
   return wedge(container, colour).querySelector("path")?.getAttribute("fill-opacity") ?? null;
 }
@@ -348,6 +348,13 @@ describe("the summary wheel's focus on the selected slice", () => {
 
     expect(wedgeOpacity(container, "#4ade80")).toBe("1");
     expect(wedgeOpacity(container, "#f87171")).toBe("0.35");
+  });
+
+  it("should fade a wedge once, through its fill, rather than again through the path's own opacity", async () => {
+    url("weeks=12&owner=team");
+    const container = await drawn();
+
+    expect(wedge(container, "#f87171").querySelector("path")?.hasAttribute("opacity")).toBe(false);
   });
 
   it("should fade the unselected legend entries and keep the selected one at full opacity", async () => {

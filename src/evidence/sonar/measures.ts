@@ -1,3 +1,4 @@
+import { jsonText } from "../domain/json-text.ts";
 import { type SonarDeclaration, SonarGateLevel, type SonarMeasures, type SonarQualityGate, type SonarRating } from "../domain/sonar.ts";
 
 /**
@@ -101,11 +102,11 @@ export function measuredGate(values: Map<string, string>): SonarQualityGate | un
       ? parsed.conditions.map((condition) => {
           const entry = condition as Record<string, unknown>;
           return {
-            metric: String(entry.metric ?? ""),
-            level: String(entry.level ?? ""),
-            ...(entry.op === undefined ? {} : { comparator: String(entry.op) }),
-            ...(entry.error === undefined ? {} : { errorThreshold: String(entry.error) }),
-            ...(entry.actual === undefined ? {} : { actual: String(entry.actual) })
+            metric: jsonText(entry.metric ?? ""),
+            level: jsonText(entry.level ?? ""),
+            ...(entry.op === undefined ? {} : { comparator: jsonText(entry.op) }),
+            ...(entry.error === undefined ? {} : { errorThreshold: jsonText(entry.error) }),
+            ...(entry.actual === undefined ? {} : { actual: jsonText(entry.actual) })
           };
         })
       : undefined;

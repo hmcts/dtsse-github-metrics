@@ -2,8 +2,8 @@
 
 import clsx from "clsx";
 import { usePathname, useSearchParams } from "next/navigation";
-import type { CSSProperties } from "react";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import type { CSSProperties, Key } from "react";
+import { Pie, PieChart, type PieSectorShapeProps, ResponsiveContainer, Sector, Tooltip, type TooltipContentProps } from "recharts";
 import { InfoTooltip } from "@/components/InfoTooltip";
 import { ToggleTick } from "@/components/ToggleTick";
 import { activeSlices, type PieSlice, totalValue } from "@/lib/chart";
@@ -58,7 +58,7 @@ export function SummaryPieChart({
   tooltip,
   parameter,
   showsAllVisibilities = false
-}: {
+}: Readonly<{
   title: string;
   /** Every slice, including the ones counted at zero. */
   data: readonly PieSlice[];
@@ -75,7 +75,7 @@ export function SummaryPieChart({
    * repositories too, and show fewer rows than the slice it was filtered by. See `allVisibilitiesTarget`.
    */
   showsAllVisibilities?: boolean;
-}) {
+}>) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const total = totalValue(data);
@@ -136,7 +136,7 @@ export function SummaryPieChart({
         <ResponsiveContainer width="100%" height={height}>
           <PieChart>
             <Pie
-              data={wedges}
+              data={wedges.map((wedge) => ({ ...wedge, fade: unselected(wedge.key) ? UNSELECTED_OPACITY : 1 }))}
               cx="50%"
               cy="50%"
               innerRadius={48}
@@ -146,39 +146,14 @@ export function SummaryPieChart({
               strokeWidth={0}
               className="cursor-pointer"
               onClick={(sector) => toggle(clickedKey(sector))}
-            >
-              {wedges.map((wedge) => (
-                <Cell key={wedge.name} fill={wedge.color} fillOpacity={unselected(wedge.key) ? UNSELECTED_OPACITY : 1} />
-              ))}
-            </Pie>
-            <Tooltip
-              content={({ active: hovered, payload }) => {
-                const slice = payload?.[0]?.payload as PieSlice | undefined;
-                if (!hovered || slice === undefined) {
-                  return null;
-                }
-                return (
-                  <div style={TOOLTIP}>
-                    {/* THE MARK CARRIES THE COLOUR AND THE TEXT DOES NOT, which is the one thing here that
-                        differs from the legend entries' predecessor: a word set in its series colour is a
-                        value doing two jobs, and the slice colours are tuned for a fill on the panel rather
-                        than for type on the card's own darker surface. */}
-                    <p className="text-xs font-semibold mb-0.5 flex items-center gap-1.5 text-slate-200">
-                      <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
-                      {slice.name}
-                    </p>
-                    <p className="text-xs text-slate-300 tabular-nums">
-                      {slice.value} &nbsp;&middot;&nbsp; {percentageOf(slice.value, total)}
-                    </p>
-                  </div>
-                );
-              }}
+              shape={Wedge}
             />
+            <Tooltip content={<SliceTooltip total={total} />} />
           </PieChart>
         </ResponsiveContainer>
       )}
 
-      <div className="flex flex-wrap justify-center gap-x-3 gap-y-1.5" role="group" aria-label={`${title} filter`}>
+      <fieldset className="flex min-w-0 flex-wrap justify-center gap-x-3 gap-y-1.5" aria-label={`${title} filter`}>
         {data.map((slice) => (
           <button
             key={slice.key}
@@ -207,7 +182,7 @@ export function SummaryPieChart({
             <ToggleTick on={slice.key === active} />
           </button>
         ))}
-      </div>
+      </fieldset>
     </div>
   );
 }
@@ -220,6 +195,42 @@ export function SummaryPieChart({
  * array, which is a position two things have to agree on and a lookup that can miss. The cast is
  * because the sector's declared type describes the geometry and not what was plotted.
  */
+/**
+ * A wedge as a slice has it drawn: its own colour, faded where it sits outside the active filter.
+ *
+ * The fade travels in the data as `fade` and not `opacity`, because recharts copies every data field onto these
+ * props and `Sector` writes an `opacity` through to the path, which would fade the wedge a second time on top of
+ * `fillOpacity`. The `key` recharts includes is passed on directly, as React requires, rather than in the spread.
+ */
+function Wedge(shape: PieSectorShapeProps) {
+  const { key, ...props } = shape as PieSectorShapeProps & { key?: Key };
+  const wedge = props.payload as PieSlice & { fade: number };
+  return <Sector key={key} {...props} fill={wedge.color} fillOpacity={wedge.fade} />;
+}
+
+/** The hover card over one wedge: its word, its count and its share of `total`. */
+function SliceTooltip({ active, payload, total }: Readonly<Partial<TooltipContentProps<number, string>> & { total: number }>) {
+  const slice = payload?.[0]?.payload as PieSlice | undefined;
+  if (!active || slice === undefined) {
+    return null;
+  }
+  return (
+    <div style={TOOLTIP}>
+      {/* THE MARK CARRIES THE COLOUR AND THE TEXT DOES NOT, which is the one thing here that
+          differs from the legend entries' predecessor: a word set in its series colour is a
+          value doing two jobs, and the slice colours are tuned for a fill on the panel rather
+          than for type on the card's own darker surface. */}
+      <p className="text-xs font-semibold mb-0.5 flex items-center gap-1.5 text-slate-200">
+        <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
+        {slice.name}
+      </p>
+      <p className="text-xs text-slate-300 tabular-nums">
+        {slice.value} &nbsp;&middot;&nbsp; {percentageOf(slice.value, total)}
+      </p>
+    </div>
+  );
+}
+
 function clickedKey(sector: unknown): string {
   return (sector as PieSlice).key;
 }

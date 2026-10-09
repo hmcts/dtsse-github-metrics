@@ -349,7 +349,7 @@ export function alertRecordTone(alert: SecurityAlertRecord): Tone {
   if (alert.severity === undefined) {
     return "neutral";
   }
-  return SEVERE.some((severity) => alert.severity === severity) ? "bad" : "warn";
+  return (SEVERE as readonly string[]).includes(alert.severity) ? "bad" : "warn";
 }
 
 /**
