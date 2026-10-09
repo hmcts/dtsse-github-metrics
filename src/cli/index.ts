@@ -483,11 +483,9 @@ async function sonarSource(configuration: Configuration, githubClient: ReturnTyp
         now
       });
       const mapping = resolved.mapping;
+      // No note and no refusal can come back here: both are answers about a declaration, and none is passed.
       if (mapping === undefined) {
-        return {
-          state: { detail: resolved.note ?? `no SonarCloud project in ${sonarOrganization} analyses this repository` },
-          failures: resolved.reason === undefined ? 0 : 1
-        };
+        return { state: { detail: `no SonarCloud project in ${sonarOrganization} analyses this repository` }, failures: 0 };
       }
       if (!listed.has(mapping.projectKey)) {
         // AN OBSERVATION AND NOT A FAILURE. A mapped project can be deleted, renamed or made private after the
@@ -789,8 +787,7 @@ async function runAlertCollection(configuration: Configuration, argv: Arguments)
     if (walk.byRepository === undefined) {
       // NAMED AND COUNTED ONCE FOR THE RUN, not once per repository: it is a single walk, and inflating one refusal
       // to 1,890 would swamp the exit status with it.
-      const detail = walk.detail ?? `${family} could not be read`;
-      console.warn(`${detail}; every repository's ${family} answer will be unmeasured`);
+      console.warn(`${walk.detail}; every repository's ${family} answer will be unmeasured`);
       continue;
     }
     const found = [...walk.byRepository.values()].reduce((total, alerts) => total + alerts.length, 0);

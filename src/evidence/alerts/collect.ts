@@ -61,8 +61,14 @@ const ENDPOINTS: Readonly<Record<AlertFamily, FamilyEndpoint>> = {
   }
 };
 
-/** What one family's organisation-wide walk produced. */
-export interface AlertWalk {
+/**
+ * What one family's organisation-wide walk produced: the alerts it read, or why it read none.
+ *
+ * A UNION so a refused walk cannot be built without saying why it was refused.
+ */
+export type AlertWalk = ReadAlertWalk | RefusedAlertWalk;
+
+interface ReadAlertWalk {
   family: AlertFamily;
   /**
    * The alerts it found, keyed by the CASEFOLDED repository name. `undefined` WHERE THE WALK ITSELF WAS REFUSED.
@@ -77,11 +83,18 @@ export interface AlertWalk {
    * the estate has no alerts of this family, and `undefined` means nobody could look. A refused walk that returned
    * an empty map would report the whole organisation clean, which is the one wrong answer that reads like good news.
    */
-  byRepository?: Map<string, SecurityAlertDetail[]>;
+  byRepository: Map<string, SecurityAlertDetail[]>;
   /** Records the walk could not attribute to a repository, counted rather than silently dropped. */
   unattributable: number;
-  /** Why the walk produced nothing, where it failed. */
-  detail?: string;
+  detail?: undefined;
+}
+
+interface RefusedAlertWalk {
+  family: AlertFamily;
+  byRepository?: undefined;
+  unattributable: number;
+  /** Why the walk produced nothing. */
+  detail: string;
 }
 
 /**

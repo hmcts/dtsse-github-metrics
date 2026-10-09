@@ -7,6 +7,9 @@ import { EXIT_COMPLETE, EXIT_FAILED, EXIT_INCOMPLETE, EXIT_USAGE } from "./exit-
 const migrate = vi.hoisted(() => vi.fn<() => Promise<string[]>>());
 const loadConfiguration = vi.hoisted(() => vi.fn());
 const cohortRepositories = vi.hoisted(() => vi.fn());
+// Who owns each repository `evidence` reports. Empty by default, so a case that is not about a shared repository
+// states no owners.
+const cohortOwners = vi.hoisted(() => vi.fn(async () => new Map<string, string[]>()));
 // What `collect` walks, as the entries carrying `behaviourCollectable`. Stubbed here rather than derived, so a
 // case can state a stale repository beside a fresh one without also stating a `pushedAt` and a policy.
 const readCohort = vi.hoisted(() => vi.fn());
@@ -58,7 +61,7 @@ const pruneCache = vi.hoisted(() => vi.fn(async () => 0));
 // command does with them. What the SQL itself does to a real table is asserted in
 // `test/integration/reduce-descriptions.test.ts`.
 const censusOfDescriptions = vi.hoisted(() => vi.fn(async () => ({ rows: 24_249, carryingDescription: 23_854, derived: 395, unmeasurable: 0 })));
-const reduceStoredDescriptions = vi.hoisted(() => vi.fn(async () => ({ scanned: 23_854, changed: 23_854 })));
+const reduceStoredDescriptions = vi.hoisted(() => vi.fn(async (..._unused: unknown[]) => ({ scanned: 23_854, changed: 23_854 })));
 
 const collectOrgTeams = vi.hoisted(() => vi.fn());
 const collectOrgRepositories = vi.hoisted(() => vi.fn());
@@ -117,7 +120,7 @@ vi.mock("../evidence/policy/repositories.ts", async () => ({
 vi.mock("../evidence/org/cohort.ts", async () => ({
   ...(await vi.importActual<typeof import("../evidence/org/cohort.ts")>("../evidence/org/cohort.ts")),
   cohortRepositories,
-  cohortOwners: async () => new Map(),
+  cohortOwners,
   readCohort
 }));
 // The two batched readers `evidence` reports the estate through, and the seam its cases are written at: they are
@@ -150,7 +153,8 @@ vi.mock("../evidence/behaviour/fill.ts", async () => ({
   ...(await vi.importActual<typeof import("../evidence/behaviour/fill.ts")>("../evidence/behaviour/fill.ts")),
   fillCachedSource,
   loadCachedMerges,
-  requestedCoverage: () => ({}),
+  // The window is all a case can see of the coverage it asked for, so it is all this keeps.
+  requestedCoverage: (_organization: string, _repository: string, _source: string, window: unknown) => ({ window }),
   pullRequestCacheWriter: () => undefined,
   directCommitCacheWriter: () => undefined
 }));
@@ -230,6 +234,12 @@ beforeEach(() => {
   loadCachedFactsForOrganisation.mockResolvedValue(new Map());
   storedRepositoryStates.mockResolvedValue(new Map());
   prevailingCachedCoverage.mockResolvedValue(undefined);
+  cohortOwners.mockResolvedValue(new Map());
+  authorshipForOrganisation.mockResolvedValue(new Map());
+  // Blank rather than absent, so a developer's own SonarCloud token cannot decide which branch a case takes. The
+  // cases about a token state one.
+  vi.stubEnv("SONAR_TOKEN", "");
+  vi.stubEnv("SONARCLOUD_TOKEN", "");
   // A one-repository estate by default, so the cases that are not about the cohort do not have to state one.
   // `assertCohortCollected` calls this too, so it must always resolve.
   readCohort.mockResolvedValue([cohortEntry("repo-a")]);
@@ -248,6 +258,11 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => undefined);
   vi.spyOn(console, "debug").mockImplementation(() => undefined);
   vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+});
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
 });
 
 describe("main", () => {
@@ -290,6 +305,16 @@ describe("main", () => {
     expect(await main(["collect"])).toBe(EXIT_USAGE);
     expect(loadConfiguration).not.toHaveBeenCalled();
   });
+
+  it("should fail a cohort command whose cohort could not be read for a reason other than its absence", async () => {
+    // Only an uncollected graph is the operator's to fix with a command; a database that refuses is a fault.
+    loadConfiguration.mockResolvedValue({ organization: "hmcts", lookback: { operational_days: 90 }, teams: [] });
+    readCohort.mockRejectedValue(new Error("connection refused"));
+
+    expect(await main(["collect", "--config", "m.yaml"])).toBe(EXIT_FAILED);
+    expect(process.stderr.write).toHaveBeenCalledWith("connection refused\n");
+    expect(resolveCredentials).not.toHaveBeenCalled();
+  });
 });
 
 describe("doctor", () => {
@@ -302,7 +327,7 @@ describe("doctor", () => {
   /** The client `doctor` drives, reporting how many merged pull requests each repository answered with. */
   let graphql: MockInstance;
 
-  function withMergeCounts(perRepository: number[], repositories = ["repo-a", "repo-b"]) {
+  function withMergeCounts(perRepository: number[], repositories = ["repo-a", "repo-b"], get = vi.fn().mockResolvedValue({ default_branch: "master" })) {
     loadConfiguration.mockResolvedValue(CONFIG);
     readCohort.mockResolvedValue(repositories.map((repository) => cohortEntry(repository)));
     collectionState.mockResolvedValue(undefined);
@@ -311,7 +336,7 @@ describe("doctor", () => {
     const counts = [...perRepository];
     graphql = vi.fn().mockImplementation(() => Promise.resolve({ repository: { pullRequests: { totalCount: counts.shift() ?? 0 } } }));
     createGitHubClient.mockReturnValue({
-      get: vi.fn().mockResolvedValue({ default_branch: "master" }),
+      get,
       graphql,
       requestsIssued: () => 0,
       callOutcomes: () => []
@@ -328,6 +353,68 @@ describe("doctor", () => {
 
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("no organisation graph has been collected"));
     expect(console.info).toHaveBeenCalledWith(expect.stringContaining("0 of 0 readable"));
+  });
+
+  it("should fail on a cohort read that fails for any reason other than an uncollected graph", async () => {
+    withMergeCounts([12, 30]);
+    readCohort.mockRejectedValue(new Error("connection refused"));
+
+    expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
+    expect(process.stderr.write).toHaveBeenCalledWith("connection refused\n");
+  });
+
+  it("should say when the last collection landed", async () => {
+    withMergeCounts([12, 30]);
+    collectionState.mockResolvedValue({ collectedAt: new Date("2026-09-14T14:00:00Z"), revision: 7 });
+
+    await main(["doctor", "--config", "m.yaml"]);
+
+    expect(console.info).toHaveBeenCalledWith("the last collection landed at 2026-09-14T14:00:00.000Z (revision 7)");
+  });
+
+  it("should fail and name each repository the credential cannot read", async () => {
+    withMergeCounts(
+      [12, 30],
+      ["repo-a", "repo-b"],
+      vi.fn(async (path: string) => {
+        if (path === "/repos/hmcts/repo-b") {
+          throw new Error("Not Found");
+        }
+        return { default_branch: "master" };
+      })
+    );
+
+    expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_FAILED);
+    expect(console.warn).toHaveBeenCalledWith("repo-b: Not Found");
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("1 of 2 readable"));
+  });
+
+  it("should say the teams are readable when the teams endpoint answers with a list", async () => {
+    withMergeCounts(
+      [12, 30],
+      ["repo-a", "repo-b"],
+      vi.fn(async (path: string) => (path === "/orgs/hmcts/teams" ? [] : { default_branch: "master" }))
+    );
+
+    await main(["doctor", "--config", "m.yaml"]);
+
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("the organisation's teams are readable"));
+  });
+
+  it("should say the teams are not readable, and why, when the teams endpoint refuses", async () => {
+    withMergeCounts(
+      [12, 30],
+      ["repo-a", "repo-b"],
+      vi.fn(async (path: string) => {
+        if (path === "/orgs/hmcts/teams") {
+          throw new Error("Forbidden");
+        }
+        return { default_branch: "master" };
+      })
+    );
+
+    expect(await main(["doctor", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("the organisation's teams are NOT readable (Forbidden)"));
   });
 
   it("should pass when the credential can see merged pull requests", async () => {
@@ -537,11 +624,24 @@ describe("what collect walks", () => {
    * metadata now comes from: a repository in it costs no call of its own, and one absent from it falls back to
    * the per-repository read. Both are named by default, which is the ordinary case.
    */
-  async function pathsAskedFor(options: { listed?: string[]; argv?: string[]; refusing?: string[] } = {}): Promise<string[]> {
-    loadConfiguration.mockResolvedValue(CONFIG);
+  async function pathsAskedFor(
+    options: {
+      listed?: string[];
+      argv?: string[];
+      refusing?: string[];
+      /** What a per-repository read answers, where the case is about it. */
+      get?: (path: string) => Promise<unknown>;
+      /** The records an estate-wide listing answers with, by path. Empty for every path not named. */
+      records?: Record<string, unknown[]>;
+      configuration?: Record<string, unknown>;
+      /** The rate-limit pauses the client reports having taken. */
+      waits?: { resource: string; seconds: number; count: number }[];
+    } = {}
+  ): Promise<string[]> {
+    loadConfiguration.mockResolvedValue({ ...CONFIG, ...options.configuration });
     readCohort.mockResolvedValue([cohortEntry("fresh"), cohortEntry("stale", { behaviourCollectable: false, unmaintained: true })]);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
-    const get = vi.fn().mockResolvedValue({ default_branch: "main" });
+    const get = vi.fn(options.get ?? (async () => ({ default_branch: "main" })));
     const paths: string[] = [];
     const listed = (options.listed ?? ["fresh", "stale"]).map((name) => ({ name, default_branch: "main" }));
     createGitHubClient.mockReturnValue({
@@ -551,19 +651,155 @@ describe("what collect walks", () => {
         paths.push(String(path));
         return (async function* pages() {
           if (options.refusing?.includes(path) === true) {
-            throw new Error("Resource not accessible by integration");
+            throw new GitHubError("Resource not accessible by integration", AvailabilityReason.PermissionDenied, 403);
           }
-          yield path === "/orgs/hmcts/repos" ? listed : [];
+          yield path === "/orgs/hmcts/repos" ? listed : (options.records?.[path] ?? []);
         })();
       },
       requestsIssued: () => 1,
       callOutcomes: () => [],
-      rateLimitWaits: () => []
+      rateLimitWaits: () => options.waits ?? []
     });
 
-    await main(options.argv ?? ["collect", "--config", "m.yaml", "--tolerate-partial"]);
+    status = await main(options.argv ?? ["collect", "--config", "m.yaml", "--tolerate-partial"]);
     return [...get.mock.calls.map(([path]) => String(path)), ...paths];
   }
+
+  /** What the last `pathsAskedFor` run exited with. */
+  let status: number;
+
+  /** The window one run's pull-request fill asked to cover. */
+  function windowAskedFor(): { startsAt: Date; endsAt: Date } {
+    return (fillCachedSource.mock.calls[0]?.[0] as { window: { startsAt: Date; endsAt: Date } }).window;
+  }
+
+  it("should fail a run whose only repository could not be read at all", async () => {
+    await pathsAskedFor({
+      argv: ["collect", "--config", "m.yaml", "--repository", "fresh"],
+      get: async () => {
+        throw new Error("Not Found");
+      }
+    });
+
+    expect(status).toBe(EXIT_FAILED);
+    expect(console.warn).toHaveBeenCalledWith("fresh: could not be read at all, so nothing was collected for it");
+    expect(recordRepositoryState).not.toHaveBeenCalled();
+  });
+
+  it("should collect nothing for a repository GitHub names no default branch for", async () => {
+    await pathsAskedFor({ argv: ["collect", "--config", "m.yaml", "--repository", "fresh"], get: async () => ({ default_branch: "" }) });
+
+    expect(status).toBe(EXIT_FAILED);
+    expect(console.warn).toHaveBeenCalledWith("fresh: GitHub named no default branch, so nothing was collected for it");
+  });
+
+  it("should collect the window the operator bounded with --from and --to", async () => {
+    await pathsAskedFor({ argv: ["collect", "--config", "m.yaml", "--from", "2026-08-01", "--to", "2026-08-15", "--tolerate-partial"] });
+
+    expect(windowAskedFor()).toStrictEqual({ startsAt: new Date("2026-08-01T00:00:00Z"), endsAt: new Date("2026-08-15T00:00:00Z") });
+  });
+
+  it("should collect the number of days the operator asked for", async () => {
+    await pathsAskedFor({ argv: ["collect", "--config", "m.yaml", "--to", "2026-08-15", "--days", "7", "--tolerate-partial"] });
+
+    expect(windowAskedFor()).toStrictEqual({ startsAt: new Date("2026-08-08T00:00:00Z"), endsAt: new Date("2026-08-15T00:00:00Z") });
+  });
+
+  it("should record which repositories the production list says deploy to production", async () => {
+    const fetch = vi.fn(async () => new Response("prod:\n  - repo: https://github.com/hmcts/fresh\n", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+
+    await pathsAskedFor({ configuration: { production_list_url: "https://example.test/approvals.yaml" } });
+
+    expect(fetch).toHaveBeenCalledWith("https://example.test/approvals.yaml", expect.anything());
+    expect(
+      recordRepositoryState.mock.calls.map(([, repository, state]) => [repository, (state as { deploysToProduction?: boolean }).deploysToProduction])
+    ).toEqual([
+      ["fresh", true],
+      ["stale", false]
+    ]);
+  });
+
+  it("should name how many collected repositories the organisation no longer lists", async () => {
+    await pathsAskedFor({ listed: [] });
+
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("2 collected repositories are not in the organisation's listing"));
+  });
+
+  it("should count each repository's open alerts off the two estate-wide reads", async () => {
+    await pathsAskedFor({
+      records: {
+        "/orgs/hmcts/secret-scanning/alerts": [{ created_at: "2026-08-01T00:00:00Z", repository: { name: "fresh" } }],
+        "/orgs/hmcts/dependabot/alerts": [{ created_at: "2026-08-01T00:00:00Z", security_advisory: { severity: "high" }, repository: { name: "stale" } }]
+      }
+    });
+
+    expect(console.info).toHaveBeenCalledWith("1 open secret-scanning alerts across 1 repositories");
+    expect(console.info).toHaveBeenCalledWith("1 open Dependabot alerts across 1 repositories");
+    const stored = Object.fromEntries(
+      recordRepositoryState.mock.calls.map(([, repository, state]) => [
+        repository,
+        (state as { securityAlerts: { secretScanning?: { open?: number }; dependabot?: { open?: number } } }).securityAlerts
+      ])
+    );
+    expect(stored.fresh?.secretScanning?.open).toBe(1);
+    expect(stored.stale?.dependabot?.open).toBe(1);
+  });
+
+  it("should count a refused estate-wide secret-scanning read ONCE, as a partial run", async () => {
+    await pathsAskedFor({ argv: ["collect", "--config", "m.yaml"], refusing: ["/orgs/hmcts/secret-scanning/alerts"] });
+
+    expect(status).toBe(EXIT_INCOMPLETE);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("Could not read the open secret-scanning alerts of hmcts"));
+  });
+
+  it("should print where the run waited beneath its call count", async () => {
+    await pathsAskedFor({ waits: [{ resource: "core", seconds: 60, count: 1 }] });
+
+    expect(console.info).toHaveBeenCalledWith("  waited 60s for the core quota across 1 pause");
+  });
+
+  it("should warn and count a direct-commit fill that failed", async () => {
+    fillCachedSource
+      .mockImplementationOnce(async () => [])
+      .mockImplementationOnce(async () => {
+        throw new Error("statement timeout");
+      });
+
+    await pathsAskedFor();
+
+    expect(console.warn).toHaveBeenCalledWith("fresh: direct commits were not collected: statement timeout");
+  });
+
+  it("should warn each per-repository alert read that failed", async () => {
+    await pathsAskedFor({ refusing: ["/repos/hmcts/fresh/code-scanning/alerts"] });
+
+    expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/^fresh: .*Resource not accessible by integration/));
+  });
+
+  it("should state an unreadable SonarCloud map on every repository, and count it once", async () => {
+    storedSonarMappings.mockRejectedValue(new Error("relation sonar_project_map does not exist"));
+
+    await pathsAskedFor();
+
+    expect(console.warn).toHaveBeenCalledWith("the SonarCloud project map could not be read: relation sonar_project_map does not exist");
+    expect(storedSonar("fresh")?.detail).toBe("the stored SonarCloud project map could not be read");
+    expect(storedSonar("stale")?.detail).toBe("the stored SonarCloud project map could not be read");
+  });
+
+  it("should hand the direct-commit fill a walk of the default branch's history", async () => {
+    fillCachedSource.mockImplementation(async (...args: unknown[]) => {
+      const collect = args[2] as (startsAt: Date, endsAt: Date) => Promise<unknown[]>;
+      await collect(new Date("2026-08-01T00:00:00Z"), new Date("2026-08-31T00:00:00Z"));
+      return [];
+    });
+
+    await pathsAskedFor();
+
+    const client = createGitHubClient.mock.results[0]?.value as { graphql: MockInstance };
+    const queries = client.graphql.mock.calls.map(([query]) => String(query));
+    expect(queries.filter((query) => query.includes("query DefaultBranchCommits("))).toHaveLength(1);
+  });
 
   it("should read every repository in the estate, stale ones included, so the assurance columns are populated", async () => {
     // The other half of the change: a stale repository must still be COLLECTED, or the criteria it exists to be
@@ -903,6 +1139,44 @@ describe("what collect walks", () => {
     // Stated rather than absent: an absent block means nobody looked, and somebody did look and was refused.
     expect(storedSonar("fresh")?.mapping).toBeUndefined();
   });
+
+  /** A run whose map attributes `hmcts.fresh` to `fresh`, measured by `measures`. */
+  async function measuredBy(measures: () => Promise<unknown>, configuration: Record<string, unknown> = {}): Promise<void> {
+    storedSonarMappings.mockResolvedValue([{ projectKey: "hmcts.fresh", repository: "fresh", method: "stored_map", resolvedAt: new Date() }]);
+    createSonarClient.mockReturnValue({ projects: async () => [{ key: "hmcts.fresh" }, { key: "hmcts.chosen" }], measures: vi.fn(measures) });
+    await pathsAskedFor({ argv: ["collect", "--config", "m.yaml"], configuration });
+  }
+
+  it("should measure the project a sonar_projects override names, ahead of the map", async () => {
+    await measuredBy(async () => ({ projectKey: "hmcts.chosen", coverage: 80 }), { sonar_projects: { fresh: "hmcts.chosen" } });
+
+    expect(storedSonar("fresh")).toMatchObject({ mapping: { projectKey: "hmcts.chosen", method: "configured" }, measures: { coverage: 80 } });
+  });
+
+  it("should say a mapped project is not there to measure", async () => {
+    await measuredBy(async () => {
+      throw new SonarError("not found", AvailabilityReason.NotFoundOrInaccessible);
+    });
+
+    expect(storedSonar("fresh")?.detail).toBe("SonarCloud lists no project hmcts.fresh to measure");
+  });
+
+  it("should keep a refused measures read's reason", async () => {
+    await measuredBy(async () => {
+      throw new SonarError("SonarCloud refused the measures read", AvailabilityReason.PermissionDenied);
+    });
+
+    expect(storedSonar("fresh")?.detail).toBe("SonarCloud refused the measures read");
+  });
+
+  it("should fail the run on a measures read that throws something other than a SonarCloud refusal", async () => {
+    await measuredBy(async () => {
+      throw new TypeError("a bug, not a refusal");
+    });
+
+    expect(status).toBe(EXIT_FAILED);
+    expect(process.stderr.write).toHaveBeenCalledWith("a bug, not a refusal\n");
+  });
 });
 
 /**
@@ -964,9 +1238,10 @@ describe("evidence", () => {
   async function reported(
     repositories: string[],
     cached: Record<string, { pullRequests?: unknown[]; directCommits?: unknown[] }>,
-    states: Record<string, unknown> = {}
-  ): Promise<{ status: number; repositories: Record<string, unknown>[] }> {
-    loadConfiguration.mockResolvedValue(CONFIG);
+    states: Record<string, unknown> = {},
+    options: { argv?: string[]; configuration?: Record<string, unknown> } = {}
+  ): Promise<{ status: number; window: { starts_at: string; ends_at: string }; repositories: Record<string, unknown>[] }> {
+    loadConfiguration.mockResolvedValue({ ...CONFIG, ...options.configuration });
     cohortRepositories.mockResolvedValue(repositories);
     prevailingCachedCoverage.mockResolvedValue(new Date("2026-08-31T00:00:00Z"));
     // `DatedFact`s, which is what the batched reader answers with: the instant the window SELECTED the row on,
@@ -998,11 +1273,11 @@ describe("evidence", () => {
       return true;
     });
 
-    const status = await main(["evidence", "--config", "m.yaml"]);
+    const status = await main(["evidence", "--config", "m.yaml", ...(options.argv ?? [])]);
     if (printed === "") {
       throw new Error(`evidence printed no document and exited ${status}: ${complained.trim()}`);
     }
-    return { status, ...(JSON.parse(printed) as { repositories: Record<string, unknown>[] }) };
+    return { status, ...(JSON.parse(printed) as { window: { starts_at: string; ends_at: string }; repositories: Record<string, unknown>[] }) };
   }
 
   it("should read the whole estate's facts and states in one call each, whatever the cohort size", async () => {
@@ -1066,6 +1341,58 @@ describe("evidence", () => {
     expect(document.status).toBe(EXIT_COMPLETE);
     expect(prevailingCachedCoverage).toHaveBeenCalledOnce();
   });
+
+  it("should report the window the operator bounded with --from and --to", async () => {
+    const { window } = await reported(["repo-a"], {}, {}, { argv: ["--from", "2026-08-01", "--to", "2026-08-15"] });
+
+    expect(window).toStrictEqual({ starts_at: "2026-08-01T00:00:00.000Z", ends_at: "2026-08-15T00:00:00.000Z" });
+  });
+
+  it("should report the number of days the operator asked for, back from the anchor", async () => {
+    const { window } = await reported(["repo-a"], {}, {}, { argv: ["--days", "7"] });
+
+    expect(window).toStrictEqual({ starts_at: "2026-08-24T00:00:00.000Z", ends_at: "2026-08-31T00:00:00.000Z" });
+  });
+
+  it("should report only the repository named by --repository, without reading the cohort", async () => {
+    const { repositories } = await reported(["repo-a", "repo-b"], {}, {}, { argv: ["--repository", "repo-b"] });
+
+    expect(repositories.map((row) => row.repository)).toEqual(["repo-b"]);
+    expect(cohortRepositories).not.toHaveBeenCalled();
+  });
+
+  it("should name every team a shared repository belongs to, and only the first as its team", async () => {
+    cohortOwners.mockResolvedValue(new Map([["repo-a", ["team-a", "team-b"]]]));
+
+    const { repositories } = await reported(["repo-a"], {});
+
+    expect(repositories[0]).toMatchObject({ team: "team-a", teams: ["team-a", "team-b"] });
+  });
+
+  /** The readiness `evidence` reports for one repository whose stored state is `state`, with the policy on. */
+  async function assessedWith(state: unknown): Promise<Record<string, unknown> | undefined> {
+    // The shipped thresholds, read through the real loader, because every grade the policy makes needs one.
+    const { parseConfiguration } = await vi.importActual<typeof import("../evidence/policy/load.ts")>("../evidence/policy/load.ts");
+    const shipped = parseConfiguration("version: 1\norganization: hmcts\n");
+    const enabled = { assessment: { ...shipped.assessment, enabled: true }, triviality: shipped.triviality };
+    const { repositories } = await reported(["repo-a"], { "repo-a": { pullRequests: [merge()] } }, { "repo-a": state }, { configuration: enabled });
+    return repositories[0];
+  }
+
+  it.each([
+    ["no stored state at all", undefined],
+    ["a stored state with no merge gate", { securityAlerts: {} }],
+    ["a merge gate that recorded why it could not be read", { mergeGate: { detail: "branch protection could not be read" } }],
+    ["a merge gate that recorded nothing", { mergeGate: {} }]
+  ])("should report a repository with %s as having no merge gate collected", async (_case, state) => {
+    expect(await assessedWith(state)).toMatchObject({ readiness: "cannot_assess", blocking: expect.arrayContaining(["merge-gate-not-collected"]) });
+  });
+
+  it("should grade a stored merge gate that carries no collection instant", async () => {
+    const gate = { branch: "main", pullRequests: [], requiredStatusChecks: [], blocksForcePushes: true, appliesToAdministrators: true };
+
+    expect((await assessedWith({ mergeGate: { gate } }))?.blocking).not.toContain("merge-gate-not-collected");
+  });
 });
 
 /**
@@ -1089,6 +1416,9 @@ describe("map-sonar", () => {
     analyses?: { revision?: string; analysisAt?: Date }[];
     searching?: (revision: string) => unknown;
     argv?: string[];
+    /** Why SonarCloud refused the project listing, where it did. */
+    refusing?: Error;
+    waits?: { resource: string; seconds: number; count: number }[];
   }): Promise<{ status: number; searches: string[] }> {
     loadConfiguration.mockResolvedValue(CONFIG);
     resolveCredentials.mockResolvedValue({ token: async () => "t", describe: () => "a token" });
@@ -1102,10 +1432,15 @@ describe("map-sonar", () => {
       budget: () => undefined,
       requestsIssued: () => searches.length,
       callOutcomes: () => [],
-      rateLimitWaits: () => []
+      rateLimitWaits: () => options.waits ?? []
     });
     createSonarClient.mockReturnValue({
-      projects: async () => options.projects ?? [],
+      projects: async () => {
+        if (options.refusing !== undefined) {
+          throw options.refusing;
+        }
+        return options.projects ?? [];
+      },
       projectAnalyses: async () => options.analyses ?? []
     });
 
@@ -1264,6 +1599,62 @@ describe("map-sonar", () => {
     // lookup settles it by analysis recency. Surfaced because the alternative is a page quietly showing one of two.
     expect(console.warn).toHaveBeenCalledWith("cath-service is claimed by 2 projects: hmcts.cath, hmcts.cath.old");
   });
+
+  it("should count a remembered negative nothing has been analysed since as answered, claiming no repository", async () => {
+    storedSonarMappings.mockResolvedValue([{ projectKey: "hmcts.orphan", detail: "no commit matched", resolvedAt: new Date(Date.UTC(2026, 8, 17)) }]);
+
+    const { status } = await mapping({ projects: [{ key: "hmcts.orphan", analysisAt: new Date(Date.UTC(2026, 8, 16)) }] });
+
+    expect(status).toBe(EXIT_COMPLETE);
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("1 unchanged"));
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("0 repositories mapped"));
+  });
+
+  it("should say when a newer stored answer was kept rather than overwritten", async () => {
+    recordSonarMapping.mockResolvedValue(false);
+    const analysed = new Date(Date.UTC(2026, 8, 16));
+
+    await mapping({
+      projects: [{ key: "hmcts.cath", analysisAt: analysed }],
+      analyses: [{ revision: REVISION, analysisAt: analysed }],
+      searching: () => ({ items: [{ repository: { full_name: "hmcts/cath-service" } }] })
+    });
+
+    expect(console.debug).toHaveBeenCalledWith("kept the stored mapping for hmcts.cath: it was resolved from a newer analysis");
+  });
+
+  it("should fail when SonarCloud refuses the project listing", async () => {
+    const { status } = await mapping({ refusing: new SonarError("SonarCloud refused the projects read", AvailabilityReason.PermissionDenied) });
+
+    expect(status).toBe(EXIT_FAILED);
+    expect(console.error).toHaveBeenCalledWith("SonarCloud's project listing failed for hmcts: SonarCloud refused the projects read");
+  });
+
+  it("should print where the run waited for the search quota", async () => {
+    storedSonarMappings.mockResolvedValue([
+      { projectKey: "hmcts.cath", repository: "cath-service", method: "analysis_revision", resolvedAt: new Date(Date.UTC(2026, 8, 17)) }
+    ]);
+
+    await mapping({ projects: [{ key: "hmcts.cath", analysisAt: new Date(Date.UTC(2026, 8, 16)) }], waits: [{ resource: "search", seconds: 30, count: 3 }] });
+
+    expect(console.info).toHaveBeenCalledWith("  waited 30s for the search quota across 3 pauses");
+  });
+
+  it("should read SonarCloud with the token the environment sets, and say so", async () => {
+    vi.stubEnv("SONAR_TOKEN", "a-sonar-token");
+
+    await mapping({ projects: [] });
+
+    expect(createSonarClient).toHaveBeenCalledWith({ organization: "hmcts", token: "a-sonar-token" });
+    expect(console.info).toHaveBeenCalledWith("resolving SonarCloud projects for hmcts with a token");
+  });
+
+  it("should read SonarCloud anonymously where the environment sets no token", async () => {
+    await mapping({ projects: [] });
+
+    expect(createSonarClient).toHaveBeenCalledWith({ organization: "hmcts" });
+    expect(console.info).toHaveBeenCalledWith("resolving SonarCloud projects for hmcts anonymously");
+  });
 });
 
 describe("the collector lock", () => {
@@ -1311,6 +1702,20 @@ describe("the collector lock", () => {
 
     expect(asSoleCollector).toHaveBeenCalledOnce();
     expect(pruneCache).toHaveBeenCalledWith(new Date(Date.UTC(2026, 8, 8, 12)));
+  });
+
+  it("should prune what has gone unused for thirty days when the operator names no cut-off", async () => {
+    loadConfiguration.mockResolvedValue({ organization: "hmcts", lookback: { operational_days: 90 }, teams: [], org_graph: { enabled: true } });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(Date.UTC(2026, 8, 15, 12)));
+
+    try {
+      expect(await main(["prune", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(pruneCache).toHaveBeenCalledWith(new Date(Date.UTC(2026, 7, 16, 12)));
   });
 });
 
@@ -1667,6 +2072,104 @@ describe("collect-org", () => {
     expect(entryOf(proposed(), "unknown")).not.toContain("    github_team_slugs:");
     expect(entryOf(proposed(), "unknown")).toContain("      - mystery-repo");
   });
+
+  it("should list the unknown bucket after every team, wherever it falls alphabetically", async () => {
+    // A repository named to sort AFTER the teams' repositories, so the bucket is not already last on the way in.
+    withWalks({ repositories: ["repo-a", "repo-b", "zz-mystery"] });
+
+    await main(["collect-org", "--config", "m.yaml", "--propose-teams"]);
+
+    const identifiers = proposed()
+      .split("\n")
+      .filter((line) => line.startsWith("  - identifier: "));
+    expect(identifiers).toEqual(["  - identifier: team-a", "  - identifier: team-b", "  - identifier: unknown"]);
+  });
+
+  it("should report a proposal the unresolved limit cut short as partial", async () => {
+    withWalks({ repositories: ["repo-a", "orphan-one"] });
+
+    expect(await main(["collect-org", "--config", "m.yaml", "--propose-teams", "--unresolved-limit", "0"])).toBe(EXIT_INCOMPLETE);
+  });
+
+  it("should say ownership will rest on CODEOWNERS and names when the teams could not be listed", async () => {
+    withWalks({
+      teams: wholeTeamPicture({
+        teamsRead: false,
+        teamsComplete: false,
+        teams: [],
+        memberships: [],
+        teamRepositories: [],
+        membershipsObserved: new Set(),
+        teamRepositoriesObserved: new Set()
+      })
+    });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith("the teams could not be listed, so ownership will rest on CODEOWNERS and names alone\n");
+  });
+
+  it("should fail and write nothing when no repository could be listed", async () => {
+    withWalks({ repositories: [] });
+
+    expect(await main(["collect-org", "--config", "m.yaml"])).toBe(EXIT_FAILED);
+    expect(console.error).toHaveBeenCalledWith("no repositories could be listed for hmcts");
+    for (const writer of WRITERS) {
+      expect(writer).not.toHaveBeenCalled();
+    }
+  });
+
+  it("should not attribute a residue repository whose CODEOWNERS read was refused", async () => {
+    withWalks({
+      repositories: ["repo-a", "refused-codeowners"],
+      codeowners: new Map([["refused-codeowners", { ...codeownersFact("refused-codeowners", {}), refusal: "Resource not accessible by integration" }]]),
+      directAdmins: new Map([["refused-codeowners", []]])
+    });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    const [, , , observed] = recordRepositoryOwnership.mock.calls[0] as [string, Date, unknown, Set<string>];
+    expect(observed.has("refused-codeowners")).toBe(false);
+  });
+
+  it("should report a partial walk as success for a scheduled run, and say so", async () => {
+    withWalks({ teams: wholeTeamPicture({ membershipsObserved: new Set(["team-a"]) }) });
+
+    expect(await main(["collect-org", "--config", "m.yaml", "--tolerate-partial"])).toBe(EXIT_COMPLETE);
+    expect(process.stderr.write).toHaveBeenCalledWith(expect.stringContaining("part of the organisation would not answer"));
+  });
+
+  it("should name each team too populous or too broad to be read as an owner, with the figure that excluded it", async () => {
+    withWalks();
+    loadConfiguration.mockResolvedValue({ ...CONFIG, org_graph: { ...CONFIG.org_graph, maximum_team_members: 0, maximum_team_share: 0 } });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith("  team-a has 1 members, over the 0 ceiling, so is not read as an owner\n");
+    expect(process.stderr.write).toHaveBeenCalledWith("  team-a holds 1 repositories, over the 0% ceiling, so is not read as an owner\n");
+  });
+
+  it("should print where the walk waited beneath its call count", async () => {
+    withWalks();
+    createGitHubClient.mockReturnValue({
+      requestsIssued: () => 0,
+      callOutcomes: () => [],
+      rateLimitWaits: () => [{ resource: "graphql", seconds: 90, count: 2 }]
+    });
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith("  waited 90s for the graphql quota across 2 pauses\n");
+  });
+
+  it("should read authorship from the fact cache for the configured number of days", async () => {
+    withWalks();
+    authorshipForOrganisation.mockResolvedValue(new Map([["repo-a", new Map([["alice", 3]])]]));
+
+    await main(["collect-org", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith("read authorship for 1 repositories from the 90-day fact cache\n");
+  });
 });
 
 /**
@@ -1731,6 +2234,30 @@ describe("reduce-descriptions", () => {
     expect(reported()).toContain("before: 24249 cached pull requests, 23854 carrying a description, 395 measurable");
     expect(reported()).toContain("after: 24249 cached pull requests, 0 carrying a description, 24249 measurable");
     expect(reported()).toContain("reduced 23854 of 23854 rows read");
+  });
+
+  /** Has the reduction report one batch of `scanned` rows, `changed` of which it wrote. */
+  function reportingOneBatch(scanned: number, changed: number): void {
+    reduceStoredDescriptions.mockImplementation(async (_patterns, options) => {
+      (options as { onBatch: (batch: { scanned: number; changed: number }) => void }).onBatch({ scanned, changed });
+      return { scanned, changed };
+    });
+  }
+
+  it("should report each batch it derived on a dry run, and nothing as written", async () => {
+    reportingOneBatch(500, 500);
+
+    await main(["reduce-descriptions", "--config", "m.yaml"]);
+
+    expect(reported()).toContain("  derived 500 of 23854\n");
+  });
+
+  it("should report each batch it wrote on a real run", async () => {
+    reportingOneBatch(500, 498);
+
+    await main(["reduce-descriptions", "--config", "m.yaml", "--write"]);
+
+    expect(reported()).toContain("  derived 500 of 23854, 498 written\n");
   });
 
   it("should grade with the patterns the configuration states and no others", async () => {
@@ -2072,6 +2599,15 @@ describe("collect-alerts", () => {
     expect(await main(["collect-alerts", "--config", "m.yaml", "--tolerate-partial"])).toBe(EXIT_COMPLETE);
 
     expect(writtenStates()["alpha/secret-scanning"]).toBe("unmeasured");
+  });
+
+  it("should say how many records named no repository, because no page will ever show them", async () => {
+    const { repository: _unnamed, ...unattributable } = secretRecord("alpha", 2);
+    walking({ [SECRET_PATH]: [secretRecord("alpha", 1), unattributable] });
+
+    await main(["collect-alerts", "--config", "m.yaml"]);
+
+    expect(process.stderr.write).toHaveBeenCalledWith("secret-scanning: 1 records named no repository this build could read, so they are not stored\n");
   });
 
   it("should report a repository the counts say was read as clean when the walk named it no alerts", async () => {
