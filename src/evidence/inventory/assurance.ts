@@ -229,9 +229,6 @@ export async function collectAssuranceSignals(
 }
 
 async function readAssuranceBatch(client: GitHubClient, organization: string, batch: readonly string[], into: Map<string, GraphAssurance>): Promise<void> {
-  if (batch.length === 0) {
-    return;
-  }
   const variables: Record<string, unknown> = { organization };
   for (const [index, name] of batch.entries()) {
     variables[`r${index}`] = name;
