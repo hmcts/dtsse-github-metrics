@@ -40,9 +40,10 @@ export function exempt(pathname: string): boolean {
  * one-liner would spend the warning that catches the genuine ones, and spelled out the rule is plainer anyway.
  */
 function unsafeInAPath(value: string): boolean {
+  // Compared as strings: every control character is a single UTF-16 unit, and a character outside the basic plane
+  // starts with a surrogate far above U+001F, so the comparison reads the same as one on the code point.
   for (const character of value) {
-    const code = character.charCodeAt(0);
-    if (character === "\\" || code <= 0x1f || code === 0x7f) {
+    if (character === "\\" || character <= "\u001f" || character === "\u007f") {
       return true;
     }
   }

@@ -20,28 +20,19 @@ export function parseInstant(value: string): Date {
 
   const bare = BARE_DATE.exec(text);
   if (bare) {
-    return fromParts(group(bare, 1), group(bare, 2), group(bare, 3), "0", "0", "0", "0", 0);
+    return fromParts(bare, 0);
   }
 
   const naive = NAIVE_DATETIME.exec(text);
   if (naive) {
     // No offset given, so UTC — matching `parse_instant`'s `replace(tzinfo=UTC)` rather than
     // JavaScript's local-time reading of the same string.
-    return fromParts(group(naive, 1), group(naive, 2), group(naive, 3), group(naive, 4), group(naive, 5), group(naive, 6), group(naive, 7), 0);
+    return fromParts(naive, 0);
   }
 
   const zoned = ZONED_DATETIME.exec(text);
   if (zoned) {
-    return fromParts(
-      group(zoned, 1),
-      group(zoned, 2),
-      group(zoned, 3),
-      group(zoned, 4),
-      group(zoned, 5),
-      group(zoned, 6),
-      group(zoned, 7),
-      offsetMinutes(group(zoned, 8))
-    );
+    return fromParts(zoned, offsetMinutes(group(zoned, 8)));
   }
 
   throw new RangeError(`expected a date or datetime such as 2026-08-01, 2026-08-01T14:30 or 2026-08-01T14:30:00Z: ${value}`);
@@ -86,7 +77,18 @@ function group(match: RegExpExecArray, index: number): string {
   return match[index] ?? "";
 }
 
-function fromParts(year: string, month: string, day: string, hour: string, minute: string, second: string, fraction: string, offset: number): Date {
+/**
+ * The instant one of the three patterns matched. They share their first seven groups (date, time, fraction), and a
+ * bare date's time groups are absent, so they read as empty and so as midnight.
+ */
+function fromParts(match: RegExpExecArray, offset: number): Date {
+  const year = group(match, 1);
+  const month = group(match, 2);
+  const day = group(match, 3);
+  const hour = group(match, 4);
+  const minute = group(match, 5);
+  const second = group(match, 6);
+  const fraction = group(match, 7);
   // Microsecond precision in the source, milliseconds in a `Date`: pad to six digits, then keep the
   // leading three. Truncation, not rounding — a fractional second is a position in time, and rounding
   // one up could move an instant past a half-open window's exclusive edge.
@@ -99,7 +101,8 @@ function fromParts(year: string, month: string, day: string, hour: string, minut
   // value before pydantic sees it, and a configuration naming an instant that does not exist is a mistake to
   // report, not one to normalise. The time is checked first because a rolled-over hour also moves the date.
   if (local.getUTCHours() !== Number(hour) || local.getUTCMinutes() !== Number(minute) || local.getUTCSeconds() !== Number(second)) {
-    throw new RangeError(`no such time: ${hour}:${minute}${second === "" ? "" : `:${second}`}`);
+    const time = second === "" ? `${hour}:${minute}` : `${hour}:${minute}:${second}`;
+    throw new RangeError(`no such time: ${time}`);
   }
   if (!sameCalendarDate(local, year, month, day)) {
     throw new RangeError(`no such date: ${year}-${month}-${day}`);

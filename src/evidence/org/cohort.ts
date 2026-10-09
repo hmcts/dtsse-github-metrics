@@ -305,7 +305,7 @@ export function selectCohort(
   });
 
   return entries
-    .sort((left, right) => left.owner.localeCompare(right.owner) || left.entry.repository.localeCompare(right.entry.repository))
+    .toSorted((left, right) => left.owner.localeCompare(right.owner) || left.entry.repository.localeCompare(right.entry.repository))
     .map(({ entry }) => entry);
 }
 

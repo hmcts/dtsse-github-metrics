@@ -290,9 +290,8 @@ export function reviewStartedAt(pullRequest: PullRequestFact): Date {
   if (reviews.length === 0) {
     return anchor;
   }
-  // No initial value: the list is non-empty here, so the first submission seeds the comparison.
-  const earliest = reviews.map((review) => review.submittedAt).reduce((soonest, at) => (at.getTime() < soonest.getTime() ? at : soonest));
-  return earliest.getTime() < anchor.getTime() ? earliest : anchor;
+  const earliest = Math.min(...reviews.map((review) => review.submittedAt.getTime()));
+  return earliest < anchor.getTime() ? new Date(earliest) : anchor;
 }
 
 /**

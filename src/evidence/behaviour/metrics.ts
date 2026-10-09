@@ -257,9 +257,8 @@ function timeToFirstReviewValue(pullRequest: PullRequestFact): number | undefine
   if (reviews.length === 0) {
     return undefined;
   }
-  // No initial value: the list is non-empty here, so the first submission seeds the comparison.
-  const first = reviews.map((review) => review.submittedAt).reduce((soonest, at) => (at.getTime() < soonest.getTime() ? at : soonest));
-  return (first.getTime() - reviewStartedAt(pullRequest).getTime()) / HOURS;
+  const first = Math.min(...reviews.map((review) => review.submittedAt.getTime()));
+  return (first - reviewStartedAt(pullRequest).getTime()) / HOURS;
 }
 
 /** How many lines each merged pull request changed. */

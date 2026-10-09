@@ -82,13 +82,26 @@ export function scimDisplayName(name: ScimUser["name"]): string | undefined {
 export function upnDisplayName(nameId: string): string | undefined {
   // The local part, and the whole string when there is no `@` — a directory that spells a bare `Jack.Maloney` is
   // still naming somebody.
-  const local = nameId.replace(/@.*/s, "").trim().replace(/\d+$/, "");
+  const local = withoutTrailingDigits(nameId.replace(/@.*/s, "").trim());
   const parts = local
     .split(/[._]/)
     .map((part) => part.trim())
     .filter((part) => part !== "")
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`);
   return parts.length === 0 ? undefined : parts.join(" ");
+}
+
+/**
+ * The text with any run of digits at its end removed, as `jack.maloney2` becomes `jack.maloney`. A loop rather
+ * than `/\d+$/`, which restarts at every digit of a long run that is followed by anything else and so takes
+ * quadratic time on input the directory controls.
+ */
+function withoutTrailingDigits(text: string): string {
+  let end = text.length;
+  while (end > 0 && "0123456789".includes(text.charAt(end - 1))) {
+    end -= 1;
+  }
+  return text.slice(0, end);
 }
 
 /**
