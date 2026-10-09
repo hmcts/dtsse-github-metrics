@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { type Align, SortHeader } from "@/components/SortHeader";
 import { ABSENT, day } from "@/lib/format";
+import { answerWord } from "@/lib/rows";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { TeamMergeRow } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
@@ -33,8 +34,11 @@ interface Column {
  * every other table here follows: "which merges went unreviewed" is a question about the merges somebody read the
  * reviews of, and one whose payload carries none is not an answer to it either way round.
  */
-function flag(value: boolean | undefined): number | undefined {
-  return value === undefined ? undefined : value ? 1 : 0;
+export function flag(value: boolean | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return value ? 1 : 0;
 }
 
 const COLUMNS: readonly Column[] = [
@@ -121,12 +125,17 @@ export function TeamMergesTable({ rows, weeks }: Readonly<{ rows: readonly TeamM
  * THREE-VALUED, because the fact cache is: a merge whose stored payload carries no reviews was not measured, which
  * is a different answer from one that went unreviewed. The dash keeps them apart where a `No` would accuse.
  */
-function Judgement({ value }: Readonly<{ value?: boolean }>) {
+function judgementClass(value: boolean | undefined): string {
+  if (value === undefined) {
+    return "text-slate-400";
+  }
+  return value ? "text-rag-green" : "text-rag-amber";
+}
+
+export function Judgement({ value }: Readonly<{ value?: boolean }>) {
   return (
     <td className="py-2 pr-3 text-center">
-      <span className={value === undefined ? "text-slate-400" : value ? "text-rag-green" : "text-rag-amber"}>
-        {value === undefined ? ABSENT : value ? "Yes" : "No"}
-      </span>
+      <span className={judgementClass(value)}>{answerWord(value)}</span>
     </td>
   );
 }

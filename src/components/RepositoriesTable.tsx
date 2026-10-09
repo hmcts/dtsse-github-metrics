@@ -3,7 +3,7 @@
 import clsx from "clsx";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Fragment, type ReactNode, useState } from "react";
+import { type ReactNode, useState } from "react";
 import { EmptyState } from "@/components/EmptyState";
 import { OwnerName } from "@/components/OwnerName";
 import { RAGLabel } from "@/components/RAGCard";
@@ -59,7 +59,7 @@ import {
   visibilityParameter
 } from "@/lib/rows";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
-import type { AssuranceGrade, AssuranceOutcome, ProductionSource, RepositoryRow, Visibility } from "@/lib/types";
+import type { AssuranceCriterion, AssuranceGrade, AssuranceOutcome, ProductionSource, RepositoryRow, Visibility } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
 
 /**
@@ -123,6 +123,22 @@ function cveColumn(column: CveColumn): Column {
 }
 
 /**
+ * What one criterion's column sorts on.
+ *
+ * Patching sorts on its age in days. `Secrets` states what was FOUND, so it sorts by the finding: the repositories
+ * with open alerts lead, where the other criteria lead with the ones that pass. See `findingOrder`.
+ */
+function criterionRead(criterion: AssuranceCriterion): (row: RepositoryRow) => SortValue {
+  if (criterion === "patching") {
+    return (row) => row.assurance?.oldest_severe_alert_days;
+  }
+  if (criterion === SECRETS_CRITERION) {
+    return (row) => findingOrder(criterionResult(row, criterion)?.outcome);
+  }
+  return (row) => outcomeOrder(criterionResult(row, criterion)?.outcome);
+}
+
+/**
  * The columns, from 2026-09-14: basic identity, then one per assurance criterion.
  *
  * EIGHT COLUMNS WENT AND FIVE OF THEM WERE ALREADY EMPTY. Readiness, Merged and Direct commits carried real
@@ -178,14 +194,7 @@ const COLUMNS: readonly Column[] = [
     // criterion reports an age against no threshold, so ordering it by its outcome would sort every repository
     // level — the age is the whole information.
     align: (criterion === "patching" ? "right" : "center") as Align,
-    read:
-      criterion === "patching"
-        ? (row: RepositoryRow) => row.assurance?.oldest_severe_alert_days
-        : // `Secrets` states what was FOUND, so it sorts by the finding: the repositories with open alerts lead,
-          // where the other criteria lead with the ones that pass. See `findingOrder`.
-          criterion === SECRETS_CRITERION
-          ? (row: RepositoryRow) => findingOrder(criterionResult(row, criterion)?.outcome)
-          : (row: RepositoryRow) => outcomeOrder(criterionResult(row, criterion)?.outcome)
+    read: criterionRead(criterion)
   })),
   // AFTER THE CRITERIA AND BEFORE THE ATTRIBUTES, because it is evidence of the same kind and none of the grade.
   // `judgeAssurance` does not read it — the pipeline's own dependency scan is not one of the six criteria — so
@@ -529,27 +538,9 @@ export function RepositoriesTable({
                       column existed has no answer either. Neither is today. */}
                   <td className="py-2 pr-3 tabular-nums text-slate-300">{day(row.default_branch_committed_at)}</td>
                   <td className="py-2 pr-3 capitalize text-slate-400">{row.visibility ?? ABSENT}</td>
-                  {ASSURANCE_CRITERIA.map((criterion) =>
-                    criterion === "patching" ? (
-                      // The AGE, with no colouring and no threshold. "Measurement first": the number is the
-                      // finding and the reader is the judge, so a tone here would publish an SLA nobody chose.
-                      <td key={criterion} className="py-2 pr-3 text-right tabular-nums text-slate-300">
-                        {alertAge(row.assurance?.oldest_severe_alert_days)}
-                      </td>
-                    ) : criterion === SECRETS_CRITERION ? (
-                      <Finding key={criterion} result={criterionResult(row, criterion)} />
-                    ) : criterion === HYGIENE_CRITERION ? (
-                      // The aggregate, then the checks behind it where the reader has asked for them. The
-                      // criterion's own cell keeps its place either way: it is the graded answer and the only one
-                      // whose hover names the missing control in words.
-                      <Fragment key={criterion}>
-                        <Outcome result={criterionResult(row, criterion)} />
-                        {expanded ? HYGIENE_CHECKS.map((check) => <Signal key={check.key} value={check.read(hygieneSignals(row))} />) : null}
-                      </Fragment>
-                    ) : (
-                      <Outcome key={criterion} result={criterionResult(row, criterion)} />
-                    )
-                  )}
+                  {ASSURANCE_CRITERIA.map((criterion) => (
+                    <CriterionCells key={criterion} row={row} criterion={criterion} expanded={expanded} />
+                  ))}
                   {/* The live critical count, then the whole position where the reader has asked for it. The
                       aggregate's own cell keeps its place either way, on the Hygiene column's rule. */}
                   <Cve row={row} column={CVE_AGGREGATE} />
@@ -600,6 +591,29 @@ export function RepositoriesTable({
  * `productionHint` returns nothing for a row whose answer no source gave, which leaves the attribute off rather
  * than hovering an empty bubble.
  */
+/** The cells one criterion draws in a repository's row: one, or the hygiene aggregate and its checks. */
+function CriterionCells({ row, criterion, expanded }: Readonly<{ row: RepositoryRow; criterion: AssuranceCriterion; expanded: boolean }>) {
+  if (criterion === "patching") {
+    // The AGE, with no colouring and no threshold. "Measurement first": the number is the finding and the reader
+    // is the judge, so a tone here would publish an SLA nobody chose.
+    return <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{alertAge(row.assurance?.oldest_severe_alert_days)}</td>;
+  }
+  if (criterion === SECRETS_CRITERION) {
+    return <Finding result={criterionResult(row, criterion)} />;
+  }
+  if (criterion === HYGIENE_CRITERION) {
+    // The aggregate, then the checks behind it where the reader has asked for them. The criterion's own cell keeps
+    // its place either way: it is the graded answer and the only one whose hover names the missing control in words.
+    return (
+      <>
+        <Outcome result={criterionResult(row, criterion)} />
+        {expanded ? HYGIENE_CHECKS.map((check) => <Signal key={check.key} value={check.read(hygieneSignals(row))} />) : null}
+      </>
+    );
+  }
+  return <Outcome result={criterionResult(row, criterion)} />;
+}
+
 function Answer({ value, source }: Readonly<{ value?: boolean; source?: ProductionSource }>) {
   return (
     <td className="py-2 pr-3 text-center text-slate-300" title={productionHint(source)}>

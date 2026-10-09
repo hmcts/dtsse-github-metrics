@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { type Align, SortHeader } from "@/components/SortHeader";
+import { flag, Judgement } from "@/components/TeamMergesTable";
 import { ABSENT, day } from "@/lib/format";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { TeamDirectPushRow } from "@/lib/types";
@@ -30,7 +31,7 @@ const COLUMNS: readonly Column[] = [
   { key: "repository", label: "Repository", read: (row) => row.repository },
   { key: "commit", label: "Commit", read: (row) => row.sha },
   { key: "author", label: "Author", read: (row) => row.author },
-  { key: "ci", label: "CI", align: "center", read: (row) => (row.ci === undefined ? undefined : row.ci ? 1 : 0) },
+  { key: "ci", label: "CI", align: "center", read: (row) => flag(row.ci) },
   { key: "lines", label: "Lines", align: "right", read: (row) => row.lines },
   { key: "files", label: "Files", align: "right", read: (row) => row.files }
 ];
@@ -83,11 +84,7 @@ export function TeamDirectPushesTable({ rows, weeks }: Readonly<{ rows: readonly
               {/* The git author NAME where GitHub linked no account, which is why this is not a link: a name is
                   not a login and has no contributor page. See `directPushRows` for the fallback. */}
               <td className="py-2 pr-3 font-mono text-slate-400 break-all">{row.author ?? ABSENT}</td>
-              <td className="py-2 pr-3 text-center">
-                <span className={row.ci === undefined ? "text-slate-400" : row.ci ? "text-rag-green" : "text-rag-amber"}>
-                  {row.ci === undefined ? ABSENT : row.ci ? "Yes" : "No"}
-                </span>
-              </td>
+              <Judgement value={row.ci} />
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.lines === undefined ? ABSENT : row.lines.toLocaleString("en-GB")}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.files ?? ABSENT}</td>
             </tr>

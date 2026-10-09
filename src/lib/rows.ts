@@ -1275,7 +1275,10 @@ export function foundOutcome(outcome: AssuranceOutcome | undefined): boolean | u
  */
 export function findingOrder(outcome: AssuranceOutcome | undefined): SortValue {
   const found = foundOutcome(outcome);
-  return found === undefined ? undefined : found ? 0 : 1;
+  if (found === undefined) {
+    return undefined;
+  }
+  return found ? 0 : 1;
 }
 
 /**
@@ -1301,7 +1304,10 @@ export function metOutcome(outcome: AssuranceOutcome | undefined): boolean | und
  * a visible mark keeps the two apart in a column of otherwise short words.
  */
 export function answerWord(answer: boolean | undefined): string {
-  return answer === undefined ? ABSENT : answer ? "Yes" : "No";
+  if (answer === undefined) {
+    return ABSENT;
+  }
+  return answer ? "Yes" : "No";
 }
 
 /**

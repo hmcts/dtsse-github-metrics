@@ -419,8 +419,9 @@ export function decideFromEvidence(
   const authoring = evidence.authoringTeams.get(repository) ?? [];
   const authored = authoring[0];
   if (authored !== undefined) {
-    const contested =
-      authoring.length > 1 ? `, ahead of ${authoring.length - 1} other team${authoring.length === 2 ? "" : "s"} with access whose members merged here` : "";
+    const others = authoring.length - 1;
+    const teams = others === 1 ? "team" : "teams";
+    const contested = others > 0 ? `, ahead of ${others} other ${teams} with access whose members merged here` : "";
     return [
       {
         kind: OwnerKind.Team,

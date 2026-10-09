@@ -1273,6 +1273,17 @@ async function authoredMerges(organization: string, days: number, reference: Dat
 /** The bucket a repository nothing owns is grouped under. Not a GitHub team, and never given a slug. */
 const UnknownIdentifier = "unknown";
 
+/** Code-point order, with the unknown team last whatever its name sorts as. */
+function unknownLast(left: string, right: string): number {
+  if (left === UnknownIdentifier) {
+    return 1;
+  }
+  if (right === UnknownIdentifier) {
+    return -1;
+  }
+  return byCodePoint(left, right);
+}
+
 /**
  * A reviewable `teams:` block, one team per owning slug with the repositories it was attributed.
  *
@@ -1310,7 +1321,7 @@ function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
   }
 
   const lines = ["teams:"];
-  for (const key of [...grouped.keys()].sort((left, right) => (left === UnknownIdentifier ? 1 : right === UnknownIdentifier ? -1 : byCodePoint(left, right)))) {
+  for (const key of [...grouped.keys()].sort(unknownLast)) {
     const group = grouped.get(key) as { repositories: string[]; rungs: Set<string> };
     lines.push(
       `  # attributed by ${[...group.rungs].sort(byCodePoint).join(", ")}`,
