@@ -71,4 +71,4 @@ async function run(): Promise<number> {
   }
 }
 
-run().then((status) => process.exit(status));
+void run().then((status) => process.exit(status));

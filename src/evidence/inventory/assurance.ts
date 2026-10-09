@@ -410,9 +410,9 @@ export function assuranceEvidence(
    * A THREE-WAY PARAMETER carried as an object rather than as a bare summary, because "no alerts for this
    * repository" and "the whole read failed" must not collapse into the same `undefined`. `{ read: true }` with no
    * summary is clean — the org-wide call covers every repository, so absence from it is an answer — and
-   * `{ read: false }` is unknown.
+   * `{ read: false }`, like no argument at all, is unknown.
    */
-  secrets: { read: boolean; summary?: SecretAlertSummary } = { read: false }
+  secrets?: { read: boolean; summary?: SecretAlertSummary }
 ): AssuranceEvidence {
   const age = alerts === undefined ? undefined : severeAlertAge(alerts, reference);
   // The policy is lifted OUT of the hygiene signals it arrives beside: it is its own criterion, and leaving it in
@@ -424,7 +424,7 @@ export function assuranceEvidence(
     severeAlertsRead: alerts !== undefined,
     ...(securityPolicy === undefined ? {} : { securityPolicy }),
     // Clean is `{ open: 0 }` rather than an absence, so the domain can tell it from an unread estate.
-    ...(secrets.read ? { secrets: secrets.summary ?? { open: 0 } } : {}),
-    secretsRead: secrets.read
+    ...(secrets?.read ? { secrets: secrets.summary ?? { open: 0 } } : {}),
+    secretsRead: secrets?.read === true
   };
 }

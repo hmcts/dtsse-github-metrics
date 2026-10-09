@@ -60,7 +60,7 @@ export function graphqlOperationName(document: string): string | undefined {
  */
 export function endpointTemplate(target: string, operation?: string): string {
   const url = new URL(target);
-  const segments = url.pathname.replace(/^\/+|\/+$/g, "").split("/");
+  const segments = withoutEdgeSlashes(url.pathname).split("/");
 
   if (segments.length === 1 && segments[0] === "graphql") {
     // Every GraphQL call is a POST to the same address, so the operation the body named is what tells one
@@ -87,4 +87,20 @@ export function endpointTemplate(target: string, operation?: string): string {
 
   const search = query === "" ? "" : `?${query}`;
   return `${url.origin}/${templated.join("/")}${search}`;
+}
+
+/**
+ * The path with every leading and trailing `/` removed. A loop rather than `/^\/+|\/+$/`, whose second branch
+ * restarts at every slash of a long run that is followed by anything else and so takes quadratic time.
+ */
+function withoutEdgeSlashes(path: string): string {
+  let start = 0;
+  let end = path.length;
+  while (start < end && path.charAt(start) === "/") {
+    start += 1;
+  }
+  while (end > start && path.charAt(end - 1) === "/") {
+    end -= 1;
+  }
+  return path.slice(start, end);
 }
