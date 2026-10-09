@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageOf } from "../../platform/error-message.ts";
 import type { AssuranceEvidence, HygieneSignals, SecretAlertSummary } from "../domain/assurance.ts";
 import { ageInDays } from "../domain/assurance.ts";
 import { GitHubError } from "../domain/availability.ts";
@@ -171,11 +172,6 @@ export interface GraphAssurance extends Pick<HygieneSignals, "vulnerabilityAlert
   securityPolicy?: boolean;
 }
 
-/** One failure's message, for a log line that names what went wrong rather than that something did. */
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * Reads one repository's aliased entry, or nothing where the node is not one this build can read.
  *
@@ -248,7 +244,7 @@ async function readAssuranceBatch(client: GitHubClient, organization: string, ba
     // NOTHING ARRIVED, so nothing is consumed and the batch is split exactly as it always was. A transport
     // failure, a spent quota that outlasted the retries or an unparseable body says nothing about any
     // repository in the batch, and a document too complex for GitHub to serve can succeed one at a time.
-    await reReadOneAtATime(client, organization, batch, into, reason(error));
+    await reReadOneAtATime(client, organization, batch, into, messageOf(error));
     return;
   }
   if (answer.data === undefined) {
@@ -379,7 +375,7 @@ export async function collectOrganisationSecretAlerts(
       }
     }
   } catch (error) {
-    console.warn(`Could not read the open secret-scanning alerts of ${organization}; every repository's answer will be unknown: ${reason(error)}`);
+    console.warn(`Could not read the open secret-scanning alerts of ${organization}; every repository's answer will be unknown: ${messageOf(error)}`);
     return undefined;
   }
 

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageOf } from "../../platform/error-message.ts";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { type MergeGateEvidence, type MergeGateReport, mergeGateReport, type PullRequestRule, type StatusChecksRule } from "../domain/merge-gate.ts";
 import type { GitHubClient } from "../github/client.ts";
@@ -308,7 +309,7 @@ export async function collectMergeGate(client: GitHubClient, organization: strin
     }
     return mergeGateReport({
       fetchedAt: new Date(),
-      detail: `GitHub returned invalid branch rules: ${error instanceof Error ? error.message : String(error)}`
+      detail: `GitHub returned invalid branch rules: ${messageOf(error)}`
     });
   }
 }

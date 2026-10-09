@@ -1,4 +1,5 @@
 import type * as contract from "../../../lib/types.ts";
+import { messageOf } from "../../../platform/error-message.ts";
 import type { ReadinessPolicy } from "../../assessment/assessment.ts";
 import { mergeCycleTime, timeToFirstReview } from "../../behaviour/metrics.ts";
 import type { Merges } from "../../domain/facts.ts";
@@ -144,7 +145,7 @@ function reviewDerivedFigures(policy: ReadinessPolicy, merges: Merges): ReviewDe
     // above; a payload that failed to round-trip can be short of anything. One such row must not become a 500 for
     // the whole page, so the figures are ABSENT — the answer a window with nothing to measure gives — and the
     // reason is logged rather than swallowed, because an unmeasurable metric is worth knowing about.
-    console.warn(`the review figures could not be measured: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`the review figures could not be measured: ${messageOf(error)}`);
     return {};
   }
 }

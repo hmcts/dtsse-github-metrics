@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { SignJWT } from "jose";
+import { messageOf } from "../../platform/error-message.ts";
 import { redacted, refusal } from "./redact.ts";
 
 /**
@@ -166,7 +167,7 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
       // a passphrase-protected one — and each surfaces from the crypto layer differently. Catching
       // broadly is what puts every one of them in the single line saying the key cannot be used, and it
       // is also what keeps the redaction: an escaped error carries the key in its frames.
-      const detail = redacted(error instanceof Error ? error.message : String(error), privateKey);
+      const detail = redacted(messageOf(error), privateKey);
       throw new CredentialsError(`the GitHub App private key could not be used to sign a request: ${detail}`);
     }
   }
@@ -189,7 +190,7 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
       try {
         response = await fetchImpl(url, { method: "POST", headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
       } catch (error) {
-        const detail = redacted(error instanceof Error ? error.message : String(error), signed, privateKey);
+        const detail = redacted(messageOf(error), signed, privateKey);
         if (attempt === MAXIMUM_EXCHANGE_ATTEMPTS) {
           throw new CredentialsError(`the GitHub App installation token could not be obtained after ${MAXIMUM_EXCHANGE_ATTEMPTS} attempts: ${detail}`);
         }
@@ -232,7 +233,7 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
     try {
       payload = JSON.parse(body);
     } catch (error) {
-      throw new CredentialsError(`GitHub's installation token exchange returned an unreadable body: ${error instanceof Error ? error.message : String(error)}`);
+      throw new CredentialsError(`GitHub's installation token exchange returned an unreadable body: ${messageOf(error)}`);
     }
     held = mintedToken(payload);
     expiresAt = mintedExpiry(payload);
@@ -261,9 +262,9 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
         throw error;
       }
       console.warn(
-        `the GitHub App installation token could not be renewed early, continuing with the held token until it expires at ${expiresAt?.toISOString()}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        `the GitHub App installation token could not be renewed early, continuing with the held token until it expires at ${expiresAt?.toISOString()}: ${messageOf(
+          error
+        )}`
       );
       return current;
     }
@@ -389,7 +390,7 @@ export async function privateKeyMaterial(environment: Environment): Promise<stri
     } catch (error) {
       // A file that is not UTF-8 — a DER key, or a `.pem` that is really a keystore — fails the decode
       // rather than the open, and is an ordinary mistake belonging in the one line naming the path.
-      throw new CredentialsError(`the GitHub App private key could not be read from ${configured}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new CredentialsError(`the GitHub App private key could not be read from ${configured}: ${messageOf(error)}`);
     }
     source = `read from ${configured}`;
   } else {

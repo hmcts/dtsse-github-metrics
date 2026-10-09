@@ -1,4 +1,5 @@
 import { getPropertiesVolumeSecrets, MonitoringService } from "@hmcts-cft/cloud-native-platform";
+import { messageOf } from "../platform/error-message.ts";
 import { loadSecrets } from "../platform/secrets.ts";
 import { EXIT_COMPLETE, EXIT_FAILED } from "./exit-status.ts";
 
@@ -24,7 +25,7 @@ async function startPlatform(): Promise<MonitoringService | undefined> {
   try {
     return new MonitoringService(connectionString, "dtsse-github-metrics-collector");
   } catch (error) {
-    console.warn(`could not start Application Insights: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`could not start Application Insights: ${messageOf(error)}`);
     return undefined;
   }
 }

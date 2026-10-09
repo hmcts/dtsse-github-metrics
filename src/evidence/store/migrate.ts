@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
+import { messageOf } from "../../platform/error-message.ts";
 import { resolveDatabaseUrl } from "./database-url.ts";
 
 const LEDGER = `
@@ -47,7 +48,7 @@ async function connectWhenReady(connectionString: string, pause: (ms: number) =>
       if (!starting || Date.now() >= deadline) {
         throw error;
       }
-      console.info(`waiting for the database: ${error instanceof Error ? error.message : String(error)}`);
+      console.info(`waiting for the database: ${messageOf(error)}`);
       await pause(CONNECT_RETRY_MS);
     }
   }
@@ -110,7 +111,7 @@ export async function migrate(
         await client.query("COMMIT");
       } catch (error) {
         await client.query("ROLLBACK");
-        throw new Error(`migration ${migration.name} failed: ${error instanceof Error ? error.message : String(error)}`, {
+        throw new Error(`migration ${migration.name} failed: ${messageOf(error)}`, {
           cause: error
         });
       }

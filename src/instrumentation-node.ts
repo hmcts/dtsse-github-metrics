@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { messageOf } from "./platform/error-message.ts";
 import { loadSecrets } from "./platform/secrets.ts";
 
 type Platform = typeof import("@hmcts-cft/cloud-native-platform");
@@ -40,7 +41,7 @@ function startMonitoring(): void {
   try {
     new (platform().MonitoringService)(connectionString, "dtsse-github-metrics-web");
   } catch (error) {
-    console.warn(`could not start Application Insights: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`could not start Application Insights: ${messageOf(error)}`);
   }
 }
 
@@ -67,6 +68,6 @@ async function startWarming(): Promise<void> {
     const paths = (process.env.METRICS_CONFIG ?? "metrics.yaml").split(",").map((path) => path.trim());
     startReportWarmer(await loadConfiguration(...paths));
   } catch (error) {
-    console.warn(`could not start the report warmer: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`could not start the report warmer: ${messageOf(error)}`);
   }
 }

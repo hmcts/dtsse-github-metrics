@@ -1,3 +1,4 @@
+import { messageOf } from "../../platform/error-message.ts";
 import { parseResponse } from "../behaviour/responses.ts";
 import type { GitHubClient } from "../github/client.ts";
 import { canonical, type PersonFact } from "./graph.ts";
@@ -33,11 +34,6 @@ import { type ScimUser, samlIdentitiesSchema, scimUsersSchema } from "./response
  * ~16 requests: 9 GraphQL pages and 7 SCIM pages, once per `collect-org`. Negligible against the installation's
  * hourly budget, and the reason this is a walk rather than a per-member call.
  */
-
-/** One failure's message, worded as `collect.ts` words its own. */
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** What the SSO pass answers. */
 export interface SsoIdentityWalk {
@@ -117,7 +113,7 @@ async function collectSamlIdentities(client: GitHubClient, organization: string)
       connection = parseSamlIdentities(data);
     } catch (error) {
       console.warn(
-        `Could not read the SSO identities of ${organization} after ${identities.length}; contributor names will be left as they stand: ${reason(error)}`
+        `Could not read the SSO identities of ${organization} after ${identities.length}; contributor names will be left as they stand: ${messageOf(error)}`
       );
       return undefined;
     }
@@ -177,7 +173,7 @@ async function collectScimNames(client: GitHubClient, organization: string): Pro
       page = parseScimUsers(data);
     } catch (error) {
       console.warn(
-        `Could not read the SCIM directory of ${organization} after ${names.size} addresses; contributor names will be left as they stand: ${reason(error)}`
+        `Could not read the SCIM directory of ${organization} after ${names.size} addresses; contributor names will be left as they stand: ${messageOf(error)}`
       );
       return undefined;
     }

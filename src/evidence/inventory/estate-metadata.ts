@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageOf } from "../../platform/error-message.ts";
 import type { GitHubClient } from "../github/client.ts";
 
 /**
@@ -39,11 +40,6 @@ export interface EstateRepository {
  */
 const listedRepositorySchema = z.object({ name: z.string(), default_branch: z.string().nullish() });
 
-/** One failure's message, for a log line that names what went wrong rather than that something did. */
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 /**
  * Every repository the organisation lists, keyed by name.
  *
@@ -77,7 +73,7 @@ export async function readEstateMetadata(client: GitHubClient, organization: str
       }
     }
   } catch (error) {
-    console.warn(`Could not list the repositories of ${organization}, so each one's metadata will be read on its own: ${reason(error)}`);
+    console.warn(`Could not list the repositories of ${organization}, so each one's metadata will be read on its own: ${messageOf(error)}`);
     return undefined;
   }
   return listed;

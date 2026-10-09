@@ -1,3 +1,4 @@
+import { messageOf } from "../../platform/error-message.ts";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { type BodyFailure, classify, failureMessage, graphqlBodyFailure, graphqlRateLimited } from "./classify.ts";
 import type { GitHubCredentials } from "./credentials.ts";
@@ -389,7 +390,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
         // No response, so no status: counted at 0 rather than at a status nothing returned.
         if (attempt < maximumAttempts) {
           countOutcome(NO_RESPONSE, "unreachable", method, endpoint);
-          console.warn(`GitHub request failed, retrying (attempt ${attempt} of ${maximumAttempts}): ${error instanceof Error ? error.message : String(error)}`);
+          console.warn(`GitHub request failed, retrying (attempt ${attempt} of ${maximumAttempts}): ${messageOf(error)}`);
           await pause(2 ** (attempt - 1) * 1000);
           continue;
         }

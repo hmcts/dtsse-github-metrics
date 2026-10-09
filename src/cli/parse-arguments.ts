@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { parseInstant } from "../evidence/window/instant.ts";
+import { messageOf } from "../platform/error-message.ts";
 
 export const COMMANDS = [
   "doctor",
@@ -102,7 +103,7 @@ function instant(value: string | undefined, name: string): Date | undefined {
   try {
     return parseInstant(value);
   } catch (error) {
-    throw new UsageError(`--${name}: ${error instanceof Error ? error.message : String(error)}`);
+    throw new UsageError(`--${name}: ${messageOf(error)}`);
   }
 }
 
@@ -120,7 +121,7 @@ export function parseArguments(argv: readonly string[]): Arguments {
   try {
     ({ values } = parseArgs({ args: [...rest], options: OPTIONS, allowPositionals: false, strict: true }));
   } catch (error) {
-    throw new UsageError(error instanceof Error ? error.message : String(error));
+    throw new UsageError(messageOf(error));
   }
 
   const config = (values.config as string[] | undefined) ?? [];

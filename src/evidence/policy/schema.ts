@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageOf } from "../../platform/error-message.ts";
 import { byCodePoint } from "../org/graph.ts";
 import { parseInstant } from "../window/instant.ts";
 
@@ -49,7 +50,7 @@ const enablementInstant = z.union([z.string(), z.date()]).transform((value, ctx)
   try {
     return value instanceof Date ? parseInstant(value.toISOString()) : parseInstant(value);
   } catch (error) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : String(error) });
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: messageOf(error) });
     return z.NEVER;
   }
 });
@@ -316,7 +317,7 @@ const traceability = z
           } catch (error) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              message: `invalid reference pattern ${JSON.stringify(pattern)}: ${error instanceof Error ? error.message : String(error)}`
+              message: `invalid reference pattern ${JSON.stringify(pattern)}: ${messageOf(error)}`
             });
           }
         }

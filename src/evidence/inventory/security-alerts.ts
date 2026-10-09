@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageOf } from "../../platform/error-message.ts";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import {
   type AlertSeverity,
@@ -110,7 +111,7 @@ export async function openAlerts(
     return { count: { open: records.length, bySeverity: countBySeverity(severities) } };
   } catch (error) {
     return {
-      count: { detail: `GitHub returned invalid ${family} records: ${error instanceof Error ? error.message : String(error)}` },
+      count: { detail: `GitHub returned invalid ${family} records: ${messageOf(error)}` },
       reason: AvailabilityReason.CollectionFailed
     };
   }
@@ -137,7 +138,7 @@ function countRecords(records: readonly unknown[], family: string, severityOf: (
     return { count: { open: records.length, bySeverity: countBySeverity(records.map((record) => severityOf(record))) } };
   } catch (error) {
     return {
-      count: { detail: `GitHub returned invalid ${family} records: ${error instanceof Error ? error.message : String(error)}` },
+      count: { detail: `GitHub returned invalid ${family} records: ${messageOf(error)}` },
       reason: AvailabilityReason.CollectionFailed
     };
   }
@@ -369,9 +370,7 @@ export async function collectOrganisationDependabotAlerts(client: GitHubClient, 
       }
     }
   } catch (error) {
-    console.warn(
-      `Could not read the open Dependabot alerts of ${organization}; every repository's answer will be unmeasured: ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.warn(`Could not read the open Dependabot alerts of ${organization}; every repository's answer will be unmeasured: ${messageOf(error)}`);
     return undefined;
   }
   return byRepository;

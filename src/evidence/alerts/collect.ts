@@ -1,3 +1,4 @@
+import { messageOf } from "../../platform/error-message.ts";
 import { ALERT_FAMILIES, AlertFamily, AlertScanState, alertScanState, type SecurityAlertDetail } from "../domain/alert-detail.ts";
 import type { OpenAlertCount, SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import type { GitHubClient } from "../github/client.ts";
@@ -116,7 +117,7 @@ export async function collectOrganisationAlerts(client: GitHubClient, organizati
       }
     }
   } catch (error) {
-    return { family, unattributable, detail: `${family} could not be read for the organisation: ${error instanceof Error ? error.message : String(error)}` };
+    return { family, unattributable, detail: `${family} could not be read for the organisation: ${messageOf(error)}` };
   }
   return { family, byRepository, unattributable };
 }
