@@ -14,7 +14,12 @@
  * figure and its window are read together. `action` is the section's own control — a filter box, a
  * toggle — and sits at the end of the heading row, which a border divides from the body.
  */
-export function Section({ heading, detail, action, children }: { heading: string; detail?: string; action?: React.ReactNode; children?: React.ReactNode }) {
+export function Section({
+  heading,
+  detail,
+  action,
+  children
+}: Readonly<{ heading: string; detail?: string; action?: React.ReactNode; children?: React.ReactNode }>) {
   return (
     <Panel>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-2 border-b border-slate-800 px-4 py-3">
@@ -42,7 +47,7 @@ export function Section({ heading, detail, action, children }: { heading: string
  * one-line `EmptyState` and the other a full list. Pinning
  * the pair to the top instead would leave a stub panel beside a tall one.
  */
-export function SectionPair({ children }: { children: React.ReactNode }) {
+export function SectionPair({ children }: Readonly<{ children: React.ReactNode }>) {
   return <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">{children}</div>;
 }
 
@@ -55,6 +60,6 @@ export function SectionPair({ children }: { children: React.ReactNode }) {
  * `MetricCard` no longer draws one and four unbounded figures would float on the page background —
  * so the surface is one component and its classes are written once.
  */
-export function Panel({ children }: { children: React.ReactNode }) {
+export function Panel({ children }: Readonly<{ children: React.ReactNode }>) {
   return <section className="bg-slate-900/40 border border-slate-800 rounded-lg">{children}</section>;
 }

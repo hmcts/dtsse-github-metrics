@@ -20,7 +20,7 @@ import { Panel } from "@/components/Section";
  * One `role="status"` sits at the top of each skeleton and says LOADING in words. The bars are
  * `aria-hidden`: a screen reader gets the sentence, not thirty empty boxes.
  */
-export function SkeletonPage({ children }: { children: React.ReactNode }) {
+export function SkeletonPage({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <div className="space-y-8">
       <p role="status" className="sr-only">
@@ -34,7 +34,7 @@ export function SkeletonPage({ children }: { children: React.ReactNode }) {
 }
 
 /** One pulsing bar. `className` carries its size, because a bone is only ever a size. */
-export function SkeletonBar({ className }: { className: string }) {
+export function SkeletonBar({ className }: Readonly<{ className: string }>) {
   return <div className={`animate-pulse rounded bg-slate-800 ${className}`} />;
 }
 
@@ -66,7 +66,7 @@ export function SkeletonHeader() {
 }
 
 /** A row of headline figures: a label bar over a figure bar, on the panel the cards share. */
-export function SkeletonCards({ count }: { count: number }) {
+export function SkeletonCards({ count }: Readonly<{ count: number }>) {
   return (
     <Panel>
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 p-4">
@@ -88,7 +88,7 @@ export function SkeletonCards({ count }: { count: number }) {
  * becomes forty rows still tells the reader a table is coming, and forty bones for a section that
  * turns out to hold two would be a worse guess in the other direction.
  */
-export function SkeletonSection({ rows }: { rows: number }) {
+export function SkeletonSection({ rows }: Readonly<{ rows: number }>) {
   return (
     <Panel>
       <div className="flex items-baseline gap-x-3 border-b border-slate-800 px-4 py-3">
@@ -110,7 +110,7 @@ export function SkeletonSection({ rows }: { rows: number }) {
  * The three list routes differ in the table they hold and in nothing above it, so they share this
  * rather than each keeping a copy of the header.
  */
-export function SkeletonList({ rows }: { rows: number }) {
+export function SkeletonList({ rows }: Readonly<{ rows: number }>) {
   return (
     <SkeletonPage>
       <SkeletonHeader />

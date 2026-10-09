@@ -34,7 +34,7 @@ import { withWeeks } from "@/lib/weeks";
  * pattern that change exists to remove. The gap does the separating and the hover tint says the whole
  * card is the target, which the border was carrying before.
  */
-export function TeamsList({ rows, weeks }: { rows: readonly TeamRow[]; weeks: number }) {
+export function TeamsList({ rows, weeks }: Readonly<{ rows: readonly TeamRow[]; weeks: number }>) {
   // The term the page's filter box writes, read here as `RepositoriesTable` reads its own: over rows already held,
   // so a keystroke costs no request.
   const term = useSearchParams().get(TEAM_TERM_PARAMETER) ?? "";

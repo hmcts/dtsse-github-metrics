@@ -24,13 +24,13 @@ export function MetricsGrid({
   summaries,
   empty,
   assessment
-}: {
+}: Readonly<{
   summaries: readonly BehaviourMetricSummary[];
   /** What no metrics means here — no eligible merges, or a repository this window cannot report. */
   empty: string;
   /** The readiness assessment these metrics were graded by, where one graded them. */
   assessment?: ReadinessAssessment;
-}) {
+}>) {
   if (summaries.length === 0) {
     return <EmptyState message={empty} />;
   }

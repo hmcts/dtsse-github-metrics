@@ -30,7 +30,7 @@ import { withWeeks } from "@/lib/weeks";
  * line, so nothing moves; what changes is that it is no longer a link inside a block of text, which is the case
  * WCAG 1.4.1 (axe's `link-in-text-block`) would otherwise want an underline for.
  */
-export function ContributorName({ person, weeks }: { person: Contributor; weeks: number }) {
+export function ContributorName({ person, weeks }: Readonly<{ person: Contributor; weeks: number }>) {
   const label = contributorLabel(person);
   return (
     <>

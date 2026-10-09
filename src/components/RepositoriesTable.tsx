@@ -299,7 +299,7 @@ export function RepositoriesTable({
   action,
   wheels = true,
   visibilities: openingVisibilities = DEFAULT_VISIBILITIES
-}: {
+}: Readonly<{
   rows: readonly RepositoryRow[];
   /**
    * The span this table's drill-through links carry, or nothing from a page that states no window.
@@ -335,7 +335,7 @@ export function RepositoriesTable({
    * private ones would leave the list short of the count on the team's header.
    */
   visibilities?: readonly Visibility[];
-}) {
+}>) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const [column, setColumn] = useState<Column | null>(null);
@@ -600,7 +600,7 @@ export function RepositoriesTable({
  * `productionHint` returns nothing for a row whose answer no source gave, which leaves the attribute off rather
  * than hovering an empty bubble.
  */
-function Answer({ value, source }: { value?: boolean; source?: ProductionSource }) {
+function Answer({ value, source }: Readonly<{ value?: boolean; source?: ProductionSource }>) {
   return (
     <td className="py-2 pr-3 text-center text-slate-300" title={productionHint(source)}>
       {answerWord(value)}
@@ -619,7 +619,7 @@ function Answer({ value, source }: { value?: boolean; source?: ProductionSource 
  * The criterion underneath is untouched — `judgeAssurance` still marks a repository with open alerts as unmet, and
  * the Assurance grade still counts it against them. This is a presentation of that judgement, not a second one.
  */
-function Finding({ result }: { result?: { outcome: AssuranceOutcome; detail: string } }) {
+function Finding({ result }: Readonly<{ result?: { outcome: AssuranceOutcome; detail: string } }>) {
   const found = foundOutcome(result?.outcome);
   return (
     <td className="py-2 pr-3 text-center" title={result?.detail}>
@@ -632,7 +632,7 @@ function Finding({ result }: { result?: { outcome: AssuranceOutcome; detail: str
   );
 }
 
-function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: string } }) {
+function Outcome({ result }: Readonly<{ result?: { outcome: AssuranceOutcome; detail: string } }>) {
   const outcome = result?.outcome;
   return (
     <td className="py-2 pr-3 text-center" title={result?.detail}>
@@ -665,7 +665,7 @@ function Outcome({ result }: { result?: { outcome: AssuranceOutcome; detail: str
  * A tone here would publish a threshold nobody agreed on — and a warm one over an unscanned dash would blame a team
  * for a pipeline that does not publish.
  */
-function Cve({ row, column }: { row: RepositoryRow; column: CveColumn }) {
+function Cve({ row, column }: Readonly<{ row: RepositoryRow; column: CveColumn }>) {
   return (
     <td className="py-2 pr-3 text-right tabular-nums text-slate-300" title={cveDetail(row)}>
       {quantity(cveCount(row, column))}
@@ -688,7 +688,7 @@ function Cve({ row, column }: { row: RepositoryRow; column: CveColumn }) {
  * The word is the information and the colour supports it, as everywhere else on this page: `answerWord` is the same
  * three words the criteria, the production attribute and the export all print.
  */
-function Signal({ value }: { value?: boolean }) {
+function Signal({ value }: Readonly<{ value?: boolean }>) {
   return (
     <td className="py-2 pr-3 text-center">
       <span
@@ -706,7 +706,7 @@ function Signal({ value }: { value?: boolean }) {
  * Not `RAGLabel`, which reads readiness's vocabulary — "Ready", "Blocked" — about a different question. Same
  * shape and same palette so the page looks like one thing; different words so it says the true thing.
  */
-function AssuranceLabel({ grade }: { grade?: AssuranceGrade }) {
+function AssuranceLabel({ grade }: Readonly<{ grade?: AssuranceGrade }>) {
   const resolved = grade ?? "unknown";
   return (
     <span className={clsx("inline-block rounded px-1.5 py-0.5 text-xs whitespace-nowrap", RAG_BADGE[ASSURANCE_GRADE_STATE[resolved]])}>

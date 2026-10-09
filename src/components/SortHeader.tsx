@@ -40,7 +40,7 @@ export function SortHeader({
   align = "left",
   first,
   hint
-}: {
+}: Readonly<{
   label: string;
   active: boolean;
   direction: Direction;
@@ -57,7 +57,7 @@ export function SortHeader({
    * keeps them separately reachable: Tab to sort, Tab again to read what you are sorting.
    */
   hint?: string;
-}) {
+}>) {
   const Chevron = direction === "ascending" ? ChevronUp : ChevronDown;
   return (
     // NAMED EXPLICITLY, so the column announces "Team" and not "Team" followed by the whole hint. `InfoTooltip`

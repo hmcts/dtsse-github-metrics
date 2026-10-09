@@ -58,7 +58,7 @@ export function SummaryPieChart({
   tooltip,
   parameter,
   showsAllVisibilities = false
-}: {
+}: Readonly<{
   title: string;
   /** Every slice, including the ones counted at zero. */
   data: readonly PieSlice[];
@@ -75,7 +75,7 @@ export function SummaryPieChart({
    * repositories too, and show fewer rows than the slice it was filtered by. See `allVisibilitiesTarget`.
    */
   showsAllVisibilities?: boolean;
-}) {
+}>) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const total = totalValue(data);

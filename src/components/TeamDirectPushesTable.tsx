@@ -37,7 +37,7 @@ const COLUMNS: readonly Column[] = [
 
 const DEFAULT_COLUMN = COLUMNS[0] as Column;
 
-export function TeamDirectPushesTable({ rows, weeks }: { rows: readonly TeamDirectPushRow[]; weeks: number }) {
+export function TeamDirectPushesTable({ rows, weeks }: Readonly<{ rows: readonly TeamDirectPushRow[]; weeks: number }>) {
   const [column, setColumn] = useState<Column | null>(null);
   const [direction, setDirection] = useState<Direction>("descending");
 

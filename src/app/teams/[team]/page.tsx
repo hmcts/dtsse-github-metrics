@@ -43,7 +43,10 @@ import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
  */
 export const dynamic = "force-dynamic";
 
-export default async function TeamPage({ params, searchParams }: { params: Promise<{ team: string }>; searchParams?: Promise<{ weeks?: SearchValue }> }) {
+export default async function TeamPage({
+  params,
+  searchParams
+}: Readonly<{ params: Promise<{ team: string }>; searchParams?: Promise<{ weeks?: SearchValue }> }>) {
   const windows = await getWindows();
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const detail = await readTeam((await params).team, weeks);

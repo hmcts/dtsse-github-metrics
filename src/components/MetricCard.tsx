@@ -28,14 +28,14 @@ export function MetricCard({
   value,
   detail,
   tone
-}: {
+}: Readonly<{
   label: string;
   value: string | number;
   /** The line under the figure: what it was measured over, or when it was read. */
   detail?: string;
   /** How the figure reads, from `lib/tone.ts`; absent means it carries no verdict. */
   tone?: Tone;
-}) {
+}>) {
   return (
     <div>
       <p className="text-xs text-slate-400 uppercase tracking-wide mb-1">{label}</p>

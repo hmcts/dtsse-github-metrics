@@ -50,7 +50,7 @@ const COLUMNS: readonly Column[] = [
 
 const DEFAULT_COLUMN = COLUMNS[0] as Column;
 
-export function TeamMergesTable({ rows, weeks }: { rows: readonly TeamMergeRow[]; weeks: number }) {
+export function TeamMergesTable({ rows, weeks }: Readonly<{ rows: readonly TeamMergeRow[]; weeks: number }>) {
   const [column, setColumn] = useState<Column | null>(null);
   const [direction, setDirection] = useState<Direction>("descending");
 
@@ -121,7 +121,7 @@ export function TeamMergesTable({ rows, weeks }: { rows: readonly TeamMergeRow[]
  * THREE-VALUED, because the fact cache is: a merge whose stored payload carries no reviews was not measured, which
  * is a different answer from one that went unreviewed. The dash keeps them apart where a `No` would accuse.
  */
-function Judgement({ value }: { value?: boolean }) {
+function Judgement({ value }: Readonly<{ value?: boolean }>) {
   return (
     <td className="py-2 pr-3 text-center">
       <span className={value === undefined ? "text-slate-400" : value ? "text-rag-green" : "text-rag-amber"}>

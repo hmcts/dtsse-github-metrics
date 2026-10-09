@@ -23,7 +23,7 @@ import { type Tone, valueClass } from "@/lib/tone";
  * digits that line up down the right edge are worth the fixed width, and `not disclosed` in a
  * tabular face reads as a typo.
  */
-export function DefinitionList({ values }: { values: readonly DefinitionRow[] }) {
+export function DefinitionList({ values }: Readonly<{ values: readonly DefinitionRow[] }>) {
   // Nothing at all rather than an empty bordered list: a block with no rows is one that was not
   // collected, and the page says so with an `EmptyState` carrying the reason.
   if (values.length === 0) {

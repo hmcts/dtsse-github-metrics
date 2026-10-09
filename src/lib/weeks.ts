@@ -30,7 +30,7 @@ export const WEEKS_COOKIE_MAXIMUM_AGE = 365 * 24 * 3600;
  * the same reason, and a page showing 26 weeks of figures under a `?weeks=30` would be read as
  * covering the thirty.
  */
-export function parseWeeks(raw: SearchValue, options: readonly number[]): number | null {
+export function parseWeeks(raw: SearchValue | undefined, options: readonly number[]): number | null {
   const only = single(raw);
   if (only === undefined || only.trim() === "") {
     return null;
@@ -46,9 +46,9 @@ export function parseWeeks(raw: SearchValue, options: readonly number[]): number
  * `['1', '4']`. The first is taken rather than the request refused: a page is a reading of the
  * evidence and should render at some span, not answer a stray parameter with a server error.
  */
-export type SearchValue = string | string[] | null | undefined;
+export type SearchValue = string | string[] | null;
 
-function single(raw: SearchValue): string | undefined {
+function single(raw: SearchValue | undefined): string | undefined {
   if (raw === null || raw === undefined) {
     return undefined;
   }
@@ -56,7 +56,7 @@ function single(raw: SearchValue): string | undefined {
 }
 
 /** Resolve the span a page renders at: URL, then cookie, then the service's default. */
-export function resolveWeeks(parameter: SearchValue, cookie: string | null | undefined, options: readonly number[], fallback: number): number {
+export function resolveWeeks(parameter: SearchValue | undefined, cookie: string | null | undefined, options: readonly number[], fallback: number): number {
   return parseWeeks(parameter, options) ?? parseWeeks(cookie, options) ?? fallback;
 }
 
@@ -93,7 +93,7 @@ export const LANDING_PATH = "/repositories";
  * It is put back through `URLSearchParams`, so a value somebody typed reaches the redirect encoded
  * rather than as whatever they typed.
  */
-export function landingTarget(parameter: SearchValue): string {
+export function landingTarget(parameter: SearchValue | undefined): string {
   const only = single(parameter);
   if (only === undefined || only.trim() === "") {
     return LANDING_PATH;
@@ -117,7 +117,7 @@ export function landingTarget(parameter: SearchValue): string {
  * a cookie that lives a year. A number is returned rather than the raw text so the cookie is written
  * through `weeksCookie` like the selector's, and `04` reaches it as the `4` `parseWeeks` can match.
  */
-export function rememberableWeeks(raw: SearchValue): number | null {
+export function rememberableWeeks(raw: SearchValue | undefined): number | null {
   const only = single(raw);
   if (only === undefined) {
     return null;

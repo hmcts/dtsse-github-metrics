@@ -38,12 +38,12 @@ export function RepositoriesExport({
   rows,
   teamContributors,
   window: reported
-}: {
+}: Readonly<{
   rows: readonly RepositoryRow[];
   teamContributors: Readonly<Record<string, Contributor[]>>;
   /** The span the page states, which the file is named after so two exports are distinguishable. */
   window: string;
-}) {
+}>) {
   const searchParameters = useSearchParams();
   const shown = orderRepositories(
     filterRepositories(

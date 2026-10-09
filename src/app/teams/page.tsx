@@ -28,7 +28,7 @@ import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
  */
 export const dynamic = "force-dynamic";
 
-export default async function TeamsPage({ searchParams }: { searchParams?: Promise<{ weeks?: SearchValue }> }) {
+export default async function TeamsPage({ searchParams }: Readonly<{ searchParams?: Promise<{ weeks?: SearchValue }> }>) {
   const windows = await getWindows();
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const [overview, teams] = await Promise.all([getOverview(weeks), getTeams(weeks)]);

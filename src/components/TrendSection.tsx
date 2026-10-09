@@ -26,7 +26,7 @@ import type { RepositoryTrend } from "@/lib/types";
  * close. Drawing nothing made them indistinguishable from each other and from a repository whose
  * series was simply never built, which is what this section did on every page until VIBE-592.
  */
-export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: number }) {
+export function TrendSection({ series, cut }: Readonly<{ series: RepositoryTrend; cut: number }>) {
   if (!hasPeriods(series)) {
     return (
       <Section heading="Trend">
@@ -89,7 +89,7 @@ export function TrendSection({ series, cut }: { series: RepositoryTrend; cut: nu
   );
 }
 
-function MetricSeriesCard({ chart }: { chart: MetricChart }) {
+function MetricSeriesCard({ chart }: Readonly<{ chart: MetricChart }>) {
   return (
     <ChartCard title={chart.label} detail={`${chart.unit} · ${chart.basis}`}>
       <TrendChart data={chart.rows} unit={chart.axis} series={[{ key: "value", label: chart.label, color: ROUTE_HEX.pullRequests }]} />
@@ -104,7 +104,7 @@ function MetricSeriesCard({ chart }: { chart: MetricChart }) {
  * panel was one of the nested boxes this page was rebuilt to lose. A chart is bounded by its own
  * axes, so the grid gap is enough to keep two of them apart.
  */
-function ChartCard({ title, detail, children }: { title: string; detail: string; children: React.ReactNode }) {
+function ChartCard({ title, detail, children }: Readonly<{ title: string; detail: string; children: React.ReactNode }>) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-baseline gap-x-2">

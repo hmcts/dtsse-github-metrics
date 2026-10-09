@@ -61,7 +61,7 @@ const COLUMNS: readonly Column[] = [CONTRIBUTOR, { key: "repositories", label: "
  * `labelled` says whether the readiness policy graded anything at all in this window, which one
  * person's row cannot say on its own — see `Readiness`.
  */
-export function ActorsTable({ rows, weeks, labelled }: { rows: readonly ActorRow[]; weeks: number; labelled: boolean }) {
+export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly ActorRow[]; weeks: number; labelled: boolean }>) {
   const [column, setColumn] = useState<Column>(READINESS);
   const [direction, setDirection] = useState<Direction>("ascending");
 
@@ -144,7 +144,7 @@ export function ActorsTable({ rows, weeks, labelled }: { rows: readonly ActorRow
  * A service older than 2026-09-02 sends no `labels` key at all, and reads the same way as an empty
  * one: unassessable rather than the page failing to render.
  */
-function Readiness({ labels, labelled }: { labels?: readonly ReadinessLabel[]; labelled: boolean }) {
+function Readiness({ labels, labelled }: Readonly<{ labels?: readonly ReadinessLabel[]; labelled: boolean }>) {
   if (!labelled) {
     return <RAGLabel />;
   }

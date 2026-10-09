@@ -24,12 +24,12 @@ export function FilterSearchBox({
   parameter,
   placeholder = "Filter…",
   className
-}: {
+}: Readonly<{
   /** The query-string key this box reads and writes, e.g. `repository`. */
   parameter: string;
   placeholder?: string;
   className?: string;
-}) {
+}>) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
   const [value, setValue] = useState<string>(() => searchParameters.get(parameter) ?? "");

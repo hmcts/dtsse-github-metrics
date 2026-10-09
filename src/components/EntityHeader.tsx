@@ -31,7 +31,7 @@ export function EntityHeader({
   context,
   action,
   href
-}: {
+}: Readonly<{
   kind: EntityKind;
   name: string;
   /**
@@ -65,7 +65,7 @@ export function EntityHeader({
    * through the organisation, and neither is what a reader of this page came for.
    */
   href?: string;
-}) {
+}>) {
   return (
     <header className={clsx("bg-slate-900 border border-slate-800 rounded-lg p-5 space-y-2", label === undefined ? null : borderClass(label))}>
       <div className="flex flex-wrap items-center gap-3">

@@ -24,7 +24,7 @@ import { weeksCookie } from "@/lib/weeks";
  * cold span that render is the slowest thing on the page. The two halves are the whole answer: which
  * button was pressed, and whether the page behind it has arrived.
  */
-export function NavWeekSelector({ options, active }: { options: readonly number[]; active: number }) {
+export function NavWeekSelector({ options, active }: Readonly<{ options: readonly number[]; active: number }>) {
   const pathname = usePathname();
   const router = useRouter();
   // Tracks the click so the button highlights immediately, without waiting for the server render the
@@ -83,12 +83,12 @@ export function WeekSpanButtons({
   current,
   pending,
   onChoose
-}: {
+}: Readonly<{
   options: readonly number[];
   current: number;
   pending: boolean;
   onChoose: (weeks: number) => void;
-}) {
+}>) {
   return (
     <div
       className={clsx("flex items-center gap-1.5 transition-opacity", pending && "opacity-50")}

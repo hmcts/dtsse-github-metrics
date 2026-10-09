@@ -19,7 +19,7 @@ import type { ReadinessAssessment } from "@/lib/types";
  * without judging. That last group is why the flag exists — a `clear` section where a rule nobody
  * grades looks exactly like a check that passed reads as approval the policy never gave.
  */
-export function AssessmentSection({ assessment }: { assessment: ReadinessAssessment }) {
+export function AssessmentSection({ assessment }: Readonly<{ assessment: ReadinessAssessment }>) {
   return (
     <div className="space-y-6">
       {conditionGroups(assessment).map((group) => (

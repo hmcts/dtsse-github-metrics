@@ -17,7 +17,7 @@ import type { TeamActorRow } from "@/lib/types";
  * team's repositories has a different count on that team's page and a third on their own, and each of
  * the three answers the question its page asks rather than being one person-wide total.
  */
-export function TeamActorsTable({ rows, weeks }: { rows: readonly TeamActorRow[]; weeks: number }) {
+export function TeamActorsTable({ rows, weeks }: Readonly<{ rows: readonly TeamActorRow[]; weeks: number }>) {
   return (
     // No border of its own: the table sits inside a `Section` panel that already draws one.
     <div className="overflow-x-auto">

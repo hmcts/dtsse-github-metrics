@@ -14,7 +14,7 @@ import { PRODUCTION_BADGE, PRODUCTION_LABEL } from "@/lib/production";
  * is kept in the field itself and spent by the filter and its count, not here — which is why this
  * guard is a single `!== true` rather than a pair of tests that would imply they differ on the page.
  */
-export function ProductionBadge({ production }: { production?: boolean }) {
+export function ProductionBadge({ production }: Readonly<{ production?: boolean }>) {
   if (production !== true) {
     return null;
   }
