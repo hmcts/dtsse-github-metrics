@@ -17,7 +17,13 @@
  */
 
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+/** The URL the table reads its contributor filter from. Empty unless a case sets a term. */
+let parameters = new URLSearchParams();
+
+vi.mock("next/navigation", () => ({ useSearchParams: () => parameters }));
+
 import { ActorsTable } from "@/components/ActorsTable";
 import type { ActorRow } from "@/lib/types";
 
@@ -52,7 +58,10 @@ function mount(rows: readonly ActorRow[] = ROWS, labelled = true) {
   return render(<ActorsTable rows={rows} weeks={8} labelled={labelled} />);
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  parameters = new URLSearchParams();
+});
 
 describe("ActorsTable sorting", () => {
   it("opens on readiness ascending, and says so on the column", () => {
@@ -204,5 +213,29 @@ describe("ActorsTable contributor column", () => {
     ]);
 
     expect(sortBy("Contributor")).toEqual(["zack", "Zoe Zealaaron"]);
+  });
+});
+
+describe("ActorsTable filter", () => {
+  const NAMED: ActorRow[] = [
+    { login: "tamarah", name: "Tam Arah", repositories: 1, labels: ["green"] },
+    { login: "zed", repositories: 1, labels: ["green"] }
+  ];
+
+  it("narrows to the people whose login or name holds the term", () => {
+    parameters = new URLSearchParams("contributor=arah");
+    mount(NAMED);
+
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    expect(screen.getByText("Tam Arah")).toBeTruthy();
+    expect(screen.queryByText("zed")).toBeNull();
+  });
+
+  it("says so when the filter matches nobody, rather than drawing an empty table", () => {
+    parameters = new URLSearchParams("contributor=nobody-here");
+    mount(NAMED);
+
+    expect(screen.queryByRole("table")).toBeNull();
+    expect(screen.getByText("No contributor matches this filter.")).toBeTruthy();
   });
 });

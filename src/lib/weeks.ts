@@ -67,7 +67,7 @@ export function resolveWeeks(parameter: SearchValue, cookie: string | null | und
  * the remembered preference, exactly as a navigation-bar link does.
  *
  * `/repositories` DOES CARRY ITS PINNED SPAN, from 2026-10-08. It is read at the default span whatever the reader
- * chose, and its AI readiness column showed one label while the repository page opened from it showed another at
+ * chose, and its Readiness column showed one label while the repository page opened from it showed another at
  * the reader's span. Carrying the span makes the two agree. The cost is the one `proxy` documents: following any
  * link that names a span is the same as pressing that span's button, so the remembered preference becomes the
  * default too.
@@ -132,7 +132,7 @@ export function weeksCookie(weeks: number): string {
 }
 
 /**
- * A heading for a figure that depends on the window, with the span it was counted at, e.g. "AI readiness (4 weeks)".
+ * A heading for a figure that depends on the window, with the span it was counted at, e.g. "Readiness (4 weeks)".
  *
  * For the pinned `/repositories` page above all: its readiness figures answer for the default span while a
  * repository page answers for the reader's, and naming the span is what stops the two reading as a contradiction.

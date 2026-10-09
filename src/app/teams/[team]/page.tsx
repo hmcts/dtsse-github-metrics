@@ -12,6 +12,7 @@ import { TeamMembersTable } from "@/components/TeamMembersTable";
 import { TeamMergesTable } from "@/components/TeamMergesTable";
 import { TeamPractice, TeamThroughput } from "@/components/TeamPractice";
 import { getTeam, getWindows, isNotFound } from "@/lib/api";
+import { VISIBILITIES } from "@/lib/rows";
 import { contributors, holdings, members, unreported } from "@/lib/team";
 import type { TeamDetail } from "@/lib/types";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
@@ -90,7 +91,7 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
             detail="Add repositories to this team in the configuration the service was started with."
           />
         ) : (
-          <RepositoriesTable rows={detail.repositories} weeks={weeks} wheels={false} />
+          <RepositoriesTable rows={detail.repositories} weeks={weeks} wheels={false} visibilities={VISIBILITIES} />
         )}
       </Section>
 

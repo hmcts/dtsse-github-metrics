@@ -1,9 +1,12 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { ContributorName } from "@/components/ContributorName";
+import { EmptyState } from "@/components/EmptyState";
 import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
+import { CONTRIBUTOR_TERM_PARAMETER, matchesAny } from "@/lib/filter";
 import { contributorLabel } from "@/lib/person";
 import { combinationKey } from "@/lib/rag";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
@@ -62,11 +65,22 @@ export function ActorsTable({ rows, weeks, labelled }: { rows: readonly ActorRow
   const [column, setColumn] = useState<Column>(READINESS);
   const [direction, setDirection] = useState<Direction>("ascending");
 
-  const ordered = sorted(rows, column.read, direction);
+  // The term the page's filter box writes, matched against the login and the profile name both.
+  const term = useSearchParams().get(CONTRIBUTOR_TERM_PARAMETER) ?? "";
+  const ordered = sorted(
+    rows.filter((row) => matchesAny([row.login, row.name], term)),
+    column.read,
+    direction
+  );
 
   function sort(next: Column) {
     setDirection(nextDirection(column, next, direction));
     setColumn(next);
+  }
+
+  // Only a filter hiding everybody earns the sentence; nobody at all is the page's own empty state.
+  if (ordered.length === 0 && rows.length > 0) {
+    return <EmptyState message="No contributor matches this filter." detail="Clear the filter box to see everybody." />;
   }
 
   return (

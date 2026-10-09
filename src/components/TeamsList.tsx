@@ -1,5 +1,10 @@
+"use client";
+
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { EmptyState } from "@/components/EmptyState";
 import { distributionSlices } from "@/lib/chart";
+import { matchesAny, TEAM_TERM_PARAMETER } from "@/lib/filter";
 import { count } from "@/lib/format";
 import type { TeamRow } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
@@ -30,9 +35,19 @@ import { withWeeks } from "@/lib/weeks";
  * card is the target, which the border was carrying before.
  */
 export function TeamsList({ rows, weeks }: { rows: readonly TeamRow[]; weeks: number }) {
+  // The term the page's filter box writes, read here as `RepositoriesTable` reads its own: over rows already held,
+  // so a keystroke costs no request.
+  const term = useSearchParams().get(TEAM_TERM_PARAMETER) ?? "";
+  const shown = rows.filter((row) => matchesAny([row.team, row.display_name], term));
+
+  // Only a filter hiding every team earns the sentence; no teams at all is the page's own empty state.
+  if (shown.length === 0 && rows.length > 0) {
+    return <EmptyState message="No team matches this filter." detail="Clear the filter box to see every team." />;
+  }
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-      {rows.map((row) => (
+      {shown.map((row) => (
         <div key={row.team} className="rounded-lg p-3 space-y-3 hover:bg-slate-800/30 transition-colors">
           <Link href={withWeeks(`/teams/${encodeURIComponent(row.team)}`, weeks)} className="font-mono text-sm text-indigo-400 hover:text-indigo-300 break-all">
             {row.team}

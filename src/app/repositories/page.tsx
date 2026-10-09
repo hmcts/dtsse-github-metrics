@@ -59,8 +59,8 @@ export default async function RepositoriesPage() {
   return (
     <div className="space-y-8">
       {/* No control in the header: this page is pinned to the default span, so it offers no way to change one. The
-          figures that depend on the span name it instead — the two windowed cards, the AI readiness wheel and
-          column — and every repository link carries it, so a repository opens at the span the list was read at.
+          figures that depend on the span name it instead — the two windowed cards and the Readiness wheel —
+          and every repository link carries it, so a repository opens at the span the list was read at.
           What the header does state is provenance: the collection the figures are anchored at and when the report
           was built. */}
       <OrganisationHeader overview={overview} snapshot unavailable={uncollected} />
@@ -92,7 +92,7 @@ export default async function RepositoriesPage() {
         </div>
       </Panel>
 
-      {/* EIGHT WHEELS IN TWO GROUPS, ONE PER COHORT. AI readiness, Enforces review, Enforces CI and Test coverage
+      {/* EIGHT WHEELS IN TWO GROUPS, ONE PER COHORT. Readiness, Enforces review, Enforces CI and Test coverage
           count every unarchived repository listed; Code owner, Maintained, Hygiene and Vulnerabilities count the
           public estate alone. Each is a CONTROL as well as a chart — a wedge writes its slice to the query and the
           table below narrows — which is the half the previous charts took with them when they went, leaving the

@@ -302,19 +302,25 @@ export function allVisibilitiesTarget(pathname: string, search: string, paramete
 }
 
 /**
- * Which visibilities the reader has selected, or the default where they have selected nothing.
+ * Which visibilities the reader has selected, each one the URL does not mention keeping its default.
+ *
+ * PER VISIBILITY AND NOT ALL OR NOTHING, from 2026-10-08. A toggle writes only its own parameter, so reading every
+ * unmentioned visibility as off made turning internal ON hide public, and on a page whose default is all three it
+ * would make turning any one OFF hide the lot. The default is the page's: public on `/repositories`, all three on a
+ * team's page.
  *
  * A URL naming EVERY visibility as off returns an empty set, which filters the table to nothing. That is the
  * honest answer rather than a silent fallback to the default: the reader turned all three off, and showing them
  * the whole estate instead would be ignoring three clicks. `filterRepositories` says the same for a dimension
  * nothing satisfies.
  */
-export function parseVisibilities(read: (parameter: string) => string | null): Set<Visibility> {
-  const stated = VISIBILITIES.filter((visibility) => read(visibilityParameter(visibility)) !== null);
-  if (stated.length === 0) {
-    return new Set(DEFAULT_VISIBILITIES);
-  }
-  return new Set(stated.filter((visibility) => read(visibilityParameter(visibility)) === VISIBILITY_ON));
+export function parseVisibilities(read: (parameter: string) => string | null, defaults: readonly Visibility[] = DEFAULT_VISIBILITIES): Set<Visibility> {
+  return new Set(
+    VISIBILITIES.filter((visibility) => {
+      const stated = read(visibilityParameter(visibility));
+      return stated === null ? defaults.includes(visibility) : stated === VISIBILITY_ON;
+    })
+  );
 }
 
 /**
@@ -462,7 +468,7 @@ const NOT_STATED = "No state stated";
 /**
  * The eight questions this page answers, drawn as wheels in two groups by the cohort each is counted over.
  *
- * FOUR OVER EVERY REPOSITORY, FOUR OVER THE PUBLIC ESTATE. AI readiness, Enforces review, Enforces CI and Test
+ * FOUR OVER EVERY REPOSITORY, FOUR OVER THE PUBLIC ESTATE. Readiness, Enforces review, Enforces CI and Test
  * coverage were brought back from the previous version on 2026-10-08, and they count every unarchived repository
  * listed: none of them reads a control the GitHub Advanced Security licence switches off, so dropping the internal
  * and private repositories would only shrink the sample. Code owner, Maintained, Hygiene and Vulnerabilities stay
@@ -487,7 +493,7 @@ const NOT_STATED = "No state stated";
 export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
   {
     parameter: LABEL_PARAMETER,
-    title: "AI readiness",
+    title: "Readiness",
     hint: "How many repositories carry each readiness label. Repositories the span could not be reported for carry no label and are counted as not assessed instead.",
     cohort: "all",
     windowed: true,

@@ -530,7 +530,7 @@ describe("the wheels' cohorts", () => {
   it("should count the four brought-back wheels over every repository, in the order the group draws them", () => {
     const everywhere = ESTATE_DIMENSIONS.filter((dimension) => dimension.cohort === "all").map((dimension) => dimension.title);
 
-    expect(everywhere).toEqual(["AI readiness", "Enforces review", "Enforces CI", "Test coverage"]);
+    expect(everywhere).toEqual(["Readiness", "Enforces review", "Enforces CI", "Test coverage"]);
   });
 
   it("should count every row on an all-cohort wheel, the internal, private and unread ones included", () => {

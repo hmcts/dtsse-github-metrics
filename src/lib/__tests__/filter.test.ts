@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterTarget, matches } from "@/lib/filter";
+import { filterTarget, matches, matchesAny } from "@/lib/filter";
 import { allVisibilitiesTarget } from "@/lib/rows";
 
 describe("filterTarget", () => {
@@ -67,5 +67,21 @@ describe("allVisibilitiesTarget", () => {
     expect(allVisibilitiesTarget("/repositories", "?public=true&internal=false&private=true&review=multiple", "review", "")).toBe(
       "/repositories?public=true&internal=false&private=true"
     );
+  });
+});
+
+describe("matchesAny", () => {
+  it("matches a term held by any of the names, ignoring case", () => {
+    expect(matchesAny(["civil-admins", "Civil Admins"], "civil ad")).toBe(true);
+    expect(matchesAny(["tamarah", "Tam Arah"], "TAM")).toBe(true);
+  });
+
+  it("skips an absent name rather than matching it as empty", () => {
+    expect(matchesAny(["tamarah", undefined], "zed")).toBe(false);
+  });
+
+  it("holds every row for an empty or blank term", () => {
+    expect(matchesAny(["anything"], "")).toBe(true);
+    expect(matchesAny([undefined], "  ")).toBe(true);
   });
 });

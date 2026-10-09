@@ -1,10 +1,12 @@
 import { cookies } from "next/headers";
 import { ActorsTable } from "@/components/ActorsTable";
 import { EmptyState } from "@/components/EmptyState";
+import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
 import { Section } from "@/components/Section";
 import { getActors, getOverview, getWindows } from "@/lib/api";
+import { CONTRIBUTOR_TERM_PARAMETER } from "@/lib/filter";
 import { anyLabelled } from "@/lib/rag";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
@@ -34,7 +36,11 @@ export default async function ContributorsPage({ searchParams }: { searchParams?
     <div className="space-y-8">
       <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
-      <Section heading="Contributors" detail="by their repositories' labels">
+      <Section
+        heading="Contributors"
+        detail="by their repositories' labels"
+        action={<FilterSearchBox parameter={CONTRIBUTOR_TERM_PARAMETER} placeholder="Filter by login or name…" />}
+      >
         {actors.length === 0 ? (
           <EmptyState
             message="Nobody contributed to a reported repository at this span."

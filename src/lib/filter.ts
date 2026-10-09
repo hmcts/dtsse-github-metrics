@@ -28,3 +28,20 @@ export function filterTarget(pathname: string, search: string, parameter: string
 export function matches(text: string, term: string): boolean {
   return text.toLocaleLowerCase().includes(term.trim().toLocaleLowerCase());
 }
+
+/** The parameter the `/teams` filter box writes, which `TeamsList` reads back. */
+export const TEAM_TERM_PARAMETER = "team";
+
+/** The parameter the `/contributors` filter box writes, which `ActorsTable` reads back. */
+export const CONTRIBUTOR_TERM_PARAMETER = "contributor";
+
+/**
+ * Whether any of a row's names holds the term, an empty term holding everything.
+ *
+ * Every name a reader might know a team or a person by — a team's slug and display name, a contributor's login and
+ * profile name — so a reader who knows "Civil" finds `civil-admins`, and one who knows a person's name finds their
+ * login. An absent name is skipped rather than matched as an empty string.
+ */
+export function matchesAny(names: readonly (string | undefined)[], term: string): boolean {
+  return term.trim() === "" || names.some((name) => name !== undefined && matches(name, term));
+}
