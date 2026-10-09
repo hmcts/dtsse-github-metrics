@@ -17,7 +17,11 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// `ActorsTable` and `TeamsList` read their filter off the URL; no term means every row, which these cases assert.
+vi.mock("next/navigation", () => ({ useSearchParams: () => new URLSearchParams() }));
+
 import LoadingContributor from "@/app/contributors/[login]/loading";
 import LoadingContributors from "@/app/contributors/loading";
 import LoadingRepository from "@/app/repositories/[repository]/loading";

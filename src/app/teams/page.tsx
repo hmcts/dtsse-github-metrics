@@ -1,10 +1,12 @@
 import { cookies } from "next/headers";
 import { EmptyState } from "@/components/EmptyState";
+import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
 import { Section } from "@/components/Section";
 import { TeamsList } from "@/components/TeamsList";
 import { getOverview, getTeams, getWindows } from "@/lib/api";
+import { TEAM_TERM_PARAMETER } from "@/lib/filter";
 import { span } from "@/lib/format";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
@@ -35,7 +37,11 @@ export default async function TeamsPage({ searchParams }: { searchParams?: Promi
     <div className="space-y-8">
       <OrganisationHeader overview={overview} action={<NavWeekSelector options={windows.options} active={weeks} />} />
 
-      <Section heading="Teams" detail={`${span(overview.starts_at, overview.ends_at)}, most repositories first`}>
+      <Section
+        heading="Teams"
+        detail={`${span(overview.starts_at, overview.ends_at)}, most repositories first`}
+        action={<FilterSearchBox parameter={TEAM_TERM_PARAMETER} placeholder="Filter by team…" />}
+      >
         {teams.length === 0 ? (
           <EmptyState
             message="No team owns a repository in this organisation."

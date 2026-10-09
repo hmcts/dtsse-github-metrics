@@ -30,6 +30,7 @@ import {
   cveCount,
   cveDetail,
   cveOrder,
+  DEFAULT_VISIBILITIES,
   type EstateSelections,
   EXPAND_LABEL,
   EXPANDED_PARAMETER,
@@ -59,7 +60,7 @@ import {
 } from "@/lib/rows";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { AssuranceGrade, AssuranceOutcome, ProductionSource, RepositoryRow, Visibility } from "@/lib/types";
-import { withSpan, withWeeks } from "@/lib/weeks";
+import { withWeeks } from "@/lib/weeks";
 
 /**
  * Every configured repository in one table: what the collection found about it, and what it did not.
@@ -133,8 +134,8 @@ function cveColumn(column: CveColumn): Column {
  * Readiness is the one whose removal is a decision rather than a tidy-up. It grades READINESS FOR AI ENABLEMENT
  * off ways-of-working conditions, which is a different question from the assurance criteria this page now
  * answers — so it moves to `/teams`, where the ways-of-working material belongs, and to a repository's own page.
- * It is not deleted and its thresholds are untouched. From 2026-10-08 it is back as an `AI readiness` column beside
- * the grade, so the table and the AI readiness wheel above it can be read against each other.
+ * It is not deleted and its thresholds are untouched. From 2026-10-08 it is back as a `Readiness` column beside
+ * the grade, so the table and the Readiness wheel above it can be read against each other.
  *
  * `Default branch pushed` and `Visibility` are the "basic info" the page still carries, and both are load-bearing
  * rather than decoration: the first is the default sort and the second the default filter, so a reader can see
@@ -165,7 +166,7 @@ const COLUMNS: readonly Column[] = [
     key: "visibility",
     label: "Visibility",
     read: (row) => row.visibility,
-    hint: "GitHub's visibility: public, internal or private. The table opens filtered to public only."
+    hint: "GitHub's visibility: public, internal or private. The repositories list opens filtered to public only; a team's list opens showing all three."
   },
   // One per criterion, in the criteria's own order, generated rather than listed so a criterion added to the
   // domain cannot appear in the grade and be missing from the table.
@@ -209,7 +210,7 @@ const COLUMNS: readonly Column[] = [
   // Sorted by `severity`, so the order is ready, caution, blocked, cannot assess, and an ungraded row goes last.
   {
     key: "readiness",
-    label: "AI readiness",
+    label: "Readiness",
     read: (row) => severity(row.readiness),
     hint: "The readiness policy's label for this repository: Ready, Caution, Blocked, Cannot assess where half the question could not be read, or Not assessed where the policy graded nothing."
   },
@@ -296,7 +297,8 @@ export function RepositoriesTable({
   rows,
   weeks,
   action,
-  wheels = true
+  wheels = true,
+  visibilities: openingVisibilities = DEFAULT_VISIBILITIES
 }: {
   rows: readonly RepositoryRow[];
   /**
@@ -304,7 +306,8 @@ export function RepositoriesTable({
    *
    * A team's page passes its resolved span, so following a repository out of it stays in the window the reader was
    * reading the team at. `/repositories` passes the default span it is pinned to, from 2026-10-08, so a repository
-   * opened from the list shows the readiness label the list showed. The AI readiness heading names the span too.
+   * opened from the list shows the readiness label the list showed. The span is named on the
+   * Readiness wheel rather than on this column's heading, which stays short.
    */
   weeks?: number;
   /**
@@ -324,6 +327,14 @@ export function RepositoriesTable({
    * narrow the team's list with no control on the page to show or clear it.
    */
   wheels?: boolean;
+  /**
+   * Which visibilities the table opens showing, before the reader touches a toggle.
+   *
+   * Public only on `/repositories`, where the wheels above are a statement about the public estate. A team's page
+   * opens on all three: a team's own repositories are the whole question there, and hiding its internal and
+   * private ones would leave the list short of the count on the team's header.
+   */
+  visibilities?: readonly Visibility[];
 }) {
   const pathname = usePathname();
   const searchParameters = useSearchParams();
@@ -333,7 +344,7 @@ export function RepositoriesTable({
 
   const term = searchParameters.get(TERM_PARAMETER) ?? "";
   const production = parseProduction((parameter) => searchParameters.get(parameter));
-  const visibilities = parseVisibilities((parameter) => searchParameters.get(parameter));
+  const visibilities = parseVisibilities((parameter) => searchParameters.get(parameter), openingVisibilities);
   const expanded = parseExpanded((parameter) => searchParameters.get(parameter));
   // THE WEDGES THE READER HAS CLICKED, read through the same hook as every other control: the wheels above this
   // table write their slice keys to the query and this is where they narrow the list. A page that draws no wheels
@@ -485,9 +496,7 @@ export function RepositoriesTable({
                 {columns.map((entry, index) => (
                   <SortHeader
                     key={entry.key}
-                    // The readiness label depends on the window, so its heading names the span the links below carry.
-                    // Relabelled here rather than in `COLUMNS`, whose instances the sort compares by identity.
-                    label={entry.key === "readiness" && weeks !== undefined ? withSpan(entry.label, weeks) : entry.label}
+                    label={entry.label}
                     active={entry === (column ?? DEFAULT_COLUMN)}
                     direction={direction}
                     align={entry.align}

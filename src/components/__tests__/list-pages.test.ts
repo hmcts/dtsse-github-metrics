@@ -208,7 +208,7 @@ describe("the three list routes", () => {
   /**
    * EVERY DRILL-THROUGH LINK CARRIES THE PINNED SPAN, from 2026-10-08, whatever span the URL asked for.
    *
-   * The list's AI readiness column is read at the default span, and a repository page opened from it used to
+   * The list's Readiness column is read at the default span, and a repository page opened from it used to
    * resolve the reader's remembered span instead — so a repository Ready here read Caution there. Carrying the
    * span makes the two agree. `weeks=26` in this page's own URL is ignored, as the page is pinned, so it is the
    * default and not 26 that the links carry.
@@ -223,12 +223,13 @@ describe("the three list routes", () => {
     expect(markup).not.toContain("weeks=26");
   });
 
-  it("names the span on the AI readiness wheel and column", async () => {
+  it("names the span on the Readiness wheel and not on the table's column", async () => {
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
-    expect(markup).toContain("AI readiness (4 weeks)");
-    expect(markup).not.toMatch(/>AI readiness</);
+    expect(markup).toContain(">Readiness (4 weeks)<");
+    expect(markup).toContain('aria-label="Readiness"');
+    expect(markup).not.toContain('aria-label="Readiness (4 weeks)"');
   });
 
   /**
@@ -479,7 +480,7 @@ describe("the three list routes", () => {
    * one of those filters, so a chip surviving here would be a control a reader can dismiss and never apply.
    */
   it("draws no donut and no filter chip for the dimensions that moved to /teams", async () => {
-    // AI readiness, Enforces review, Enforces CI and Test coverage came back as wheels on 2026-10-08; these stay gone.
+    // Readiness, Enforces review, Enforces CI and Test coverage came back as wheels on 2026-10-08; these stay gone.
     stubService();
     const markup = renderToStaticMarkup(await RepositoriesPage());
 

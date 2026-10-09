@@ -462,6 +462,17 @@ describe("the visibility filter", () => {
     expect([...parseVisibilities(reader({ public: "false", internal: "true" }))]).toEqual(["internal"]);
   });
 
+  it("keeps the default for a visibility the URL does not mention, so turning one on adds to it", () => {
+    // A toggle writes only its own parameter. Turning internal on must not take public away with it.
+    expect([...parseVisibilities(reader({ internal: "true" }))]).toEqual(["public", "internal"]);
+  });
+
+  it("opens on the defaults a page passes, and turning one off leaves the other two", () => {
+    // A team's page opens on all three; turning public off there must not hide the lot.
+    expect([...parseVisibilities(reader({}), VISIBILITIES)]).toEqual(["public", "internal", "private"]);
+    expect([...parseVisibilities(reader({ public: "false" }), VISIBILITIES)]).toEqual(["internal", "private"]);
+  });
+
   it("selects nothing when the reader turns all three off, rather than silently showing everything", () => {
     // Three clicks are three clicks. Falling back to the default here would ignore them, which is what
     // `filterRepositories` refuses to do for a dimension nothing satisfies.

@@ -10,7 +10,13 @@
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/** The URL `ActorsTable` and `TeamsList` read their filter from. Empty unless a case sets a term. */
+let parameters = new URLSearchParams();
+
+vi.mock("next/navigation", () => ({ useSearchParams: () => parameters }));
+
 import { ActorsTable } from "@/components/ActorsTable";
 import { TeamActorsTable } from "@/components/TeamActorsTable";
 import { TeamPractice, TeamThroughput } from "@/components/TeamPractice";
@@ -253,6 +259,24 @@ describe("TeamsList", () => {
   it("draws no box of its own, because the section it renders inside draws one", () => {
     expect(markup).not.toContain("border");
     expect(markup).not.toContain("bg-slate-900");
+  });
+
+  it("narrows to the teams whose slug or display name holds the term, and says so when none does", () => {
+    const teams = [
+      { team: "civil-admins", display_name: "Civil Admins", repositories: 1, unavailable: 0, actors: 1, labels: {} },
+      { team: "platform", repositories: 1, unavailable: 0, actors: 1, labels: {} }
+    ];
+    try {
+      parameters = new URLSearchParams("team=civil ad");
+      const narrowed = renderToStaticMarkup(createElement(TeamsList, { rows: teams, weeks: 4 }));
+      expect(narrowed).toContain("civil-admins");
+      expect(narrowed).not.toContain("platform");
+
+      parameters = new URLSearchParams("team=nothing");
+      expect(renderToStaticMarkup(createElement(TeamsList, { rows: teams, weeks: 4 }))).toContain("No team matches this filter.");
+    } finally {
+      parameters = new URLSearchParams();
+    }
   });
 
   it("says nothing at all when no team was configured", () => {

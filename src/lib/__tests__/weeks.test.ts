@@ -151,7 +151,7 @@ describe("weeksCookie", () => {
 
 describe("withSpan", () => {
   it("names the span a windowed figure was counted at", () => {
-    expect(withSpan("AI readiness", 4)).toBe("AI readiness (4 weeks)");
-    expect(withSpan("AI readiness", 1)).toBe("AI readiness (1 week)");
+    expect(withSpan("Readiness", 4)).toBe("Readiness (4 weeks)");
+    expect(withSpan("Readiness", 1)).toBe("Readiness (1 week)");
   });
 });

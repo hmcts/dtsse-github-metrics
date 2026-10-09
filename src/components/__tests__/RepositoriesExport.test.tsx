@@ -156,7 +156,8 @@ describe("RepositoriesExport", () => {
   });
 
   it("honours the visibility toggles, including the private one the default hides", () => {
-    url("weeks=12&private=true");
+    // Public turned off explicitly: from 2026-10-08 a visibility the URL does not mention keeps its default.
+    url("weeks=12&public=false&private=true");
     mount();
     fireEvent.click(control());
 

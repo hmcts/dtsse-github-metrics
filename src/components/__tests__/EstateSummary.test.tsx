@@ -117,7 +117,7 @@ describe("EstateSummary", () => {
       within(everywhere)
         .getAllByRole("heading", { level: 3 })
         .map((heading) => heading.textContent)
-    ).toEqual(["AI readiness (4 weeks)", "Enforces review", "Enforces CI", "Test coverage"]);
+    ).toEqual(["Readiness (4 weeks)", "Enforces review", "Enforces CI", "Test coverage"]);
     // Nothing is graded on these rows, so every one lands in each wheel's unmeasured slice — all three of them.
     expect(within(screen.getByRole("group", { name: "Enforces review filter" })).getByRole("button", { name: /Unknown/ }).textContent).toContain("3");
   });
