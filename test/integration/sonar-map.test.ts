@@ -132,6 +132,28 @@ describe("recordSonarMapping", () => {
     expect(stored?.resolvedAt).toEqual(asked);
   });
 
+  it("should replace a remembered negative with an attribution, since a negative has no analysis to defend", async () => {
+    await recordSonarMapping(ORGANIZATION, { projectKey: "hmcts.cath", resolvedAt: RESOLVED_AT, detail: "no commit matched last week" });
+
+    const later = new Date(RESOLVED_AT.getTime() + 604_800_000);
+    const written = await recordSonarMapping(ORGANIZATION, {
+      projectKey: "hmcts.cath",
+      resolvedAt: later,
+      mapping: {
+        projectKey: "hmcts.cath",
+        repository: "cath-service",
+        method: SonarResolutionMethod.AnalysisRevision,
+        analysisAt: ANALYSED_AT,
+        resolvedAt: later
+      }
+    });
+
+    expect(written).toBe(true);
+    const [stored] = await storedSonarMappings(ORGANIZATION);
+    expect(stored?.repository).toBe("cath-service");
+    expect(stored?.detail).toBeUndefined();
+  });
+
   it("should answer for one SonarCloud organisation only, since the two names may differ from GitHub's", async () => {
     await recordSonarMapping(ORGANIZATION, { projectKey: "hmcts.cath", resolvedAt: RESOLVED_AT, detail: "unresolved" });
     await recordSonarMapping("somebody-else", { projectKey: "other.cath", resolvedAt: RESOLVED_AT, detail: "unresolved" });

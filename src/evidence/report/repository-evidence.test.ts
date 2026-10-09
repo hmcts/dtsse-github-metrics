@@ -467,6 +467,12 @@ describe("each contributor's own metric summaries", () => {
     expect(contributorMetrics(CONFIGURATION, { pullRequests: [anonymous], directCommits: [] }).size).toBe(0);
   });
 
+  it("should leave out a direct commit nobody can be named for", () => {
+    const anonymous: DirectCommitFact = { ...directCommit("a", "alan"), authorLogin: undefined };
+
+    expect(contributorMetrics(CONFIGURATION, { pullRequests: [], directCommits: [anonymous] }).size).toBe(0);
+  });
+
   it("should give an excluded author no figures, since their work is not on the page's own", () => {
     const walked: Merges = { pullRequests: [merge(1), merge(2, "ignored-human")], directCommits: [] };
 

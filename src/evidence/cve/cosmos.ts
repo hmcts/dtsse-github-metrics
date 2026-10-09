@@ -6,8 +6,8 @@ import { CVE_PAGE_SIZE, cveDocumentQuery, cveDocumentsFrom } from "./documents.t
 /**
  * The one call that reaches the `pipeline-metrics` Cosmos account.
  *
- * THE DRIVER CALL AND NOTHING ELSE, which is why this module is the only part of `cve/**` excluded from coverage —
- * a test of it is a test of `@azure/cosmos`. Everything that decides anything lives next door and is tested:
+ * THE DRIVER CALL AND NOTHING ELSE, so its test stubs `@azure/cosmos` and checks only that the query reaches the
+ * right container and every page is pumped through. Everything that decides anything lives next door:
  * `./credentials.ts` resolves the account, `./documents.ts` holds the query and the per-document guard,
  * `./reports.ts` parses a report and `./collect.ts` folds the stream.
  *

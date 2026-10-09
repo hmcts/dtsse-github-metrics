@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { seal } from "./sealed.ts";
 import type { AuthSettings } from "./settings.ts";
 
 const discovery = vi.hoisted(() => vi.fn());
@@ -92,6 +93,20 @@ describe("sealSignIn and readSignIn", () => {
     ["a value that is not a token", "not-a-jwe"]
   ])("should refuse %s, because a callback cannot be checked without it", async (_label, cookie) => {
     expect(await readSignIn(cookie, SETTINGS.sessionSecret)).toBeUndefined();
+  });
+
+  it.each([
+    ["no state", { nonce: "a-nonce", codeVerifier: "a-verifier", returnTo: "/" }],
+    ["no nonce", { state: "a-state", codeVerifier: "a-verifier", returnTo: "/" }],
+    ["a verifier that is not a string", { state: "a-state", nonce: "a-nonce", codeVerifier: 7, returnTo: "/" }]
+  ])("should refuse a sealed sign-in carrying %s, since there is nothing to check the callback against", async (_label, claims) => {
+    expect(await readSignIn(await seal(claims, SETTINGS.sessionSecret, 600), SETTINGS.sessionSecret)).toBeUndefined();
+  });
+
+  it("should return the reader to the root where the sealed sign-in carries no usable return path", async () => {
+    const sealed = await seal({ state: "a-state", nonce: "a-nonce", codeVerifier: "a-verifier", returnTo: 42 }, SETTINGS.sessionSecret, 600);
+
+    expect(await readSignIn(sealed, SETTINGS.sessionSecret)).toEqual({ state: "a-state", nonce: "a-nonce", codeVerifier: "a-verifier", returnTo: "/" });
   });
 });
 

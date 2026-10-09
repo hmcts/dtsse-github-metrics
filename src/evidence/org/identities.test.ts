@@ -146,6 +146,10 @@ describe("upnDisplayName", () => {
     expect(upnDisplayName("Harpreet.Jhita")).toBe("Harpreet Jhita");
   });
 
+  it("should read the local part as everything before the FIRST `@`", () => {
+    expect(upnDisplayName("harpreet.jhita@hmcts@net")).toBe("Harpreet Jhita");
+  });
+
   it("should name somebody from a local part carrying no separator", () => {
     expect(upnDisplayName("jhita@hmcts.net")).toBe("Jhita");
   });
@@ -259,6 +263,18 @@ describe("collectSsoIdentities", () => {
         ["lgeddis", "Lucy Geddis"]
       ])
     );
+    expect(sent.filter((call) => call.query.includes("OrganizationSamlIdentities"))).toHaveLength(2);
+  });
+
+  it("should continue from the start when GitHub says there is more but names no cursor", async () => {
+    const { fetch, sent } = replying(
+      graphql(identities([identity("joedutton", "Joe.Dutton@justice.gov.uk")], { hasNextPage: true, endCursor: null })),
+      graphql(identities([])),
+      { status: 200, body: directory([]) }
+    );
+
+    await collectSsoIdentities(client(fetch), "hmcts");
+
     expect(sent.filter((call) => call.query.includes("OrganizationSamlIdentities"))).toHaveLength(2);
   });
 

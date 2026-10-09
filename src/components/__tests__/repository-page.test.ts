@@ -251,6 +251,16 @@ describe("repository page layout", () => {
     expect(security).toContain("Maintenance");
   });
 
+  it("says so where the merge gate could not be read, and why, rather than drawing an empty list", async () => {
+    const markup = await render((block) => ({
+      ...block,
+      merge_gate: { fetched_at: "2026-08-31T00:00:00Z", detail: "the branch protection could not be read" }
+    }));
+
+    expect(markup).toContain("The merge gate could not be read for this repository.");
+    expect(markup).toContain("the branch protection could not be read");
+  });
+
   it("states the last push and the last human commit above the maintenance windows, and no branch", async () => {
     const markup = await render();
 

@@ -49,6 +49,14 @@ describe("parseArguments", () => {
     expect(parseArguments(["evidence", "--config", "m.yaml", "--from", written]).startsAt?.toISOString()).toBe(expected);
   });
 
+  it("should read --to as the window's end, leaving the start to be derived", () => {
+    const parsed = parseArguments(["evidence", "--config", "m.yaml", "--to", "2026-08-08", "--days", "7"]);
+
+    expect(parsed.endsAt?.toISOString()).toBe("2026-08-08T00:00:00.000Z");
+    expect(parsed.startsAt).toBeUndefined();
+    expect(parsed.days).toBe(7);
+  });
+
   it("should name the option when a window edge cannot be parsed", () => {
     expect(() => parseArguments(["evidence", "--config", "m.yaml", "--from", "last tuesday"])).toThrow(/--from: expected a date or datetime/);
   });

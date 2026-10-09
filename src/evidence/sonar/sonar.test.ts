@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import { isSonarObservation, ratingLetter, SonarGateLevel, SonarMappingOutcome, SonarResolutionMethod, type StoredSonarMapping } from "../domain/sonar.ts";
-import { createGitHubClient } from "../github/client.ts";
+import { createGitHubClient, type GitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
-import { alreadyAnswered, attributedRepository, attributeProject, SEARCH_CALLS_PER_MINUTE, searchPacer } from "./attribute.ts";
-import { createSonarClient, SonarError, searchableRevisions, sonarToken } from "./client.ts";
+import { alreadyAnswered, attributedRepository, attributeProject, resolveRevision, SEARCH_CALLS_PER_MINUTE, searchPacer } from "./attribute.ts";
+import { createSonarClient, type SonarClient, SonarError, searchableRevisions, sonarToken } from "./client.ts";
 import { sonarProjectMap } from "./map.ts";
 import { declaredProject, gateLevel, measuredCount, measuredGate, measuredNumber, measuredRating, parseMeasures, parseProperties } from "./measures.ts";
 import { createCallPacer } from "./pacer.ts";
-import { checkDeclaration, confirmsCandidate, declaredKey, mappedProject, namesRepository, resolveRepositoryProject } from "./resolve.ts";
+import { checkDeclaration, confirmByCommit, confirmsCandidate, declaredKey, mappedProject, namesRepository, resolveRepositoryProject } from "./resolve.ts";
 
 // Ported from tests/test_sonar.py.
 
@@ -34,6 +34,16 @@ function githubClient(fetch: typeof globalThis.fetch) {
 
 function values(entries: Record<string, string>): Map<string, string> {
   return new Map(Object.entries(entries));
+}
+
+/** A GitHub client whose every read fails with the one error given, for the paths a real response cannot reach. */
+function refusingGitHub(error: Error): GitHubClient {
+  return { get: () => Promise.reject(error) } as unknown as GitHubClient;
+}
+
+/** A SonarCloud client whose analyses read fails with the one error given. */
+function refusingSonar(error: Error): SonarClient {
+  return { projectAnalyses: () => Promise.reject(error) } as unknown as SonarClient;
 }
 
 /** Awaits a read that must fail, and hands back the SonarError it failed with. */
@@ -133,6 +143,30 @@ describe("measuredGate", () => {
   it("should report no gate at all when neither key was sent", () => {
     expect(measuredGate(values({}))).toBeUndefined();
   });
+
+  it("should fall back to the bare verdict when only alert_status was sent", () => {
+    expect(measuredGate(values({ alert_status: "ERROR" }))).toEqual({ level: SonarGateLevel.Error });
+  });
+
+  it("should take the verdict's level when the details name none, and keep no conditions when they list none", () => {
+    const gate = measuredGate(values({ alert_status: "OK", quality_gate_details: JSON.stringify({ level: 3, conditions: "none" }) }));
+
+    expect(gate).toEqual({ level: SonarGateLevel.Ok });
+  });
+
+  it("should keep a sparse condition's absences as absences rather than inventing a comparator or threshold", () => {
+    const gate = measuredGate(values({ quality_gate_details: JSON.stringify({ level: "OK", conditions: [{}] }) }));
+
+    expect(gate).toEqual({ level: SonarGateLevel.Ok, conditions: [{ metric: "", level: "" }] });
+  });
+
+  it("should report no gate when neither the details nor the verdict name a known level", () => {
+    expect(measuredGate(values({ quality_gate_details: JSON.stringify({ level: "WARN" }) }))).toBeUndefined();
+  });
+
+  it("should report no gate when unreadable details have no verdict to degrade to", () => {
+    expect(measuredGate(values({ quality_gate_details: "not json" }))).toBeUndefined();
+  });
 });
 
 describe("parseMeasures", () => {
@@ -147,6 +181,10 @@ describe("parseMeasures", () => {
 
   it("should ignore a measure sent with no value", () => {
     expect(parseMeasures("hmcts.cath", [{ metric: "coverage" }], undefined).coverage).toBeUndefined();
+  });
+
+  it("should carry the gate when one was measured", () => {
+    expect(parseMeasures("hmcts.cath", [{ metric: "alert_status", value: "OK" }], undefined).gate).toEqual({ level: SonarGateLevel.Ok });
   });
 });
 
@@ -165,6 +203,10 @@ describe("parseProperties", () => {
 
   it("should accept a colon separator as well as an equals", () => {
     expect(parseProperties("sonar.projectKey: hmcts.cath\n").get("sonar.projectKey")).toBe("hmcts.cath");
+  });
+
+  it("should skip a line that is not a property rather than guessing at it", () => {
+    expect([...parseProperties("sonar.sources\nsonar.projectKey=hmcts.cath\n").keys()]).toEqual(["sonar.projectKey"]);
   });
 });
 
@@ -243,6 +285,72 @@ describe("createSonarClient", () => {
     expect(asked.pathname).toBe("/api/components/search_projects");
     expect(asked.searchParams.get("f")).toBe("analysisDate");
     expect(projects[0]?.analysisAt?.toISOString()).toBe("2026-09-16T10:15:55.000Z");
+  });
+
+  it("should keep a project's name where SonarCloud lists one", async () => {
+    const fetch = replying({ body: { components: [{ key: "hmcts.cath", name: "CaTH" }] } });
+
+    expect(await createSonarClient({ organization: "hmcts", fetch }).projects()).toEqual([{ key: "hmcts.cath", name: "CaTH" }]);
+  });
+
+  it("should send a token as the basic-auth username with an empty password, to the base URL given", async () => {
+    const fetch = vi.fn(() => Promise.resolve(new Response(JSON.stringify({ analyses: [] }), { status: 200 }))) as unknown as typeof globalThis.fetch;
+
+    await createSonarClient({ organization: "hmcts", token: "squ_test", fetch, baseUrl: "https://sonar.example" }).projectAnalyses("hmcts.cath", 1);
+
+    const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0] ?? [];
+    expect(new URL(String(url)).origin).toBe("https://sonar.example");
+    expect((init?.headers as Record<string, string>).Authorization).toBe(`Basic ${Buffer.from("squ_test:").toString("base64")}`);
+  });
+
+  it("should keep an analysis that carries no date, and a measure sent as null, as absences", async () => {
+    const analyses = await createSonarClient({
+      organization: "hmcts",
+      fetch: replying({ body: { analyses: [{ revision: REVISION, date: null }] } })
+    }).projectAnalyses("hmcts.cath", 1);
+    const measures = await createSonarClient({
+      organization: "hmcts",
+      fetch: replying({ body: { component: { measures: [{ metric: "coverage", value: null }] } } })
+    }).measures("hmcts.cath", undefined);
+
+    expect(analyses).toEqual([{ revision: REVISION }]);
+    expect(measures.coverage).toBeUndefined();
+  });
+
+  it("should read through the global fetch where none is injected", async () => {
+    const fetch = replying({ body: { analyses: [] } });
+    vi.stubGlobal("fetch", fetch);
+    try {
+      expect(await createSonarClient({ organization: "hmcts" }).projectAnalyses("hmcts.cath", 1)).toEqual([]);
+      expect(fetch).toHaveBeenCalledOnce();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("should carry a SonarCloud that could not be reached as a collection failure", async () => {
+    const fetch = vi.fn(() => Promise.reject(new TypeError("fetch failed"))) as unknown as typeof globalThis.fetch;
+
+    const error = await failing(createSonarClient({ organization: "hmcts", fetch }).projects());
+
+    expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
+    expect(error.message).toMatch(/could not be reached/);
+  });
+
+  it("should carry a body that is not JSON as a collection failure", async () => {
+    const error = await failing(createSonarClient({ organization: "hmcts", fetch: replying({ body: "<html>" }) }).projects());
+
+    expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
+    expect(error.message).toMatch(/unreadable projects body/);
+  });
+
+  it("should carry a body of the wrong shape as a collection failure", async () => {
+    const error = await failing(
+      createSonarClient({ organization: "hmcts", fetch: replying({ body: { component: "none" } }) }).measures("hmcts.cath", undefined)
+    );
+
+    expect(error.reason).toBe(AvailabilityReason.CollectionFailed);
+    expect(error.message).toMatch(/cannot accept/);
   });
 });
 
@@ -360,6 +468,49 @@ describe("createCallPacer", () => {
 
     expect(paused).toEqual([6000]);
   });
+
+  it("should not pause a call that arrives after the interval has already passed", async () => {
+    const paused: number[] = [];
+    let now = 1000;
+    const pacer = createCallPacer({
+      interval: 6,
+      clock: () => now,
+      pause: (ms) => {
+        paused.push(ms);
+        return Promise.resolve();
+      }
+    });
+
+    await pacer.wait();
+    now = 1010;
+    await pacer.wait();
+    now = 1012;
+    await pacer.wait();
+
+    // The second call claimed its slot at 1010, so the third is paced from there rather than from 1000.
+    expect(paused).toEqual([4000]);
+  });
+
+  it("should pause on a real timer when no pause is injected", async () => {
+    vi.useFakeTimers();
+    try {
+      const pacer = createCallPacer({ interval: 6, clock: () => 1000 });
+      await pacer.wait();
+
+      let settled = false;
+      const waiting = pacer.wait().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(5999);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      await waiting;
+
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("namesRepository", () => {
@@ -399,6 +550,13 @@ describe("confirmsCandidate", () => {
 
   it.each([[404], [422]])("should read HTTP %i as the repository not holding it", async (status) => {
     expect(await confirmsCandidate(githubClient(replying({ status, body: {} })), "hmcts", "cath-service", "abc")).toBe(false);
+  });
+
+  it("should raise any other failure, which says nothing about whether the repository holds the commit", async () => {
+    const refused = new GitHubError("GitHub refused the read", AvailabilityReason.PermissionDenied, 403);
+
+    await expect(confirmsCandidate(refusingGitHub(refused), "hmcts", "cath-service", "abc")).rejects.toBe(refused);
+    await expect(confirmsCandidate(refusingGitHub(new Error("boom")), "hmcts", "cath-service", "abc")).rejects.toThrow("boom");
   });
 });
 
@@ -469,6 +627,64 @@ describe("checkDeclaration", () => {
     expect(checked.note).toMatch(/no analysed commit/);
     expect(checked.reason).toBeUndefined();
   });
+
+  it("should keep the map's analysis instant and leave out a revision the map never recorded", async () => {
+    const analysisAt = new Date("2026-07-01T00:00:00Z");
+    const stored: StoredSonarMapping = { projectKey: "hmcts.cath", repository: "cath-service", analysisAt, resolvedAt: now };
+
+    const checked = await checkDeclaration(sonar(), githubClient(replying()), "hmcts", "cath-service", "hmcts.cath", stored, now);
+
+    expect(checked.mapping).toEqual({
+      projectKey: "hmcts.cath",
+      repository: "cath-service",
+      method: SonarResolutionMethod.DeclaredConfirmedByMap,
+      analysisAt,
+      resolvedAt: now
+    });
+  });
+});
+
+describe("confirmByCommit", () => {
+  const now = new Date("2026-08-08T00:00:00Z");
+  const analysed = () => createSonarClient({ organization: "hmcts", fetch: replying({ body: { analyses: [{ revision: REVISION }] } }) });
+
+  it("should confirm an undated analysis without inventing an instant for it", async () => {
+    const checked = await confirmByCommit(analysed(), githubClient(replying({ body: { sha: REVISION } })), "hmcts", "cath-service", "hmcts.cath", now);
+
+    expect(checked.mapping).toEqual({
+      projectKey: "hmcts.cath",
+      repository: "cath-service",
+      method: SonarResolutionMethod.DeclaredConfirmedByCommit,
+      revision: REVISION,
+      resolvedAt: now
+    });
+  });
+
+  it("should refute a declaration whose latest analysed commit the repository does not hold", async () => {
+    const checked = await confirmByCommit(analysed(), githubClient(replying({ status: 404, body: {} })), "hmcts", "cath-service", "hmcts.cath", now);
+
+    expect(checked.mapping).toBeUndefined();
+    expect(checked.reason).toBeUndefined();
+    expect(checked.note).toBe(`cath-service does not hold commit ${REVISION}, the latest analysis of hmcts.cath`);
+  });
+
+  it("should keep the reason when GitHub refused the commit read", async () => {
+    const refused = new GitHubError("GitHub refused the read", AvailabilityReason.PermissionDenied, 403);
+
+    const checked = await confirmByCommit(analysed(), refusingGitHub(refused), "hmcts", "cath-service", "hmcts.cath", now);
+
+    expect(checked).toEqual({ note: "GitHub refused the read", reason: AvailabilityReason.PermissionDenied });
+  });
+
+  it("should raise a commit read that failed for a reason GitHub did not give", async () => {
+    await expect(confirmByCommit(analysed(), refusingGitHub(new Error("boom")), "hmcts", "cath-service", "hmcts.cath", now)).rejects.toThrow("boom");
+  });
+
+  it("should raise an analyses read that failed for a reason SonarCloud did not give", async () => {
+    await expect(confirmByCommit(refusingSonar(new Error("boom")), githubClient(replying()), "hmcts", "cath-service", "hmcts.cath", now)).rejects.toThrow(
+      "boom"
+    );
+  });
 });
 
 describe("mappedProject", () => {
@@ -489,6 +705,15 @@ describe("mappedProject", () => {
     expect(mapping.method).toBe(SonarResolutionMethod.StoredMap);
     expect(mapping.revision).toBe("abc");
     expect(mapping.analysisAt?.toISOString()).toBe("2026-07-01T00:00:00.000Z");
+  });
+
+  it("should say which project it reads where several claim the repository, and carry only the evidence the map holds", () => {
+    const claimed: StoredSonarMapping = { projectKey: "hmcts.cath", resolvedAt: new Date("2026-07-01Z") };
+
+    const mapping = mappedProject(claimed, 2, "cath-service", now);
+
+    expect(mapping).toEqual({ projectKey: "hmcts.cath", method: SonarResolutionMethod.StoredMap, resolvedAt: now });
+    expect(console.info).toHaveBeenCalledWith(expect.stringContaining("cath-service is claimed by 2 SonarCloud projects"));
   });
 });
 
@@ -543,6 +768,28 @@ describe("resolveRepositoryProject", () => {
 
     expect(resolved.mapping).toBeUndefined();
     expect(resolved.note).toMatch(/declares no sonar\.projectKey/);
+  });
+
+  it("should settle on a declaration the map confirms, without consulting the repository's own claim", async () => {
+    const stored: StoredSonarMapping = { projectKey: "hmcts.cath", repository: "cath-service", resolvedAt: now };
+    const storedByRepository = vi.fn(() => undefined);
+
+    const resolved = await ladder({ declaration: { projectKey: "hmcts.cath" }, storedByProject: () => stored, storedByRepository });
+
+    expect(resolved.mapping?.method).toBe(SonarResolutionMethod.DeclaredConfirmedByMap);
+    expect(storedByRepository).not.toHaveBeenCalled();
+  });
+
+  it("should keep the refutation's note when the map attributes no project to the repository either", async () => {
+    const stored: StoredSonarMapping = { projectKey: "hmcts.template", repository: "the-template", resolvedAt: now };
+
+    const resolved = await ladder({ declaration: { projectKey: "hmcts.template" }, storedByProject: () => stored });
+
+    expect(resolved).toEqual({ note: "the declared project hmcts.template is mapped to the-template" });
+  });
+
+  it("should report nothing at all where there is neither a declaration nor a claim", async () => {
+    expect(await ladder()).toEqual({});
   });
 });
 
@@ -651,6 +898,46 @@ describe("attributeProject", () => {
     expect(isSonarObservation(attempt.outcome)).toBe(false);
   });
 
+  it("should raise an analyses read that failed for a reason SonarCloud did not give", async () => {
+    await expect(
+      attributeProject({
+        sonarClient: refusingSonar(new Error("boom")),
+        githubClient: githubClient(replying()),
+        organization: "hmcts",
+        projectKey: "hmcts.cath",
+        pacer: IDLE_PACER,
+        now
+      })
+    ).rejects.toThrow("boom");
+  });
+
+  it("should record a refused commit search as this project's failure", async () => {
+    const refused = new GitHubError("GitHub refused the search", AvailabilityReason.PermissionDenied, 403);
+
+    const attempt = await resolveRevision(refusingGitHub(refused), "hmcts", "hmcts.cath", REVISION, undefined, now, IDLE_PACER);
+
+    expect(attempt).toEqual({ projectKey: "hmcts.cath", outcome: SonarMappingOutcome.Failed, analysesTried: 0, detail: "GitHub refused the search" });
+  });
+
+  it("should raise a commit search that failed for a reason GitHub did not give", async () => {
+    await expect(resolveRevision(refusingGitHub(new Error("boom")), "hmcts", "hmcts.cath", REVISION, undefined, now, IDLE_PACER)).rejects.toThrow("boom");
+  });
+
+  it("should resolve an undated analysis without inventing an instant for it", async () => {
+    const attempt = await attributing({
+      sonar: replying({ body: { analyses: [{ revision: REVISION }] } }),
+      github: replying({ body: { items: [{ repository: { full_name: "hmcts/cath-service" } }] } })
+    });
+
+    expect(attempt.mapping).toEqual({
+      projectKey: "hmcts.cath",
+      repository: "cath-service",
+      method: SonarResolutionMethod.AnalysisRevision,
+      revision: REVISION,
+      resolvedAt: now
+    });
+  });
+
   it("should raise a spent search quota rather than recording it as the project's dead end", async () => {
     const rateLimited = { status: 429, body: {} };
     const raised = await attributing({
@@ -737,7 +1024,13 @@ describe("sonarProjectMap", () => {
       { projectKey: "hmcts.a", repository: "cath-service", resolvedAt }
     ]);
 
+    const undatedLast = sonarProjectMap([
+      { projectKey: "hmcts.b", repository: "cath-service", analysisAt: new Date("2026-01-01T00:00:00Z"), resolvedAt },
+      { projectKey: "hmcts.a", repository: "cath-service", resolvedAt }
+    ]);
+
     expect(undated.byRepository("cath-service")?.mapping.projectKey).toBe("hmcts.b");
+    expect(undatedLast.byRepository("cath-service")?.mapping.projectKey).toBe("hmcts.b");
     expect(tied.byRepository("cath-service")?.mapping.projectKey).toBe("hmcts.a");
   });
 

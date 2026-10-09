@@ -1,5 +1,6 @@
 import type { Environment } from "../evidence/store/database-url.ts";
 import { describeDatabase } from "./database-target.ts";
+import { messageOf } from "./error-message.ts";
 
 /**
  * Reading the deployed secrets, which is the one thing a process does before it can reach a database.
@@ -61,7 +62,7 @@ export async function loadSecrets(read: ReadSecrets, env: Environment = process.
     try {
       await read(CHART_PATH);
     } catch (error) {
-      console.warn(`could not load Key Vault secrets: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`could not load Key Vault secrets: ${messageOf(error)}`);
     }
   } else {
     console.info(`not reading the Key Vault: NODE_ENV is ${env.NODE_ENV ?? "unset"} and ${KEY_VAULT_OPT_IN}=true is not set, so the local defaults apply`);

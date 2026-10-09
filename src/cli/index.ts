@@ -92,6 +92,7 @@ import { recordSonarMapping, storedSonarMappings } from "../evidence/store/sonar
 import { midnight } from "../evidence/window/instant.ts";
 import { collectedAnchor, days, resolveWindow } from "../evidence/window/window.ts";
 import { describeDatabase } from "../platform/database-target.ts";
+import { messageOf } from "../platform/error-message.ts";
 import { collectionStatus, EXIT_COMPLETE, EXIT_FAILED, EXIT_USAGE, runStatus } from "./exit-status.ts";
 import { type Arguments, COHORT_COMMANDS, parseArguments, UsageError } from "./parse-arguments.ts";
 
@@ -290,7 +291,7 @@ async function collectRepository(
   ).catch((error: unknown) => {
     failures += 1;
     filled = false;
-    console.warn(`${repository}: merged pull requests were not collected: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`${repository}: merged pull requests were not collected: ${messageOf(error)}`);
     return [];
   });
 
@@ -302,7 +303,7 @@ async function collectRepository(
   ).catch((error: unknown) => {
     failures += 1;
     filled = false;
-    console.warn(`${repository}: direct commits were not collected: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`${repository}: direct commits were not collected: ${messageOf(error)}`);
     return [];
   });
 
@@ -362,7 +363,7 @@ async function lastHumanCommit(
   try {
     return { evidence: await findLastHumanCommit(client, configuration.organization, repository, since, excluded, bots), failures: 0 };
   } catch (error) {
-    console.warn(`${repository}: the last human commit was not collected: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`${repository}: the last human commit was not collected: ${messageOf(error)}`);
     return { failures: 1 };
   }
 }
@@ -444,7 +445,7 @@ async function sonarSource(configuration: Configuration, githubClient: ReturnTyp
   try {
     rows = await storedSonarMappings(sonarOrganization);
   } catch (error) {
-    console.warn(`the SonarCloud project map could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`the SonarCloud project map could not be read: ${messageOf(error)}`);
     return statedSonarAbsence("the stored SonarCloud project map could not be read", 1);
   }
 
@@ -463,7 +464,7 @@ async function sonarSource(configuration: Configuration, githubClient: ReturnTyp
     listed = new Map(projects.map((project) => [project.key, project.analysisAt]));
     console.info(`SonarCloud lists ${projects.length} projects for ${sonarOrganization}; the map attributes ${map.attributed} repositories`);
   } catch (error) {
-    console.warn(`SonarCloud's project listing could not be read: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`SonarCloud's project listing could not be read: ${messageOf(error)}`);
     return statedSonarAbsence(`SonarCloud's ${sonarOrganization} project listing could not be read, so no project was measured`, 1);
   }
 
@@ -482,11 +483,10 @@ async function sonarSource(configuration: Configuration, githubClient: ReturnTyp
         now
       });
       const mapping = resolved.mapping;
+      // No note and no refusal can come back here: both are answers about a declaration, none is passed, and
+      // `resolveRepositoryProject`'s overload types the result accordingly.
       if (mapping === undefined) {
-        return {
-          state: { detail: resolved.note ?? `no SonarCloud project in ${sonarOrganization} analyses this repository` },
-          failures: resolved.reason === undefined ? 0 : 1
-        };
+        return { state: { detail: `no SonarCloud project in ${sonarOrganization} analyses this repository` }, failures: 0 };
       }
       if (!listed.has(mapping.projectKey)) {
         // AN OBSERVATION AND NOT A FAILURE. A mapped project can be deleted, renamed or made private after the
@@ -697,7 +697,7 @@ async function runCveCollection(configuration: Configuration, argv: Arguments): 
     } catch (error) {
       // NAMED, COUNTED AND NOT FATAL. The other database's repositories are still collectable, and a partial
       // collection that says which half it got is more use than no collection at all.
-      progress(`could not read ${database}: ${error instanceof Error ? error.message : String(error)}`);
+      progress(`could not read ${database}: ${messageOf(error)}`);
       refused += 1;
       continue;
     }
@@ -788,8 +788,7 @@ async function runAlertCollection(configuration: Configuration, argv: Arguments)
     if (walk.byRepository === undefined) {
       // NAMED AND COUNTED ONCE FOR THE RUN, not once per repository: it is a single walk, and inflating one refusal
       // to 1,890 would swamp the exit status with it.
-      const detail = walk.detail ?? `${family} could not be read`;
-      console.warn(`${detail}; every repository's ${family} answer will be unmeasured`);
+      console.warn(`${walk.detail}; every repository's ${family} answer will be unmeasured`);
       continue;
     }
     const found = [...walk.byRepository.values()].reduce((total, alerts) => total + alerts.length, 0);
@@ -850,7 +849,7 @@ async function describeTeamAccess(client: ReturnType<typeof createGitHubClient>,
       ? `the organisation's teams are readable, so collect-org can use team access as evidence`
       : `the teams endpoint answered something unexpected, so collect-org would rest on CODEOWNERS and names`;
   } catch (error) {
-    return `the organisation's teams are NOT readable (${error instanceof Error ? error.message : String(error)}), so collect-org would rest on CODEOWNERS and names alone`;
+    return `the organisation's teams are NOT readable (${messageOf(error)}), so collect-org would rest on CODEOWNERS and names alone`;
   }
 }
 
@@ -936,7 +935,7 @@ async function runDoctor(configuration: Configuration, argv: Arguments): Promise
       await client.get(`/repos/${configuration.organization}/${repository}`);
     } catch (error) {
       unreadable += 1;
-      console.warn(`${repository}: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`${repository}: ${messageOf(error)}`);
     }
   }
 
@@ -1007,7 +1006,7 @@ async function countRepositoriesWithMerges(
       }
       withMerges += 1;
     } catch (error) {
-      console.warn(`${repository}: reading merged pull requests failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`${repository}: reading merged pull requests failed: ${messageOf(error)}`);
     }
   }
 
@@ -1428,7 +1427,7 @@ async function resolveListedProjects(
       // The one error `attributeProject` raises rather than classifying is an exhausted search quota, which is
       // why this is a stop and not one project's failure.
       console.error(
-        `ERROR  ${project.key} (${position}/${projects.length}): ${error instanceof Error ? error.message : String(error)}; stopping and keeping the ${answeredProjects(progress)} projects already answered`
+        `ERROR  ${project.key} (${position}/${projects.length}): ${messageOf(error)}; stopping and keeping the ${answeredProjects(progress)} projects already answered`
       );
       progress.stopped = true;
       return progress;
@@ -1532,7 +1531,7 @@ async function runMapSonar(configuration: Configuration, argv: Arguments): Promi
   try {
     projects = await sonarClient.projects();
   } catch (error) {
-    console.error(`SonarCloud's project listing failed for ${sonarOrganization}: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`SonarCloud's project listing failed for ${sonarOrganization}: ${messageOf(error)}`);
     return EXIT_FAILED;
   }
   if (projects.length === 0) {
@@ -1721,7 +1720,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   try {
     parsed = parseArguments(argv);
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${messageOf(error)}\n`);
     return EXIT_USAGE;
   }
 
@@ -1777,7 +1776,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return await runReduceDescriptions(configuration, parsed);
     }
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${messageOf(error)}\n`);
     return error instanceof UsageError ? EXIT_USAGE : EXIT_FAILED;
   } finally {
     await prisma.$disconnect();

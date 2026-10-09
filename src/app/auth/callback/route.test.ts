@@ -11,6 +11,7 @@ vi.mock("@/auth/entra", () => ({
 }));
 
 const { GET } = await import("./route.ts");
+const { SignInFailed } = await import("@/auth/entra");
 
 const REDIRECT_URI = "https://github-metrics.aat.platform.hmcts.net/auth/callback";
 
@@ -99,5 +100,28 @@ describe("the callback's redirects", () => {
 
     expect(response.status).toBe(403);
     expect(await response.text()).toContain("/auth/login");
+  });
+
+  it("should log a refused sign-in's own reason, and a library fault as it was thrown", async () => {
+    const warn = vi.mocked(console.warn);
+
+    completeSignIn.mockRejectedValue(new SignInFailed("state mismatch"));
+    expect((await GET(callbackFrom("a-pod"))).status).toBe(403);
+    expect(warn).toHaveBeenLastCalledWith("a sign-in could not be completed: state mismatch");
+
+    completeSignIn.mockRejectedValue("a bare string");
+    expect((await GET(callbackFrom("a-pod"))).status).toBe(403);
+    expect(warn).toHaveBeenLastCalledWith("a sign-in could not be completed: a bare string");
+  });
+});
+
+describe("the callback without a sign-in to complete", () => {
+  it("should send the reader to the repositories where authentication is disabled", async () => {
+    vi.stubEnv("AUTH_DISABLED", "true");
+
+    const response = await GET(callbackFrom("a-pod"));
+
+    expect(response.headers.get("location")).toBe("/repositories");
+    expect(readSignIn).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,7 @@ import {
   independentReviewCoverage,
   mergeCycleTime,
   Percentile,
+  percentileValue,
   pullRequestSize,
   reviewDepth,
   timeToFirstReview
@@ -184,26 +185,11 @@ function measuredRate(identifier: string, observation: RateObservation): { perce
   return { percentage, measured: `${identifier} is ${g(percentage)}% (${observation.numerator} of ${observation.denominator})` };
 }
 
-/** The value a distribution is graded at, read from the percentile the metric declares. */
-function percentileValue(metric: BehaviourMetric, observation: DistributionObservation): number | undefined {
-  if (metric.percentile === Percentile.Percentile75) {
-    return observation.percentile75;
-  }
-  if (metric.percentile === Percentile.Percentile90) {
-    return observation.percentile90;
-  }
-  return observation.median;
-}
-
-function percentileLabel(metric: BehaviourMetric): string {
-  if (metric.percentile === Percentile.Percentile75) {
-    return "75th percentile";
-  }
-  if (metric.percentile === Percentile.Percentile90) {
-    return "90th percentile";
-  }
-  return "median";
-}
+const PERCENTILE_LABELS: Record<Percentile, string> = {
+  [Percentile.Median]: "median",
+  [Percentile.Percentile75]: "75th percentile",
+  [Percentile.Percentile90]: "90th percentile"
+};
 
 function section(judgements: readonly Judgement[], outcome: Outcome): ReadinessCondition[] {
   return judgements.filter((judgement) => judgement.outcome === outcome).map((judgement) => judgement.condition);
@@ -295,7 +281,7 @@ function gradeDistribution(metric: BehaviourMetric, threshold: DistributionThres
   if (observation.status !== ObservationStatus.Observed || value === undefined) {
     return caution(`${identifier}-not-observed`, `${identifier} has no observations in this window, so it was not graded`);
   }
-  const measured = `${identifier} ${percentileLabel(metric)} is ${g(value)} ${observation.unit}`;
+  const measured = `${identifier} ${PERCENTILE_LABELS[metric.percentile]} is ${g(value)} ${observation.unit}`;
   if (value <= threshold.maximum) {
     return clear(`${identifier}-at-target`, `${measured}, at or below the ${g(threshold.maximum)} ${observation.unit} target`);
   }

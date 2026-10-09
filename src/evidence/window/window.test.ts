@@ -26,7 +26,23 @@ describe("parseInstant", () => {
   });
 
   it("should reject a date that does not exist rather than rolling it over", () => {
-    expect(() => parseInstant("2026-13-05")).toThrow();
+    expect(() => parseInstant("2026-13-05")).toThrow(/no such date: 2026-13-05/);
+  });
+
+  it("should reject an impossible date even when an offset is given", () => {
+    expect(() => parseInstant("2026-13-05T00:00:00+01:00")).toThrow(/no such date: 2026-13-05/);
+  });
+
+  it.each([
+    ["2026-08-01T24:00", /no such time: 24:00/],
+    ["2026-08-01T10:99", /no such time: 10:99/],
+    ["2026-08-01T10:00:99Z", /no such time: 10:00:99/]
+  ])("should reject %s rather than rolling the time over", (value, message) => {
+    expect(() => parseInstant(value)).toThrow(message);
+  });
+
+  it.each(["2026-08-01T10:00:00+24:00", "2026-08-01T10:00:00-01:60"])("should reject the offset in %s rather than shifting the instant by it", (value) => {
+    expect(() => parseInstant(value)).toThrow(/no such offset/);
   });
 });
 

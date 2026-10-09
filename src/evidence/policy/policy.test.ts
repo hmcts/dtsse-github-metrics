@@ -210,6 +210,12 @@ describe("parseConfiguration", () => {
     expect(() => parseConfiguration(document)).toThrow(/sonar project keys may not be empty: civil-service/);
   });
 
+  it("should name every blank sonar project override in collated order", () => {
+    const document = `${VALID}\nsonar_projects:\n  zebra-api: ""\n  civil-service: " "\n`;
+
+    expect(() => parseConfiguration(document)).toThrow(/sonar project keys may not be empty: civil-service, zebra-api/);
+  });
+
   it("should accept a sonar override for a repository no team overrides the owner of", () => {
     // The cross-check that used to sit here required every key to name a repository `teams:` listed. `teams:` no
     // longer lists the estate, so that check rejected the ordinary case.
@@ -414,6 +420,15 @@ describe("configuredOwners", () => {
     const document = `${POPULATION}  - identifier: shared\n    display_name: Shared\n    repositories:\n      - nfdiv-case-api\n`;
 
     expect(configuredOwners(parseConfiguration(document)).get("nfdiv-case-api")).toEqual(["divorce", "shared"]);
+  });
+
+  it("should name a team once for a repository it lists twice, even though the schema refuses such a file", () => {
+    const configuration = {
+      ...parseConfiguration(POPULATION),
+      teams: [{ identifier: "divorce", display_name: "Divorce", github_team_slugs: [], repositories: ["nfdiv-case-api", "nfdiv-case-api"] }]
+    };
+
+    expect([...configuredOwners(configuration)]).toEqual([["nfdiv-case-api", ["divorce"]]]);
   });
 
   it("should be empty where the file overrides nothing, which is now the normal case", () => {

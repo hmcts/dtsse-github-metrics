@@ -24,6 +24,17 @@ export const Percentile = {
 
 export type Percentile = (typeof Percentile)[keyof typeof Percentile];
 
+const PERCENTILE_READERS: Record<Percentile, (observation: DistributionObservation) => number | undefined> = {
+  [Percentile.Median]: (observation) => observation.median,
+  [Percentile.Percentile75]: (observation) => observation.percentile75,
+  [Percentile.Percentile90]: (observation) => observation.percentile90
+};
+
+/** The value a distribution is read at, taken from the percentile the metric declares. */
+export function percentileValue(metric: BehaviourMetric, observation: DistributionObservation): number | undefined {
+  return PERCENTILE_READERS[metric.percentile](observation);
+}
+
 export interface BehaviourMetric {
   identifier: string;
   /**
@@ -246,11 +257,8 @@ function timeToFirstReviewValue(pullRequest: PullRequestFact): number | undefine
   if (reviews.length === 0) {
     return undefined;
   }
-  const first = reviews.reduce(
-    (soonest, review) => (review.submittedAt.getTime() < soonest.getTime() ? review.submittedAt : soonest),
-    reviews[0]?.submittedAt as Date
-  );
-  return (first.getTime() - reviewStartedAt(pullRequest).getTime()) / HOURS;
+  const first = Math.min(...reviews.map((review) => review.submittedAt.getTime()));
+  return (first - reviewStartedAt(pullRequest).getTime()) / HOURS;
 }
 
 /** How many lines each merged pull request changed. */

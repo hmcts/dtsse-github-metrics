@@ -1,9 +1,8 @@
 /**
  * Whether this process was given a Cosmos account to read, and which.
  *
- * ITS OWN MODULE so it is a tested, covered decision rather than a few lines inside the driver call. It used to
- * sit in `./cosmos.ts`, which is excluded from coverage for `store/**`'s reason — and that exclusion then hid the
- * one decision in that file that a test can reach. What is left in `cosmos.ts` is `new CosmosClient(...)`.
+ * ITS OWN MODULE so it is tested as a decision on a plain environment, rather than through a mocked
+ * `@azure/cosmos` in `./cosmos.ts`, whose remaining work is `new CosmosClient(...)`.
  */
 
 /** Where the account name and its read-only key arrive from, mounted by the collector's `keyVaults` block. */

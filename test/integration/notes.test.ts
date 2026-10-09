@@ -31,6 +31,23 @@ async function leave(body: string, author = { subject: "0000-1111", name: "A Rea
   return await addRepositoryNote({ organization: HMCTS, repository: "pcs-api", body, authorSubject: author.subject, authorName: author.name });
 }
 
+/**
+ * Waits until the database clock reads a later millisecond than `instant`.
+ *
+ * Both instants come off Postgres's clock, which in some environments advances in steps coarser than a
+ * statement, and a `Date` keeps only milliseconds. Two writes made back to back can therefore carry the same
+ * instant, so a case about their order waits for the clock rather than assuming it moved.
+ */
+async function untilTheClockPasses(instant: Date): Promise<void> {
+  for (;;) {
+    const [{ now }] = await prisma.$queryRaw<[{ now: Date }]>`SELECT now() AS now`;
+    if (now.getTime() > instant.getTime()) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
 describe("addRepositoryNote", () => {
   it("should store a note with the author the caller stated", async () => {
     const stored = await leave("The suppressions are tracked in HDPI-8150.");
@@ -111,8 +128,8 @@ describe("repositoryNotes", () => {
   });
 
   it("should order the notes oldest first, which is the order the page prints them in", async () => {
-    await leave("First.");
-    await leave("Second.");
+    await untilTheClockPasses((await leave("First.")).createdAt);
+    await untilTheClockPasses((await leave("Second.")).createdAt);
     await leave("Third.");
 
     expect((await repositoryNotes(HMCTS, "pcs-api")).map((note) => note.body)).toEqual(["First.", "Second.", "Third."]);
@@ -151,6 +168,7 @@ describe("editRepositoryNote", () => {
     // THE ACCEPTANCE CRITERION, and it holds structurally: the statement names only `body`, and `updated_at`
     // is moved by the trigger. Neither the author nor the creation instant is reachable from this call.
     const stored = await leave("Frist.");
+    await untilTheClockPasses(stored.updatedAt);
 
     await editRepositoryNote(stored.id, "First.");
     const [edited] = await repositoryNotes(HMCTS, "pcs-api");
@@ -191,6 +209,7 @@ describe("editRepositoryNote", () => {
 
   it("should edit only the note named, leaving the others where they are", async () => {
     const first = await leave("First.");
+    await untilTheClockPasses(first.createdAt);
     await leave("Second.");
 
     await editRepositoryNote(first.id, "Corrected.");

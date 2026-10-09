@@ -143,4 +143,72 @@ describe("the SonarCloud section a collection stored", () => {
     expect(report.measures?.coverage).toBe(92.5);
     expect(report.measures?.security_rating).toEqual({ value: 1 });
   });
+
+  it("should carry the analysis instant and revision a mapping stored", () => {
+    const report = storedSonar(
+      payload({
+        mapping: {
+          projectKey: "hmcts.cath",
+          repository: "cath-service",
+          method: "analysis_revision",
+          analysisAt: "2026-09-16T10:15:55.000Z",
+          revision: "abc123"
+        }
+      }),
+      FETCHED
+    );
+
+    expect(report.mapping).toEqual({
+      project_key: "hmcts.cath",
+      repository: "cath-service",
+      method: "analysis_revision",
+      analysis_at: "2026-09-16T10:15:55.000Z",
+      revision: "abc123"
+    });
+  });
+
+  it("should drop measures that name no project rather than attribute figures to nothing", () => {
+    const report = storedSonar(payload({ mapping: { projectKey: "hmcts.cath", repository: "cath-service" }, measures: { coverage: 50 } }), FETCHED);
+
+    expect(report.measures).toBeUndefined();
+  });
+
+  it("should leave a rating absent where its stored value is not a finite number", () => {
+    const report = storedSonar(
+      payload({
+        mapping: { projectKey: "hmcts.cath", repository: "cath-service" },
+        measures: { projectKey: "hmcts.cath", reliabilityRating: { value: "A" }, securityRating: "A" }
+      }),
+      FETCHED
+    );
+
+    expect(report.measures).toEqual({ project_key: "hmcts.cath" });
+  });
+
+  it("should keep a gate's level when its conditions did not parse", () => {
+    const report = storedSonar(
+      payload({
+        mapping: { projectKey: "hmcts.cath", repository: "cath-service" },
+        measures: { projectKey: "hmcts.cath", gate: { level: "OK", conditions: "unparsed" } }
+      }),
+      FETCHED
+    );
+
+    expect(report.measures?.gate).toEqual({ level: "OK", conditions: [] });
+  });
+
+  it("should render an unreadable gate condition as blank fields rather than invent them", () => {
+    const report = storedSonar(
+      payload({
+        mapping: { projectKey: "hmcts.cath", repository: "cath-service" },
+        measures: { projectKey: "hmcts.cath", gate: { level: "ERROR", conditions: [null, { metric: 80 }] } }
+      }),
+      FETCHED
+    );
+
+    expect(report.measures?.gate?.conditions).toEqual([
+      { metric: "", level: "", comparator: "" },
+      { metric: "", level: "", comparator: "" }
+    ]);
+  });
 });

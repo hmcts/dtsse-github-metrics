@@ -331,6 +331,13 @@ describe("eligibleReviews", () => {
 
     expect(eligibleReviews(fact).map((r) => r.identifier)).toEqual([4]);
   });
+
+  it("should keep every human review of a pull request whose author account no longer exists", () => {
+    // A deleted account comes back as no login; nobody can then be the author's own reviewer.
+    const fact = pullRequest({ authorLogin: undefined, reviews: [review({ identifier: 5, authorLogin: "reviewer" })] });
+
+    expect(eligibleReviews(fact).map((r) => r.identifier)).toEqual([5]);
+  });
 });
 
 describe("reviewStartedAt", () => {
@@ -346,6 +353,19 @@ describe("reviewStartedAt", () => {
     const fact = pullRequest({
       readyForReviewAt: new Date("2026-08-02T12:00:00Z"),
       reviews: [review({ submittedAt: new Date("2026-08-01T06:00:00Z") })]
+    });
+
+    expect(reviewStartedAt(fact).toISOString()).toBe("2026-08-01T06:00:00.000Z");
+  });
+
+  it("should take the earliest of several eligible reviews whatever order they were listed in", () => {
+    const fact = pullRequest({
+      readyForReviewAt: new Date("2026-08-02T12:00:00Z"),
+      reviews: [
+        review({ identifier: 1, submittedAt: new Date("2026-08-01T09:00:00Z") }),
+        review({ identifier: 2, submittedAt: new Date("2026-08-01T06:00:00Z") }),
+        review({ identifier: 3, submittedAt: new Date("2026-08-01T07:00:00Z") })
+      ]
     });
 
     expect(reviewStartedAt(fact).toISOString()).toBe("2026-08-01T06:00:00.000Z");

@@ -22,6 +22,7 @@ import {
   independentReviewCoverage,
   mergeCycleTime,
   Percentile,
+  percentileValue,
   pullRequestSize,
   reviewDepth,
   timeToFirstReview,
@@ -364,5 +365,45 @@ describe("every behaviour metric's per-merge accessors", () => {
     for (const metric of metrics) {
       expect(Object.values(Percentile)).toContain(metric.percentile);
     }
+  });
+});
+
+describe("percentileValue", () => {
+  const observation: DistributionObservation = {
+    status: ObservationStatus.Observed,
+    sampleSize: 3,
+    unit: "hours",
+    median: 1,
+    percentile75: 2,
+    percentile90: 3
+  };
+
+  it.each([
+    [Percentile.Median, 1],
+    [Percentile.Percentile75, 2],
+    [Percentile.Percentile90, 3]
+  ])("should read %s from the distribution", (percentile, expected) => {
+    expect(percentileValue({ ...mergeCycleTime, percentile }, observation)).toBe(expected);
+  });
+});
+
+describe("checksPassingAtMerge for a rollup state GitHub has not documented", () => {
+  it("should judge the direct commit as unchecked rather than guess a verdict", () => {
+    expect(checksPassingAtMerge.commitClassification(commit({ checkState: "NEUTRAL" }))).toBe("no-checks");
+  });
+});
+
+describe("timeToFirstReview across several reviews", () => {
+  it("should measure to the earliest review whatever order GitHub listed them in", () => {
+    const fact = pullRequest({
+      readyForReviewAt: new Date("2026-08-01T00:00:00Z"),
+      reviews: [
+        review({ identifier: 1, submittedAt: new Date("2026-08-01T10:00:00Z") }),
+        review({ identifier: 2, submittedAt: new Date("2026-08-01T08:00:00Z") }),
+        review({ identifier: 3, submittedAt: new Date("2026-08-01T12:00:00Z") })
+      ]
+    });
+
+    expect(timeToFirstReview.value(fact)).toBe(8);
   });
 });

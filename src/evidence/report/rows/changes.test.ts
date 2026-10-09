@@ -167,4 +167,19 @@ describe("the direct-push rows a window holds", () => {
 
     expect(builtDirectPushRows(held).map((row) => row.repository)).toEqual(["GAPS2", "GAPS2-archive"]);
   });
+
+  it("should break a tie within one repository on the sha", () => {
+    const at = new Date(Date.UTC(2026, 7, 12));
+    const held = facts({ alpha: { directCommits: [commit({ sha: "bbbbbbb", committedAt: at }), commit({ sha: "aaaaaaa", committedAt: at })] } });
+
+    expect(builtDirectPushRows(held).map((row) => row.sha)).toEqual(["aaaaaaa", "bbbbbbb"]);
+  });
+
+  it("should leave the size absent when the commit records no line counts", () => {
+    const sizeless = commit({ additions: undefined, deletions: undefined, changedFiles: undefined });
+    const row = builtDirectPushRows(facts({ alpha: { directCommits: [sizeless] } }))[0];
+
+    expect("lines" in (row ?? {})).toBe(false);
+    expect("files" in (row ?? {})).toBe(false);
+  });
 });

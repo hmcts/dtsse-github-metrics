@@ -94,21 +94,23 @@ export const DEFAULT_BATCH_SIZE = 500;
 export async function censusOfDescriptions(): Promise<DescriptionCensus> {
   try {
     // `total` rather than `rows`, which is a reserved word Postgres would refuse as a bare alias.
-    const counted = (
-      await prisma.$queryRaw<{ total: bigint; carrying: bigint; derived: bigint; unmeasurable: bigint }[]>`
-        SELECT count(*) AS total,
-               count(*) FILTER (WHERE payload ? 'body' OR payload ? 'title') AS carrying,
-               count(*) FILTER (WHERE payload ? 'bodyLength' AND payload ? 'hasTicketReference') AS derived,
-               count(*) FILTER (WHERE NOT (payload ? 'body' OR payload ? 'title') AND NOT (payload ? 'bodyLength')) AS unmeasurable
-        FROM pull_request_facts
-      `
-    )[0];
-    return {
-      rows: Number(counted?.total ?? 0n),
-      carryingDescription: Number(counted?.carrying ?? 0n),
-      derived: Number(counted?.derived ?? 0n),
-      unmeasurable: Number(counted?.unmeasurable ?? 0n)
-    };
+    const counted = await prisma.$queryRaw<{ total: bigint; carrying: bigint; derived: bigint; unmeasurable: bigint }[]>`
+      SELECT count(*) AS total,
+             count(*) FILTER (WHERE payload ? 'body' OR payload ? 'title') AS carrying,
+             count(*) FILTER (WHERE payload ? 'bodyLength' AND payload ? 'hasTicketReference') AS derived,
+             count(*) FILTER (WHERE NOT (payload ? 'body' OR payload ? 'title') AND NOT (payload ? 'bodyLength')) AS unmeasurable
+      FROM pull_request_facts
+    `;
+    // Summed rather than indexed: an aggregate with no `GROUP BY` returns exactly one row, so this adds that row to
+    // zero and needs no fallback for a row that cannot be missing.
+    const census: DescriptionCensus = { rows: 0, carryingDescription: 0, derived: 0, unmeasurable: 0 };
+    for (const row of counted) {
+      census.rows += Number(row.total);
+      census.carryingDescription += Number(row.carrying);
+      census.derived += Number(row.derived);
+      census.unmeasurable += Number(row.unmeasurable);
+    }
+    return census;
   } catch (error) {
     throw new StorageError("could not read the cached descriptions", error);
   }

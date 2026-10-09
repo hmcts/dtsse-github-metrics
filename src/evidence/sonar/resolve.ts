@@ -199,13 +199,7 @@ export function mappedProject(claimed: StoredSonarMapping, candidates: number, r
   };
 }
 
-/**
- * Resolves which SonarCloud project analyses one repository, climbing the ladder.
- *
- * `configuredKey` short-circuits everything: it is a decision somebody made, and the schema already refuses a
- * blank one so it cannot silently mean "unresolved".
- */
-export async function resolveRepositoryProject(options: {
+interface ResolveOptions {
   sonarClient: SonarClient;
   githubClient: GitHubClient;
   organization: string;
@@ -216,7 +210,20 @@ export async function resolveRepositoryProject(options: {
   storedByProject: (key: string) => StoredSonarMapping | undefined;
   storedByRepository: (repository: string) => { mapping: StoredSonarMapping; candidates: number } | undefined;
   now: Date;
-}): Promise<DeclarationCheck> {
+}
+
+/**
+ * Resolves which SonarCloud project analyses one repository, climbing the ladder.
+ *
+ * `configuredKey` short-circuits everything: it is a decision somebody made, and the schema already refuses a
+ * blank one so it cannot silently mean "unresolved".
+ *
+ * Notes and refusals are answers about a declaration, so a caller that passes none is typed to receive only a
+ * mapping: if a caller starts passing one, the compiler makes it handle what can then come back.
+ */
+export async function resolveRepositoryProject(options: ResolveOptions & { declaration?: undefined }): Promise<Pick<DeclarationCheck, "mapping">>;
+export async function resolveRepositoryProject(options: ResolveOptions): Promise<DeclarationCheck>;
+export async function resolveRepositoryProject(options: ResolveOptions): Promise<DeclarationCheck> {
   const { sonarClient, githubClient, organization, sonarOrganization, repository, configuredKey, declaration, storedByProject, storedByRepository, now } =
     options;
 

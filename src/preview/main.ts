@@ -1,3 +1,4 @@
+import { messageOf } from "../platform/error-message.ts";
 import { loadAat } from "./load-aat.ts";
 import { dependencies } from "./processes.ts";
 import { SOURCE_VARIABLES } from "./target.ts";
@@ -22,7 +23,7 @@ async function main(): Promise<number> {
     await loadAat({ env, image, ...(process.env.KUBE_CONTEXT ? { context: process.env.KUBE_CONTEXT } : {}) }, dependencies);
     return 0;
   } catch (error) {
-    console.error(`[preview:load-aat] FAILED: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[preview:load-aat] FAILED: ${messageOf(error)}`);
     return 1;
   }
 }

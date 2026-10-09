@@ -105,6 +105,15 @@ Two rules follow from that:
 - Unit tests live in `__tests__/` beside what they test, or as `<name>.test.ts` next to it; integration tests
   that need Postgres live in `test/integration/`.
 - `yarn test` is the unit suite, `yarn test:integration` needs the compose Postgres (`yarn deps:up`).
+- **Every file under `src/` is held at 100% statements, branches, functions and lines by exactly one suite.**
+  The Postgres-backed modules are listed in `vitest.integration-owned.mts`, which the integration config
+  covers and the unit config excludes; add a new one there. Sonar merges both lcov reports and excludes only
+  `src/evidence/store/generated/**`.
+- **Do not lower a threshold or add a `v8 ignore` / `istanbul ignore` comment.** A branch no input can reach
+  is refactored away rather than replaced by a cast or a non-null assertion; a guard reachable only by a
+  direct call is tested by that call with a hand-built argument.
+- **Turn a caught value into text with `messageOf` from `src/platform/error-message.ts`**, not an inline
+  `error instanceof Error ? error.message : String(error)`, whose `String` arm every copy leaves uncovered.
 
 ## Local development, and the way it reaches production
 
@@ -130,8 +139,8 @@ subcommand as production-touching unless you have checked which database it reso
 | --- | --- |
 | `yarn lint` | `biome check --error-on-warnings .` — a new warning fails the build |
 | `yarn typecheck` | three passes: app, `tsconfig.cli.json`, `tsconfig.e2e.json` |
-| `yarn test:coverage` | unit suite with coverage thresholds |
-| `yarn test:integration` | needs Postgres; run in CI |
+| `yarn test:coverage` | unit suite; fails below 100% on any measure |
+| `yarn test:integration` | needs Postgres; run in CI; holds the Postgres-backed modules at 100% |
 | `yarn build` | `next build` plus the CLI's `tsc` build |
 
 **`yarn lint` is a no-op inside a worktree under `.claude/worktrees/`.** `biome.json` lists

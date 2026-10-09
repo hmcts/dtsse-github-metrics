@@ -1,3 +1,4 @@
+import { messageOf } from "../../platform/error-message.ts";
 import { parseResponse } from "../behaviour/responses.ts";
 import type { GitHubClient } from "../github/client.ts";
 import { canonical, type PersonFact } from "./graph.ts";
@@ -33,11 +34,6 @@ import { type ScimUser, samlIdentitiesSchema, scimUsersSchema } from "./response
  * ~16 requests: 9 GraphQL pages and 7 SCIM pages, once per `collect-org`. Negligible against the installation's
  * hourly budget, and the reason this is a walk rather than a per-member call.
  */
-
-/** One failure's message, worded as `collect.ts` words its own. */
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 /** What the SSO pass answers. */
 export interface SsoIdentityWalk {
@@ -86,13 +82,26 @@ export function scimDisplayName(name: ScimUser["name"]): string | undefined {
 export function upnDisplayName(nameId: string): string | undefined {
   // The local part, and the whole string when there is no `@` — a directory that spells a bare `Jack.Maloney` is
   // still naming somebody.
-  const local = (nameId.split("@")[0] ?? "").trim().replace(/\d+$/, "");
+  const local = withoutTrailingDigits(nameId.replace(/@.*/s, "").trim());
   const parts = local
     .split(/[._]/)
     .map((part) => part.trim())
     .filter((part) => part !== "")
     .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1).toLowerCase()}`);
   return parts.length === 0 ? undefined : parts.join(" ");
+}
+
+/**
+ * The text with any run of digits at its end removed, as `jack.maloney2` becomes `jack.maloney`. A loop rather
+ * than `/\d+$/`, which restarts at every digit of a long run that is followed by anything else and so takes
+ * quadratic time on input the directory controls.
+ */
+function withoutTrailingDigits(text: string): string {
+  let end = text.length;
+  while (end > 0 && "0123456789".includes(text.charAt(end - 1))) {
+    end -= 1;
+  }
+  return text.slice(0, end);
 }
 
 /**
@@ -117,7 +126,7 @@ async function collectSamlIdentities(client: GitHubClient, organization: string)
       connection = parseSamlIdentities(data);
     } catch (error) {
       console.warn(
-        `Could not read the SSO identities of ${organization} after ${identities.length}; contributor names will be left as they stand: ${reason(error)}`
+        `Could not read the SSO identities of ${organization} after ${identities.length}; contributor names will be left as they stand: ${messageOf(error)}`
       );
       return undefined;
     }
@@ -177,7 +186,7 @@ async function collectScimNames(client: GitHubClient, organization: string): Pro
       page = parseScimUsers(data);
     } catch (error) {
       console.warn(
-        `Could not read the SCIM directory of ${organization} after ${names.size} addresses; contributor names will be left as they stand: ${reason(error)}`
+        `Could not read the SCIM directory of ${organization} after ${names.size} addresses; contributor names will be left as they stand: ${messageOf(error)}`
       );
       return undefined;
     }

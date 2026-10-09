@@ -4,9 +4,8 @@ import { CVE_BRANCH, type CveDocument } from "./collect.ts";
  * What to ask the container for, and how to read what comes back.
  *
  * SEPARATE FROM `./cosmos.ts` SO IT IS TESTED. The query text and the per-document guard below are decisions —
- * which branch is read, what happens to a document that cannot be ordered — and they were inside the driver call,
- * which is excluded from coverage because a test of it is a test of `@azure/cosmos`. Paging over an injected page
- * source needs no account at all.
+ * which branch is read, what happens to a document that cannot be ordered — and kept out of the driver call so
+ * they are tested without mocking `@azure/cosmos`. Paging over an injected page source needs no account at all.
  */
 
 /**

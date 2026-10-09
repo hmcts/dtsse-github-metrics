@@ -79,7 +79,7 @@ export function builtTeamRows(
     teams.map((identifier): contract.TeamRow => {
       // `teams` is absent on the ordinary single-owner row, so fall back to the primary rather than treating
       // its absence as "owned by nobody".
-      const owned = attributable.filter((row) => (row.teams ?? (row.team === undefined ? [] : [row.team])).includes(identifier));
+      const owned = attributable.filter((row) => (row.teams ?? [row.team]).includes(identifier));
       const labels: Record<string, number> = {};
       const contributors = new Set<string>();
       for (const row of owned) {
@@ -168,15 +168,15 @@ function authorsByRepository(changes: readonly AttributedChange[]): Map<string, 
  * largest-holding-first and that is a count of what a team is on the hook for, not a grade.
  */
 function teamPractice(owned: readonly TeamAggregableRow[]): contract.TeamPractice {
-  const reviewed = owned.filter((row) => row.required_approving_reviews !== undefined);
-  const checked = owned.filter((row) => row.required_status_checks !== undefined);
+  const reviewed = owned.flatMap((row) => (row.required_approving_reviews === undefined ? [] : [row.required_approving_reviews]));
+  const checked = owned.flatMap((row) => (row.required_status_checks === undefined ? [] : [row.required_status_checks]));
   const graded = owned.filter((row) => row.unreviewed_substantial !== undefined);
   return {
     // How many of the team's gates were readable at all, so every figure below has its denominator stated.
     gates_measured: reviewed.length,
-    enforces_review: reviewed.filter((row) => (row.required_approving_reviews ?? 0) >= 1).length,
+    enforces_review: reviewed.filter((approvals) => approvals >= 1).length,
     checks_measured: checked.length,
-    enforces_checks: checked.filter((row) => (row.required_status_checks ?? 0) >= 1).length,
+    enforces_checks: checked.filter((checks) => checks >= 1).length,
     // The policy's own verdict on unreviewed substantial merging, counted in its own three words rather than
     // folded into a pass and a fail: `within` is the allowance forgiving what it was configured to forgive,
     // which is a different fact from nothing having merged unreviewed at all.

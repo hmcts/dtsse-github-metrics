@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { messageOf } from "../../platform/error-message.ts";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
 import {
   type AlertSeverity,
@@ -110,7 +111,7 @@ export async function openAlerts(
     return { count: { open: records.length, bySeverity: countBySeverity(severities) } };
   } catch (error) {
     return {
-      count: { detail: `GitHub returned invalid ${family} records: ${error instanceof Error ? error.message : String(error)}` },
+      count: { detail: `GitHub returned invalid ${family} records: ${messageOf(error)}` },
       reason: AvailabilityReason.CollectionFailed
     };
   }
@@ -137,7 +138,7 @@ function countRecords(records: readonly unknown[], family: string, severityOf: (
     return { count: { open: records.length, bySeverity: countBySeverity(records.map((record) => severityOf(record))) } };
   } catch (error) {
     return {
-      count: { detail: `GitHub returned invalid ${family} records: ${error instanceof Error ? error.message : String(error)}` },
+      count: { detail: `GitHub returned invalid ${family} records: ${messageOf(error)}` },
       reason: AvailabilityReason.CollectionFailed
     };
   }
@@ -369,9 +370,7 @@ export async function collectOrganisationDependabotAlerts(client: GitHubClient, 
       }
     }
   } catch (error) {
-    console.warn(
-      `Could not read the open Dependabot alerts of ${organization}; every repository's answer will be unmeasured: ${error instanceof Error ? error.message : String(error)}`
-    );
+    console.warn(`Could not read the open Dependabot alerts of ${organization}; every repository's answer will be unmeasured: ${messageOf(error)}`);
     return undefined;
   }
   return byRepository;
@@ -449,19 +448,17 @@ export async function collectSecurityAlerts(
     secretScanning: { place: OrganisationPlace; open: number };
   }
 ): Promise<{ evidence: SecurityAlertEvidence; failures: { family: string; reason: AvailabilityReason; detail: string }[] }> {
+  const dependabot = countFromSource(sources.dependabot, "dependabot/alerts", dependabotSeverity);
+  const codeScanning = await openAlerts(client, organization, repository, "code-scanning/alerts", codeScanningSeverity);
+  const secretScanning = countedAlertsFromOrganisation(sources.secretScanning.place, sources.secretScanning.open, "secret-scanning/alerts");
   const families: [string, AlertFamilyResult][] = [
-    ["dependabot/alerts", countFromSource(sources.dependabot, "dependabot/alerts", dependabotSeverity)],
-    ["code-scanning/alerts", await openAlerts(client, organization, repository, "code-scanning/alerts", codeScanningSeverity)],
-    ["secret-scanning/alerts", countedAlertsFromOrganisation(sources.secretScanning.place, sources.secretScanning.open, "secret-scanning/alerts")]
+    ["dependabot/alerts", dependabot],
+    ["code-scanning/alerts", codeScanning],
+    ["secret-scanning/alerts", secretScanning]
   ];
 
-  const byName = new Map(families);
   return {
-    evidence: {
-      dependabot: byName.get("dependabot/alerts")?.count ?? {},
-      codeScanning: byName.get("code-scanning/alerts")?.count ?? {},
-      secretScanning: byName.get("secret-scanning/alerts")?.count ?? {}
-    },
+    evidence: { dependabot: dependabot.count, codeScanning: codeScanning.count, secretScanning: secretScanning.count },
     failures: families
       .filter(([, result]) => result.reason !== undefined)
       .map(([family, result]) => ({ family, reason: result.reason as AvailabilityReason, detail: `${family}: ${result.count.detail}` }))

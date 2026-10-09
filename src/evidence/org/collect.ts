@@ -1,3 +1,4 @@
+import { messageOf } from "../../platform/error-message.ts";
 import { isHumanAccount } from "../behaviour/analysis.ts";
 import { parseResponse } from "../behaviour/responses.ts";
 import { AliasAnswer, readAliasedBatch, reaskable } from "../github/aliased-batch.ts";
@@ -88,11 +89,6 @@ export interface OrgWalk<Fact> {
    * whole estate. A rate limit at page 5 of 33 would otherwise supersede some 1,500 live repository rows.
    */
   complete: boolean;
-}
-
-/** One failure's message, for a log line that names what went wrong rather than that something did. */
-function reason(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 /** One team as the organisation listed it. */
@@ -250,8 +246,8 @@ export async function collectOrgTeams(client: GitHubClient, organization: string
     } catch (error) {
       console.warn(
         facts.teamsRead
-          ? `Could not list further teams of ${organization} after ${facts.teams.length}; keeping the teams already read: ${reason(error)}`
-          : `Could not list the teams of ${organization}; the graph will be built without team access: ${reason(error)}`
+          ? `Could not list further teams of ${organization} after ${facts.teams.length}; keeping the teams already read: ${messageOf(error)}`
+          : `Could not list the teams of ${organization}; the graph will be built without team access: ${messageOf(error)}`
       );
       facts.teamsComplete = false;
       break;
@@ -275,13 +271,13 @@ export async function collectOrgTeams(client: GitHubClient, organization: string
         facts.memberships.push(...(await collectTeamMembers(client, organization, node.slug, node.members)));
         facts.membershipsObserved.add(canonical(node.slug));
       } catch (error) {
-        console.warn(`Could not list the members of ${organization}/${node.slug}; it will claim no people: ${reason(error)}`);
+        console.warn(`Could not list the members of ${organization}/${node.slug}; it will claim no people: ${messageOf(error)}`);
       }
       try {
         facts.teamRepositories.push(...(await collectTeamRepositories(client, organization, node.slug, node.repositories)));
         facts.teamRepositoriesObserved.add(canonical(node.slug));
       } catch (error) {
-        console.warn(`Could not list the repositories of ${organization}/${node.slug}; it will claim no repositories: ${reason(error)}`);
+        console.warn(`Could not list the repositories of ${organization}/${node.slug}; it will claim no repositories: ${messageOf(error)}`);
       }
     }
 
@@ -318,7 +314,7 @@ export async function collectOrgRepositories(client: GitHubClient, organization:
       const data: unknown = await client.graphql(orgRepositoriesQuery(), { organization, cursor });
       connection = parseRepositories(data);
     } catch (error) {
-      console.warn(`Could not list the repositories of ${organization} after ${repositories.length}: ${reason(error)}`);
+      console.warn(`Could not list the repositories of ${organization} after ${repositories.length}: ${messageOf(error)}`);
       complete = false;
       break;
     }
@@ -379,7 +375,7 @@ export async function collectOrgPeople(client: GitHubClient, organization: strin
       const data: unknown = await client.graphql(orgPeopleQuery(), { organization, cursor });
       connection = parsePeople(data);
     } catch (error) {
-      console.warn(`Could not list the members of ${organization} after ${people.size}: ${reason(error)}`);
+      console.warn(`Could not list the members of ${organization} after ${people.size}: ${messageOf(error)}`);
       complete = false;
       break;
     }
@@ -461,9 +457,6 @@ export async function collectCodeowners(
  * unanswered, so a batch of one never splits further.
  */
 async function readOwnershipBatch(client: GitHubClient, organization: string, batch: string[], facts: Map<string, CodeownersFact>): Promise<void> {
-  if (batch.length === 0) {
-    return;
-  }
   const variables: Record<string, unknown> = { organization };
   for (const [index, name] of batch.entries()) {
     variables[`r${index}`] = name;
@@ -487,7 +480,7 @@ async function readOwnershipBatch(client: GitHubClient, organization: string, ba
   } catch (error) {
     // NOTHING ARRIVED, so nothing is consumed and the batch is split, unchanged. A document too complex for
     // GitHub to serve can succeed one repository at a time.
-    await reReadOneAtATime(client, organization, batch, facts, reason(error));
+    await reReadOneAtATime(client, organization, batch, facts, messageOf(error));
     return;
   }
 
@@ -552,7 +545,7 @@ function readOwnershipRepository(organization: string, repository: string, value
   try {
     entry = ownershipEntry(value);
   } catch (error) {
-    facts.set(repository, refused(repository, reason(error)));
+    facts.set(repository, refused(repository, messageOf(error)));
     return;
   }
 
@@ -627,7 +620,7 @@ export async function collectDirectAdmins(client: GitHubClient, organization: st
         }
       }
     } catch (error) {
-      console.warn(`Could not list the direct collaborators of ${organization}/${repository}: ${reason(error)}`);
+      console.warn(`Could not list the direct collaborators of ${organization}/${repository}: ${messageOf(error)}`);
       continue;
     }
     admins.set(repository, [...logins].sort(byCodePoint));

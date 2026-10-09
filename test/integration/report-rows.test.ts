@@ -11,6 +11,7 @@ import {
   forgetBuiltRows,
   mergeRows,
   overviewSummary,
+  repositoryReport,
   repositoryRows,
   teamMemberRows,
   teamRows
@@ -568,6 +569,25 @@ describe("repositoryRows", () => {
  * None of it is visible from a component test, which is handed rows somebody wrote by hand, and none of it from a
  * unit test of the store: the seam is the report reading one estate's coverage and deciding per row.
  */
+describe("repositoryReport", () => {
+  it("should send no evidence block for a repository outside the cohort, only its contributors", async () => {
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+
+    const report = await repositoryReport(CONFIGURATION, "absent", 26, { pullRequests: true, directCommits: true }, new Date(Date.UTC(2026, 8, 1)));
+
+    expect(report.evidence).toBeUndefined();
+    expect(report.contributors).toBeInstanceOf(Map);
+  });
+
+  it("should send no evidence block for a cohort repository nothing has been collected for", async () => {
+    await graphRepository("alpha", new Date(Date.UTC(2026, 7, 20)));
+
+    const report = await repositoryReport(CONFIGURATION, "alpha", 26, { pullRequests: true, directCommits: true }, new Date(Date.UTC(2026, 8, 1)));
+
+    expect(report.evidence).toBeUndefined();
+  });
+});
+
 describe("the merge figures a row states", () => {
   const REFERENCE = new Date(Date.UTC(2026, 8, 1));
 

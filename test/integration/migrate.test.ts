@@ -1,5 +1,8 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import pg from "pg";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { migrate, migrationsDirectory } from "../../src/evidence/store/migrate.ts";
 
 const SCRATCH = "github_metrics_migrate_test";
@@ -108,6 +111,62 @@ describe("migrate", () => {
   });
 });
 
+describe("migrate on a database already up to date", () => {
+  const original = process.env.DATABASE_URL;
+  let directory: string;
+
+  beforeAll(async () => {
+    await administer(`DROP DATABASE IF EXISTS "${SCRATCH}"`);
+    await administer(`CREATE DATABASE "${SCRATCH}"`);
+    process.env.DATABASE_URL = scratchUrl();
+    await migrate();
+    directory = await mkdtemp(path.join(tmpdir(), "migrations-"));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  afterAll(async () => {
+    if (original === undefined) {
+      delete process.env.DATABASE_URL;
+    } else {
+      process.env.DATABASE_URL = original;
+    }
+    await rm(directory, { recursive: true, force: true });
+    await administer(`DROP DATABASE IF EXISTS "${SCRATCH}"`);
+  });
+
+  it("should roll back a migration that fails, name it, and leave it out of the ledger", async () => {
+    await mkdir(path.join(directory, "29991231000000_broken"));
+    await writeFile(path.join(directory, "29991231000000_broken", "migration.sql"), "CREATE TABLE half_made (id int); SELECT no_such_function();");
+
+    await expect(migrate(directory)).rejects.toThrow(/^migration 29991231000000_broken failed: /);
+
+    const client = new pg.Client({ connectionString: scratchUrl() });
+    await client.connect();
+    try {
+      const { rows } = await client.query(`SELECT 1 FROM "_prisma_migrations" WHERE migration_name = '29991231000000_broken'`);
+      expect(rows).toEqual([]);
+      expect(await tableNames()).not.toContain("half_made");
+    } finally {
+      await client.end();
+    }
+  });
+
+  it("should still finish when the unlock fails, since closing the session releases the lock", async () => {
+    const query = pg.Client.prototype.query;
+    vi.spyOn(pg.Client.prototype, "query").mockImplementation(function (this: pg.Client, ...args: unknown[]) {
+      if (typeof args[0] === "string" && args[0].startsWith("SELECT pg_advisory_unlock")) {
+        return Promise.reject(new Error("the server went away"));
+      }
+      return (query as (...rest: unknown[]) => unknown).apply(this, args);
+    } as never);
+
+    await expect(migrate(migrationsDirectory())).resolves.toEqual([]);
+  });
+});
+
 describe("migrate waiting for the database", () => {
   const original = process.env.DATABASE_URL;
 
@@ -133,6 +192,22 @@ describe("migrate waiting for the database", () => {
     ).rejects.toThrow();
 
     expect(waits).toBeGreaterThan(1);
+  });
+
+  it("should wait its own retry interval and try again when the default pause applies", async () => {
+    // The default pause is a real two seconds, so this is the one case that spends it. The first refusal is
+    // stated rather than produced by a closed port, so the second attempt meets the real database.
+    process.env.DATABASE_URL = original ?? "postgresql://hmcts@localhost:5432/github_metrics";
+    vi.spyOn(pg.Client.prototype, "connect").mockRejectedValueOnce(Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }));
+    vi.spyOn(pg.Client.prototype, "end").mockRejectedValueOnce(new Error("never connected"));
+    vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    try {
+      await expect(migrate(migrationsDirectory())).resolves.toEqual([]);
+      expect(console.info).toHaveBeenCalledWith("waiting for the database: connect ECONNREFUSED");
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it("should fail immediately when the database answers with a refusal of its own", async () => {

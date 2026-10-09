@@ -237,7 +237,7 @@ export function selectCohort(
   policy: CohortPolicy,
   reference: Date
 ): CohortEntry[] {
-  const owners = new Map<string, { kind: OwnerKind; identifiers: string[] }>();
+  const owners = new Map<string, { kind: OwnerKind; identifiers: [string, ...string[]] }>();
   for (const row of ownership) {
     // A `none` row is the ladder's remembered negative, and it is what puts the repository in the unowned
     // bucket rather than leaving it with an empty owner list that later code would have to interpret.
@@ -282,9 +282,11 @@ export function selectCohort(
     // row for every repository it walks, so this is the case where the two tables disagree — a repository
     // collected after the last attribution — and it belongs in the estate rather than being dropped from it.
     const owned = owners.get(repository.repository) ?? { kind: OwnerKind.None, identifiers: [UnownedIdentifier] };
-    return {
+    // Sorted in place: the map is local to this call, and sorting it keeps the non-empty tuple type.
+    const sorted = owned.identifiers.sort((left, right) => left.localeCompare(right));
+    const entry: CohortEntry = {
       repository: repository.repository,
-      owners: owned.identifiers.slice().sort((left, right) => left.localeCompare(right)),
+      owners: sorted,
       ownerKind: owned.kind,
       archived: repository.archived,
       visibility: repository.visibility,
@@ -297,15 +299,14 @@ export function selectCohort(
       ...(repository.pushedAt === undefined ? {} : { pushedAt: repository.pushedAt }),
       ...(repository.defaultBranchCommittedAt === undefined ? {} : { defaultBranchCommittedAt: repository.defaultBranchCommittedAt })
     };
+    // The first owner is the sort key. The tuple type is what proves it exists: every path above seeds
+    // `identifiers` with one element, so no fallback is needed for an owner list that cannot be empty.
+    return { owner: sorted[0], entry };
   });
 
-  return entries.sort((left, right) => {
-    // `owners` is never empty by construction, but the fallback is stated rather than asserted away: if it ever
-    // were, sorting under the bucket the entry would be reported in beats throwing inside a comparator.
-    const leftOwner = left.owners[0] ?? UnownedIdentifier;
-    const rightOwner = right.owners[0] ?? UnownedIdentifier;
-    return leftOwner.localeCompare(rightOwner) || left.repository.localeCompare(right.repository);
-  });
+  return entries
+    .toSorted((left, right) => left.owner.localeCompare(right.owner) || left.entry.repository.localeCompare(right.entry.repository))
+    .map(({ entry }) => entry);
 }
 
 /**
@@ -422,10 +423,12 @@ export function cohortTeams(entries: readonly CohortEntry[]): string[] {
       holdings.set(owner, (holdings.get(owner) ?? 0) + 1);
     }
   }
-  return [...holdings.keys()].sort((left, right) => {
-    if (left === UnownedIdentifier || right === UnownedIdentifier) {
-      return left === UnownedIdentifier ? 1 : -1;
-    }
-    return (holdings.get(right) ?? 0) - (holdings.get(left) ?? 0) || left.localeCompare(right);
-  });
+  return [...holdings]
+    .sort(([left, leftHolding], [right, rightHolding]) => {
+      if (left === UnownedIdentifier || right === UnownedIdentifier) {
+        return left === UnownedIdentifier ? 1 : -1;
+      }
+      return rightHolding - leftHolding || left.localeCompare(right);
+    })
+    .map(([owner]) => owner);
 }

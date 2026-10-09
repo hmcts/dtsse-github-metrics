@@ -290,11 +290,8 @@ export function reviewStartedAt(pullRequest: PullRequestFact): Date {
   if (reviews.length === 0) {
     return anchor;
   }
-  const earliest = reviews.reduce(
-    (soonest, review) => (review.submittedAt.getTime() < soonest.getTime() ? review.submittedAt : soonest),
-    reviews[0]?.submittedAt as Date
-  );
-  return earliest.getTime() < anchor.getTime() ? earliest : anchor;
+  const earliest = Math.min(...reviews.map((review) => review.submittedAt.getTime()));
+  return earliest < anchor.getTime() ? new Date(earliest) : anchor;
 }
 
 /**

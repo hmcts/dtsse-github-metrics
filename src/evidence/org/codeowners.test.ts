@@ -51,6 +51,10 @@ describe("parseCodeowners", () => {
     expect(parseCodeowners(document, "hmcts")).toEqual({ teams: ["appreg"], people: [] });
   });
 
+  it("should cut a comment to the end of the line even past a stray carriage return", () => {
+    expect(parseCodeowners("* @hmcts/appreg # note\r@hmcts/dtsse\n", "hmcts").teams).toEqual(["appreg"]);
+  });
+
   it("should read a whole-line comment as naming nobody", () => {
     expect(parseCodeowners("# @hmcts/appreg\n", "hmcts")).toEqual({ teams: [], people: [] });
   });

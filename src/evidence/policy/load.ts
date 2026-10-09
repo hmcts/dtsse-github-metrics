@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import yaml from "js-yaml";
 import type { ZodError } from "zod";
+import { messageOf } from "../../platform/error-message.ts";
 import { type Configuration, configurationSchema } from "./schema.ts";
 
 /**
@@ -65,7 +66,7 @@ export async function loadConfiguration(...paths: string[]): Promise<Configurati
     // would otherwise run into the next file's first line and change what both mean.
     document = contents.join("\n");
   } catch (error) {
-    throw new ConfigurationError(error instanceof Error ? error.message : String(error));
+    throw new ConfigurationError(messageOf(error));
   }
 
   let parsed: unknown;
@@ -75,7 +76,7 @@ export async function loadConfiguration(...paths: string[]): Promise<Configurati
     // js-yaml raises for an unparseable document and for an impossible timestamp such as `2026-13-05`
     // before the schema sees the value. Both are invalid configuration to be reported as such, not
     // crashes to escape the loader.
-    throw new ConfigurationError(error instanceof Error ? error.message : String(error));
+    throw new ConfigurationError(messageOf(error));
   }
 
   const result = configurationSchema.safeParse(parsed);
@@ -91,7 +92,7 @@ export function parseConfiguration(document: string, source = "<inline>"): Confi
   try {
     parsed = yaml.load(document, YAML_OPTIONS);
   } catch (error) {
-    throw new ConfigurationError(error instanceof Error ? error.message : String(error));
+    throw new ConfigurationError(messageOf(error));
   }
   const result = configurationSchema.safeParse(parsed);
   if (!result.success) {

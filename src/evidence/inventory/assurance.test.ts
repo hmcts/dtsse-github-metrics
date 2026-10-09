@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGitHubClient } from "../github/client.ts";
+import { createGitHubClient, type GitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
 import {
   assuranceEvidence,
@@ -74,6 +74,12 @@ describe("hygieneFromMetadata", () => {
     expect(hygieneFromMetadata(metadata)).toEqual({ secretScanning: true });
   });
 
+  it("should leave secret scanning absent where only the other blocks were named", () => {
+    const metadata = { security_and_analysis: { dependabot_security_updates: { status: "enabled" } } };
+
+    expect(hygieneFromMetadata(metadata)).toEqual({ dependabotSecurityUpdates: true });
+  });
+
   it("should read anything but GitHub's own word for enabled as off", () => {
     // GitHub keeps adding statuses to this object, and a new one is not evidence that a feature is on.
     const metadata = { security_and_analysis: { secret_scanning: { status: "enabled_for_new_repos" } } };
@@ -115,6 +121,10 @@ describe("severeAlertAge", () => {
     const records = [alert("critical", "not a date"), alert("high", "2026-09-04T00:00:00Z")];
 
     expect(severeAlertAge(records, NOW)).toBe(10);
+  });
+
+  it("should drop a severe alert carrying no instant at all", () => {
+    expect(severeAlertAge([{ security_advisory: { severity: "critical" } }, alert("high", "2026-09-04T00:00:00Z")], NOW)).toBe(10);
   });
 
   it("should ignore a record whose shape it cannot read", () => {
@@ -293,6 +303,22 @@ describe("collectAssuranceSignals", () => {
     });
   });
 
+  it("should leave a repository unread where its node is not one this build can read", () => {
+    const { fetch } = replying({ body: { data: { a0: { ...entry("alpha"), hasVulnerabilityAlertsEnabled: "yes" } } } });
+
+    return collectAssuranceSignals(client(fetch), "hmcts", ["alpha"], 1).then((signals) => {
+      expect(signals.has("alpha")).toBe(false);
+    });
+  });
+
+  it("should carry the security policy GitHub reported beside the hygiene signals", () => {
+    const { fetch } = replying({ body: { data: { a0: { ...entry("alpha"), isSecurityPolicyEnabled: false } } } });
+
+    return collectAssuranceSignals(client(fetch), "hmcts", ["alpha"], 1).then((signals) => {
+      expect(signals.get("alpha")).toEqual({ vulnerabilityAlerts: true, securityPolicy: false, updateConfiguration: false });
+    });
+  });
+
   it("should leave the alerts flag absent where GitHub sent none, keeping the file answer", () => {
     const { fetch } = replying({ body: { data: { a0: entry("alpha", { alerts: null }) } } });
 
@@ -327,6 +353,14 @@ describe("readDependabotAlerts", () => {
     return readDependabotAlerts(client(fetch), "hmcts", "alpha").then((records) => {
       expect(records).toBeUndefined();
     });
+  });
+
+  it("should raise a failure that is not a GitHub answer rather than reporting the family unread", async () => {
+    const failing = {
+      paginate: () => ({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(new TypeError("boom")) }) })
+    } as unknown as GitHubClient;
+
+    await expect(readDependabotAlerts(failing, "hmcts", "alpha")).rejects.toThrow("boom");
   });
 
   it("should ask for a hundred records a page, matching the org-wide read beside it", () => {
@@ -445,6 +479,14 @@ describe("collectOrganisationSecretAlerts", () => {
     // had an unreadable `created_at` reported ZERO open — turning a leaked credential into a clean bill. An alert
     // with no readable instant is still an alert; it just cannot contribute an age.
     const { fetch } = replying({ body: [alert("kubernetes", "not a date")] });
+
+    return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
+      expect(summaries?.get("kubernetes")).toEqual({ open: 1 });
+    });
+  });
+
+  it("counts an alert carrying no instant at all", () => {
+    const { fetch } = replying({ body: [{ repository: { name: "kubernetes" } }] });
 
     return collectOrganisationSecretAlerts(client(fetch), "hmcts", NOW).then((summaries) => {
       expect(summaries?.get("kubernetes")).toEqual({ open: 1 });

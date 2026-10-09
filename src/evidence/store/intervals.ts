@@ -36,10 +36,9 @@ export function findMissingIntervals(requested: Interval, covered: readonly Inte
       break;
     }
     if (interval.startsAt.getTime() > cursor.getTime()) {
-      missing.push({
-        startsAt: cursor,
-        endsAt: earlier(interval.startsAt, requested.endsAt)
-      });
+      // `interval.startsAt` is already before the request's end — the `break` above saw to that — so the gap
+      // closes where the interval opens, with no clamp to the request needed.
+      missing.push({ startsAt: cursor, endsAt: interval.startsAt });
     }
     cursor = later(cursor, interval.endsAt);
     if (cursor.getTime() >= requested.endsAt.getTime()) {
@@ -98,27 +97,18 @@ export function coalesceIntervals(existing: readonly Interval[], addition: Inter
  * forward from one lagging behind, so the answer stays what it was before the mode was counted.
  */
 export function modalEdge(edges: readonly Date[]): Date | undefined {
-  if (edges.length === 0) {
-    return undefined;
-  }
   const counts = new Map<number, number>();
   for (const edge of edges) {
     const time = edge.getTime();
     counts.set(time, (counts.get(time) ?? 0) + 1);
   }
-  let bestTime: number | undefined;
-  let bestCount = 0;
+  let best: { time: number; count: number } | undefined;
   for (const [time, count] of counts) {
-    if (count > bestCount || (count === bestCount && bestTime !== undefined && time > bestTime)) {
-      bestTime = time;
-      bestCount = count;
+    if (best === undefined || count > best.count || (count === best.count && time > best.time)) {
+      best = { time, count };
     }
   }
-  return bestTime === undefined ? undefined : new Date(bestTime);
-}
-
-function earlier(left: Date, right: Date): Date {
-  return left.getTime() <= right.getTime() ? left : right;
+  return best === undefined ? undefined : new Date(best.time);
 }
 
 function later(left: Date, right: Date): Date {

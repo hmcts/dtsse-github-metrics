@@ -1,11 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { AvailabilityReason } from "../domain/availability.ts";
 import { AlertSeverity } from "../domain/security-alerts.ts";
 import { HUMAN_MAINTENANCE_SEARCH_DAYS, humanWindowAnswer, maintenanceEvidence, maintenanceWindows } from "../domain/standards.ts";
-import { createGitHubClient } from "../github/client.ts";
+import { createGitHubClient, type GitHubClient } from "../github/client.ts";
 import { personalAccessToken } from "../github/credentials.ts";
 import { severeAlertAge } from "./assurance.ts";
 import { bindsAdministrators, collectMergeGate, enforcingRules, mergeGateFromClassicProtection, mergeGateWithoutRuleDetails } from "./merge-gate.ts";
-import { deploysToProduction, entryRepository, ProductionListError, parseProductionRepositories, parseRepositoryUrl } from "./production.ts";
+import {
+  deploysToProduction,
+  entryRepository,
+  fetchProductionRepositories,
+  ProductionListError,
+  parseProductionRepositories,
+  parseRepositoryUrl
+} from "./production.ts";
 import {
   alertRepositoryName,
   alertsFromOrganisation,
@@ -14,6 +22,7 @@ import {
   collectSecurityAlerts,
   countBySeverity,
   countedAlertsFromOrganisation,
+  countFromSource,
   dependabotSeverity,
   noSeverity,
   OrganisationAnswer,
@@ -44,6 +53,13 @@ function replying(replies: Reply[]): typeof globalThis.fetch {
 
 function client(fetch: typeof globalThis.fetch) {
   return createGitHubClient({ credentials: personalAccessToken("ghp_test"), fetch, pause: () => Promise.resolve(), clock: () => 1000 });
+}
+
+/** A client whose every paginated read fails with something other than a GitHub answer. */
+function failingPagination(error: Error): GitHubClient {
+  return {
+    paginate: () => ({ [Symbol.asyncIterator]: () => ({ next: () => Promise.reject(error) }) })
+  } as unknown as GitHubClient;
 }
 
 beforeEach(() => {
@@ -149,7 +165,7 @@ describe("collectMergeGate", () => {
     const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
 
     expect(report.gate).toBeUndefined();
-    expect(report.detail).toBeTruthy();
+    expect(report.detail).toBe("GitHub returned HTTP 500");
   });
 
   it("should name a rule type it does not model rather than dropping it", async () => {
@@ -186,6 +202,64 @@ describe("collectMergeGate", () => {
     const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
 
     expect(report.gate?.statusChecks[0]).toEqual({ contexts: ["build", "lint"], strictRequiredStatusChecksPolicy: true });
+  });
+
+  it("should keep the rules of a ruleset it was refused, leaving administrators unknown", async () => {
+    // Losing a gate because its bypass list is private would report less than GitHub disclosed.
+    const fetch = replying([
+      { body: [{ type: "pull_request", parameters: {}, ruleset_id: 7 }] },
+      { status: 403, body: { message: "Resource not accessible by personal access token" } }
+    ]);
+
+    const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
+
+    expect(report.gate?.pullRequests[0]?.requiredApprovingReviewCount).toBe(0);
+    expect(report.gate).not.toHaveProperty("appliesToAdministrators");
+  });
+
+  it("should read a rule naming no ruleset, leaving administrators unknown and skipping unnamed checks", async () => {
+    const fetch = replying([
+      {
+        body: [
+          { type: "required_status_checks", parameters: { required_status_checks: "unexpected" } },
+          { type: "required_status_checks", parameters: { required_status_checks: [{}, { context: "build" }] } }
+        ]
+      }
+    ]);
+
+    const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
+
+    expect(report.gate?.statusChecks.map((rule) => rule.contexts)).toEqual([[], ["build"]]);
+    expect(report.gate).not.toHaveProperty("appliesToAdministrators");
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should report a ruleset it cannot read as invalid rules rather than a gate", async () => {
+    const fetch = replying([{ body: [{ type: "pull_request", parameters: {}, ruleset_id: 7 }] }, { body: { enforcement: 5 } }]);
+
+    const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
+
+    expect(report.gate).toBeUndefined();
+    expect(report.detail).toMatch(/^GitHub returned invalid branch rules: /);
+  });
+
+  it("should report classic protection it cannot read as invalid rules rather than a gate", async () => {
+    const fetch = replying([{ body: [] }, { body: { enforce_admins: { enabled: "yes" } } }]);
+
+    const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
+
+    expect(report.gate).toBeUndefined();
+    expect(report.detail).toMatch(/^GitHub returned invalid branch rules: /);
+  });
+
+  it("should report the reason when classic protection fails for a reason other than a refusal", async () => {
+    const fetch = replying([{ body: [] }, { status: 500, body: {} }, { status: 500, body: {} }, { status: 500, body: {} }]);
+
+    const report = await collectMergeGate(client(fetch), "hmcts", "cath-service", "main");
+
+    expect(report.gate).toBeUndefined();
+    expect(report.detail).toBe("GitHub returned HTTP 500");
+    expect(report.detail).not.toMatch(/invalid branch rules/);
   });
 
   it("should encode a branch name that needs it", async () => {
@@ -358,6 +432,46 @@ describe("severity readers", () => {
   it("should grade no secret-scanning alert, since GitHub grades none", () => {
     // Treating every leaked secret as critical would rank a test fixture alongside a live production key.
     expect(noSeverity()).toBeUndefined();
+  });
+});
+
+describe("openAlerts failures", () => {
+  it("should raise a failure that is not a GitHub answer rather than reporting it as a refusal", async () => {
+    await expect(openAlerts(failingPagination(new TypeError("boom")), "hmcts", "cath-service", "code-scanning/alerts", codeScanningSeverity)).rejects.toThrow(
+      "boom"
+    );
+  });
+
+  it("should report records it cannot grade as invalid, and record the failure", async () => {
+    const fetch = replying([{ body: [{}] }]);
+
+    const result = await openAlerts(client(fetch), "hmcts", "cath-service", "code-scanning/alerts", () => {
+      throw new Error("ungradable");
+    });
+
+    expect(result.count.detail).toBe("GitHub returned invalid code-scanning/alerts records: ungradable");
+    expect(result.reason).toBe(AvailabilityReason.CollectionFailed);
+  });
+});
+
+describe("countFromSource", () => {
+  it("should read records fetched per repository as unread where the fetch found the family off", () => {
+    expect(countFromSource({ from: "repository", records: undefined }, "dependabot/alerts", dependabotSeverity).count.open).toBeUndefined();
+  });
+
+  it("should count records fetched per repository", () => {
+    const records = [{ security_advisory: { severity: "high" } }];
+
+    expect(countFromSource({ from: "repository", records }, "dependabot/alerts", dependabotSeverity).count).toEqual({ open: 1, bySeverity: { high: 1 } });
+  });
+
+  it("should report records it cannot grade as invalid, and record the failure", () => {
+    const result = countFromSource({ from: "repository", records: [{}] }, "dependabot/alerts", () => {
+      throw new Error("ungradable");
+    });
+
+    expect(result.count.detail).toBe("GitHub returned invalid dependabot/alerts records: ungradable");
+    expect(result.reason).toBe(AvailabilityReason.CollectionFailed);
   });
 });
 
@@ -653,7 +767,13 @@ describe("parseRepositoryUrl", () => {
     expect(parseRepositoryUrl("git@github.com:hmcts/bar-api.git")).toBeUndefined();
   });
 
-  it.each(["https://github.com/hmcts", "https://github.com/hmcts/a/b", "https://github.com/hmcts/.git", "not a url"])("should refuse %s", (url) => {
+  it.each([
+    "https://github.com/hmcts",
+    "https://github.com/hmcts/a/b",
+    "https://github.com/hmcts/.git",
+    "not a url",
+    "file:///hmcts/cath-service"
+  ])("should refuse %s", (url) => {
     expect(parseRepositoryUrl(url)).toBeUndefined();
   });
 });
@@ -702,8 +822,55 @@ prod:
     expect(parseProductionRepositories("prod: []\n").size).toBe(0);
   });
 
-  it.each([["not a mapping"], ["- a list\n"], ["demo:\n  - repo: https://github.com/hmcts/x\n"]])("should refuse %s", (document) => {
+  it.each([["not a mapping"], ["- a list\n"], ["demo:\n  - repo: https://github.com/hmcts/x\n"], ["prod: [unclosed\n"]])("should refuse %s", (document) => {
     expect(() => parseProductionRepositories(document)).toThrow(ProductionListError);
+  });
+});
+
+describe("fetchProductionRepositories", () => {
+  const LIST_URL = "https://raw.githubusercontent.com/hmcts/cnp-jenkins-config/master/environment-approvals.yml";
+
+  function answering(status: number, body: string): typeof globalThis.fetch {
+    return vi.fn(() => Promise.resolve(new Response(body, { status }))) as unknown as typeof globalThis.fetch;
+  }
+
+  it("should read the list it fetched", async () => {
+    const fetch = answering(200, "prod:\n  - repo: https://github.com/hmcts/cath-service\n");
+
+    expect(await fetchProductionRepositories(LIST_URL, fetch)).toEqual(new Set(["hmcts/cath-service"]));
+    expect(fetch).toHaveBeenCalledWith(LIST_URL, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("should send no credential, the list being public", async () => {
+    const fetch = answering(200, "prod: []\n");
+
+    await fetchProductionRepositories(LIST_URL, fetch);
+
+    expect(vi.mocked(fetch).mock.calls[0]?.[1]).not.toHaveProperty("headers");
+  });
+
+  it("should report nothing, not an empty set, when the request fails", async () => {
+    const fetch = vi.fn(() => Promise.reject(new TypeError("fetch failed"))) as unknown as typeof globalThis.fetch;
+
+    expect(await fetchProductionRepositories(LIST_URL, fetch)).toBeUndefined();
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("Could not fetch the production list"));
+  });
+
+  it("should report nothing when the host answers anything but a 200", async () => {
+    expect(await fetchProductionRepositories(LIST_URL, answering(502, "Bad Gateway"))).toBeUndefined();
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("returned HTTP 502"));
+  });
+
+  it("should report nothing when the body is not a list it can read", async () => {
+    expect(await fetchProductionRepositories(LIST_URL, answering(200, "- a list\n"))).toBeUndefined();
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("Could not read the production list"));
+  });
+
+  it("should default to the global fetch", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("prod: []\n", { status: 200 }));
+
+    expect(await fetchProductionRepositories(LIST_URL)).toEqual(new Set());
+    expect(fetch).toHaveBeenCalledOnce();
   });
 });
 

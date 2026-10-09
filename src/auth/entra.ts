@@ -1,4 +1,5 @@
 import * as client from "openid-client";
+import { messageOf } from "../platform/error-message.ts";
 import { SIGN_IN_MAX_AGE } from "./cookies.ts";
 import { open, seal } from "./sealed.ts";
 import type { Session } from "./session.ts";
@@ -114,7 +115,7 @@ export async function completeSignIn(settings: AuthSettings, currentUrl: URL, si
       pkceCodeVerifier: signIn.codeVerifier
     });
   } catch (error) {
-    throw new SignInFailed(error instanceof Error ? error.message : String(error));
+    throw new SignInFailed(messageOf(error));
   }
 
   const claims = tokens.claims();

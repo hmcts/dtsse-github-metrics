@@ -142,6 +142,10 @@ describe("modalEdge", () => {
     expect(modalEdge([august(7), august(8)])?.toISOString()).toBe(august(8).toISOString());
   });
 
+  it("should break a tie towards the later edge whichever order the edges arrive in", () => {
+    expect(modalEdge([august(8), august(7)])?.toISOString()).toBe(august(8).toISOString());
+  });
+
   it("should report the only edge when one repository has been collected", () => {
     expect(modalEdge([august(8)])?.toISOString()).toBe(august(8).toISOString());
   });

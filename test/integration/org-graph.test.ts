@@ -192,6 +192,15 @@ describe("recordOrgTeams", () => {
       [third, null]
     ]);
   });
+
+  it("should write a team listed twice in one run once, keeping the first", async () => {
+    // Two live rows for one identity would break the `_live` partial unique, so the second sighting is dropped
+    // rather than allowed to fail the whole write.
+    const summary = await recordOrgTeams(ORGANIZATION, FIRST, [team("civil-admins", { parentSlug: "civil" }), team("civil-admins")], true);
+
+    expect(summary).toEqual({ inserted: 1, unchanged: 0, changed: 0, superseded: 0 });
+    expect(await liveOrgTeams(ORGANIZATION)).toMatchObject([{ teamSlug: "civil-admins", parentSlug: "civil" }]);
+  });
 });
 
 describe("ownership churn", () => {
@@ -537,6 +546,15 @@ describe("recordOrgRepositories", () => {
       { repository: "cath-service", archived: false, visibility: "public" },
       { repository: "old-thing", archived: true, visibility: "public" }
     ]);
+  });
+
+  it("should write nothing for a run that listed no repositories and saw the estate only in part", async () => {
+    await recordOrgRepositories(ORGANIZATION, FIRST, [repository("cath-service")], true);
+
+    const summary = await recordOrgRepositories(ORGANIZATION, SECOND, [], false);
+
+    expect(summary).toEqual({ inserted: 0, unchanged: 0, changed: 0, superseded: 0 });
+    expect(await liveOrgRepositories(ORGANIZATION)).toMatchObject([{ repository: "cath-service", lastObservedAt: FIRST }]);
   });
 
   it("should store pushed_at, which the cohort's activity window is read from", async () => {

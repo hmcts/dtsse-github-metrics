@@ -1,4 +1,5 @@
 import "server-only";
+import { messageOf } from "../../platform/error-message.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { collectionState } from "../store/collection-state.ts";
 import { type Estate, estateForEverySpan } from "./estate.ts";
@@ -61,7 +62,7 @@ export async function warmEverySpan(configuration: Configuration): Promise<void>
       const rows = await repositoryRows(configuration, weeks, reference, read);
       console.info(`warmed the ${weeks}-week report: ${rows.length} repositories in ${Date.now() - started}ms`);
     } catch (error) {
-      console.warn(`could not warm the ${weeks}-week report: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`could not warm the ${weeks}-week report: ${messageOf(error)}`);
     }
   }
 }
@@ -80,7 +81,7 @@ async function estateOrNothing(configuration: Configuration, reference: Date): P
     console.info(`read the estate for every span in ${Date.now() - started}ms`);
     return read;
   } catch (error) {
-    console.warn(`could not read the estate for every span: ${error instanceof Error ? error.message : String(error)}; each span will read for itself`);
+    console.warn(`could not read the estate for every span: ${messageOf(error)}; each span will read for itself`);
     return undefined;
   }
 }
@@ -118,7 +119,7 @@ export function startReportWarmer(configuration: Configuration, intervalMillisec
         await running;
       }
     } catch (error) {
-      console.warn(`could not check the collection revision: ${error instanceof Error ? error.message : String(error)}`);
+      console.warn(`could not check the collection revision: ${messageOf(error)}`);
     }
   }
 

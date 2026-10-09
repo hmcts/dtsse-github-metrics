@@ -1,4 +1,5 @@
 import yaml from "js-yaml";
+import { messageOf } from "../../platform/error-message.ts";
 
 /**
  * The published list of repositories approved to deploy to production. Ported from `metrics.production`.
@@ -97,7 +98,7 @@ export function parseProductionRepositories(document: string): Set<string> {
   try {
     parsed = yaml.load(document, { json: true });
   } catch (error) {
-    throw new ProductionListError(`the production list is not a YAML document: ${error instanceof Error ? error.message : String(error)}`);
+    throw new ProductionListError(`the production list is not a YAML document: ${messageOf(error)}`);
   }
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
     throw new ProductionListError(`the production list is not a mapping but a ${Array.isArray(parsed) ? "list" : typeof parsed}`);
@@ -143,7 +144,7 @@ export async function fetchProductionRepositories(url: string, fetchImpl: typeof
   try {
     response = await fetchImpl(url, { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
   } catch (error) {
-    console.warn(`Could not fetch the production list from ${url}: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`Could not fetch the production list from ${url}: ${messageOf(error)}`);
     return undefined;
   }
   if (response.status !== 200) {
@@ -153,7 +154,7 @@ export async function fetchProductionRepositories(url: string, fetchImpl: typeof
   try {
     return parseProductionRepositories(await response.text());
   } catch (error) {
-    console.warn(`Could not read the production list from ${url}: ${error instanceof Error ? error.message : String(error)}`);
+    console.warn(`Could not read the production list from ${url}: ${messageOf(error)}`);
     return undefined;
   }
 }
