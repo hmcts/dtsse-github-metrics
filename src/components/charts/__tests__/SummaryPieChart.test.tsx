@@ -336,7 +336,7 @@ describe("the summary wheel as a filter control", () => {
   });
 });
 
-/** The opacity a wedge's path was filled at, which recharts writes as an attribute from the cell. */
+/** The opacity a wedge's path was filled at, which `Wedge` writes as an attribute. */
 function wedgeOpacity(container: HTMLElement, colour: string): string | null {
   return wedge(container, colour).querySelector("path")?.getAttribute("fill-opacity") ?? null;
 }

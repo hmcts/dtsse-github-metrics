@@ -90,9 +90,8 @@ export function WeekSpanButtons({
   onChoose: (weeks: number) => void;
 }>) {
   return (
-    <div
-      className={clsx("flex items-center gap-1.5 transition-opacity", pending && "opacity-50")}
-      role="group"
+    <fieldset
+      className={clsx("flex min-w-0 items-center gap-1.5 transition-opacity", pending && "opacity-50")}
       aria-label="Reporting window"
       aria-busy={pending}
     >
@@ -110,6 +109,6 @@ export function WeekSpanButtons({
           {weeks}w
         </button>
       ))}
-    </div>
+    </fieldset>
   );
 }

@@ -23,9 +23,7 @@ import { Panel } from "@/components/Section";
 export function SkeletonPage({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <div className="space-y-8">
-      <p role="status" className="sr-only">
-        Loading
-      </p>
+      <output className="sr-only">Loading</output>
       <div aria-hidden="true" className="space-y-8">
         {children}
       </div>

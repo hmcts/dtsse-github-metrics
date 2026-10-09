@@ -420,7 +420,7 @@ export function RepositoriesTable({
           announced as "Repository filters" is still four toggles and nothing else. `justify-between` rather than
           `ml-auto` on the action, so on a narrow viewport the row wraps instead of the button being pushed off. */}
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Repository filters">
+        <fieldset className="flex min-w-0 flex-wrap gap-1.5" aria-label="Repository filters">
           {/* A dot, the word, and a count in `tabular-nums` so the figure does not shift as it changes.
             `aria-pressed` rather than a chip with an ×, because this is a state a reader turns on and off
             here, rather than one they set by clicking a slice and clear by clicking it again. */}
@@ -462,7 +462,7 @@ export function RepositoriesTable({
               <span className="tabular-nums text-slate-400">{rows.filter((row) => row.visibility === visibility).length}</span>
             </button>
           ))}
-        </div>
+        </fieldset>
         {/* The controls that are ABOUT THE COLUMNS rather than about which rows are shown, drawn as one cluster at
             the end of the row: the expand toggle and, where a page passes one, the export beside it. Outside the
             filters group deliberately — what a screen reader hears announced as "Repository filters" is still the
