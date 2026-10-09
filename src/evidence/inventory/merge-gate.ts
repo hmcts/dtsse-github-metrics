@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { messageOf } from "../../platform/error-message.ts";
 import { AvailabilityReason, GitHubError } from "../domain/availability.ts";
+import { jsonText } from "../domain/json-text.ts";
 import { type MergeGateEvidence, type MergeGateReport, mergeGateReport, type PullRequestRule, type StatusChecksRule } from "../domain/merge-gate.ts";
 import type { GitHubClient } from "../github/client.ts";
 import { byCodePoint } from "../org/graph.ts";
@@ -283,7 +284,7 @@ export async function collectMergeGate(client: GitHubClient, organization: strin
           .map((rule) => ({
             contexts: Array.isArray(rule.parameters.required_status_checks)
               ? (rule.parameters.required_status_checks as { context?: unknown }[])
-                  .map((check) => String(check.context ?? ""))
+                  .map((check) => jsonText(check.context ?? ""))
                   .filter((context) => context !== "")
               : [],
             strictRequiredStatusChecksPolicy: rule.parameters.strict_required_status_checks_policy === true
