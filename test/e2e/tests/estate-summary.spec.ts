@@ -200,8 +200,15 @@ test.describe("estate summary @regression", () => {
     await page.goto("/repositories");
     await expect(page.locator("tbody tr").first()).toBeVisible();
 
+    // THE LIST ROUTE ONLY, matched on its whole path. A wedge that narrows the table brings new rows into view, and
+    // Next prefetches each row's link to `/repositories/<name>` as it appears — a read of a page the reader may open
+    // next, not a refetch of this one, and how many there are depends on which rows AAT's figures put on screen.
     const requested: string[] = [];
-    page.on("request", (request) => void requested.push(`${request.method()} ${request.url()}`));
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/repositories") {
+        requested.push(`${request.method()} ${request.url()}`);
+      }
+    });
 
     await legend(page, "Maintained")
       .getByRole("button", { name: /Unmaintained/ })
@@ -219,7 +226,7 @@ test.describe("estate summary @regression", () => {
     await clickLeadingWedge(page, "Vulnerabilities");
     await expect(page).toHaveURL(new RegExp(`[?&]vulnerabilities=${VULNERABILITY_SLICE}`));
 
-    expect(requested.filter((entry) => entry.includes("/repositories"))).toEqual([]);
+    expect(requested).toEqual([]);
   });
 
   test("should carry a filtered view in a shared link @regression", async ({ page }) => {
