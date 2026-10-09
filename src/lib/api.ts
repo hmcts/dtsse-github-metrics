@@ -237,20 +237,19 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
   ]);
 
   const folded = login.toLowerCase();
-  const contributions = new Map<string, number>();
-  let spelling: string | undefined;
-  for (const change of [...merges, ...pushes]) {
-    if (change.author === undefined || change.author.toLowerCase() !== folded) {
-      continue;
-    }
-    spelling ??= change.author;
-    contributions.set(change.repository, (contributions.get(change.repository) ?? 0) + 1);
-  }
+  const landed = [...merges, ...pushes].flatMap((change) =>
+    change.author === undefined || change.author.toLowerCase() !== folded ? [] : [{ author: change.author, repository: change.repository }]
+  );
 
   // The same refusal an unknown repository gets, and by the same rule: a login that landed nothing in the window
   // has no page, which is what makes `/contributors/nobody` the not-found page rather than an empty one.
-  if (contributions.size === 0) {
+  const [first] = landed;
+  if (first === undefined) {
     throw new RepositoryUnknownError(`${login} has no contributions in the reported cohort`);
+  }
+  const contributions = new Map<string, number>();
+  for (const change of landed) {
+    contributions.set(change.repository, (contributions.get(change.repository) ?? 0) + 1);
   }
 
   const theirs = rows.filter((row) => contributions.has(row.repository));
@@ -259,13 +258,14 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
     // is built on. Absent where GitHub holds no name, so the page heads itself with the login.
     ...(names.has(folded) ? { name: names.get(folded) } : {}),
     actor: {
-      actor_login: spelling ?? login,
+      // The first spelling a change carried, rather than the one in the URL.
+      actor_login: first.author,
       repositories: [...contributions.entries()]
-        .map(([repository, landed]) => {
+        .map(([repository, count]) => {
           const row = theirs.find((candidate) => candidate.repository === repository);
           return {
             repository,
-            contributions: landed,
+            contributions: count,
             blocking: 0,
             metrics: [],
             ...(row?.readiness === undefined ? {} : { readiness: row.readiness })

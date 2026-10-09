@@ -25,7 +25,6 @@ export default defineConfig({
       exclude: [
         "src/evidence/store/generated/**",
         "src/lib/types.ts",
-        "src/app/**/layout.tsx",
         "src/evidence/store/**",
         // The two modules of `report/**` that read Postgres, and the only two left after VIBE-569 split the
         // aggregation layer out of `report/repositories.ts`. `estate.ts` is the one read every span is derived
@@ -36,7 +35,6 @@ export default defineConfig({
         "src/evidence/report/estate.ts",
         "src/evidence/report/reports.ts",
         "src/evidence/behaviour/fill.ts",
-        "src/lib/api.ts",
         // The preview copy's SQL, which `vitest.integration.config.mts` covers against a real database.
         "src/preview/database.ts"
       ],
