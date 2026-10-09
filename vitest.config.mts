@@ -75,13 +75,6 @@ export default defineConfig({
         "src/evidence/org/**": { statements: 95, lines: 95, branches: 80, functions: 95 },
         // The guards that keep the preview copy's destructive statements off AAT.
         "src/preview/**": { statements: 100, lines: 100, branches: 95, functions: 100 },
-        // `policy` reaches 100% of statements, lines and functions, and its seven uncovered branches are
-        // unreachable rather than untested: five are the `error instanceof Error ? … : String(error)` fallback
-        // in a catch that only ever receives an Error (`load.ts` 68/78/94, `schema.ts` 51/318), one is a
-        // duplicate guard in `repositories.ts` for input the schema already refuses, and one is a `??` fallback
-        // whose map is built from the same array it is looked up in. Raising coverage here means reaching one of
-        // the seven, which is what "unreachable" says cannot be done — worth knowing before anyone reads its
-        // branch figure as a gap to close.
         "src/evidence/policy/**": { statements: 95, lines: 95, branches: 80, functions: 95 },
         // Measured 94.15/94.28/89.23/96.52 across the suite. The old 80/75 left hundreds of covered lines
         // free to go dark before it tripped.

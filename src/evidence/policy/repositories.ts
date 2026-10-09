@@ -23,21 +23,7 @@ import type { Configuration } from "./schema.ts";
  * shared ownership is real — and each is kept.
  */
 export function configuredOwners(configuration: Configuration): Map<string, string[]> {
-  const pairs: [string, string][] = configuration.teams.flatMap((team) =>
-    team.repositories.map((repository) => [team.identifier, repository] as [string, string])
-  );
-  pairs.sort((left, right) => left[0].localeCompare(right[0]) || left[1].localeCompare(right[1]));
-
-  const owners = new Map<string, string[]>();
-  for (const [identifier, repository] of pairs) {
-    const existing = owners.get(repository);
-    if (existing === undefined) {
-      owners.set(repository, [identifier]);
-    } else if (!existing.includes(identifier)) {
-      existing.push(identifier);
-    }
-  }
-  return owners;
+  return ownersByRepository(configuration, (team) => [team.identifier]);
 }
 
 /**
@@ -55,19 +41,26 @@ export function configuredOwners(configuration: Configuration): Map<string, stri
  * guess available, and the same string as before, so nothing gets worse for the case that used to work.
  */
 export function configuredTeamSlugs(configuration: Configuration): Map<string, string[]> {
-  const slugsByIdentifier = new Map(
-    configuration.teams.map((team) => [team.identifier, team.github_team_slugs.length > 0 ? team.github_team_slugs : [team.identifier]])
-  );
+  return ownersByRepository(configuration, (team) => (team.github_team_slugs.length > 0 ? team.github_team_slugs : [team.identifier]));
+}
+
+/**
+ * Each configured repository mapped to the owners `ownersOf` names for the teams listing it, each owner kept once.
+ *
+ * Both readers above go through this one walk, so they cannot disagree about the order a shared override is
+ * reported in: pairs are sorted by team identifier then repository, and each team's owners are resolved from the
+ * team itself rather than looked up again by identifier.
+ */
+function ownersByRepository(configuration: Configuration, ownersOf: (team: Configuration["teams"][number]) => string[]): Map<string, string[]> {
+  const pairs = configuration.teams.flatMap((team) => team.repositories.map((repository) => ({ team, repository })));
+  pairs.sort((left, right) => left.team.identifier.localeCompare(right.team.identifier) || left.repository.localeCompare(right.repository));
+
   const owners = new Map<string, string[]>();
-  // Built on `configuredOwners` rather than re-deriving the pairs, so the two cannot disagree about the order a
-  // shared override is reported in.
-  for (const [repository, identifiers] of configuredOwners(configuration)) {
-    const held: string[] = [];
-    for (const identifier of identifiers) {
-      for (const slug of slugsByIdentifier.get(identifier) ?? [identifier]) {
-        if (!held.includes(slug)) {
-          held.push(slug);
-        }
+  for (const { team, repository } of pairs) {
+    const held = owners.get(repository) ?? [];
+    for (const owner of ownersOf(team)) {
+      if (!held.includes(owner)) {
+        held.push(owner);
       }
     }
     owners.set(repository, held);
