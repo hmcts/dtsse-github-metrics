@@ -25,7 +25,6 @@ export default defineConfig({
       exclude: [
         "src/evidence/store/generated/**",
         "src/lib/types.ts",
-        "src/instrumentation.ts",
         "src/app/**/layout.tsx",
         "src/evidence/store/**",
         // The two modules of `report/**` that read Postgres, and the only two left after VIBE-569 split the
@@ -36,20 +35,10 @@ export default defineConfig({
         // these two against a real database.
         "src/evidence/report/estate.ts",
         "src/evidence/report/reports.ts",
-        // The Cosmos driver call, excluded for `store/**`'s reason: a test of it is a test of `@azure/cosmos`.
-        // IT HOLDS NOTHING ELSE, and that is the point of how small it is — `cve/credentials.ts` resolves the
-        // account, `cve/documents.ts` holds the query and the per-document guard, `cve/reports.ts` parses a report
-        // and `cve/collect.ts` folds the stream. All four are tested at the bar below. What is exempt here is
-        // `new CosmosClient(...)` and the loop that pumps its pages, and nothing that decides anything.
-        "src/evidence/cve/cosmos.ts",
         "src/evidence/behaviour/fill.ts",
         "src/lib/api.ts",
-        // The preview copy's SQL, which `vitest.integration.config.mts` covers against a real database, and its
-        // entry point and the real processes behind `load-aat.ts`. Every decision is in `target.ts`,
-        // `commands.ts` and `load-aat.ts`, held at the bar below.
-        "src/preview/database.ts",
-        "src/preview/main.ts",
-        "src/preview/processes.ts"
+        // The preview copy's SQL, which `vitest.integration.config.mts` covers against a real database.
+        "src/preview/database.ts"
       ],
       reporter: ["lcov", "text"],
       reportsDirectory: "coverage",
