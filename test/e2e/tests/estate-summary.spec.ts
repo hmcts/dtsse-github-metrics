@@ -20,11 +20,20 @@ import { expect, type Page, test } from "@playwright/test";
 const WHEELS = ["Code owner", "Maintained", "Hygiene", "Vulnerabilities"];
 
 /**
+ * Any of the `Vulnerabilities` wheel's slice keys, as a pattern.
+ *
+ * ANY AND NOT THE LEADING ONE, because which slice the ring click lands in is a figure: the wheel leads with
+ * `high`, and whether that wedge still spans the clicked point moves with every collection on AAT. What this asserts
+ * is that the wedge wrote a key `parseSelections` accepts, which is the behaviour.
+ */
+const VULNERABILITY_SLICE = "(?:high|medium|clear|unscanned)";
+
+/**
  * One wheel's LEGEND, which is what a slice's button is looked up inside.
  *
  * SCOPED TO THE GROUP AND NOT TO THE PANEL, which is not a detail: the panel also holds the heading's information
  * control, whose `aria-label` is the wheel's whole hint — and a hint names its own slices, so
- * `getByRole("button", { name: /Unscanned by anything/ })` over the panel matches the tooltip as well as the legend
+ * `getByRole("button", { name: /Unscanned/ })` over the panel matches the tooltip as well as the legend
  * entry and fails as a strict-mode violation. The legend is the only place a slice button lives.
  */
 function legend(page: Page, title: string) {
@@ -47,8 +56,8 @@ function wheel(page: Page, title: string) {
  * So the point is computed from the ring's own geometry instead: `innerRadius` 48 and `outerRadius` 68 in
  * `SummaryPieChart`, giving 58 as the middle of the band, at 45° round from three o'clock — which recharts
  * measures anticlockwise from, so it is inside the first slice of any wheel whose leading slice spans more than a
- * eighth of the circle. Every one of the four does, by a wide margin: the smallest leading slice of the four is
- * `Vulnerabilities`' clean wedge at 710 of 1,049, which is two thirds of the ring.
+ * eighth of the circle. Three of the four do by a wide margin. `Vulnerabilities` leads with its `high` wedge,
+ * which need not, so the cases that click that ring accept any of its slices — see `VULNERABILITY_SLICE`.
  *
  * IT WAITS FOR THIS WHEEL'S OWN SECTOR FIRST, and that wait is load-bearing rather than defensive. The surface is
  * measurable as soon as `ResponsiveContainer` has a width, which is BEFORE recharts has drawn any sector into it —
@@ -114,7 +123,7 @@ test.describe("estate summary @regression", () => {
 
     for (const [title, parameter, slice] of [
       ["Hygiene", "signals", "pass"],
-      ["Vulnerabilities", "vulnerabilities", "clean"]
+      ["Vulnerabilities", "vulnerabilities", VULNERABILITY_SLICE]
     ] as const) {
       await clickLeadingWedge(page, title);
 
@@ -137,7 +146,7 @@ test.describe("estate summary @regression", () => {
     await expect(rows.first()).toBeVisible();
     const whole = await rows.count();
 
-    const unscanned = legend(page, "Vulnerabilities").getByRole("button", { name: /Unscanned by anything/ });
+    const unscanned = legend(page, "Vulnerabilities").getByRole("button", { name: /Unscanned/ });
     await expect(unscanned).toHaveAttribute("aria-pressed", "false");
 
     await unscanned.click();
@@ -208,7 +217,7 @@ test.describe("estate summary @regression", () => {
     await expect(page).toHaveURL(/[?&]signals=pass/);
 
     await clickLeadingWedge(page, "Vulnerabilities");
-    await expect(page).toHaveURL(/[?&]vulnerabilities=clean/);
+    await expect(page).toHaveURL(new RegExp(`[?&]vulnerabilities=${VULNERABILITY_SLICE}`));
 
     expect(requested.filter((entry) => entry.includes("/repositories"))).toEqual([]);
   });
