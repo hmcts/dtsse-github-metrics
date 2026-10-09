@@ -327,10 +327,8 @@ export function createGitHubClient(options: GitHubClientOptions) {
       // `refused` is reserved for these three. Every other error status is `failed`, because the client
       // cannot tell a 404 on a feature that is off from one on a repository that is genuinely unreadable.
       outcome = "refused";
-    } else if (!response.ok) {
-      outcome = "failed";
     } else {
-      outcome = "ok";
+      outcome = "failed";
     }
 
     countOutcome(status, outcome, method, endpoint);

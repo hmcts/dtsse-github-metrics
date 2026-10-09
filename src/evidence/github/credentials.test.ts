@@ -1,6 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import os, { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -171,6 +171,48 @@ describe("appInstallation", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
+  it("should retry an exchange that never reached GitHub and succeed", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: "ghs_minted" }), { status: 201 })) as unknown as typeof globalThis.fetch;
+
+    expect(await installation({ fetch: fetchImpl }).token()).toBe("ghs_minted");
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("(attempt 1 of 3), retrying in 1s: socket hang up"));
+  });
+
+  it("should give up on an exchange that never reached GitHub, keeping the key out of the message", async () => {
+    // A transport error that quotes the request back would otherwise carry the private key into the log.
+    const fetchImpl = vi.fn().mockRejectedValue(new Error(`connect refused for ${PRIVATE_KEY}`)) as unknown as typeof globalThis.fetch;
+
+    const error = await installation({ fetch: fetchImpl })
+      .token()
+      .catch((thrown: unknown) => thrown);
+
+    expect(error).toBeInstanceOf(CredentialsError);
+    expect(String(error)).toMatch(/could not be obtained after 3 attempts: connect refused for/);
+    expect(String(error)).not.toContain(PRIVATE_KEY.split("\n")[1]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("should fall back to the wall clock and a real timer when none is injected", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("socket hang up"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ token: "ghs_minted" }), { status: 201 })) as unknown as typeof globalThis.fetch;
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const pending = appInstallation({ appIdentifier: 12345, installationIdentifier: 67890, privateKey: PRIVATE_KEY, fetch: fetchImpl }).token();
+      // Signing is asynchronous, so the backoff is only scheduled once the failed attempt has been reported.
+      await vi.waitFor(() => expect(console.warn).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(await pending).toBe("ghs_minted");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("should sign with a PKCS#1 key, which is what GitHub actually downloads", async () => {
     // Regression: importPKCS8 reads only `BEGIN PRIVATE KEY`, so the real App key — `BEGIN RSA PRIVATE KEY` —
     // was rejected as unusable until this went through node:crypto instead.
@@ -256,6 +298,12 @@ describe("refusal", () => {
     expect(refusal(JSON.stringify({ message: "Integration not found" }))).toBe("Integration not found");
   });
 
+  it.each([[{ message: "" }], [{ message: 404 }]])("should fall back to the body when its message %o is not one worth reading", (payload) => {
+    const body = JSON.stringify(payload);
+
+    expect(refusal(body)).toBe(body);
+  });
+
   it("should fall back to the body when it is not JSON", () => {
     expect(refusal("<html>gateway timeout</html>")).toBe("<html>gateway timeout</html>");
   });
@@ -295,7 +343,13 @@ describe("mintedExpiry", () => {
     expect(mintedExpiry({ expires_at: "2026-08-08T13:00:00Z" })?.toISOString()).toBe("2026-08-08T13:00:00.000Z");
   });
 
-  it.each([[{}], [{ expires_at: 17 }], [{ expires_at: "not a date" }]])("should treat %o as an unknown expiry rather than a failure", (payload) => {
+  it.each([
+    [{}],
+    [null],
+    ["2026-08-08T13:00:00Z"],
+    [{ expires_at: 17 }],
+    [{ expires_at: "not a date" }]
+  ])("should treat %o as an unknown expiry rather than a failure", (payload) => {
     // The token GitHub just issued works now; an unreadable expiry falls back to the 401 retry.
     expect(mintedExpiry(payload)).toBeUndefined();
   });
@@ -308,6 +362,10 @@ describe("mintedToken", () => {
 
   it("should refuse an empty token", () => {
     expect(() => mintedToken({ token: "" })).toThrow(CredentialsError);
+  });
+
+  it.each([[null], ["ghs_minted"]])("should refuse %o, which is not a body at all", (payload) => {
+    expect(() => mintedToken(payload)).toThrow(CredentialsError);
   });
 });
 
@@ -337,6 +395,19 @@ describe("privateKeyMaterial", () => {
     const key = await privateKeyMaterial({ [PRIVATE_KEY_VARIABLE]: "-----BEGIN-----\\nbody\\n-----END-----" });
 
     expect(key).toBe("-----BEGIN-----\nbody\n-----END-----");
+  });
+
+  it("should expand a leading ~ that no shell expanded first", async () => {
+    // A CI `env:` block or a Kubernetes manifest passes `~/app.pem` through literally.
+    const directory = mkdtempSync(path.join(tmpdir(), "ghm-"));
+    writeFileSync(path.join(directory, "app.pem"), "from home");
+    vi.spyOn(os, "homedir").mockReturnValue(directory);
+
+    expect(await privateKeyMaterial({ [PRIVATE_KEY_PATH_VARIABLE]: "~/app.pem" })).toBe("from home");
+  });
+
+  it("should report an empty key when neither source is set, rather than leaving it to the signer", async () => {
+    await expect(privateKeyMaterial({})).rejects.toThrow(`the GitHub App private key in ${PRIVATE_KEY_VARIABLE} is empty`);
   });
 
   it("should name the path when the key cannot be read", async () => {

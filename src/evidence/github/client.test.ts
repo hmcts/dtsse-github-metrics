@@ -67,6 +67,44 @@ describe("get", () => {
     expect(await client(fetch).instance.get("/repos/hmcts/cath-service")).toEqual({ full_name: "hmcts/cath-service" });
   });
 
+  it("should accept an absolute URL as well as a path", async () => {
+    const { fetch, calls } = replying({ body: { full_name: "hmcts/cath-service" } });
+
+    await client(fetch).instance.get("https://api.github.com/repos/hmcts/cath-service");
+
+    expect(calls).toEqual(["https://api.github.com/repos/hmcts/cath-service"]);
+  });
+
+  it("should fall back to the global fetch, a real timer and the wall clock when none is injected", async () => {
+    // A 500 whose budget reset in the past: the retry sleeps on the default pause, and the second attempt asks
+    // the default clock whether that spent budget still needs waiting out.
+    const { fetch } = replying(
+      {
+        status: 500,
+        headers: {
+          "x-ratelimit-resource": "core",
+          "x-ratelimit-limit": "5000",
+          "x-ratelimit-remaining": "0",
+          "x-ratelimit-used": "5000",
+          "x-ratelimit-reset": "1"
+        }
+      },
+      { body: { ok: true } }
+    );
+    vi.stubGlobal("fetch", fetch);
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const pending = createGitHubClient({ credentials: personalAccessToken("ghp_test") }).get("/rate_limit");
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(await pending).toEqual({ ok: true });
+      expect(fetch).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("should append query parameters", async () => {
     const { fetch, calls } = replying({ body: [] });
 
@@ -256,6 +294,32 @@ describe("graphql", () => {
 
     await expect(client(fetch).instance.graphql("query {}")).rejects.toThrow(/no data/);
   });
+
+  it("should read an error that is not a refusal as a collection failure at the status it arrived under", async () => {
+    const { fetch } = replying({ body: { errors: [{ type: "NOT_FOUND", message: "Could not resolve to a Repository" }] } });
+
+    const error = await client(fetch)
+      .instance.graphql("query {}")
+      .catch((thrown: unknown) => thrown);
+
+    expect((error as GitHubError).reason).toBe(AvailabilityReason.CollectionFailed);
+    expect((error as GitHubError).status).toBe(200);
+  });
+
+  it.each([
+    ["the stated retry-after", { "retry-after": "5" }, 5_000],
+    ["until the reset instant when remaining is zero", { "x-ratelimit-remaining": "0", "x-ratelimit-reset": "1030" }, 30_000],
+    ["the flat minute when remaining is zero but no reset is given", { "x-ratelimit-remaining": "0" }, 60_000]
+  ])("should wait %s on a GraphQL rate-limit error carried in a 200", async (_label, headers, expected) => {
+    const { fetch } = replying(
+      { status: 200, body: { errors: [{ type: "RATE_LIMITED", message: "API rate limit exceeded" }] }, headers },
+      { body: { data: { ok: true } } }
+    );
+    const { instance, paused } = client(fetch);
+
+    expect(await instance.graphql("query {}")).toEqual({ ok: true });
+    expect(paused).toEqual([expected]);
+  });
 });
 
 /**
@@ -409,6 +473,18 @@ describe("paginate", () => {
 
     expect(pages).toEqual([[{ id: 1 }]]);
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("should accept an absolute URL and append query parameters to it", async () => {
+    const { fetch, calls } = replying({ body: [{ id: 1 }] });
+
+    const pages: unknown[][] = [];
+    for await (const page of client(fetch).instance.paginate("https://api.github.com/repos/hmcts/x/alerts", { state: "open" })) {
+      pages.push(page);
+    }
+
+    expect(pages).toEqual([[{ id: 1 }]]);
+    expect(calls).toEqual(["https://api.github.com/repos/hmcts/x/alerts?state=open"]);
   });
 });
 
@@ -686,6 +762,15 @@ describe("classification helpers", () => {
   it("should prefer GitHub's own message when reporting a failure", () => {
     expect(failureMessage(JSON.stringify({ message: "Not Found" }))).toBe("Not Found");
     expect(failureMessage("<html/>")).toBe("no message");
+    expect(failureMessage("{}")).toBe("no message");
+  });
+
+  it("should summarise an error that is not an object, or names no type or message, without dropping it", () => {
+    expect(graphqlErrorSummary(["plain text", {}])).toBe("plain text; UNKNOWN: ");
+  });
+
+  it.each([[["plain text"]], [[{}]]])("should not read %o as a refusal", (errors) => {
+    expect(graphqlErrorReason(errors)).toBe(AvailabilityReason.CollectionFailed);
   });
 
   it("should count each kind of GraphQL error once, keeping first-appearance order", () => {
@@ -715,7 +800,9 @@ describe("classification helpers", () => {
     [JSON.stringify({ errors: [{ message: "API rate limit exceeded" }] }), true],
     [JSON.stringify({ errors: [{ type: "RATE_LIMITED" }] }), true],
     [JSON.stringify({ errors: [{ type: "FORBIDDEN" }] }), false],
-    ["not json", false]
+    ["not json", false],
+    ["null", false],
+    ["42", false]
   ])("should detect a GraphQL rate limit in %s as %s", (body, expected) => {
     expect(graphqlRateLimited(body)).toBe(expected);
   });

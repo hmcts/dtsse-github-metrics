@@ -68,7 +68,7 @@ export function endpointTemplate(target: string, operation?: string): string {
     return operation === undefined ? `${url.origin}/graphql` : `${url.origin}/graphql ${operation}`;
   }
 
-  const owned = OWNED_PREFIXES[segments[0] ?? ""] ?? [];
+  const owned = Object.entries(OWNED_PREFIXES).find(([prefix]) => prefix === segments[0])?.[1] ?? [];
   const templated = segments.map((segment, position) => {
     if (position > 0 && position <= owned.length) {
       return owned[position - 1] as string;
