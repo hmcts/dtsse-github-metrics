@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { seal } from "./sealed.ts";
 import { readSession, SESSION_MAX_AGE, type Session, sealSession } from "./session.ts";
 import { authSettings, sessionSecret } from "./settings.ts";
 
@@ -66,5 +67,14 @@ describe("sealing and verifying across the two readers", () => {
     const sealed = await sealSession(READER, authSettings(env).sessionSecret);
 
     expect(await readSession(sealed, sessionSecret(env) as string)).toEqual(READER);
+  });
+});
+
+describe("readSession on a cookie that decrypts but does not describe a reader", () => {
+  it.each([
+    ["no subject", { name: "A Reader" }],
+    ["a name that is not a string", { subject: "0000-1111", name: 7 }]
+  ])("should refuse a session carrying %s", async (_label, claims) => {
+    expect(await readSession(await seal(claims, SECRET, SESSION_MAX_AGE), SECRET)).toBeUndefined();
   });
 });

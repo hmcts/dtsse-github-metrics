@@ -17,7 +17,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TeamPage, { dynamic } from "@/app/teams/[team]/page";
 import { RepositoryUnknownError } from "@/lib/not-found";
-import type { RepositoryRow, TeamActorRow, TeamDetail, TeamMemberRow, WindowOptions } from "@/lib/types";
+import type { RepositoryRow, TeamActorRow, TeamDetail, TeamDirectPushRow, TeamMemberRow, TeamMergeRow, TeamPractice, WindowOptions } from "@/lib/types";
 
 const WINDOWS: WindowOptions = {
   options: [4, 12, 26],
@@ -383,6 +383,59 @@ describe("the team’s members and its contributors", () => {
 
     expect(markup).not.toContain('href="/contributors/alan');
     expect(markup).toContain('href="/contributors/ada?weeks=4"');
+  });
+});
+
+/** How the team works, counted across its repositories, which only some teams carry. */
+const PRACTICE: TeamPractice = {
+  gates_measured: 2,
+  enforces_review: 1,
+  checks_measured: 2,
+  enforces_checks: 2,
+  unreviewed_measured: 2,
+  unreviewed_clear: 1,
+  unreviewed_within: 1,
+  unreviewed_above: 0,
+  merged_pull_requests: 9,
+  direct_commits: 3
+};
+
+const MERGES: TeamMergeRow[] = [
+  { repository: "api", number: 2, merged_at: "2026-08-30T09:00:00Z", author: "ada", reviewed: true, ci: true, lines: 12, files: 2 }
+];
+
+const DIRECT_PUSHES: TeamDirectPushRow[] = [{ repository: "web", sha: "aaaaaaabbbbbb", committed_at: "2026-08-31T09:00:00Z", author: "grace" }];
+
+describe("the team’s ways of working and its changes", () => {
+  it("draws the ways of working only where the team carries them", async () => {
+    stubService();
+    expect(await render()).not.toContain(">Ways of working<");
+
+    stubService((detail) => ({ ...detail, practice: PRACTICE }));
+    const markup = await render();
+
+    expect(markup).toContain(">Ways of working<");
+    expect(markup).toContain("counted across this team’s repositories");
+  });
+
+  it("says so where nothing was merged or pushed, whether the lists are absent or empty", async () => {
+    for (const change of [(detail: TeamDetail) => detail, (detail: TeamDetail) => ({ ...detail, merges: [], direct_pushes: [] })]) {
+      stubService(change);
+      const markup = await render();
+
+      expect(markup).toContain("No pull request was merged in platform’s repositories at this span.");
+      expect(markup).toContain("Every change in the window arrived through a pull request.");
+    }
+  });
+
+  it("lists the merges and direct pushes the window holds", async () => {
+    stubService((detail) => ({ ...detail, merges: MERGES, direct_pushes: DIRECT_PUSHES }));
+    const markup = await render();
+
+    expect(markup).not.toContain("No pull request was merged");
+    expect(markup).not.toContain("Every change in the window arrived through a pull request.");
+    expect(markup).toContain("aaaaaaa");
+    expect(markup).toContain("#2");
   });
 });
 

@@ -79,12 +79,13 @@ vi.mock("@/lib/api", async () => {
   return { ...api, RepositoryUnknownError, isNotFound };
 });
 
-function stubService(repositories: ActorRepositoryReadiness[] = REPOSITORIES, status = 200, production?: string[]): void {
+function stubService(repositories: ActorRepositoryReadiness[] = REPOSITORIES, status = 200, production?: string[], name?: string): void {
   requested = [];
   const detail: ActorDetail = {
     actor: { actor_login: "ada", repositories },
     teams: { api: "platform", web: "digital" },
-    production
+    production,
+    ...(name === undefined ? {} : { name })
   };
   api.getWindows.mockImplementation(() => {
     requested.push("windows");
@@ -138,6 +139,14 @@ describe("the contributor page", () => {
     expect(markup).toContain("9 merges across 2 repositories");
     // Case survives into the request: the evidence layer does the folding, not the page.
     expect(requested.some((entry) => entry.startsWith("actor/ADA"))).toBe(true);
+  });
+
+  it("heads the page with the person's name where one is held, and keeps the login beside it", async () => {
+    stubService(REPOSITORIES, 200, undefined, "Ada Lovelace");
+    const markup = await render("ada");
+
+    expect(markup).toContain("Ada Lovelace");
+    expect(markup).toContain('<span class="font-mono">ada</span>');
   });
 
   it("reads the person at the span asked for, and links at the same one", async () => {

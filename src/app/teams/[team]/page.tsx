@@ -49,6 +49,8 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
   const detail = await readTeam((await params).team, weeks);
   const missing = unreported(detail);
   const membership = members(detail);
+  const merges = detail.merges ?? [];
+  const directPushes = detail.direct_pushes ?? [];
 
   return (
     <div className="space-y-8">
@@ -99,18 +101,18 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
           merged pull request and a direct push are different events with different evidence — the second has no
           review to report, which is why it is counted rather than excused. */}
       <Section heading="Merges" detail="merged pull requests, most recent first">
-        {(detail.merges ?? []).length === 0 ? (
+        {merges.length === 0 ? (
           <EmptyState
             message={`No pull request was merged in ${detail.team}’s repositories at this span.`}
             detail="Read the team at a longer span, or run metrics collect for the span being asked for."
           />
         ) : (
-          <TeamMergesTable rows={detail.merges ?? []} weeks={weeks} />
+          <TeamMergesTable rows={merges} weeks={weeks} />
         )}
       </Section>
 
       <Section heading="Direct pushes" detail="commits that reached a default branch with no pull request">
-        {(detail.direct_pushes ?? []).length === 0 ? (
+        {directPushes.length === 0 ? (
           // The good answer, said as one. An empty merges table means nothing was collected; an empty table here
           // means every change went through a pull request, which is what the team is being asked to do.
           <EmptyState
@@ -118,7 +120,7 @@ export default async function TeamPage({ params, searchParams }: { params: Promi
             detail="Every change in the window arrived through a pull request."
           />
         ) : (
-          <TeamDirectPushesTable rows={detail.direct_pushes ?? []} weeks={weeks} />
+          <TeamDirectPushesTable rows={directPushes} weeks={weeks} />
         )}
       </Section>
 

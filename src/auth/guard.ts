@@ -41,7 +41,7 @@ export function exempt(pathname: string): boolean {
  */
 function unsafeInAPath(value: string): boolean {
   for (const character of value) {
-    const code = character.codePointAt(0) ?? 0;
+    const code = character.charCodeAt(0);
     if (character === "\\" || code <= 0x1f || code === 0x7f) {
       return true;
     }
