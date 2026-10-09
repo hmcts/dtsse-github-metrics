@@ -414,7 +414,7 @@ interface SonarSource {
  * and each of these means somebody looked and could not see.
  */
 function statedSonarAbsence(detail: string, failures = 0): SonarSource {
-  return { answer: async () => ({ state: { detail }, failures: 0 }), failures };
+  return { answer: () => Promise.resolve({ state: { detail }, failures: 0 }), failures };
 }
 
 /**

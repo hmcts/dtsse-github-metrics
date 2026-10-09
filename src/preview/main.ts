@@ -28,4 +28,4 @@ async function main(): Promise<number> {
   }
 }
 
-main().then((status) => process.exit(status));
+void main().then((status) => process.exit(status));

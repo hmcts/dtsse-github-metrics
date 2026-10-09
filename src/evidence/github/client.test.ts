@@ -715,7 +715,11 @@ describe("endpointTemplate", () => {
     ],
     ["https://api.github.com/repos/hmcts/cath-service/commits/a8810dc", "https://api.github.com/repos/{organization}/{repository}/commits/{sha}"],
     ["https://api.github.com/orgs/hmcts/teams", "https://api.github.com/orgs/{organization}/teams"],
-    ["https://api.github.com/graphql", "https://api.github.com/graphql"]
+    // Slashes at either end of the path are dropped, so they do not make a second endpoint.
+    ["https://api.github.com/orgs/hmcts/teams//", "https://api.github.com/orgs/{organization}/teams"],
+    ["https://api.github.com//orgs/hmcts/teams", "https://api.github.com/orgs/{organization}/teams"],
+    ["https://api.github.com/graphql", "https://api.github.com/graphql"],
+    ["https://api.github.com/graphql/", "https://api.github.com/graphql"]
   ])("should normalise %s", (url, expected) => {
     expect(endpointTemplate(url)).toBe(expected);
   });
