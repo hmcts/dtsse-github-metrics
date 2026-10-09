@@ -44,7 +44,11 @@ beforeEach(async () => {
   directory = await mkdtemp(path.join(tmpdir(), "processes-test-"));
   vi.stubEnv("PATH", "/usr/bin");
   vi.stubEnv("HOME", "/home/test");
-  vi.stubEnv("USER", undefined);
+  // Every other allow-listed name is cleared so the expected environment does not depend on the machine running
+  // the suite: macOS always sets TMPDIR, and a developer may have the Kubernetes, Docker or Azure ones set.
+  for (const name of ["USER", "TMPDIR", "KUBECONFIG", "DOCKER_CONFIG", "DOCKER_HOST", "AZURE_CONFIG_DIR"]) {
+    vi.stubEnv(name, undefined);
+  }
   vi.stubEnv("PGPASSWORD", "must-not-leak");
 });
 
