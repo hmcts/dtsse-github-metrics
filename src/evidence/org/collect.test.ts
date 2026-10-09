@@ -829,3 +829,55 @@ describe("collectDirectAdmins", () => {
     expect(sent).toHaveLength(2);
   });
 });
+
+describe("a page that says there is more but names no cursor", () => {
+  // GitHub types `endCursor` as nullable. Asking again with `null` is asking for the first page, which is the
+  // only request the walk can still make; each case answers that second page with the end of the connection.
+  const PAGE_MORE_UNNAMED = { hasNextPage: true, endCursor: null };
+
+  it("should continue a team's members with no cursor", async () => {
+    const { fetch, sent } = replying(
+      graphql(teams([teamNode({ members: { totalCount: 51, pageInfo: PAGE_MORE_UNNAMED, edges: [memberEdge("alice")] } })])),
+      graphql({ organization: { team: { members: { pageInfo: PAGE_END, edges: [] } } } })
+    );
+
+    await collectOrgTeams(client(fetch), "hmcts");
+
+    expect(sent[1]?.variables).toEqual({ organization: "hmcts", slug: "appreg", cursor: null });
+  });
+
+  it("should continue a team's repositories with no cursor", async () => {
+    const { fetch, sent } = replying(
+      graphql(teams([teamNode({ repositories: { totalCount: 51, pageInfo: PAGE_MORE_UNNAMED, edges: [repositoryEdge("pcs-api", "ADMIN")] } })])),
+      graphql({ organization: { team: { repositories: { pageInfo: PAGE_END, edges: [] } } } })
+    );
+
+    await collectOrgTeams(client(fetch), "hmcts");
+
+    expect(sent[1]?.variables).toEqual({ organization: "hmcts", slug: "appreg", cursor: null });
+  });
+
+  it("should continue the team walk with no cursor", async () => {
+    const { fetch, sent } = replying(graphql(teams([teamNode()], { pageInfo: PAGE_MORE_UNNAMED })), graphql(teams([])));
+
+    await collectOrgTeams(client(fetch), "hmcts");
+
+    expect(sent[1]?.variables).toEqual({ organization: "hmcts", cursor: null });
+  });
+
+  it("should continue the repository walk with no cursor", async () => {
+    const { fetch, sent } = replying(graphql(repositories([repositoryNode()], { pageInfo: PAGE_MORE_UNNAMED })), graphql(repositories([])));
+
+    await collectOrgRepositories(client(fetch), "hmcts");
+
+    expect(sent[1]?.variables).toEqual({ organization: "hmcts", cursor: null });
+  });
+
+  it("should continue the membership walk with no cursor", async () => {
+    const { fetch, sent } = replying(graphql(people([{ role: "MEMBER", node: { login: "alice" } }], { pageInfo: PAGE_MORE_UNNAMED })), graphql(people([])));
+
+    await collectOrgPeople(client(fetch), "hmcts");
+
+    expect(sent[1]?.variables).toEqual({ organization: "hmcts", cursor: null });
+  });
+});

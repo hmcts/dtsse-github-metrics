@@ -399,6 +399,12 @@ describe("cohortPolicy", () => {
     expect(Object.hasOwn(policy, "activeWithinDays")).toBe(false);
   });
 
+  it("should turn a null unmaintained boundary into an absent one", () => {
+    const policy = cohortPolicy(configurationOf("cohort:", "  unmaintained_after_days: null"));
+
+    expect(Object.hasOwn(policy, "unmaintainedAfterDays")).toBe(false);
+  });
+
   it("should carry the excluded repositories through from the top level of the file", () => {
     const policy = cohortPolicy(configurationOf("excluded_repositories:", "  - retired-service"));
 
@@ -568,6 +574,13 @@ describe("servedCohort", () => {
     liveRepositoryOwnership.mockResolvedValue([]);
 
     await expect(servedCohort(configurationOf("cohort:", "  visibilities:", "    - public"), REFERENCE)).resolves.toEqual([]);
+  });
+
+  it("should pass on a failure that is not an uncollected graph, which a page must not hide as an empty estate", async () => {
+    liveOrgRepositories.mockRejectedValue(new Error("connection refused"));
+    liveRepositoryOwnership.mockResolvedValue([]);
+
+    await expect(servedCohort(configurationOf(), REFERENCE)).rejects.toThrow("connection refused");
   });
 
   it("should still serve the cohort when there is one", async () => {

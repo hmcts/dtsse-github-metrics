@@ -65,7 +65,7 @@ export function parseCodeowners(document: string, organization: string): Codeown
   const people = new Set<string>();
 
   for (const raw of document.split(/\r?\n/)) {
-    const line = raw.split("#", 1)[0] ?? "";
+    const line = raw.replace(/#.*/s, "");
     for (const token of line.split(/\s+/)) {
       if (!token.startsWith("@")) {
         continue;

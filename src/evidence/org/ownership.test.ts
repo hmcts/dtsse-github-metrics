@@ -332,6 +332,36 @@ describe("ownershipEvidence", () => {
  * administrators. A fixture with no admin team would pass under the old ladder too.
  */
 describe("the authoring team", () => {
+  it("should credit a member to each team they are in once, ignore authors in no team, and break a full tie by slug", () => {
+    // Three teams, one author and one merge each, all holding one repository: every key ties, so the slug
+    // decides. `alice` is listed in `alpha` twice and counts once; `carol` is in no team and moves nothing; and
+    // the merges recorded on a repository no team claims are read by no rung of this one.
+    const facts = orgFacts({
+      repositories: repositories("shared", "unclaimed"),
+      teamRepositories: [owns("gamma", "shared"), owns("beta", "shared"), owns("alpha", "shared")],
+      memberships: [
+        { teamSlug: "alpha", login: "alice", role: "MEMBER" },
+        { teamSlug: "alpha", login: "alice", role: "MEMBER" },
+        { teamSlug: "beta", login: "alice", role: "MEMBER" },
+        { teamSlug: "gamma", login: "bob", role: "MEMBER" }
+      ],
+      authorship: new Map([...authored("shared", { alice: 1, bob: 1, carol: 5 }), ...authored("unclaimed", { alice: 4 })])
+    });
+    const options = ownershipOptions({ minimumAuthoredMerges: 1 });
+
+    const evidence = ownershipEvidence(facts, options);
+
+    expect(evidence.authoringTeams.get("shared")).toEqual([
+      { team: "alpha", authors: 1, merges: 1 },
+      { team: "beta", authors: 1, merges: 1 },
+      { team: "gamma", authors: 1, merges: 1 }
+    ]);
+    expect(evidence.authoringTeams.has("unclaimed")).toBe(false);
+    expect(decideFromEvidence("shared", evidence, options, facts)?.[0]?.detail).toBe(
+      "1 member authored 1 merge here, ahead of 2 other teams with access whose members merged here"
+    );
+  });
+
   /** `cdm-admin` holds admin and `cdm` holds push, which is `aac-manage-case-assignment` on AAT. */
   function administeredButAuthored(merges: Record<string, number>): OrgFacts {
     return orgFacts({
@@ -609,6 +639,32 @@ describe("mostSpecificClaim", () => {
     ).toBe("service");
   });
 
+  it("should keep the claim already chosen against a later, less permissive one", () => {
+    const claims = new Map<string, AccessLevel>([
+      ["admins", "admin"],
+      ["writers", "push"]
+    ]);
+
+    expect(mostSpecificClaim(claims, new Map())).toBe("admins");
+  });
+
+  it("should keep the smaller team already chosen against a later, larger one", () => {
+    const claims = new Map<string, AccessLevel>([
+      ["service", "push"],
+      ["platform", "push"]
+    ]);
+
+    expect(
+      mostSpecificClaim(
+        claims,
+        new Map([
+          ["service", 3],
+          ["platform", 400]
+        ])
+      )
+    ).toBe("service");
+  });
+
   it("should break a tie on access and size alphabetically", () => {
     const claims = new Map<string, AccessLevel>([
       ["zebra", "push"],
@@ -650,6 +706,11 @@ describe("mostSpecificOwner", () => {
 
     expect(mostSpecificOwner(["shared", "narrow", "alpha"], sizes)).toBe("alpha");
     expect(mostSpecificOwner(["shared", "narrow"], sizes)).toBe("narrow");
+    expect(mostSpecificOwner(["narrow", "shared"], sizes)).toBe("narrow");
+  });
+
+  it("should read a team the sizes do not list as named nowhere, falling to the earlier slug", () => {
+    expect(mostSpecificOwner(["beta", "alpha"], new Map())).toBe("alpha");
   });
 });
 
@@ -657,6 +718,25 @@ describe("decideFromEvidence", () => {
   function evidenceOf(facts: OrgFacts, options: OwnershipOptions = ownershipOptions()) {
     return { evidence: ownershipEvidence(facts, options), options, facts };
   }
+
+  it("should report a size of zero for a claiming team the evidence holds no size for", () => {
+    // `ownershipEvidence` sizes every team it gives a claim, so only evidence built by hand reaches this.
+    const options = ownershipOptions();
+    const evidence = { ...ownershipEvidence(orgFacts(), options), claims: new Map([["civil", new Map<string, AccessLevel>([["civil", "push"]])]]) };
+
+    expect(decideFromEvidence("civil", evidence, options)?.[0]?.detail).toBe("holds push among 1 claiming teams, and holds 0 repositories");
+  });
+
+  it("should report a count of zero for a CODEOWNERS team the evidence holds no count for", () => {
+    const options = ownershipOptions();
+    const evidence = { ...ownershipEvidence(orgFacts(), options), codeowners: new Map([["civil", ["beta", "alpha"]]]) };
+
+    expect(decideFromEvidence("civil", evidence, options)?.[0]).toMatchObject({
+      owner: "alpha",
+      rung: OwnershipRung.CodeownersFirst,
+      detail: expect.stringMatching(/^one of 2 teams in CODEOWNERS \(.*\), named in 0 repositories$/)
+    });
+  });
 
   it("should let a configured override short-circuit every collected rung", () => {
     const facts = orgFacts({ repositories: repositories("civil"), teamRepositories: [owns("collected", "civil", "admin")] });
@@ -884,6 +964,20 @@ describe("inferFromName", () => {
         new Map([
           ["zebra", 2],
           ["alpha", 2]
+        ])
+      ]
+    ]);
+
+    expect(inferFromName("sscs-new", index, ownershipOptions({ prefixSupport: 4, prefixDominance: 0.5 }))?.team).toBe("alpha");
+  });
+
+  it("should keep the earlier slug already chosen when a later one ties with it", () => {
+    const index = new Map([
+      [
+        "sscs",
+        new Map([
+          ["alpha", 2],
+          ["zebra", 2]
         ])
       ]
     ]);

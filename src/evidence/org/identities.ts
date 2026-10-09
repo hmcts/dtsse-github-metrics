@@ -82,7 +82,7 @@ export function scimDisplayName(name: ScimUser["name"]): string | undefined {
 export function upnDisplayName(nameId: string): string | undefined {
   // The local part, and the whole string when there is no `@` — a directory that spells a bare `Jack.Maloney` is
   // still naming somebody.
-  const local = (nameId.split("@")[0] ?? "").trim().replace(/\d+$/, "");
+  const local = nameId.replace(/@.*/s, "").trim().replace(/\d+$/, "");
   const parts = local
     .split(/[._]/)
     .map((part) => part.trim())

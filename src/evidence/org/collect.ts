@@ -457,9 +457,6 @@ export async function collectCodeowners(
  * unanswered, so a batch of one never splits further.
  */
 async function readOwnershipBatch(client: GitHubClient, organization: string, batch: string[], facts: Map<string, CodeownersFact>): Promise<void> {
-  if (batch.length === 0) {
-    return;
-  }
   const variables: Record<string, unknown> = { organization };
   for (const [index, name] of batch.entries()) {
     variables[`r${index}`] = name;
