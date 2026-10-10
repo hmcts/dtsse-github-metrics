@@ -643,7 +643,8 @@ describe("the merge figures a row states", () => {
 
   it("should report absent counts for a stale repository the collection never walked", async () => {
     // The shallow path, which is roughly 650 repositories on this estate: a state row carrying the assurance
-    // answers, no merge gate, no merge walk. `cohort.active_within_days` already says it has no behaviour figures
+    // answers and no merge walk. The shallow path reads the gate too now; this row has none, as one collected
+    // before it did, or whose gate read failed, still would. `cohort.active_within_days` already says it has no behaviour figures
     // to report; this is the report saying the same thing rather than reporting zeroes.
     await graphRepository("stale", new Date(Date.UTC(2024, 0, 15)));
     await prisma.repositoryState.create({

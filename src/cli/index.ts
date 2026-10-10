@@ -253,17 +253,24 @@ async function collectRepository(
   const sonar = await options.sonar.answer(repository);
   failures += sonar.failures;
 
+  // READ ON BOTH PATHS, because the gate is configuration rather than activity. A repository nobody has pushed to
+  // in a year can be a mature product that needs no change, and whether its default branch demands review and CI is
+  // as much a fact about it as about one merged into daily. Skipping it left ~650 rows reading Unknown on the
+  // Enforces review and Enforces CI wheels for a gate GitHub would have disclosed for one to three calls each.
+  const gate = await collectMergeGate(client, organization, repository, defaultBranch);
+
   if (!options.behaviour) {
     // No cached merges to consult on this path, so the human commit is always searched for: a stale repository is
     // exactly the one the Maintenance section most needs an answer about.
     const maintenance = await lastHumanCommit(configuration, client, repository, reference, undefined);
     failures += maintenance.failures;
-    // The shallow path. No gate, no other alert family, and above all no merge walk: the one per-repository
-    // GitHub read it makes is the bounded human-commit search above. The row it produces carries the assurance
-    // answers, the maintenance answer and, by the absent-means-unmeasured rule, no behaviour figures at all.
+    // The shallow path. The gate above, no other alert family, and above all no merge walk. The row it produces
+    // carries the assurance answers, the gate, the maintenance answer and, by the absent-means-unmeasured rule, no
+    // behaviour figures at all.
     await recordRepositoryState(organization, repository, {
       defaultBranch,
       fetchedAt: reference,
+      mergeGate: gate,
       sonar: sonar.state,
       // The two families this path has answers for, counted rather than thrown away — both come off estate-wide
       // reads, so a stale repository costs nothing to report them for. Code scanning stays absent, which reads
@@ -316,7 +323,6 @@ async function collectRepository(
   const maintenance = await lastHumanCommit(configuration, client, repository, reference, cached);
   failures += maintenance.failures;
 
-  const gate = await collectMergeGate(client, organization, repository, defaultBranch);
   // Handed both estate-wide families, so this pays for code scanning alone.
   const alerts = await collectSecurityAlerts(client, organization, repository, { dependabot: dependabotSource, secretScanning });
   failures += alerts.failures.length;

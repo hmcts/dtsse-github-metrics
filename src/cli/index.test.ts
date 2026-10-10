@@ -838,16 +838,20 @@ describe("what collect walks", () => {
     expect(asked.filter((path) => /^\/repos\/hmcts\/[^/]+$/.test(path))).toEqual(["/repos/hmcts/fresh"]);
   });
 
-  it("should not read a stale repository's merge gate, which is ways-of-working rather than assurance", async () => {
-    // THE QUOTA GUARANTEE, read at a seam that actually costs: the gate is several requests per repository, and a
-    // repository nobody has pushed to in two years has no current practice to report. Asserted here rather than
-    // on the merge walk because `fillCachedSource` is stubbed in this file, so the gate is the deep-path call
-    // this test can see.
+  it("should read a stale repository's merge gate, which is configuration rather than activity", async () => {
+    // A repository nobody has pushed to in a year can be a mature product, and whether its default branch demands
+    // review and CI is still true of it. Without the read its row read Unknown on both gate wheels.
     const asked = await pathsAskedFor();
 
-    expect(asked.filter((path) => path.includes("/branches/") || path.includes("/rules/"))).toEqual([
+    expect(asked.filter((path) => path.includes("/branches/") || path.includes("/rules/")).sort()).toEqual([
       "/repos/hmcts/fresh/branches/main/protection",
-      "/repos/hmcts/fresh/rules/branches/main"
+      "/repos/hmcts/fresh/rules/branches/main",
+      "/repos/hmcts/stale/branches/main/protection",
+      "/repos/hmcts/stale/rules/branches/main"
+    ]);
+    expect(recordRepositoryState.mock.calls.map(([, repository, state]) => [repository, "mergeGate" in (state as object)])).toEqual([
+      ["fresh", true],
+      ["stale", true]
     ]);
   });
 
