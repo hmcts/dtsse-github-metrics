@@ -146,23 +146,7 @@ export interface NameInference {
  */
 export function ownershipEvidence(facts: OrgFacts, options: OwnershipOptions): Evidence {
   const population = new Set(facts.repositories.filter((repository) => !repository.archived).map((repository) => repository.name));
-  const owning = new Map<string, Map<string, AccessLevel>>();
-  for (const fact of facts.teamRepositories) {
-    const slug = canonical(fact.teamSlug);
-    if (options.excludedTeams.has(slug) || !isOwningAccess(fact.access)) {
-      continue;
-    }
-    let held = owning.get(slug);
-    if (held === undefined) {
-      held = new Map();
-      owning.set(slug, held);
-    }
-    // Registered above but counted only in the population: a team holding admin on archived repositories
-    // alone is a team of size zero, not an absent one, and the share filter must see it as such.
-    if (population.has(fact.repository)) {
-      held.set(fact.repository, mostPermissiveAccess(held.get(fact.repository), fact.access));
-    }
-  }
+  const owning = owningAccess(facts, population, options);
 
   const teamSizes = new Map<string, number>();
   for (const [slug, held] of owning) {
@@ -181,21 +165,61 @@ export function ownershipEvidence(facts: OrgFacts, options: OwnershipOptions): E
   }
   const populousTeams = new Set([...memberCounts].filter(([, size]) => size > options.maximumTeamMembers).map(([slug]) => slug));
 
+  const claims = claimsByRepository(owning, (slug) => broadTeams.has(slug) || populousTeams.has(slug));
+  const { codeowners, codeownerPeople, codeownerSizes } = codeownerEvidence(facts, population, options, populousTeams);
+  const authoringTeams = rankAuthoringTeams(facts, claims, teamSizes, options);
+
+  return { claims, teamSizes, codeowners, codeownerSizes, broadTeams, populousTeams, memberCounts, codeownerPeople, authoringTeams };
+}
+
+/**
+ * Each non-excluded team's write-or-better access, keyed by team and then by repository.
+ *
+ * Every such team is registered, but a repository is counted only in the population: a team holding admin on
+ * archived repositories alone is a team of size zero, not an absent one, and the share filter must see it as such.
+ */
+function owningAccess(facts: OrgFacts, population: ReadonlySet<string>, options: OwnershipOptions): Map<string, Map<string, AccessLevel>> {
+  const owning = new Map<string, Map<string, AccessLevel>>();
+  for (const fact of facts.teamRepositories) {
+    const slug = canonical(fact.teamSlug);
+    if (options.excludedTeams.has(slug) || !isOwningAccess(fact.access)) {
+      continue;
+    }
+    const held = owning.get(slug) ?? new Map<string, AccessLevel>();
+    owning.set(slug, held);
+    if (population.has(fact.repository)) {
+      held.set(fact.repository, mostPermissiveAccess(held.get(fact.repository), fact.access));
+    }
+  }
+  return owning;
+}
+
+/** Turns per-team access into per-repository claims, leaving out the teams `filtered` names. */
+function claimsByRepository(
+  owning: ReadonlyMap<string, ReadonlyMap<string, AccessLevel>>,
+  filtered: (slug: string) => boolean
+): Map<string, Map<string, AccessLevel>> {
   const claims = new Map<string, Map<string, AccessLevel>>();
   for (const [slug, held] of owning) {
-    if (broadTeams.has(slug) || populousTeams.has(slug)) {
+    if (filtered(slug)) {
       continue;
     }
     for (const [repository, access] of held) {
-      let holders = claims.get(repository);
-      if (holders === undefined) {
-        holders = new Map();
-        claims.set(repository, holders);
-      }
+      const holders = claims.get(repository) ?? new Map<string, AccessLevel>();
       holders.set(slug, access);
+      claims.set(repository, holders);
     }
   }
+  return claims;
+}
 
+/** The teams and people each population repository's CODEOWNERS names, and how many repositories name each team. */
+function codeownerEvidence(
+  facts: OrgFacts,
+  population: ReadonlySet<string>,
+  options: OwnershipOptions,
+  populousTeams: ReadonlySet<string>
+): Pick<Evidence, "codeowners" | "codeownerPeople" | "codeownerSizes"> {
   const codeowners = new Map<string, string[]>();
   const codeownerPeople = new Map<string, string[]>();
   const codeownerSizes = new Map<string, number>();
@@ -221,10 +245,7 @@ export function ownershipEvidence(facts: OrgFacts, options: OwnershipOptions): E
       codeownerSizes.set(slug, (codeownerSizes.get(slug) ?? 0) + 1);
     }
   }
-
-  const authoringTeams = rankAuthoringTeams(facts, claims, teamSizes, options);
-
-  return { claims, teamSizes, codeowners, codeownerSizes, broadTeams, populousTeams, memberCounts, codeownerPeople, authoringTeams };
+  return { codeowners, codeownerPeople, codeownerSizes };
 }
 
 /**
@@ -256,17 +277,7 @@ function rankAuthoringTeams(
   teamSizes: ReadonlyMap<string, number>,
   options: OwnershipOptions
 ): Map<string, AuthoringClaim[]> {
-  const teamsByMember = new Map<string, string[]>();
-  for (const membership of facts.memberships) {
-    const login = canonical(membership.login);
-    const slug = canonical(membership.teamSlug);
-    const held = teamsByMember.get(login);
-    if (held === undefined) {
-      teamsByMember.set(login, [slug]);
-    } else if (!held.includes(slug)) {
-      held.push(slug);
-    }
-  }
+  const teamsByMember = teamsByMemberOf(facts.memberships);
 
   const ranked = new Map<string, AuthoringClaim[]>();
   for (const [repository, authorship] of facts.authorship) {
@@ -276,19 +287,7 @@ function rankAuthoringTeams(
       // authorship to choose between. The rungs below still answer it.
       continue;
     }
-    const scores = new Map<string, { authors: number; merges: number }>();
-    for (const [login, merges] of authorship.merges) {
-      for (const slug of teamsByMember.get(login) ?? []) {
-        if (!holders.has(slug)) {
-          continue;
-        }
-        const score = scores.get(slug) ?? { authors: 0, merges: 0 };
-        score.authors += 1;
-        score.merges += merges;
-        scores.set(slug, score);
-      }
-    }
-    const qualified = [...scores]
+    const qualified = [...authoringScores(authorship.merges, teamsByMember, holders)]
       .filter(([, score]) => score.merges >= options.minimumAuthoredMerges)
       .map(([team, score]) => ({ team, authors: score.authors, merges: score.merges }));
     if (qualified.length === 0) {
@@ -304,6 +303,43 @@ function rankAuthoringTeams(
     ranked.set(repository, qualified);
   }
   return ranked;
+}
+
+/** The teams each member belongs to, each named once. */
+function teamsByMemberOf(memberships: OrgFacts["memberships"]): Map<string, string[]> {
+  const teamsByMember = new Map<string, string[]>();
+  for (const membership of memberships) {
+    const login = canonical(membership.login);
+    const slug = canonical(membership.teamSlug);
+    const held = teamsByMember.get(login);
+    if (held === undefined) {
+      teamsByMember.set(login, [slug]);
+    } else if (!held.includes(slug)) {
+      held.push(slug);
+    }
+  }
+  return teamsByMember;
+}
+
+/** How many of each claiming team's members authored merges in one repository, and how many merges they wrote. */
+function authoringScores(
+  merges: ReadonlyMap<string, number>,
+  teamsByMember: ReadonlyMap<string, readonly string[]>,
+  holders: ReadonlyMap<string, AccessLevel>
+): Map<string, { authors: number; merges: number }> {
+  const scores = new Map<string, { authors: number; merges: number }>();
+  for (const [login, authored] of merges) {
+    for (const slug of teamsByMember.get(login) ?? []) {
+      if (!holders.has(slug)) {
+        continue;
+      }
+      const score = scores.get(slug) ?? { authors: 0, merges: 0 };
+      score.authors += 1;
+      score.merges += authored;
+      scores.set(slug, score);
+    }
+  }
+  return scores;
 }
 
 /** Name the one team holding admin, or nothing when none or several do. */
@@ -373,6 +409,13 @@ function citedPaths(paths: readonly string[] | undefined): string {
   return paths !== undefined && paths.length > 0 ? paths.join(", ") : "no path recorded";
 }
 
+/** What the authoring rung's winner did here, and how many other claiming teams it was ranked ahead of. */
+function authoringDetail(authored: AuthoringClaim, others: number): string {
+  const teams = others === 1 ? "team" : "teams";
+  const contested = others > 0 ? `, ahead of ${others} other ${teams} with access whose members merged here` : "";
+  return `${authored.authors} member${authored.authors === 1 ? "" : "s"} authored ${authored.merges} merge${authored.merges === 1 ? "" : "s"} here${contested}`;
+}
+
 /**
  * Attribute one repository from evidence alone, or return `undefined` for the name pass to try.
  *
@@ -419,17 +462,7 @@ export function decideFromEvidence(
   const authoring = evidence.authoringTeams.get(repository) ?? [];
   const authored = authoring[0];
   if (authored !== undefined) {
-    const others = authoring.length - 1;
-    const teams = others === 1 ? "team" : "teams";
-    const contested = others > 0 ? `, ahead of ${others} other ${teams} with access whose members merged here` : "";
-    return [
-      {
-        kind: OwnerKind.Team,
-        owner: authored.team,
-        rung: OwnershipRung.AuthoringTeam,
-        detail: `${authored.authors} member${authored.authors === 1 ? "" : "s"} authored ${authored.merges} merge${authored.merges === 1 ? "" : "s"} here${contested}`
-      }
-    ];
+    return [{ kind: OwnerKind.Team, owner: authored.team, rung: OwnershipRung.AuthoringTeam, detail: authoringDetail(authored, authoring.length - 1) }];
   }
 
   // EXTENSION over the Python script, which required a SOLE admin and discarded the repository to the next
