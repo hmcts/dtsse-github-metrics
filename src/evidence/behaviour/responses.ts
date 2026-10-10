@@ -135,9 +135,11 @@ export function parseResponse<Schema extends z.ZodTypeAny>(schema: Schema, data:
 // The OUTPUT types, which is what collection works with: `instant` transforms a string into a `Date`, so
 // these carry `Date` where the wire carries text.
 export type PullRequestNode = z.infer<typeof pullRequestNode>;
+export type MergedPullRequestNode = z.infer<typeof mergedPullRequestNode>;
 export type ReviewNode = z.infer<typeof reviewNode>;
 export type ReviewConnection = z.infer<typeof reviewConnection>;
 export type CheckContext = z.infer<typeof checkContext>;
 export type CheckConnection = z.infer<typeof checkConnection>;
 export type CommitConnection = z.infer<typeof commitConnection>;
 export type CommitNode = z.infer<typeof commitNode>;
+export type HumanCommitNode = z.infer<typeof humanCommitNode>;

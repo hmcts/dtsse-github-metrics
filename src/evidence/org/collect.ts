@@ -236,63 +236,96 @@ export async function collectOrgTeams(client: GitHubClient, organization: string
     membershipsObserved: new Set<string>(),
     teamRepositoriesObserved: new Set<string>()
   };
-  let cursor: string | null = null;
 
-  for (;;) {
-    let connection: ReturnType<typeof parseTeams>;
-    try {
-      const data: unknown = await client.graphql(orgTeamsQuery(), { organization, cursor });
-      connection = parseTeams(data);
-    } catch (error) {
-      console.warn(
+  facts.teamsComplete = await walkConnection(
+    async (cursor) => parseTeams(await client.graphql(orgTeamsQuery(), { organization, cursor })),
+    async (connection) => {
+      facts.teamsRead = true;
+      for (const node of connection.nodes) {
+        if (node != null) {
+          await readTeam(client, organization, node, facts);
+        }
+      }
+    },
+    {
+      refused: (error) =>
         facts.teamsRead
           ? `Could not list further teams of ${organization} after ${facts.teams.length}; keeping the teams already read: ${messageOf(error)}`
-          : `Could not list the teams of ${organization}; the graph will be built without team access: ${messageOf(error)}`
-      );
-      facts.teamsComplete = false;
-      break;
-    }
-    if (connection == null) {
+          : `Could not list the teams of ${organization}; the graph will be built without team access: ${messageOf(error)}`,
       // GitHub answered with no organisation, or with an organisation carrying no teams connection: for this
       // purpose the same answer as a refusal — nobody listed the teams.
-      console.warn(`GitHub named no teams connection for ${organization}; the graph will be built without team access`);
-      facts.teamsComplete = false;
-      break;
+      missing: `GitHub named no teams connection for ${organization}; the graph will be built without team access`
     }
-
-    facts.teamsRead = true;
-    for (const node of connection.nodes) {
-      if (node == null) {
-        continue;
-      }
-      facts.teams.push(teamFact(node));
-      facts.knownTeams.add(canonical(node.slug));
-      try {
-        facts.memberships.push(...(await collectTeamMembers(client, organization, node.slug, node.members)));
-        facts.membershipsObserved.add(canonical(node.slug));
-      } catch (error) {
-        console.warn(`Could not list the members of ${organization}/${node.slug}; it will claim no people: ${messageOf(error)}`);
-      }
-      try {
-        facts.teamRepositories.push(...(await collectTeamRepositories(client, organization, node.slug, node.repositories)));
-        facts.teamRepositoriesObserved.add(canonical(node.slug));
-      } catch (error) {
-        console.warn(`Could not list the repositories of ${organization}/${node.slug}; it will claim no repositories: ${messageOf(error)}`);
-      }
-    }
-
-    if (!connection.pageInfo.hasNextPage) {
-      break;
-    }
-    cursor = connection.pageInfo.endCursor ?? null;
-  }
+  );
 
   return facts;
 }
 
-/** Named so the loop above can annotate the connection without restating the schema's inferred shape. */
+/**
+ * Records one listed team, then reads its members and its repositories, each refusal on its own.
+ *
+ * The team is known before either read is attempted, so a refusal on both still leaves it in `knownTeams` — see
+ * `collectOrgTeams` for why that matters. Only a read that finished marks the team observed.
+ */
+async function readTeam(client: GitHubClient, organization: string, node: TeamNode, facts: OrgTeamFacts): Promise<void> {
+  facts.teams.push(teamFact(node));
+  facts.knownTeams.add(canonical(node.slug));
+  try {
+    facts.memberships.push(...(await collectTeamMembers(client, organization, node.slug, node.members)));
+    facts.membershipsObserved.add(canonical(node.slug));
+  } catch (error) {
+    console.warn(`Could not list the members of ${organization}/${node.slug}; it will claim no people: ${messageOf(error)}`);
+  }
+  try {
+    facts.teamRepositories.push(...(await collectTeamRepositories(client, organization, node.slug, node.repositories)));
+    facts.teamRepositoriesObserved.add(canonical(node.slug));
+  } catch (error) {
+    console.warn(`Could not list the repositories of ${organization}/${node.slug}; it will claim no repositories: ${messageOf(error)}`);
+  }
+}
+
+/** Named so the walk above can annotate the connection without restating the schema's inferred shape. */
 function parseTeams(data: unknown) {
   return parseResponse(orgTeamsSchema, data, "organisation team data").organization?.teams;
+}
+
+/** What every organisation-wide connection carries, whatever its nodes are. */
+interface PagedConnection {
+  pageInfo: { hasNextPage: boolean; endCursor?: string | null };
+}
+
+/**
+ * Pages one organisation-wide connection to its end, handing each page to `readPage`, and answers whether it got
+ * there.
+ *
+ * The loop the team, repository and membership walks share, with the rule they share: a refusal, or an answer
+ * naming no connection at all, STOPS the walk with a warning — but whatever the pages before it held stays read,
+ * and the `false` is what tells the caller it holds a prefix rather than the whole estate.
+ */
+async function walkConnection<Connection extends PagedConnection>(
+  fetchPage: (cursor: string | null) => Promise<Connection | null | undefined>,
+  readPage: (connection: Connection) => Promise<void> | void,
+  warnings: { refused: (error: unknown) => string; missing: string }
+): Promise<boolean> {
+  let cursor: string | null = null;
+  for (;;) {
+    let connection: Connection | null | undefined;
+    try {
+      connection = await fetchPage(cursor);
+    } catch (error) {
+      console.warn(warnings.refused(error));
+      return false;
+    }
+    if (connection == null) {
+      console.warn(warnings.missing);
+      return false;
+    }
+    await readPage(connection);
+    if (!connection.pageInfo.hasNextPage) {
+      return true;
+    }
+    cursor = connection.pageInfo.endCursor ?? null;
+  }
 }
 
 /**
@@ -305,56 +338,46 @@ function parseTeams(data: unknown) {
  */
 export async function collectOrgRepositories(client: GitHubClient, organization: string): Promise<OrgWalk<RepositoryFact>> {
   const repositories: RepositoryFact[] = [];
-  let complete = true;
-  let cursor: string | null = null;
-
-  for (;;) {
-    let connection: ReturnType<typeof parseRepositories>;
-    try {
-      const data: unknown = await client.graphql(orgRepositoriesQuery(), { organization, cursor });
-      connection = parseRepositories(data);
-    } catch (error) {
-      console.warn(`Could not list the repositories of ${organization} after ${repositories.length}: ${messageOf(error)}`);
-      complete = false;
-      break;
-    }
-    if (connection == null) {
-      console.warn(`GitHub named no repositories connection for ${organization}`);
-      complete = false;
-      break;
-    }
-
-    for (const node of connection.nodes) {
-      if (node == null) {
-        continue;
+  const complete = await walkConnection(
+    async (cursor) => parseRepositories(await client.graphql(orgRepositoriesQuery(), { organization, cursor })),
+    (connection) => {
+      for (const node of connection.nodes) {
+        if (node != null) {
+          repositories.push(repositoryFact(node));
+        }
       }
-      repositories.push({
-        name: node.name,
-        // Absent flags read as the safer answer: not archived, not a fork, visibility unstated. Each is a
-        // filter downstream, and a missing field must not exclude a repository that exists.
-        archived: node.isArchived ?? false,
-        isFork: node.isFork ?? false,
-        visibility: node.visibility ?? "",
-        ...(node.defaultBranchRef?.name == null ? {} : { defaultBranch: node.defaultBranchRef.name }),
-        ...(node.pushedAt == null ? {} : { pushedAt: node.pushedAt }),
-        // ABSENT STAYS ABSENT rather than falling back to `pushedAt`. GitHub omits the default branch ref for an
-        // empty repository, and reporting the any-branch push date under a field that promises the default branch
-        // is the confusion this field exists to end — see `RepositoryFact.defaultBranchCommittedAt`.
-        ...(node.defaultBranchRef?.target?.committedDate == null ? {} : { defaultBranchCommittedAt: node.defaultBranchRef.target.committedDate })
-      });
+    },
+    {
+      refused: (error) => `Could not list the repositories of ${organization} after ${repositories.length}: ${messageOf(error)}`,
+      missing: `GitHub named no repositories connection for ${organization}`
     }
-
-    if (!connection.pageInfo.hasNextPage) {
-      break;
-    }
-    cursor = connection.pageInfo.endCursor ?? null;
-  }
-
+  );
   return { facts: repositories, complete };
 }
 
 function parseRepositories(data: unknown) {
   return parseResponse(orgRepositoriesSchema, data, "organisation repository data").organization?.repositories;
+}
+
+/** One listed repository, as the schema's inferred shape names it. */
+type RepositoryNode = NonNullable<NonNullable<ReturnType<typeof parseRepositories>>["nodes"][number]>;
+
+/** One repository as the organisation listed it. */
+function repositoryFact(node: RepositoryNode): RepositoryFact {
+  return {
+    name: node.name,
+    // Absent flags read as the safer answer: not archived, not a fork, visibility unstated. Each is a
+    // filter downstream, and a missing field must not exclude a repository that exists.
+    archived: node.isArchived ?? false,
+    isFork: node.isFork ?? false,
+    visibility: node.visibility ?? "",
+    ...(node.defaultBranchRef?.name == null ? {} : { defaultBranch: node.defaultBranchRef.name }),
+    ...(node.pushedAt == null ? {} : { pushedAt: node.pushedAt }),
+    // ABSENT STAYS ABSENT rather than falling back to `pushedAt`. GitHub omits the default branch ref for an
+    // empty repository, and reporting the any-branch push date under a field that promises the default branch
+    // is the confusion this field exists to end — see `RepositoryFact.defaultBranchCommittedAt`.
+    ...(node.defaultBranchRef?.target?.committedDate == null ? {} : { defaultBranchCommittedAt: node.defaultBranchRef.target.committedDate })
+  };
 }
 
 /**
@@ -366,51 +389,45 @@ function parseRepositories(data: unknown) {
  */
 export async function collectOrgPeople(client: GitHubClient, organization: string): Promise<OrgWalk<PersonFact>> {
   const people = new Map<string, PersonFact>();
-  let complete = true;
-  let cursor: string | null = null;
-
-  for (;;) {
-    let connection: ReturnType<typeof parsePeople>;
-    try {
-      const data: unknown = await client.graphql(orgPeopleQuery(), { organization, cursor });
-      connection = parsePeople(data);
-    } catch (error) {
-      console.warn(`Could not list the members of ${organization} after ${people.size}: ${messageOf(error)}`);
-      complete = false;
-      break;
-    }
-    if (connection == null) {
-      console.warn(`GitHub named no membership connection for ${organization}`);
-      complete = false;
-      break;
-    }
-
-    for (const edge of connection.edges) {
-      const node = edge?.node;
-      if (edge == null || node == null) {
-        continue;
+  const complete = await walkConnection(
+    async (cursor) => parsePeople(await client.graphql(orgPeopleQuery(), { organization, cursor })),
+    (connection) => {
+      for (const edge of connection.edges) {
+        const person = personFact(edge);
+        if (person !== undefined) {
+          people.set(canonical(person.login), person);
+        }
       }
-      people.set(canonical(node.login), {
-        login: node.login,
-        // `MEMBER` when GitHub named no role, for the reason a membership defaults to it: never invent an owner.
-        role: edge.role ?? "MEMBER",
-        ...(blank(node.name) ? {} : { name: node.name as string }),
-        ...(blank(node.email) ? {} : { email: node.email as string }),
-        ...(blank(node.company) ? {} : { company: node.company as string })
-      });
+    },
+    {
+      refused: (error) => `Could not list the members of ${organization} after ${people.size}: ${messageOf(error)}`,
+      missing: `GitHub named no membership connection for ${organization}`
     }
-
-    if (!connection.pageInfo.hasNextPage) {
-      break;
-    }
-    cursor = connection.pageInfo.endCursor ?? null;
-  }
-
+  );
   return { facts: [...people.values()], complete };
 }
 
 function parsePeople(data: unknown) {
   return parseResponse(orgPeopleSchema, data, "organisation membership data").organization?.membersWithRole;
+}
+
+/** One membership edge, as the schema's inferred shape names it — `null` included, as GitHub may send it. */
+type PersonEdge = NonNullable<ReturnType<typeof parsePeople>>["edges"][number];
+
+/** One member as the organisation listed them, or `undefined` for an edge GitHub would not name a person on. */
+function personFact(edge: PersonEdge): PersonFact | undefined {
+  const node = edge?.node;
+  if (edge == null || node == null) {
+    return undefined;
+  }
+  return {
+    login: node.login,
+    // `MEMBER` when GitHub named no role, for the reason a membership defaults to it: never invent an owner.
+    role: edge.role ?? "MEMBER",
+    ...(blank(node.name) ? {} : { name: node.name as string }),
+    ...(blank(node.email) ? {} : { email: node.email as string }),
+    ...(blank(node.company) ? {} : { company: node.company as string })
+  };
 }
 
 function blank(value: string | null | undefined): boolean {
@@ -608,10 +625,7 @@ export async function collectDirectAdmins(client: GitHubClient, organization: st
         per_page: 100
       })) {
         for (const collaborator of parseResponse(collaboratorsSchema, page, "direct collaborator data")) {
-          if (collaborator == null) {
-            continue;
-          }
-          if (!isHumanAccount(collaborator.login, collaborator.type ?? undefined)) {
+          if (collaborator == null || !isHumanAccount(collaborator.login, collaborator.type ?? undefined)) {
             continue;
           }
           // Folded, because the other source of individual owners — a bare handle in CODEOWNERS — is folded

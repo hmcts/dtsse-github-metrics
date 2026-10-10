@@ -326,6 +326,37 @@ export async function readDependabotAlerts(client: GitHubClient, organization: s
 }
 
 /**
+ * Counts one organisation-wide secret-scanning alert against its repository, and keeps its instant where it has one.
+ *
+ * A record this build cannot read is skipped rather than failing the estate: one unparseable alert must not turn
+ * every repository's answer into unknown.
+ */
+function tallySecretAlert(record: unknown, open: Map<string, number>, raised: Map<string, Date[]>): void {
+  const parsed = organisationSecretAlertSchema.safeParse(record);
+  const repository = parsed.success ? parsed.data.repository?.name : undefined;
+  if (repository == null) {
+    return;
+  }
+  open.set(repository, (open.get(repository) ?? 0) + 1);
+  const createdAt = parsed.data?.created_at == null ? undefined : new Date(parsed.data.created_at);
+  if (createdAt !== undefined && !Number.isNaN(createdAt.getTime())) {
+    raised.set(repository, [...(raised.get(repository) ?? []), createdAt]);
+  }
+}
+
+/** Each repository's open count, with the age of its oldest alert where any alert carried a readable instant. */
+function summariseSecretAlerts(open: ReadonlyMap<string, number>, raised: ReadonlyMap<string, Date[]>, reference: Date): Map<string, SecretAlertSummary> {
+  const summaries = new Map<string, SecretAlertSummary>();
+  for (const [repository, count] of open) {
+    const instants = raised.get(repository) ?? [];
+    const oldest = instants.length === 0 ? undefined : new Date(Math.min(...instants.map((instant) => instant.getTime())));
+    const age = ageInDays(oldest, reference);
+    summaries.set(repository, { open: count, ...(age === undefined ? {} : { oldestOpenDays: age }) });
+  }
+  return summaries;
+}
+
+/**
  * Every open secret-scanning alert in the ORGANISATION, keyed by repository.
  *
  * ONE CALL FOR THE WHOLE ESTATE, and that shape is the whole reason this criterion is reportable. The
@@ -357,33 +388,14 @@ export async function collectOrganisationSecretAlerts(
   try {
     for await (const page of client.paginate<unknown>(`/orgs/${organization}/secret-scanning/alerts`, { state: "open", per_page: 100 })) {
       for (const record of page) {
-        const parsed = organisationSecretAlertSchema.safeParse(record);
-        // A record this build cannot read is skipped rather than failing the estate: one unparseable alert must
-        // not turn every repository's answer into unknown.
-        const repository = parsed.success ? parsed.data.repository?.name : undefined;
-        if (repository == null) {
-          continue;
-        }
-        open.set(repository, (open.get(repository) ?? 0) + 1);
-        const createdAt = parsed.data?.created_at == null ? undefined : new Date(parsed.data.created_at);
-        if (createdAt !== undefined && !Number.isNaN(createdAt.getTime())) {
-          raised.set(repository, [...(raised.get(repository) ?? []), createdAt]);
-        }
+        tallySecretAlert(record, open, raised);
       }
     }
   } catch (error) {
     console.warn(`Could not read the open secret-scanning alerts of ${organization}; every repository's answer will be unknown: ${messageOf(error)}`);
     return undefined;
   }
-
-  const summaries = new Map<string, SecretAlertSummary>();
-  for (const [repository, count] of open) {
-    const instants = raised.get(repository) ?? [];
-    const oldest = instants.length === 0 ? undefined : new Date(Math.min(...instants.map((instant) => instant.getTime())));
-    const age = ageInDays(oldest, reference);
-    summaries.set(repository, { open: count, ...(age === undefined ? {} : { oldestOpenDays: age }) });
-  }
-  return summaries;
+  return summariseSecretAlerts(open, raised, reference);
 }
 
 /**
