@@ -25,24 +25,7 @@ export function builtMergeRows(facts: ReadonlyMap<string, Merges>): contract.Tea
   const rows: contract.TeamMergeRow[] = [];
   for (const [repository, merges] of facts) {
     for (const pullRequest of merges.pullRequests) {
-      const size = changeSize(pullRequest);
-      // GUARDED ON THE ARRAY'S PRESENCE, not on its contents, which is the same guard `timingMedians` keeps and for
-      // its reason: `eligibleReviews` and `eligibleChecks` both call `.filter` on the stored array without checking
-      // it is one, and the projection this reads through has been narrowed once already — so "every payload carries
-      // every field" is a claim about history rather than a guarantee. An absent array is UNMEASURED; an empty one
-      // is measured and found nothing, and the two must not render alike.
-      const checks = Array.isArray(pullRequest.checks) ? eligibleChecks(pullRequest) : undefined;
-      rows.push({
-        repository,
-        number: pullRequest.number,
-        merged_at: pullRequest.mergedAt.toISOString(),
-        author: pullRequest.authorLogin,
-        ...(Array.isArray(pullRequest.reviews) ? { reviewed: eligibleReviews(pullRequest).length > 0 } : {}),
-        // A check that finished before the merge, with nothing that finished having failed. An empty list is
-        // `false` rather than absent: the merge was looked at and no check had reported on it.
-        ...(checks === undefined ? {} : { ci: checks.length > 0 && checks.every((check) => isPassingCheck(check)) }),
-        ...(size === undefined ? {} : { lines: size.lines, files: size.files })
-      });
+      rows.push(mergeRow(repository, pullRequest));
     }
   }
   return stripAbsent(
@@ -50,6 +33,27 @@ export function builtMergeRows(facts: ReadonlyMap<string, Merges>): contract.Tea
       (left, right) => right.merged_at.localeCompare(left.merged_at) || left.repository.localeCompare(right.repository) || left.number - right.number
     )
   );
+}
+
+function mergeRow(repository: string, pullRequest: Merges["pullRequests"][number]): contract.TeamMergeRow {
+  const size = changeSize(pullRequest);
+  // GUARDED ON THE ARRAY'S PRESENCE, not on its contents, which is the same guard `timingMedians` keeps and for
+  // its reason: `eligibleReviews` and `eligibleChecks` both call `.filter` on the stored array without checking
+  // it is one, and the projection this reads through has been narrowed once already — so "every payload carries
+  // every field" is a claim about history rather than a guarantee. An absent array is UNMEASURED; an empty one
+  // is measured and found nothing, and the two must not render alike.
+  const checks = Array.isArray(pullRequest.checks) ? eligibleChecks(pullRequest) : undefined;
+  return {
+    repository,
+    number: pullRequest.number,
+    merged_at: pullRequest.mergedAt.toISOString(),
+    author: pullRequest.authorLogin,
+    ...(Array.isArray(pullRequest.reviews) ? { reviewed: eligibleReviews(pullRequest).length > 0 } : {}),
+    // A check that finished before the merge, with nothing that finished having failed. An empty list is
+    // `false` rather than absent: the merge was looked at and no check had reported on it.
+    ...(checks === undefined ? {} : { ci: checks.length > 0 && checks.every((check) => isPassingCheck(check)) }),
+    ...(size === undefined ? {} : { lines: size.lines, files: size.files })
+  };
 }
 
 export function builtDirectPushRows(facts: ReadonlyMap<string, Merges>): contract.TeamDirectPushRow[] {
