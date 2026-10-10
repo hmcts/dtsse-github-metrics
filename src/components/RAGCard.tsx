@@ -10,11 +10,12 @@ import type { ReadinessLabel } from "@/lib/types";
  * nothing useful, and the same square rendered as three different shapes across the platforms the
  * team reads on. The word is the information here and the colour only supports it, which is also why
  * the badge keeps a border: a colour alone would not survive a monochrome print of the page.
+ *
+ * SENTENCE CASE, from 2026-10-10, as `RAG_LABEL` spells it: no `uppercase` class, so "Ready" reads as the
+ * assurance grade's "Meets criteria" does beside it in the same table rather than as a shouted "READY".
  */
 export function RAGLabel({ label }: Readonly<{ label?: ReadinessLabel }>) {
-  return (
-    <span className={clsx("inline-block rounded px-1.5 py-0.5 text-xs uppercase tracking-wide whitespace-nowrap", badgeClass(label))}>{labelText(label)}</span>
-  );
+  return <span className={clsx("inline-block rounded px-1.5 py-0.5 text-xs whitespace-nowrap", badgeClass(label))}>{labelText(label)}</span>;
 }
 
 /**

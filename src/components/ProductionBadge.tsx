@@ -18,7 +18,5 @@ export function ProductionBadge({ production }: Readonly<{ production?: boolean 
   if (production !== true) {
     return null;
   }
-  return (
-    <span className={clsx("inline-block rounded px-1.5 py-0.5 text-xs uppercase tracking-wide whitespace-nowrap", PRODUCTION_BADGE)}>{PRODUCTION_LABEL}</span>
-  );
+  return <span className={clsx("inline-block rounded px-1.5 py-0.5 text-xs whitespace-nowrap", PRODUCTION_BADGE)}>{PRODUCTION_LABEL}</span>;
 }

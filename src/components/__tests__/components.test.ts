@@ -226,6 +226,19 @@ describe("RAG presentation", () => {
     expect(renderToStaticMarkup(createElement(RAGLabel, {}))).toContain("Not assessed");
   });
 
+  it('reads every label in sentence case, as the assurance grade\'s "Meets criteria" does, rather than in capitals', () => {
+    for (const [label, word] of [
+      ["green", "Ready"],
+      ["amber", "Caution"],
+      ["red", "Blocked"],
+      ["cannot_assess", "Cannot assess"]
+    ] as const) {
+      const markup = renderToStaticMarkup(createElement(RAGLabel, { label }));
+      expect(markup).toContain(`>${word}<`);
+      expect(markup).not.toContain("uppercase");
+    }
+  });
+
   it("carries the colour bar down the left edge of a card", () => {
     const markup = renderToStaticMarkup(createElement(RAGCard, { label: "amber", heading: "hmcts/api", detail: "One check cautions." }));
     expect(markup).toContain(RAG_BORDER.amber);
@@ -279,9 +292,15 @@ describe("ProductionBadge", () => {
   it("wears the same span as RAGLabel, so a header carrying both reads as one row", () => {
     const production = renderToStaticMarkup(createElement(ProductionBadge, { production: true }));
     const rag = renderToStaticMarkup(createElement(RAGLabel, { label: "green" }));
-    const shape = "inline-block rounded px-1.5 py-0.5 text-xs uppercase tracking-wide whitespace-nowrap";
+    const shape = "inline-block rounded px-1.5 py-0.5 text-xs whitespace-nowrap";
     expect(production).toContain(shape);
     expect(rag).toContain(shape);
+  });
+
+  it('reads in sentence case, as the assurance grade\'s "Meets criteria" does, rather than in capitals', () => {
+    const production = renderToStaticMarkup(createElement(ProductionBadge, { production: true }));
+    expect(production).toContain(">Production<");
+    expect(production).not.toContain("uppercase");
   });
 
   // There is no non-production badge, so the two answers the field keeps apart — "the list does not
