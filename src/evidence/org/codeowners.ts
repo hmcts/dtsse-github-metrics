@@ -67,27 +67,11 @@ export function parseCodeowners(document: string, organization: string): Codeown
   for (const raw of document.split(/\r?\n/)) {
     const line = raw.replace(/#.*/s, "");
     for (const token of line.split(/\s+/)) {
-      if (!token.startsWith("@")) {
-        continue;
-      }
-      const team = TEAM_HANDLE.exec(token);
-      if (team !== null) {
-        const owner = canonical(team[1] as string);
-        const name = canonical(team[2] as string);
-        teams.add(owner === prefix ? name : `${owner}/${name}`);
-        continue;
-      }
-      const person = PERSON_HANDLE.exec(token);
-      if (person !== null) {
-        const login = canonical(person[1] as string);
-        // `@global-owner1` and `@global-owner2` are GitHub's documentation examples, copied verbatim into 18
-        // places across 97 files in this estate — the most common individual "owner" in it, and neither is a
-        // person. See `PlaceholderLogins`: kept out here so the `codeowners-person` rung cannot attribute a
-        // repository to an example.
-        if (placeholders.has(login)) {
-          continue;
-        }
-        people.add(login);
+      const owner = ownerNamedBy(token, prefix);
+      if (owner?.kind === "team") {
+        teams.add(owner.name);
+      } else if (owner?.kind === "person") {
+        people.add(owner.name);
       }
     }
   }
@@ -95,6 +79,29 @@ export function parseCodeowners(document: string, organization: string): Codeown
   // Sorted so two runs over one unchanged file produce byte-identical facts, which is what makes the digest
   // comparison downstream able to say "nothing changed" rather than "the order changed".
   return { teams: [...teams].sort(byCodePoint), people: [...people].sort(byCodePoint) };
+}
+
+/** The owner one whitespace-separated token names, folded, or `undefined` when it names nobody. */
+function ownerNamedBy(token: string, prefix: string): { kind: "team" | "person"; name: string } | undefined {
+  if (!token.startsWith("@")) {
+    return undefined;
+  }
+  const team = TEAM_HANDLE.exec(token);
+  if (team !== null) {
+    const owner = canonical(team[1] as string);
+    const name = canonical(team[2] as string);
+    return { kind: "team", name: owner === prefix ? name : `${owner}/${name}` };
+  }
+  const person = PERSON_HANDLE.exec(token);
+  if (person === null) {
+    return undefined;
+  }
+  const login = canonical(person[1] as string);
+  // `@global-owner1` and `@global-owner2` are GitHub's documentation examples, copied verbatim into 18
+  // places across 97 files in this estate — the most common individual "owner" in it, and neither is a
+  // person. See `PlaceholderLogins`: kept out here so the `codeowners-person` rung cannot attribute a
+  // repository to an example.
+  return placeholders.has(login) ? undefined : { kind: "person", name: login };
 }
 
 /** Merges the owners of the several CODEOWNERS paths one repository may carry, keeping the output stable. */
