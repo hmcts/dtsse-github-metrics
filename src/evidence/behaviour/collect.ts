@@ -14,7 +14,9 @@ import {
   type CommitNode,
   checkPageSchema,
   commitHistorySchema,
+  type HumanCommitNode,
   humanCommitHistorySchema,
+  type MergedPullRequestNode,
   mergedPullRequestSchema,
   type PullRequestNode,
   parseResponse,
@@ -209,6 +211,32 @@ async function pullRequestFact(
 }
 
 /**
+ * The pull requests on one page merged inside the window, and whether the page reached a node updated before it.
+ *
+ * `mergedAt <= updatedAt` always, and the walk is ordered by `updatedAt` descending, so a node updated before the
+ * window opened cannot have been merged inside it and neither can anything after it.
+ */
+function mergedOnPage(
+  nodes: readonly (MergedPullRequestNode | null | undefined)[],
+  startsAt: Date,
+  endsAt: Date
+): { merged: MergedPullRequestNode[]; reachedTheWindow: boolean } {
+  const merged: MergedPullRequestNode[] = [];
+  for (const node of nodes) {
+    if (node == null) {
+      continue;
+    }
+    if (node.updatedAt.getTime() < startsAt.getTime()) {
+      return { merged, reachedTheWindow: true };
+    }
+    if (node.mergedAt.getTime() >= startsAt.getTime() && node.mergedAt.getTime() < endsAt.getTime()) {
+      merged.push(node);
+    }
+  }
+  return { merged, reachedTheWindow: false };
+}
+
+/**
  * Collects the merged pull requests inside one window.
  *
  * The WINDOW is half-open, so membership is `startsAt <= mergedAt < endsAt` and is decided per node rather than
@@ -239,21 +267,10 @@ export async function collectMergedPullRequests(
     if (connection === undefined || connection === null) {
       throw new GitHubError("GitHub omitted the repository while collecting merged pull requests", AvailabilityReason.CollectionFailed);
     }
-    let reachedTheWindow = false;
-    for (const node of connection.nodes) {
-      if (node == null) {
-        continue;
-      }
-      // `mergedAt <= updatedAt` always, and the walk is ordered by `updatedAt` descending, so a node updated
-      // before the window opened cannot have been merged inside it and neither can anything after it.
-      if (node.updatedAt.getTime() < startsAt.getTime()) {
-        reachedTheWindow = true;
-        break;
-      }
-      if (node.mergedAt.getTime() >= startsAt.getTime() && node.mergedAt.getTime() < endsAt.getTime()) {
-        const fact = await pullRequestFact(client, organization, repository, node, patterns);
-        facts.set(fact.identifier, fact);
-      }
+    const { merged, reachedTheWindow } = mergedOnPage(connection.nodes, startsAt, endsAt);
+    for (const node of merged) {
+      const fact = await pullRequestFact(client, organization, repository, node, patterns);
+      facts.set(fact.identifier, fact);
     }
     if (reachedTheWindow || !connection.pageInfo.hasNextPage) {
       break;
@@ -331,6 +348,31 @@ export async function collectDirectCommits(
 export const HUMAN_COMMIT_PAGE_CAP = 10;
 
 /**
+ * The first human commit on one page of history, or else the oldest commit read so far, carrying `oldest` in from
+ * the pages before it.
+ */
+function scanForHumanCommit(
+  nodes: readonly (HumanCommitNode | null | undefined)[],
+  oldest: Date | undefined,
+  excluded: ReadonlySet<string>,
+  bots: ReadonlySet<string>
+): { lastHumanCommitAt: Date } | { oldest: Date | undefined } {
+  let oldestSoFar = oldest;
+  for (const node of nodes) {
+    if (node == null) {
+      continue;
+    }
+    if (isHumanCommitAuthor(node.author?.user?.login, node.author?.user?.__typename, node.author?.name ?? undefined, excluded, bots)) {
+      return { lastHumanCommitAt: node.committedDate };
+    }
+    if (oldestSoFar === undefined || node.committedDate.getTime() < oldestSoFar.getTime()) {
+      oldestSoFar = node.committedDate;
+    }
+  }
+  return { oldest: oldestSoFar };
+}
+
+/**
  * The newest human commit on the default branch since `since`, or how far back the search looked for one.
  *
  * Stops at the FIRST commit passing `isHumanCommitAuthor`: history is walked newest first, so that is the answer.
@@ -363,17 +405,11 @@ export async function findLastHumanCommit(
       // An empty repository, or one whose default branch nobody has pushed to.
       return maintenanceEvidence({});
     }
-    for (const node of history.nodes) {
-      if (node == null) {
-        continue;
-      }
-      if (isHumanCommitAuthor(node.author?.user?.login, node.author?.user?.__typename, node.author?.name ?? undefined, excluded, bots)) {
-        return maintenanceEvidence({ lastHumanCommitAt: node.committedDate });
-      }
-      if (oldest === undefined || node.committedDate.getTime() < oldest.getTime()) {
-        oldest = node.committedDate;
-      }
+    const scanned = scanForHumanCommit(history.nodes, oldest, excluded, bots);
+    if ("lastHumanCommitAt" in scanned) {
+      return maintenanceEvidence(scanned);
     }
+    oldest = scanned.oldest;
     if (!history.pageInfo.hasNextPage) {
       return maintenanceEvidence({ searchedBackTo: since });
     }
