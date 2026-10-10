@@ -107,15 +107,28 @@ function instant(value: string | undefined, name: string): Date | undefined {
   }
 }
 
-export function parseArguments(argv: readonly string[]): Arguments {
-  const [command, ...rest] = argv;
-
+function commandOf(command: string | undefined): Command {
   if (command === undefined || command === "--help" || command === "-h") {
     throw new UsageError(usage());
   }
   if (!COMMANDS.includes(command as Command)) {
     throw new UsageError(`unknown command ${JSON.stringify(command)}\n\n${usage()}`);
   }
+  return command as Command;
+}
+
+/** The value unchanged, which may be absent, or a usage error when it is given and falls below `minimum`. */
+function atLeast(minimum: number, value: number | undefined, message: string): number | undefined {
+  if (value !== undefined && value < minimum) {
+    throw new UsageError(message);
+  }
+  return value;
+}
+
+export function parseArguments(argv: readonly string[]): Arguments {
+  const [command, ...rest] = argv;
+
+  const known = commandOf(command);
 
   let values: Record<string, unknown>;
   try {
@@ -125,21 +138,18 @@ export function parseArguments(argv: readonly string[]): Arguments {
   }
 
   const config = (values.config as string[] | undefined) ?? [];
-  if (config.length === 0 && command !== "migrate") {
+  if (config.length === 0 && known !== "migrate") {
     throw new UsageError("--config is required, and may be repeated to layer a policy file with a team file");
   }
 
   const days = integer(values.days as string | undefined, "days");
 
-  const unresolvedLimit = integer(values["unresolved-limit"] as string | undefined, "unresolved-limit");
-  if (unresolvedLimit !== undefined && unresolvedLimit < 0) {
-    throw new UsageError("--unresolved-limit may not be negative; zero skips the per-repository rungs entirely");
-  }
-
-  const batchSize = integer(values["batch-size"] as string | undefined, "batch-size");
-  if (batchSize !== undefined && batchSize < 1) {
-    throw new UsageError("--batch-size must be at least one row");
-  }
+  const unresolvedLimit = atLeast(
+    0,
+    integer(values["unresolved-limit"] as string | undefined, "unresolved-limit"),
+    "--unresolved-limit may not be negative; zero skips the per-repository rungs entirely"
+  );
+  const batchSize = atLeast(1, integer(values["batch-size"] as string | undefined, "batch-size"), "--batch-size must be at least one row");
 
   const startsAt = instant(values.from as string | undefined, "from");
   const endsAt = instant(values.to as string | undefined, "to");
@@ -148,7 +158,7 @@ export function parseArguments(argv: readonly string[]): Arguments {
   }
 
   return {
-    command: command as Command,
+    command: known,
     config,
     ...(startsAt === undefined ? {} : { startsAt }),
     ...(endsAt === undefined ? {} : { endsAt }),
