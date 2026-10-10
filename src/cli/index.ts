@@ -51,6 +51,7 @@ import { CohortUncollectedError, cohortOwners, cohortRepositories, readCohort } 
 import { collectCodeowners, collectDirectAdmins, collectOrgPeople, collectOrgRepositories, collectOrgTeams } from "../evidence/org/collect.ts";
 import {
   byCodePoint,
+  type CodeownersFact,
   canonical,
   type OrgFacts,
   OwnerKind,
@@ -527,57 +528,63 @@ function tokenOptions(): { token?: string } {
   return token === undefined ? {} : { token };
 }
 
-async function runCollect(configuration: Configuration, argv: Arguments): Promise<number> {
-  const credentials = await resolveCredentials();
-  console.info(`authenticating as ${credentials.describe()}`);
-  const client = createGitHubClient({ credentials });
+/** One repository a `collect` run walks, and whether it is inside the cohort that has its merge history walked. */
+interface WalkEntry {
+  repository: string;
+  behaviour: boolean;
+}
 
-  const reference = new Date();
-  const window = resolveWindow({
-    ...(argv.startsAt === undefined ? {} : { startsAt: argv.startsAt }),
-    ...(argv.endsAt === undefined ? {} : { endsAt: argv.endsAt }),
-    ...(argv.days === undefined ? {} : { days: argv.days }),
-    defaultDays: configuration.lookback.operational_days,
-    reference
-  });
+/**
+ * THE WHOLE ESTATE, at two depths. Every repository gets its assurance answers; only the ones inside
+ * `cohort.active_within_days` get their merge history walked, which is where the calls are. `behaviourCollectable`
+ * rides on the entry so this call site reads the cohort's own decision rather than recomputing the window.
+ *
+ * A named `--repository` is collected in FULL whatever its last push, because somebody asking for one repository
+ * has said which and wants everything about it.
+ */
+async function collectionWalk(configuration: Configuration, argv: Arguments, reference: Date): Promise<WalkEntry[]> {
+  if (argv.repository !== undefined) {
+    return [{ repository: argv.repository, behaviour: true }];
+  }
+  const cohort = await readCohort(configuration, reference);
+  return cohort.map((entry) => ({ repository: entry.repository, behaviour: entry.behaviourCollectable }));
+}
 
-  const production = configuration.production_list_url === null ? undefined : await fetchProductionRepositories(configuration.production_list_url);
-
-  // THE WHOLE ESTATE, at two depths. Every repository gets its assurance answers; only the ones inside
-  // `cohort.active_within_days` get their merge history walked, which is where the calls are. `behaviourCollectable`
-  // rides on the entry so this call site reads the cohort's own decision rather than recomputing the window.
-  //
-  // A named `--repository` is collected in FULL whatever its last push, because somebody asking for one repository
-  // has said which and wants everything about it.
-  const cohort = argv.repository === undefined ? await readCohort(configuration, reference) : undefined;
-  const walk =
-    cohort === undefined
-      ? [{ repository: argv.repository as string, behaviour: true }]
-      : cohort.map((entry) => ({ repository: entry.repository, behaviour: entry.behaviourCollectable }));
-
-  // Batched 50 to a document AHEAD of the per-repository loop, because these two signals are GraphQL-only and
-  // aliasing them is the difference between 38 documents and 1,880 requests. A repository the batch could not read
-  // is simply absent from the map, which the domain grades as unknown rather than as tooling switched off.
-  const assurance = await collectAssuranceSignals(
-    client,
-    configuration.organization,
-    walk.map((entry) => entry.repository)
-  );
-
-  // ONE PAGINATED LISTING FOR THE WHOLE ESTATE'S METADATA, which is about 19 pages against 1,889
-  // per-repository reads. Only for a run collecting the estate: paging the organisation to find one repository
-  // asked for by name would cost more than reading it, so `--repository` keeps the read it always had.
+/**
+ * ONE PAGINATED LISTING FOR THE WHOLE ESTATE'S METADATA, which is about 19 pages against 1,889
+ * per-repository reads. Only for a run collecting the estate: paging the organisation to find one repository
+ * asked for by name would cost more than reading it, so `--repository` keeps the read it always had.
+ */
+async function estateMetadataFor(
+  client: ReturnType<typeof createGitHubClient>,
+  configuration: Configuration,
+  argv: Arguments,
+  walk: readonly WalkEntry[]
+): Promise<Map<string, EstateRepository> | undefined> {
   const estate = argv.repository === undefined ? await readEstateMetadata(client, configuration.organization) : undefined;
   const unlisted = estate === undefined ? [] : walk.filter((entry) => !estate.has(entry.repository));
   if (unlisted.length > 0) {
     // Named rather than silent: a repository in the collected graph that the organisation no longer lists has
     // been renamed, transferred or deleted since `collect-org` ran, and that is worth seeing.
-    console.warn(
-      `${unlisted.length} collected ${unlisted.length === 1 ? "repository is" : "repositories are"} not in the organisation's listing, so each one's metadata is read on its own`
-    );
+    const noun = unlisted.length === 1 ? "repository is" : "repositories are";
+    console.warn(`${unlisted.length} collected ${noun} not in the organisation's listing, so each one's metadata is read on its own`);
   }
+  return estate;
+}
 
-  let observed = 0;
+/** The two organisation-wide alert reads, and how many of them failed. */
+interface EstateAlerts {
+  secretAlerts: Map<string, SecretAlertSummary> | undefined;
+  dependabotAlerts: Map<string, unknown[]> | undefined;
+  failures: number;
+}
+
+async function readEstateAlerts(
+  client: ReturnType<typeof createGitHubClient>,
+  configuration: Configuration,
+  argv: Arguments,
+  reference: Date
+): Promise<EstateAlerts> {
   let failures = 0;
 
   // ONE CALL FOR THE WHOLE ESTATE, which is what makes the committed-secrets criterion affordable — and what makes
@@ -601,13 +608,85 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   //
   // Skipped for `--repository`, which reads that one repository's alerts instead: paging the organisation to
   // find one repository costs more than asking for it, exactly as the estate metadata listing is skipped.
-  const dependabotAlerts = argv.repository === undefined ? await collectOrganisationDependabotAlerts(client, configuration.organization) : undefined;
-  if (argv.repository === undefined && dependabotAlerts === undefined) {
+  if (argv.repository !== undefined) {
+    return { secretAlerts, dependabotAlerts: undefined, failures };
+  }
+  const dependabotAlerts = await collectOrganisationDependabotAlerts(client, configuration.organization);
+  if (dependabotAlerts === undefined) {
     failures += 1;
-  } else if (dependabotAlerts !== undefined) {
+  } else {
     const open = [...dependabotAlerts.values()].reduce((total, records) => total + records.length, 0);
     console.info(`${open} open Dependabot alerts across ${dependabotAlerts.size} repositories`);
   }
+  return { secretAlerts, dependabotAlerts, failures };
+}
+
+/** The window a run was asked for: whichever of `--starts-at`, `--ends-at` and `--days` were given, around `reference`. */
+function requestedWindow(argv: Arguments, configuration: Configuration, reference: Date): ReturnType<typeof resolveWindow> {
+  return resolveWindow({
+    ...(argv.startsAt === undefined ? {} : { startsAt: argv.startsAt }),
+    ...(argv.endsAt === undefined ? {} : { endsAt: argv.endsAt }),
+    ...(argv.days === undefined ? {} : { days: argv.days }),
+    defaultDays: configuration.lookback.operational_days,
+    reference
+  });
+}
+
+/** What the estate-wide reads made before the walk hold for one repository, in the shape `collectRepository` takes. */
+function repositoryInputs(
+  entry: WalkEntry,
+  estateReads: {
+    sonar: SonarSource;
+    assurance: Map<string, GraphAssurance>;
+    estate: Map<string, EstateRepository> | undefined;
+    secretAlerts: Map<string, SecretAlertSummary> | undefined;
+    dependabotAlerts: Map<string, unknown[]> | undefined;
+    /** Whether this run made the estate-wide reads at all, which a `--repository` run does not. */
+    estateWide: boolean;
+  }
+): Parameters<typeof collectRepository>[6] {
+  const summary = estateReads.secretAlerts?.get(entry.repository);
+  const metadata = estateReads.estate?.get(entry.repository);
+  return {
+    behaviour: entry.behaviour,
+    sonar: estateReads.sonar,
+    assurance: estateReads.assurance.get(entry.repository),
+    // Absent from the map is CLEAN rather than unread, because the org-wide read covers every repository — which
+    // is why `read` is carried separately from the summary rather than inferred from its absence.
+    secrets: { read: estateReads.secretAlerts !== undefined, ...(summary === undefined ? {} : { summary }) },
+    ...(metadata === undefined ? {} : { metadata }),
+    // Present whenever this run made the estate-wide read at all, whether or not it succeeded — see
+    // `estateAlerts`, where the refused case is what must NOT fall back to a read per repository.
+    ...(estateReads.estateWide ? { estateAlerts: { dependabot: estateReads.dependabotAlerts } } : {})
+  };
+}
+
+async function runCollect(configuration: Configuration, argv: Arguments): Promise<number> {
+  const credentials = await resolveCredentials();
+  console.info(`authenticating as ${credentials.describe()}`);
+  const client = createGitHubClient({ credentials });
+
+  const reference = new Date();
+  const window = requestedWindow(argv, configuration, reference);
+
+  const production = configuration.production_list_url === null ? undefined : await fetchProductionRepositories(configuration.production_list_url);
+
+  const walk = await collectionWalk(configuration, argv, reference);
+
+  // Batched 50 to a document AHEAD of the per-repository loop, because these two signals are GraphQL-only and
+  // aliasing them is the difference between 38 documents and 1,880 requests. A repository the batch could not read
+  // is simply absent from the map, which the domain grades as unknown rather than as tooling switched off.
+  const assurance = await collectAssuranceSignals(
+    client,
+    configuration.organization,
+    walk.map((entry) => entry.repository)
+  );
+
+  const estate = await estateMetadataFor(client, configuration, argv, walk);
+
+  let observed = 0;
+  const { secretAlerts, dependabotAlerts, failures: alertFailures } = await readEstateAlerts(client, configuration, argv, reference);
+  let failures = alertFailures;
 
   // The map and the project listing, read once each before the walk. See `sonarSource`: resolution itself spends
   // nothing after this, and only a repository the map attributes a project to pays for its measures.
@@ -615,29 +694,24 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   failures += sonar.failures;
 
   for (const entry of walk) {
-    const result = await collectRepository(configuration, client, entry.repository, window, reference, production, {
-      behaviour: entry.behaviour,
-      sonar,
-      assurance: assurance.get(entry.repository),
-      // Absent from the map is CLEAN rather than unread, because the org-wide read covers every repository — which
-      // is why `read` is carried separately from the summary rather than inferred from its absence.
-      secrets: {
-        read: secretAlerts !== undefined,
-        ...(secretAlerts?.get(entry.repository) === undefined ? {} : { summary: secretAlerts.get(entry.repository) })
-      },
-      ...(estate?.get(entry.repository) === undefined ? {} : { metadata: estate.get(entry.repository) }),
-      // Present whenever this run made the estate-wide read at all, whether or not it succeeded — see
-      // `estateAlerts`, where the refused case is what must NOT fall back to a read per repository.
-      ...(argv.repository === undefined ? { estateAlerts: { dependabot: dependabotAlerts } } : {})
-    });
-    observed += result.observed ? 1 : 0;
+    const result = await collectRepository(
+      configuration,
+      client,
+      entry.repository,
+      window,
+      reference,
+      production,
+      repositoryInputs(entry, { sonar, assurance, estate, secretAlerts, dependabotAlerts, estateWide: argv.repository === undefined })
+    );
+    if (result.observed) {
+      observed += 1;
+    }
     failures += result.failures;
   }
 
   await stampCollection(reference);
-  const repositories = walk;
   const walked = walk.filter((entry) => entry.behaviour).length;
-  console.info(`collected ${observed} of ${repositories.length} repositories (${walked} walked for behaviour) in ${client.requestsIssued()} GitHub calls`);
+  console.info(`collected ${observed} of ${walk.length} repositories (${walked} walked for behaviour) in ${client.requestsIssued()} GitHub calls`);
   for (const line of runSummaryLines(client)) {
     console.info(line);
   }
@@ -645,7 +719,7 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   if (observed === 0) {
     return runStatus(CollectionStatus.Failed);
   }
-  const status = observed === repositories.length && failures === 0 ? CollectionStatus.Complete : CollectionStatus.Partial;
+  const status = observed === walk.length && failures === 0 ? CollectionStatus.Complete : CollectionStatus.Partial;
   if (status === CollectionStatus.Partial && argv.toleratePartial) {
     console.info("some repositories refused, which a scheduled run reports as success; see collector.exit_status");
   }
@@ -1019,6 +1093,121 @@ async function countRepositoriesWithMerges(
   return withMerges;
 }
 
+/** What the paid rungs of the ownership ladder were asked about and what they answered, in one `collect-org` run. */
+interface PaidRungs {
+  /** Every repository the free rungs left unresolved, whether or not the cap let the walk reach it. */
+  residue: Set<string>;
+  /** The residue repositories CODEOWNERS was actually read for. */
+  requested: Set<string>;
+  codeowners: Map<string, CodeownersFact>;
+  /** The requested repositories whose CODEOWNERS named nobody, so the collaborator listing was asked. */
+  openAfterCodeowners: Set<string>;
+  directAdmins: Map<string, string[]>;
+}
+
+/**
+ * Whether this run knows enough about one repository to rewrite its ownership.
+ *
+ * A repository the free rungs answered is always complete: the evidence was in hand before the walk started.
+ * One in the residue is complete only if the paid rungs actually ran for it.
+ *
+ * THE THREE STATES ARE NOT TWO, and conflating them is a mistake worth naming because the first version of
+ * this made it. `collectCodeowners` records a REFUSAL as a fact carrying `refusal`, but records an ABSENT file
+ * as no map entry at all — "the map's own silence is what there is no CODEOWNERS file looks like", and it is
+ * the commonest answer on this estate. So `fact === undefined` covers both "the file does not exist", which is
+ * an answer, and "we never asked", which is not. Treating the pair as incomplete meant no residue repository
+ * ever got an ownership row — including the `unowned` remembered negative the whole "how many does nobody own"
+ * count depends on — and made `attributed.size === resolved.length` unreachable, so the command could never
+ * exit 0 on this organisation.
+ *
+ * `requested` is therefore tracked separately, and `directAdmins` is read the same way round: an entry means
+ * the collaborator listing was read, possibly to an empty result, and no entry after being asked means it was
+ * refused — in which case `unowned` is not established either.
+ *
+ * Getting this wrong the OTHER way is what produced a repository that was simultaneously owned and unowned:
+ * the ladder always answers something, so an unread repository resolved to `unowned`, and because
+ * `(repository, kind, owner)` is the key, that row was INSERTED BESIDE the live team row rather than replacing
+ * it.
+ */
+function evidenceComplete(repository: string, ladder: PaidRungs): boolean {
+  if (!ladder.residue.has(repository)) {
+    return true;
+  }
+  if (!ladder.requested.has(repository)) {
+    return false;
+  }
+  const fact = ladder.codeowners.get(repository);
+  if (fact?.refusal !== undefined) {
+    return false;
+  }
+  return !ladder.openAfterCodeowners.has(repository) || ladder.directAdmins.has(repository);
+}
+
+/** The repositories whose ownership this run may rewrite: none unless the team picture is whole, see `runCollectOrg`. */
+function attributedRepositories(teamPictureWhole: boolean, resolved: readonly ResolvedOwnership[], ladder: PaidRungs): Set<string> {
+  if (!teamPictureWhole) {
+    progress("the team picture came back short, so ownership was left as it stood rather than re-decided from it");
+    return new Set<string>();
+  }
+  return new Set(resolved.filter((entry) => evidenceComplete(entry.repository, ladder)).map((entry) => entry.repository));
+}
+
+/**
+ * Named, not just counted. A filter that quietly stops a team being an owner is the one thing in this walk
+ * that could turn a well-owned repository into an `unowned` row without anybody noticing, so each excluded
+ * team is reported with the figure that excluded it and a reader can disagree with the threshold.
+ */
+function reportExcludedTeams(evidence: ReturnType<typeof ownershipEvidence>, graph: Configuration["org_graph"]): void {
+  for (const slug of [...evidence.populousTeams].sort(byCodePoint)) {
+    progress(`  ${slug} has ${evidence.memberCounts.get(slug)} members, over the ${graph.maximum_team_members} ceiling, so is not read as an owner`);
+  }
+  for (const slug of [...evidence.broadTeams].sort(byCodePoint)) {
+    progress(`  ${slug} holds ${evidence.teamSizes.get(slug)} repositories, over the ${graph.maximum_team_share * 100}% ceiling, so is not read as an owner`);
+  }
+}
+
+/**
+ * The display name of each contributor, read from the SSO identity mapping.
+ *
+ * The one place the mapping can be read: the web pod holds no GitHub credential, so a name the dashboard shows has
+ * to be resolved here and stored. See `evidence/org/identities.ts`.
+ *
+ * AN UNMEASURED PASS CARRIES THE STORED NAMES FORWARD RATHER THAN OMITTING THEM. A credential that cannot see
+ * the mapping — a PAT, which GitHub answers with `samlIdentityProvider: null` and an HTTP 200 — would otherwise
+ * hand the writer facts with no name, and because the graph is change-versioned that ends the interval of every
+ * named person and opens a new one without their name. Blanking the estate is not a value to put back; it is
+ * 778 intervals to reopen, which nothing can do.
+ */
+async function contributorNames(client: ReturnType<typeof createGitHubClient>, organization: string): Promise<Map<string, string>> {
+  const identities = await collectSsoIdentities(client, organization);
+  if (identities.measured) {
+    progress(`resolved ${identities.names.size} contributor names from the SSO identity mapping`);
+    return identities.names;
+  }
+  const stored = await storedDisplayNames(organization);
+  progress(`the SSO identity mapping could not be read, so the ${stored.size} stored contributor names were left as they stand`);
+  return stored;
+}
+
+/** What the graph writers did between them, then where the walk's GitHub calls went. */
+function reportOrgWrites(written: readonly Awaited<ReturnType<typeof recordOrgTeams>>[], client: ReturnType<typeof createGitHubClient>): void {
+  const totals = written.reduce(
+    (sum, one) => ({
+      inserted: sum.inserted + one.inserted,
+      unchanged: sum.unchanged + one.unchanged,
+      changed: sum.changed + one.changed,
+      superseded: sum.superseded + one.superseded
+    }),
+    { inserted: 0, unchanged: 0, changed: 0, superseded: 0 }
+  );
+  progress(`  ${totals.inserted} new, ${totals.changed} changed, ${totals.superseded} ended, ${totals.unchanged} unchanged`);
+  // The same breakdown `collect` prints. This walk spends a quota too, and a single total could not say whether
+  // an hour went on the team walk, the CODEOWNERS ladder or waiting for a window to reset.
+  for (const line of runSummaryLines(client)) {
+    progress(line);
+  }
+}
+
 /**
  * Collects the organisation graph: its teams, who is in them, and who owns what.
  *
@@ -1062,22 +1251,7 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   }
   const peopleWalk = await collectOrgPeople(client, organization);
 
-  // The one place the SSO identity mapping can be read: the web pod holds no GitHub credential, so a name the
-  // dashboard shows has to be resolved here and stored. See `evidence/org/identities.ts`.
-  //
-  // AN UNMEASURED PASS CARRIES THE STORED NAMES FORWARD RATHER THAN OMITTING THEM. A credential that cannot see
-  // the mapping — a PAT, which GitHub answers with `samlIdentityProvider: null` and an HTTP 200 — would otherwise
-  // hand the writer facts with no name, and because the graph is change-versioned that ends the interval of every
-  // named person and opens a new one without their name. Blanking the estate is not a value to put back; it is
-  // 778 intervals to reopen, which nothing can do.
-  const identities = await collectSsoIdentities(client, organization);
-  const resolvedNames = identities.measured ? identities.names : await storedDisplayNames(organization);
-  progress(
-    identities.measured
-      ? `resolved ${resolvedNames.size} contributor names from the SSO identity mapping`
-      : `the SSO identity mapping could not be read, so the ${resolvedNames.size} stored contributor names were left as they stand`
-  );
-  const people = namedPeople(peopleWalk.facts, resolvedNames);
+  const people = namedPeople(peopleWalk.facts, await contributorNames(client, organization));
 
   const options: OwnershipOptions = {
     prefixSupport: graph.prefix_support,
@@ -1101,15 +1275,7 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   const free: OrgFacts = { organization, ...teamFacts, repositories, people, codeowners: new Map(), directAdmins: new Map(), authorship };
   const evidence = ownershipEvidence(free, options);
 
-  // Named, not just counted. A filter that quietly stops a team being an owner is the one thing in this walk
-  // that could turn a well-owned repository into an `unowned` row without anybody noticing, so each excluded
-  // team is reported with the figure that excluded it and a reader can disagree with the threshold.
-  for (const slug of [...evidence.populousTeams].sort(byCodePoint)) {
-    progress(`  ${slug} has ${evidence.memberCounts.get(slug)} members, over the ${graph.maximum_team_members} ceiling, so is not read as an owner`);
-  }
-  for (const slug of [...evidence.broadTeams].sort(byCodePoint)) {
-    progress(`  ${slug} holds ${evidence.teamSizes.get(slug)} repositories, over the ${graph.maximum_team_share * 100}% ceiling, so is not read as an owner`);
-  }
+  reportExcludedTeams(evidence, graph);
 
   const unresolved = unresolvedRepositories(free, evidence, options.configured);
   const residue = new Set(unresolved);
@@ -1129,44 +1295,7 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
 
   const facts: OrgFacts = { ...free, codeowners, directAdmins };
   const resolved = attributeOwnership(facts, options);
-
-  /**
-   * Whether this run knows enough about one repository to rewrite its ownership.
-   *
-   * A repository the free rungs answered is always complete: the evidence was in hand before the walk started.
-   * One in the residue is complete only if the paid rungs actually ran for it.
-   *
-   * THE THREE STATES ARE NOT TWO, and conflating them is a mistake worth naming because the first version of
-   * this made it. `collectCodeowners` records a REFUSAL as a fact carrying `refusal`, but records an ABSENT file
-   * as no map entry at all — "the map's own silence is what there is no CODEOWNERS file looks like", and it is
-   * the commonest answer on this estate. So `fact === undefined` covers both "the file does not exist", which is
-   * an answer, and "we never asked", which is not. Treating the pair as incomplete meant no residue repository
-   * ever got an ownership row — including the `unowned` remembered negative the whole "how many does nobody own"
-   * count depends on — and made `attributed.size === resolved.length` unreachable, so the command could never
-   * exit 0 on this organisation.
-   *
-   * `requested` is therefore tracked separately, and `directAdmins` is read the same way round: an entry means
-   * the collaborator listing was read, possibly to an empty result, and no entry after being asked means it was
-   * refused — in which case `unowned` is not established either.
-   *
-   * Getting this wrong the OTHER way is what produced a repository that was simultaneously owned and unowned:
-   * the ladder always answers something, so an unread repository resolved to `unowned`, and because
-   * `(repository, kind, owner)` is the key, that row was INSERTED BESIDE the live team row rather than replacing
-   * it.
-   */
-  function evidenceComplete(repository: string): boolean {
-    if (!residue.has(repository)) {
-      return true;
-    }
-    if (!requested.has(repository)) {
-      return false;
-    }
-    const fact = codeowners.get(repository);
-    if (fact?.refusal !== undefined) {
-      return false;
-    }
-    return !openAfterCodeowners.has(repository) || directAdmins.has(repository);
-  }
+  const ladder: PaidRungs = { residue, requested, codeowners, openAfterCodeowners, directAdmins };
 
   for (const [rung, count] of rungCounts(resolved)) {
     progress(`  ${rung}: ${count}`);
@@ -1190,12 +1319,7 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   // team was not read looks unowned. So unless the team walk and every team's repository list came back whole,
   // the ownership table is left entirely alone rather than rewritten from a picture known to be short.
   const teamPictureWhole = teamFacts.teamsRead && teamFacts.teamsComplete && teamFacts.teamRepositoriesObserved.size === teamFacts.teams.length;
-  const attributed = teamPictureWhole
-    ? new Set(resolved.filter((entry) => evidenceComplete(entry.repository)).map((entry) => entry.repository))
-    : new Set<string>();
-  if (!teamPictureWhole) {
-    progress("the team picture came back short, so ownership was left as it stood rather than re-decided from it");
-  }
+  const attributed = attributedRepositories(teamPictureWhole, resolved, ladder);
 
   const written = [
     await recordOrgTeams(organization, observedAt, teamFacts.teams, teamFacts.teamsComplete),
@@ -1222,24 +1346,10 @@ async function runCollectOrg(configuration: Configuration, argv: Arguments): Pro
   progress(`${await seedProduction(organization)} repositories gained a repository_production row to be marked on`);
   await stampRevision();
 
-  const totals = written.reduce(
-    (sum, one) => ({
-      inserted: sum.inserted + one.inserted,
-      unchanged: sum.unchanged + one.unchanged,
-      changed: sum.changed + one.changed,
-      superseded: sum.superseded + one.superseded
-    }),
-    { inserted: 0, unchanged: 0, changed: 0, superseded: 0 }
-  );
   progress(
     `walked ${teamFacts.teams.length} teams, ${repositories.length} repositories and ${people.length} people in ${client.requestsIssued()} GitHub calls`
   );
-  progress(`  ${totals.inserted} new, ${totals.changed} changed, ${totals.superseded} ended, ${totals.unchanged} unchanged`);
-  // The same breakdown `collect` prints. This walk spends a quota too, and a single total could not say whether
-  // an hour went on the team walk, the CODEOWNERS ladder or waiting for a window to reset.
-  for (const line of runSummaryLines(client)) {
-    progress(line);
-  }
+  reportOrgWrites(written, client);
   if (truncated > 0) {
     progress(`${truncated} repositories were left unresolved by --unresolved-limit, so nothing was superseded`);
   }
@@ -1307,7 +1417,34 @@ function unknownLast(left: string, right: string): number {
  * from a `teams-api-admin` fact.
  */
 function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
-  const grouped = new Map<string, { repositories: string[]; rungs: Set<string> }>();
+  const { grouped, individuals } = groupOwners(resolved);
+  const lines = ["teams:"];
+  for (const key of [...grouped.keys()].sort(unknownLast)) {
+    lines.push(...teamLines(key, grouped.get(key) as ProposedTeam));
+  }
+
+  // Commented out rather than omitted: these repositories DO have an owner, and a reader scanning for the
+  // individually-owned outliers wants them named. Commented rather than emitted, because nothing here is a team
+  // and `teams:` is the wrong shape for it.
+  if (individuals.size > 0) {
+    lines.push("# Owned by an individual, or by a team in another organisation. NOT teams, so not listed above.");
+    for (const owner of [...individuals.keys()].sort(byCodePoint)) {
+      const held = individuals.get(owner) as string[];
+      lines.push(`#   ${owner}: ${[...new Set(held)].sort(byCodePoint).join(", ")}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+/** One owning slug's entry in the proposed block: what it was attributed, and by which rungs. */
+interface ProposedTeam {
+  repositories: string[];
+  rungs: Set<string>;
+}
+
+/** Every owner of every repository, split into the slugs `teams:` may claim and the owners it may not. */
+function groupOwners(resolved: readonly ResolvedOwnership[]): { grouped: Map<string, ProposedTeam>; individuals: Map<string, string[]> } {
+  const grouped = new Map<string, ProposedTeam>();
   const individuals = new Map<string, string[]>();
   for (const entry of resolved) {
     for (const owner of entry.owners) {
@@ -1325,35 +1462,21 @@ function proposeTeamsBlock(resolved: readonly ResolvedOwnership[]): string {
       grouped.set(key, group);
     }
   }
+  return { grouped, individuals };
+}
 
-  const lines = ["teams:"];
-  for (const key of [...grouped.keys()].sort(unknownLast)) {
-    const group = grouped.get(key) as { repositories: string[]; rungs: Set<string> };
-    lines.push(
-      `  # attributed by ${[...group.rungs].sort(byCodePoint).join(", ")}`,
-      `  - identifier: ${key}`,
-      `    display_name: ${key === UnknownIdentifier ? "Unknown (team not established)" : key}`
-    );
-    if (key !== UnknownIdentifier) {
-      lines.push("    github_team_slugs:", `      - ${key}`);
-    }
-    lines.push("    repositories:");
-    for (const repository of [...new Set(group.repositories)].sort(byCodePoint)) {
-      lines.push(`      - ${repository}`);
-    }
+/** The `teams:` entry for one owning slug, with the rungs behind it as a comment. */
+function teamLines(key: string, group: ProposedTeam): string[] {
+  const lines = [
+    `  # attributed by ${[...group.rungs].sort(byCodePoint).join(", ")}`,
+    `  - identifier: ${key}`,
+    `    display_name: ${key === UnknownIdentifier ? "Unknown (team not established)" : key}`
+  ];
+  if (key !== UnknownIdentifier) {
+    lines.push("    github_team_slugs:", `      - ${key}`);
   }
-
-  // Commented out rather than omitted: these repositories DO have an owner, and a reader scanning for the
-  // individually-owned outliers wants them named. Commented rather than emitted, because nothing here is a team
-  // and `teams:` is the wrong shape for it.
-  if (individuals.size > 0) {
-    lines.push("# Owned by an individual, or by a team in another organisation. NOT teams, so not listed above.");
-    for (const owner of [...individuals.keys()].sort(byCodePoint)) {
-      const held = individuals.get(owner) as string[];
-      lines.push(`#   ${owner}: ${[...new Set(held)].sort(byCodePoint).join(", ")}`);
-    }
-  }
-  return lines.join("\n");
+  lines.push("    repositories:", ...[...new Set(group.repositories)].sort(byCodePoint).map((repository) => `      - ${repository}`));
+  return lines;
 }
 
 /**
@@ -1653,13 +1776,7 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
   const reference = new Date();
   const collectedThrough = await prevailingCachedCoverage(organization, EvidenceSource.PullRequests, sourceSignature(EvidenceSource.PullRequests));
   const anchor = collectedAnchor(collectedThrough, reference);
-  const window = resolveWindow({
-    ...(argv.startsAt === undefined ? {} : { startsAt: argv.startsAt }),
-    ...(argv.endsAt === undefined ? {} : { endsAt: argv.endsAt }),
-    ...(argv.days === undefined ? {} : { days: argv.days }),
-    defaultDays: configuration.lookback.operational_days,
-    reference: anchor
-  });
+  const window = requestedWindow(argv, configuration, anchor);
 
   const policy = readinessPolicy(configuration);
   const owners = await cohortOwners(configuration, reference);
