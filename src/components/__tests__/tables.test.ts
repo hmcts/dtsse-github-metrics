@@ -230,8 +230,11 @@ describe("TeamsList", () => {
     expect(markup).toContain("Ready");
     expect(markup).toContain("Caution");
     expect(markup).toContain("Blocked");
-    expect(markup).toContain("Not assessed");
     expect(markup).not.toMatch(/score|verdict|rank/i);
+  });
+
+  it("draws no Not assessed chip, because a team's labels never count an ungraded repository", () => {
+    expect(markup).not.toContain("Not assessed");
   });
 
   it("dims a label nothing carries instead of dropping it", () => {
