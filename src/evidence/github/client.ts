@@ -376,26 +376,14 @@ export function createGitHubClient(options: GitHubClientOptions) {
     requestsIssued += 1;
     let refreshed = false;
     const endpoint = endpointTemplate(url, operation);
+    const isGraphql = url === graphqlUrl;
 
     for (let attempt = 1; ; attempt += 1) {
       await waitForRateLimit(resource);
 
-      const headers = { ...(init.headers as Record<string, string> | undefined), ...(await authorization()) };
-      let response: Response;
-      try {
-        response = await fetchImpl(url, { ...init, method, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
-      } catch (error) {
-        // No response, so no status: counted at 0 rather than at a status nothing returned.
-        if (attempt < maximumAttempts) {
-          countOutcome(NO_RESPONSE, "unreachable", method, endpoint);
-          console.warn(`GitHub request failed, retrying (attempt ${attempt} of ${maximumAttempts}): ${messageOf(error)}`);
-          await pause(2 ** (attempt - 1) * 1000);
-          continue;
-        }
-        countOutcome(NO_RESPONSE, "exhausted", method, endpoint);
-        throw new GitHubError(`GitHub could not be reached after ${maximumAttempts} attempts`, AvailabilityReason.CollectionFailed, undefined, {
-          cause: error
-        });
+      const response = await send(method, url, init, endpoint, attempt);
+      if (response === undefined) {
+        continue;
       }
 
       recordRateLimit(response);
@@ -410,42 +398,77 @@ export function createGitHubClient(options: GitHubClientOptions) {
         continue;
       }
 
-      const isGraphql = url === graphqlUrl;
-      let delay: number | undefined;
-      try {
-        delay = isGraphql ? graphqlRetryDelay(response, body, attempt) : responseRetryDelay(response, body, attempt);
-      } catch (error) {
-        // The deciders raise when a rate limit outlasted `maximumAttempts`, and that attempt is the one the
-        // operation gave up on. Counted before rethrowing, because it was previously the run's largest
-        // silence: hours of waiting ending in nothing, and not a line in the summary to say so.
-        countOutcome(response.status, "exhausted", method, endpoint);
-        throw error;
-      }
-      if (delay !== undefined) {
-        countOutcome(response.status, isRateLimited(response, body, isGraphql) ? "rate-limited" : "retried", method, endpoint);
-        console.warn(`GitHub ${response.status} ${method} ${endpoint}, retrying in ${delay.toFixed(0)}s (attempt ${attempt} of ${maximumAttempts})`);
-        await pause(delay * 1000);
+      if (await waitedToRetry(response, body, attempt, isGraphql, method, endpoint)) {
         continue;
       }
 
-      const bodyFailure = isGraphql && response.ok ? graphqlBodyFailure(response.status, body) : undefined;
-      logOutcome(response, method, endpoint, body, bodyFailure);
-
-      if (!response.ok) {
-        const [message, reason] = classify(response.status, body);
-        throw new GitHubError(message, reason, response.status);
-      }
-      if (bodyFailure !== undefined && !tolerateBodyFailure) {
-        throw new GitHubError(
-          "GitHub refused part of a GraphQL query",
-          bodyFailure.status === 403 ? AvailabilityReason.PermissionDenied : AvailabilityReason.CollectionFailed,
-          bodyFailure.status
-        );
-      }
-      // The link header travels with the body, so pagination can follow it without re-reading a consumed
-      // response.
-      return { body, link: response.headers.get("link") ?? undefined, ...(bodyFailure === undefined ? {} : { bodyFailure }) };
+      return settle(response, body, isGraphql, method, endpoint, tolerateBodyFailure);
     }
+  }
+
+  /**
+   * One attempt at reaching GitHub: its response, or `undefined` once a failure to connect has been counted and
+   * waited out, so the caller asks again. The last attempt's failure is thrown instead.
+   */
+  async function send(method: string, url: string, init: RequestInit, endpoint: string, attempt: number): Promise<Response | undefined> {
+    const headers = { ...(init.headers as Record<string, string> | undefined), ...(await authorization()) };
+    try {
+      return await fetchImpl(url, { ...init, method, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    } catch (error) {
+      // No response, so no status: counted at 0 rather than at a status nothing returned.
+      if (attempt < maximumAttempts) {
+        countOutcome(NO_RESPONSE, "unreachable", method, endpoint);
+        console.warn(`GitHub request failed, retrying (attempt ${attempt} of ${maximumAttempts}): ${messageOf(error)}`);
+        await pause(2 ** (attempt - 1) * 1000);
+        return undefined;
+      }
+      countOutcome(NO_RESPONSE, "exhausted", method, endpoint);
+      throw new GitHubError(`GitHub could not be reached after ${maximumAttempts} attempts`, AvailabilityReason.CollectionFailed, undefined, {
+        cause: error
+      });
+    }
+  }
+
+  /** Whether the response asked to be retried, in which case the wait it asked for has already been served. */
+  async function waitedToRetry(response: Response, body: string, attempt: number, isGraphql: boolean, method: string, endpoint: string): Promise<boolean> {
+    let delay: number | undefined;
+    try {
+      delay = isGraphql ? graphqlRetryDelay(response, body, attempt) : responseRetryDelay(response, body, attempt);
+    } catch (error) {
+      // The deciders raise when a rate limit outlasted `maximumAttempts`, and that attempt is the one the
+      // operation gave up on. Counted before rethrowing, because it was previously the run's largest
+      // silence: hours of waiting ending in nothing, and not a line in the summary to say so.
+      countOutcome(response.status, "exhausted", method, endpoint);
+      throw error;
+    }
+    if (delay === undefined) {
+      return false;
+    }
+    countOutcome(response.status, isRateLimited(response, body, isGraphql) ? "rate-limited" : "retried", method, endpoint);
+    console.warn(`GitHub ${response.status} ${method} ${endpoint}, retrying in ${delay.toFixed(0)}s (attempt ${attempt} of ${maximumAttempts})`);
+    await pause(delay * 1000);
+    return true;
+  }
+
+  /** The final answer to a request: logged, then thrown when GitHub refused it or returned as the body. */
+  function settle(response: Response, body: string, isGraphql: boolean, method: string, endpoint: string, tolerateBodyFailure: boolean): GitHubResponse {
+    const bodyFailure = isGraphql && response.ok ? graphqlBodyFailure(response.status, body) : undefined;
+    logOutcome(response, method, endpoint, body, bodyFailure);
+
+    if (!response.ok) {
+      const [message, reason] = classify(response.status, body);
+      throw new GitHubError(message, reason, response.status);
+    }
+    if (bodyFailure !== undefined && !tolerateBodyFailure) {
+      throw new GitHubError(
+        "GitHub refused part of a GraphQL query",
+        bodyFailure.status === 403 ? AvailabilityReason.PermissionDenied : AvailabilityReason.CollectionFailed,
+        bodyFailure.status
+      );
+    }
+    // The link header travels with the body, so pagination can follow it without re-reading a consumed
+    // response.
+    return { body, link: response.headers.get("link") ?? undefined, ...(bodyFailure === undefined ? {} : { bodyFailure }) };
   }
 
   return {
