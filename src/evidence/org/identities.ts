@@ -180,14 +180,8 @@ async function collectScimNames(client: GitHubClient, organization: string): Pro
   const names = new Map<string, string>();
 
   for (let startIndex = 1; ; startIndex += ScimPageSize) {
-    let page: ReturnType<typeof parseScimUsers>;
-    try {
-      const data: unknown = await client.get(scimUsersPath(organization), { count: ScimPageSize, startIndex });
-      page = parseScimUsers(data);
-    } catch (error) {
-      console.warn(
-        `Could not read the SCIM directory of ${organization} after ${names.size} addresses; contributor names will be left as they stand: ${messageOf(error)}`
-      );
+    const page = await readScimPage(client, organization, startIndex, names.size);
+    if (page === undefined) {
       return undefined;
     }
     const records = page.Resources;
@@ -196,23 +190,46 @@ async function collectScimNames(client: GitHubClient, organization: string): Pro
       return undefined;
     }
 
-    for (const record of records) {
-      const name = record == null ? undefined : scimDisplayName(record.name);
-      if (record == null || name === undefined) {
-        continue;
-      }
-      for (const address of scimAddresses(record)) {
-        if (!names.has(address)) {
-          names.set(address, name);
-        }
-      }
-    }
+    indexScimNames(names, records);
 
     // A `startIndex` walk carries no `hasNextPage`, so it stops on the first short page — and on `totalResults`
     // as well, so a directory that keeps answering with a full page cannot spin here for ever.
     const read = startIndex + records.length - 1;
     if (records.length < ScimPageSize || (page.totalResults != null && read >= page.totalResults)) {
       return names;
+    }
+  }
+}
+
+/** One page of the SCIM directory, or `undefined`, having said why, where it could not be read. */
+async function readScimPage(
+  client: GitHubClient,
+  organization: string,
+  startIndex: number,
+  addressesSoFar: number
+): Promise<ReturnType<typeof parseScimUsers> | undefined> {
+  try {
+    const data: unknown = await client.get(scimUsersPath(organization), { count: ScimPageSize, startIndex });
+    return parseScimUsers(data);
+  } catch (error) {
+    console.warn(
+      `Could not read the SCIM directory of ${organization} after ${addressesSoFar} addresses; contributor names will be left as they stand: ${messageOf(error)}`
+    );
+    return undefined;
+  }
+}
+
+/** Adds one page's names under each address its records claim, leaving any address already claimed to its first record. */
+function indexScimNames(names: Map<string, string>, records: NonNullable<ReturnType<typeof parseScimUsers>["Resources"]>): void {
+  for (const record of records) {
+    const name = record == null ? undefined : scimDisplayName(record.name);
+    if (record == null || name === undefined) {
+      continue;
+    }
+    for (const address of scimAddresses(record)) {
+      if (!names.has(address)) {
+        names.set(address, name);
+      }
     }
   }
 }
