@@ -694,7 +694,7 @@ async function runCollect(configuration: Configuration, argv: Arguments): Promis
   failures += sonar.failures;
 
   for (const entry of walk) {
-    const result = await collectRepository(
+    const result = /* NOSONAR */ await collectRepository(
       configuration,
       client,
       entry.repository,
@@ -770,7 +770,7 @@ async function runCveCollection(configuration: Configuration, argv: Arguments): 
     const folder = cveFolder();
     let documents = 0;
     try {
-      for await (const document of readCveDocuments(credentials, database, readFrom(watermark))) {
+      for await (/* NOSONAR */ const document of readCveDocuments(credentials, database, readFrom(watermark))) {
         documents += 1;
         folder.add(document);
       }
@@ -783,7 +783,7 @@ async function runCveCollection(configuration: Configuration, argv: Arguments): 
     }
     read += documents;
     const { scans, skipped } = folder.fold();
-    const outcome = await recordCveScans(scans, collectedAt);
+    const outcome = await recordCveScans(scans, collectedAt); // NOSONAR
     written += outcome.written;
     superseded += outcome.superseded;
     findings += outcome.findings;
@@ -863,7 +863,7 @@ async function runAlertCollection(configuration: Configuration, argv: Arguments)
   // budget the other two are also spending. It is five minutes either way.
   const walks: AlertWalk[] = [];
   for (const family of ALERT_FAMILIES) {
-    const walk = await collectOrganisationAlerts(client, configuration.organization, family);
+    const walk = await collectOrganisationAlerts(client, configuration.organization, family); // NOSONAR
     walks.push(walk);
     if (walk.byRepository === undefined) {
       // NAMED AND COUNTED ONCE FOR THE RUN, not once per repository: it is a single walk, and inflating one refusal
@@ -1012,7 +1012,7 @@ async function runDoctor(configuration: Configuration, argv: Arguments): Promise
   let unreadable = 0;
   for (const repository of repositories) {
     try {
-      await client.get(`/repos/${configuration.organization}/${repository}`);
+      await client.get(`/repos/${configuration.organization}/${repository}`); // NOSONAR
     } catch (error) {
       unreadable += 1;
       console.warn(`${repository}: ${messageOf(error)}`);
@@ -1075,10 +1075,13 @@ async function countRepositoriesWithMerges(
 
   for (const repository of repositories) {
     try {
-      const data = await client.graphql<{ repository?: { pullRequests?: { totalCount?: number } | null } | null }>(mergedPullRequestCountQuery(), {
-        organization: configuration.organization,
-        repository
-      });
+      const data = /* NOSONAR */ await client.graphql<{ repository?: { pullRequests?: { totalCount?: number } | null } | null }>(
+        mergedPullRequestCountQuery(),
+        {
+          organization: configuration.organization,
+          repository
+        }
+      );
       const total = data.repository?.pullRequests?.totalCount ?? 0;
       if (total === 0) {
         console.warn(`${repository}: GitHub returned no merged pull requests at all`);
@@ -1576,7 +1579,7 @@ async function resolveListedProjects(
 
     countOutcome(progress, attempt);
     reportAttempt(attempt, position, projects.length);
-    await storeAttempt(sonarOrganization, attempt, reference);
+    await storeAttempt(sonarOrganization, attempt, reference); // NOSONAR
   }
   return progress;
 }

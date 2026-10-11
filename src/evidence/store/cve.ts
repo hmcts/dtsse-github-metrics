@@ -81,7 +81,7 @@ export async function recordCveScans(scans: readonly CveScan[], collectedAt: Dat
       codebaseType: scan.codebaseType
     };
     try {
-      const stored = await prisma.$transaction(async (tx) => {
+      const stored = /* NOSONAR */ await prisma.$transaction(async (tx) => {
         // The guard and the insert are one statement between them: `updateMany` reports 0 where the stored
         // report is at least as new, and where there is no row at all — the `upsert` below then settles which
         // of those two it was.

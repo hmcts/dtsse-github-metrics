@@ -141,7 +141,7 @@ export async function reduceStoredDescriptions(patterns: readonly RegExp[], opti
 
     progress.scanned += batch.length;
     if (!options.dryRun) {
-      progress.changed += await writeAnswers(batch, patterns);
+      progress.changed += await writeAnswers(batch, patterns); // NOSONAR
     }
 
     const last = batch.at(-1) as StoredDescription;

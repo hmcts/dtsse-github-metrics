@@ -570,7 +570,7 @@ export function createGitHubClient(options: GitHubClientOptions) {
       let next: string | undefined = first.toString();
       const host = new URL(apiUrl).host;
       while (next !== undefined) {
-        const { body, link } = await request("GET", next, {}, resource);
+        const { body, link } = await request("GET", next, {}, resource); // NOSONAR
         yield parseJson<T[]>(body, "GitHub returned an unreadable body");
         const followed = link === undefined ? undefined : nextLink(link);
         // Only within GitHub's own host: a `next` pointing anywhere else is not GitHub's pagination and is

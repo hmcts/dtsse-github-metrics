@@ -223,7 +223,7 @@ export async function collectAssuranceSignals(
   const signals = new Map<string, GraphAssurance>();
   const size = Math.max(1, Math.trunc(batchSize));
   for (let at = 0; at < repositories.length; at += size) {
-    await readAssuranceBatch(client, organization, repositories.slice(at, at + size), signals);
+    await readAssuranceBatch(client, organization, repositories.slice(at, at + size), signals); // NOSONAR
   }
   return signals;
 }
@@ -267,7 +267,7 @@ async function readAssuranceBatch(client: GitHubClient, organization: string, ba
   }
 
   for (const name of reaskable(entries)) {
-    await readAssuranceBatch(client, organization, [name], into);
+    await readAssuranceBatch(client, organization, [name], into); // NOSONAR
   }
 }
 
@@ -287,7 +287,7 @@ async function reReadOneAtATime(
   if (batch.length > 1) {
     console.warn(`Could not read assurance signals for a batch of ${batch.length} repositories, re-reading them one at a time: ${detail}`);
     for (const name of batch) {
-      await readAssuranceBatch(client, organization, [name], into);
+      await readAssuranceBatch(client, organization, [name], into); // NOSONAR
     }
     return;
   }

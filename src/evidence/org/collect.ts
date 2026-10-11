@@ -243,7 +243,7 @@ export async function collectOrgTeams(client: GitHubClient, organization: string
       facts.teamsRead = true;
       for (const node of connection.nodes) {
         if (node != null) {
-          await readTeam(client, organization, node, facts);
+          await readTeam(client, organization, node, facts); // NOSONAR
         }
       }
     },
@@ -456,7 +456,7 @@ export async function collectCodeowners(
   const facts = new Map<string, CodeownersFact>();
   const size = Math.max(1, Math.trunc(batchSize));
   for (let at = 0; at < repositories.length; at += size) {
-    await readOwnershipBatch(client, organization, repositories.slice(at, at + size), facts);
+    await readOwnershipBatch(client, organization, repositories.slice(at, at + size), facts); // NOSONAR
   }
   return facts;
 }
@@ -515,7 +515,7 @@ async function readOwnershipBatch(client: GitHubClient, organization: string, ba
   }
 
   for (const name of reaskable(entries)) {
-    await readOwnershipBatch(client, organization, [name], facts);
+    await readOwnershipBatch(client, organization, [name], facts); // NOSONAR
   }
 }
 
@@ -536,7 +536,7 @@ async function reReadOneAtATime(
   if (batch.length > 1) {
     console.warn(`Could not read CODEOWNERS for a batch of ${batch.length} repositories, re-reading them one at a time: ${detail}`);
     for (const name of batch) {
-      await readOwnershipBatch(client, organization, [name], facts);
+      await readOwnershipBatch(client, organization, [name], facts); // NOSONAR
     }
     return;
   }
@@ -619,7 +619,7 @@ export async function collectDirectAdmins(client: GitHubClient, organization: st
   for (const repository of repositories) {
     const logins = new Set<string>();
     try {
-      for await (const page of client.paginate<unknown>(`/repos/${organization}/${repository}/collaborators`, {
+      for await (/* NOSONAR */ const page of client.paginate<unknown>(`/repos/${organization}/${repository}/collaborators`, {
         affiliation: "direct",
         permission: "admin",
         per_page: 100

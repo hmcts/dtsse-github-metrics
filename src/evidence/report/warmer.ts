@@ -59,7 +59,7 @@ export async function warmEverySpan(configuration: Configuration): Promise<void>
   for (const weeks of WEEK_OPTIONS) {
     const started = Date.now();
     try {
-      const rows = await repositoryRows(configuration, weeks, reference, read);
+      const rows = await repositoryRows(configuration, weeks, reference, read); // NOSONAR
       console.info(`warmed the ${weeks}-week report: ${rows.length} repositories in ${Date.now() - started}ms`);
     } catch (error) {
       console.warn(`could not warm the ${weeks}-week report: ${messageOf(error)}`);

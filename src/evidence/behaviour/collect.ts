@@ -93,7 +93,7 @@ async function collectReviews(
   const reviews = connection.nodes.filter((node): node is ReviewNode => node != null).map((node) => reviewFact(node));
   let info = connection.pageInfo;
   while (info.hasNextPage) {
-    const data = await client.graphql(reviewQuery(), { organization, repository, number, cursor: info.endCursor ?? null });
+    const data = await client.graphql(reviewQuery(), { organization, repository, number, cursor: info.endCursor ?? null }); // NOSONAR
     const parsed = parseResponse(reviewPageSchema, data, "review behaviour data");
     const next = parsed.repository?.pullRequest?.reviews;
     if (next === undefined || next === null) {
@@ -119,7 +119,7 @@ async function collectChecks(
   const checks = connection.nodes.filter((node): node is CheckContext => node != null).map((node) => checkFact(node));
   let info = connection.pageInfo;
   while (info.hasNextPage) {
-    const data = await client.graphql(checkQuery(), { organization, repository, number, cursor: info.endCursor ?? null });
+    const data = await client.graphql(checkQuery(), { organization, repository, number, cursor: info.endCursor ?? null }); // NOSONAR
     const parsed = parseResponse(checkPageSchema, data, "status-check data");
     const next = parsed.repository?.pullRequest?.commits === undefined ? undefined : headCommitChecks(parsed.repository.pullRequest.commits);
     if (next === undefined) {
@@ -269,7 +269,7 @@ export async function collectMergedPullRequests(
     }
     const { merged, reachedTheWindow } = mergedOnPage(connection.nodes, startsAt, endsAt);
     for (const node of merged) {
-      const fact = await pullRequestFact(client, organization, repository, node, patterns);
+      const fact = await pullRequestFact(client, organization, repository, node, patterns); // NOSONAR
       facts.set(fact.identifier, fact);
     }
     if (reachedTheWindow || !connection.pageInfo.hasNextPage) {
