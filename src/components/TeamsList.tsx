@@ -6,6 +6,7 @@ import { EmptyState } from "@/components/EmptyState";
 import { distributionSlices } from "@/lib/chart";
 import { matchesAny, TEAM_TERM_PARAMETER } from "@/lib/filter";
 import { count } from "@/lib/format";
+import { classify, matchesReadiness, READINESS_PARAMETER, teamLabels } from "@/lib/readiness";
 import type { TeamRow } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
 
@@ -41,12 +42,16 @@ import { withWeeks } from "@/lib/weeks";
 export function TeamsList({ rows, weeks }: Readonly<{ rows: readonly TeamRow[]; weeks: number }>) {
   // The term the page's filter box writes, read here as `RepositoriesTable` reads its own: over rows already held,
   // so a keystroke costs no request.
-  const term = useSearchParams().get(TEAM_TERM_PARAMETER) ?? "";
-  const shown = rows.filter((row) => matchesAny([row.team, row.display_name], term));
+  //
+  // The readiness tiles above the list write their own parameter, which narrows the same rows alongside the term.
+  const parameters = useSearchParams();
+  const term = parameters.get(TEAM_TERM_PARAMETER) ?? "";
+  const readiness = parameters.get(READINESS_PARAMETER) ?? "";
+  const shown = rows.filter((row) => matchesAny([row.team, row.display_name], term) && matchesReadiness(classify(teamLabels(row.labels)), readiness));
 
   // Only a filter hiding every team earns the sentence; no teams at all is the page's own empty state.
   if (shown.length === 0 && rows.length > 0) {
-    return <EmptyState message="No team matches this filter." detail="Clear the filter box to see every team." />;
+    return <EmptyState message="No team matches this filter." detail="Clear the filter box or the readiness filter to see every team." />;
   }
 
   return (

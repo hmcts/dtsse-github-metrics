@@ -4,10 +4,12 @@ import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
+import { ReadinessFilter } from "@/components/ReadinessFilter";
 import { Section } from "@/components/Section";
 import { getActors, getOverview, getWindows } from "@/lib/api";
 import { CONTRIBUTOR_TERM_PARAMETER } from "@/lib/filter";
 import { anyLabelled } from "@/lib/rag";
+import { classify, contributorLabels, readinessTiles } from "@/lib/readiness";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
@@ -31,6 +33,7 @@ export default async function ContributorsPage({ searchParams }: Readonly<{ sear
   const windows = await getWindows();
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const [overview, actors] = await Promise.all([getOverview(weeks), getActors(weeks)]);
+  const labelled = anyLabelled(overview.labels);
 
   return (
     <div className="space-y-8">
@@ -49,8 +52,11 @@ export default async function ContributorsPage({ searchParams }: Readonly<{ sear
         ) : (
           // `/overview`'s label distribution is what says whether the policy graded anything in this
           // window; one person's empty label list cannot tell an unreadable estate from an ungraded
-          // one. Fetched here already, for the header, so this costs no request.
-          <ActorsTable rows={actors} weeks={weeks} labelled={anyLabelled(overview.labels)} />
+          // one. Fetched here already, for the header, so this costs no request. The tiles read it for the same reason.
+          <div className="space-y-4">
+            <ReadinessFilter tiles={readinessTiles(actors.map((actor) => classify(contributorLabels(actor.labels, labelled))))} />
+            <ActorsTable rows={actors} weeks={weeks} labelled={labelled} />
+          </div>
         )}
       </Section>
     </div>

@@ -9,6 +9,7 @@ import { type Align, SortHeader } from "@/components/SortHeader";
 import { CONTRIBUTOR_TERM_PARAMETER, matchesAny } from "@/lib/filter";
 import { contributorLabel } from "@/lib/person";
 import { combinationKey } from "@/lib/rag";
+import { classify, contributorLabels, matchesReadiness, READINESS_PARAMETER } from "@/lib/readiness";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { ActorRow, ReadinessLabel } from "@/lib/types";
 
@@ -65,10 +66,13 @@ export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly
   const [column, setColumn] = useState<Column>(READINESS);
   const [direction, setDirection] = useState<Direction>("ascending");
 
-  // The term the page's filter box writes, matched against the login and the profile name both.
-  const term = useSearchParams().get(CONTRIBUTOR_TERM_PARAMETER) ?? "";
+  // The term the page's filter box writes, matched against the login and the profile name both, and the group the
+  // readiness tiles above the list write.
+  const parameters = useSearchParams();
+  const term = parameters.get(CONTRIBUTOR_TERM_PARAMETER) ?? "";
+  const readiness = parameters.get(READINESS_PARAMETER) ?? "";
   const ordered = sorted(
-    rows.filter((row) => matchesAny([row.login, row.name], term)),
+    rows.filter((row) => matchesAny([row.login, row.name], term) && matchesReadiness(classify(contributorLabels(row.labels, labelled)), readiness)),
     column.read,
     direction
   );
@@ -80,7 +84,7 @@ export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly
 
   // Only a filter hiding everybody earns the sentence; nobody at all is the page's own empty state.
   if (ordered.length === 0 && rows.length > 0) {
-    return <EmptyState message="No contributor matches this filter." detail="Clear the filter box to see everybody." />;
+    return <EmptyState message="No contributor matches this filter." detail="Clear the filter box or the readiness filter to see everybody." />;
   }
 
   return (

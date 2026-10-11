@@ -3,11 +3,13 @@ import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
+import { ReadinessFilter } from "@/components/ReadinessFilter";
 import { Section } from "@/components/Section";
 import { TeamsList } from "@/components/TeamsList";
 import { getOverview, getTeams, getWindows } from "@/lib/api";
 import { TEAM_TERM_PARAMETER } from "@/lib/filter";
 import { span } from "@/lib/format";
+import { classify, readinessTiles, teamLabels } from "@/lib/readiness";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
@@ -48,7 +50,10 @@ export default async function TeamsPage({ searchParams }: Readonly<{ searchParam
             detail="Ownership is attributed from the collected graph, so this is an uncollected graph or an estate whose repositories are attributed to individuals and to nobody. The repositories list says which."
           />
         ) : (
-          <TeamsList rows={teams} weeks={weeks} />
+          <div className="space-y-4">
+            <ReadinessFilter tiles={readinessTiles(teams.map((team) => classify(teamLabels(team.labels))))} />
+            <TeamsList rows={teams} weeks={weeks} />
+          </div>
         )}
       </Section>
     </div>
