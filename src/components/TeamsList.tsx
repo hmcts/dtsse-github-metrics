@@ -29,6 +29,10 @@ import { withWeeks } from "@/lib/weeks";
  * The counts are grouped through `distributionSlices`, the same function the donut is drawn from, so a
  * chart and a row can never disagree about which repositories fall under a label.
  *
+ * NO "NOT ASSESSED" CHIP, from 2026-10-10. `builtTeamRows` counts only the repositories that carry a label, so
+ * the ungraded slice was 0 on every card whatever the estate held, including when the policy was switched off and
+ * it was the only true answer. A repository nobody collected is already stated on the card as "not reported".
+ *
  * The team cards are FLAT, for the reason `MetricCard` is: the list renders inside a `Section`, which
  * has drawn the box since 2026-09-02, and a grid of bordered cards nested in a bordered panel is the
  * pattern that change exists to remove. The gap does the separating and the hover tint says the whole
@@ -60,19 +64,21 @@ export function TeamsList({ rows, weeks }: Readonly<{ rows: readonly TeamRow[]; 
           </div>
 
           <dl className="flex flex-wrap gap-x-3 gap-y-1.5">
-            {distributionSlices(row.labels).map((slice) => (
-              <div
-                key={slice.name}
-                className="flex items-center gap-1.5"
-                // Dimmed rather than dropped when nothing carries the label, as the donut legend does:
-                // "no repository is blocked" is a finding, and an absent chip would not state it.
-                style={{ opacity: slice.value === 0 ? 0.38 : 1 }}
-              >
-                <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
-                <dt className="text-xs text-slate-400">{slice.name}</dt>
-                <dd className="text-xs text-slate-300 tabular-nums">{slice.value}</dd>
-              </div>
-            ))}
+            {distributionSlices(row.labels)
+              .filter((slice) => slice.key !== "none")
+              .map((slice) => (
+                <div
+                  key={slice.name}
+                  className="flex items-center gap-1.5"
+                  // Dimmed rather than dropped when nothing carries the label, as the donut legend does:
+                  // "no repository is blocked" is a finding, and an absent chip would not state it.
+                  style={{ opacity: slice.value === 0 ? 0.38 : 1 }}
+                >
+                  <span className="shrink-0 w-2 h-2 rounded-full" style={{ backgroundColor: slice.color }} aria-hidden="true" />
+                  <dt className="text-xs text-slate-400">{slice.name}</dt>
+                  <dd className="text-xs text-slate-300 tabular-nums">{slice.value}</dd>
+                </div>
+              ))}
           </dl>
         </div>
       ))}
