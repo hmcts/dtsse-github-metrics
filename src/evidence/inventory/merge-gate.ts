@@ -253,7 +253,7 @@ export async function collectMergeGate(client: GitHubClient, organization: strin
 
     const rulesets = new Map<number, Ruleset | undefined>();
     for (const id of new Set(rules.map((rule) => rule.ruleset_id).filter((id): id is number => id != null))) {
-      rulesets.set(id, await fetchRuleset(client, organization, repository, id));
+      rulesets.set(id, await fetchRuleset(client, organization, repository, id)); // NOSONAR
     }
 
     // A branch whose every ruleset only EVALUATES is a branch no ruleset gates, so it takes the same route

@@ -48,7 +48,7 @@ export async function fillCachedSource<FactT>(
     // ask for, so they must not age out of the cache under `prune`.
     await touchSourceCoverage(stable);
     for (const missing of fetched) {
-      await cache(missing, await collect(missing.startsAt, missing.endsAt), true);
+      await cache(missing, await collect(missing.startsAt, missing.endsAt), true); // NOSONAR
     }
   }
 

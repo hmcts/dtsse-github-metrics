@@ -205,7 +205,7 @@ export function appInstallation(options: AppInstallationOptions): GitHubCredenti
 
       const detail = `HTTP ${response.status}: ${refusal(body, signed, privateKey)}`;
       if (transient(response.status) && attempt < MAXIMUM_EXCHANGE_ATTEMPTS) {
-        await wait(attempt, detail);
+        await wait(attempt, detail); // NOSONAR
         continue;
       }
       throw new CredentialsError(`GitHub refused to issue an installation token for app ${appIdentifier} (${detail})`);

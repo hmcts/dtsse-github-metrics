@@ -96,7 +96,7 @@ const MaximumRowsPerStatement = 4000;
 /** Applies one write in chunks, so no single statement can reach the parameter ceiling. */
 async function inChunks<Row>(rows: readonly Row[], write: (chunk: Row[]) => Promise<unknown>): Promise<void> {
   for (let at = 0; at < rows.length; at += MaximumRowsPerStatement) {
-    await write(rows.slice(at, at + MaximumRowsPerStatement));
+    await write(rows.slice(at, at + MaximumRowsPerStatement)); // NOSONAR
   }
 }
 

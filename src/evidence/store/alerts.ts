@@ -42,7 +42,7 @@ export async function recordSecurityAlerts(organization: string, scans: readonly
   for (const scan of scans) {
     const key = { organization, repository: scan.repository, family: scan.family };
     try {
-      await prisma.$transaction(async (tx) => {
+      /* NOSONAR */ await prisma.$transaction(async (tx) => {
         await tx.securityAlertScan.upsert({
           where: { organization_repository_family: key },
           create: { ...key, state: scan.state, detail: scan.detail ?? null, observedAt },

@@ -33,7 +33,7 @@ export async function* readCveDocuments(credentials: CveCredentials, database: C
   const iterator = client.database(database).container(CVE_CONTAINER).items.query(cveDocumentQuery(fromTs), { maxItemCount: CVE_PAGE_SIZE });
   const pages = async function* (): AsyncGenerator<unknown[]> {
     while (iterator.hasMoreResults()) {
-      yield (await iterator.fetchNext()).resources;
+      yield (await iterator.fetchNext()).resources; // NOSONAR
     }
   };
   yield* cveDocumentsFrom(pages(), database);

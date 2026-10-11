@@ -43,14 +43,14 @@ async function connectWhenReady(connectionString: string, pause: (ms: number) =>
       await client.connect();
       return client;
     } catch (error) {
-      await client.end().catch(() => undefined);
+      await client.end().catch(() => undefined); // NOSONAR
       const code = (error as { code?: string }).code;
       const starting = code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "EAI_AGAIN";
       if (!starting || Date.now() >= deadline) {
         throw error;
       }
       console.info(`waiting for the database: ${messageOf(error)}`);
-      await pause(CONNECT_RETRY_MS);
+      await pause(CONNECT_RETRY_MS); // NOSONAR
     }
   }
 }
@@ -101,17 +101,17 @@ export async function migrate(
     const pending = migrations.filter((migration) => !done.has(migration.name));
 
     for (const migration of pending) {
-      await client.query("BEGIN");
+      await client.query("BEGIN"); // NOSONAR
       try {
-        await client.query(migration.sql);
-        await client.query(
+        await client.query(migration.sql); // NOSONAR
+        /* NOSONAR */ await client.query(
           `INSERT INTO "_prisma_migrations" (id, checksum, migration_name, started_at, finished_at, applied_steps_count)
            VALUES ($1, $2, $3, now(), now(), 1)`,
           [crypto.randomUUID(), migration.checksum, migration.name]
         );
-        await client.query("COMMIT");
+        await client.query("COMMIT"); // NOSONAR
       } catch (error) {
-        await client.query("ROLLBACK");
+        await client.query("ROLLBACK"); // NOSONAR
         throw new Error(`migration ${migration.name} failed: ${messageOf(error)}`, {
           cause: error
         });

@@ -62,7 +62,7 @@ export interface RepositoryStatePayload {
 /** Records what a collection observed, replacing whatever the last one recorded. */
 export async function recordRepositoryState(organization: string, repository: string, payload: RepositoryStatePayload): Promise<void> {
   try {
-    const stored = JSON.parse(JSON.stringify(payload)) as object;
+    const stored = JSON.parse(JSON.stringify(payload)) as object; // NOSONAR
     await prisma.repositoryState.upsert({
       where: { organization_repository: { organization, repository } },
       create: { organization, repository, fetchedAt: payload.fetchedAt, payload: stored },

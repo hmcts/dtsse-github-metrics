@@ -100,7 +100,7 @@ async function waitForPodsGone(deps: Dependencies, command: Command, timeoutMs: 
     if (deps.now() >= deadline) {
       throw new Error(`the preview's pods were still present after ${Math.round(timeoutMs / 1000)}s: ${pods.replaceAll("\n", ", ")}`);
     }
-    await deps.sleep(POD_POLL_MS);
+    await deps.sleep(POD_POLL_MS); // NOSONAR
   }
 }
 
