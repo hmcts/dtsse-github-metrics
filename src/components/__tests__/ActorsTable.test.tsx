@@ -239,3 +239,30 @@ describe("ActorsTable filter", () => {
     expect(screen.getByText("No contributor matches this filter.")).toBeTruthy();
   });
 });
+
+describe("ActorsTable readiness filter", () => {
+  it("narrows to the people in the group the tiles wrote", () => {
+    parameters = new URLSearchParams("readiness=ready");
+    mount();
+
+    expect(logins()).toEqual(["dan", "carol"]);
+  });
+
+  it("narrows to a subgroup, and reads somebody with nothing left to label as Cannot assess", () => {
+    parameters = new URLSearchParams("readiness=red");
+    mount();
+    expect(logins()).toEqual(["alice"]);
+
+    cleanup();
+    parameters = new URLSearchParams("readiness=cannot_assess");
+    mount();
+    expect(logins()).toEqual(["bob"]);
+  });
+
+  it("puts nobody in a group where the policy graded nothing", () => {
+    parameters = new URLSearchParams("readiness=cannot_assess");
+    mount(ROWS, false);
+
+    expect(screen.getByText("No contributor matches this filter.")).toBeTruthy();
+  });
+});
