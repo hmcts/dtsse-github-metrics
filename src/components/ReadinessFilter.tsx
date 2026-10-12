@@ -42,7 +42,7 @@ export function ReadinessFilter({ tiles }: Readonly<{ tiles: readonly ReadinessT
   }
 
   return (
-    <div role="group" aria-label="Readiness filter" className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+    <fieldset aria-label="Readiness filter" className="grid min-w-0 grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
       {tiles.map((tile) => {
         const keys = [tile.key, ...tile.subgroups.map((subgroup) => subgroup.key)];
         return (
@@ -86,7 +86,7 @@ export function ReadinessFilter({ tiles }: Readonly<{ tiles: readonly ReadinessT
           </div>
         );
       })}
-    </div>
+    </fieldset>
   );
 }
 

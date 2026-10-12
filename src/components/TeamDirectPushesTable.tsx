@@ -30,7 +30,7 @@ export function TeamDirectPushesTable({ rows, weeks }: Readonly<{ rows: readonly
       columns={COLUMNS}
       rows={rows}
       rowKey={(row) => `${row.repository}@${row.sha}`}
-      cells={(row) => (
+      renderCells={(row) => (
         <>
           <td className="py-2 pl-3 pr-3 tabular-nums text-slate-300">{day(row.committed_at)}</td>
           <RepositoryCell repository={row.repository} weeks={weeks} />
