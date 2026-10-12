@@ -65,14 +65,14 @@ describe("loadSecrets", () => {
     expect(read).toHaveBeenCalledWith(CHART_PATH);
   });
 
-  it("should not read anything in development, and should say why", async () => {
+  it("should not read anything in development, and should say it is using local configuration", async () => {
     const lines = captureLog();
     const read = vi.fn().mockResolvedValue(undefined);
 
     await loadSecrets(read, { NODE_ENV: "development" });
 
     expect(read).not.toHaveBeenCalled();
-    expect(lines.join("\n")).toContain(`${KEY_VAULT_OPT_IN}=true is not set`);
+    expect(lines.join("\n")).toContain("using local configuration");
   });
 
   it("should name the database it resolved, whether or not the vault was read", async () => {
@@ -102,14 +102,6 @@ describe("loadSecrets", () => {
     await loadSecrets(vi.fn(), { NODE_ENV: "production", ...DEPLOYED });
 
     expect(lines.join("\n")).not.toContain(DEPLOYED.POSTGRES_PASSWORD);
-  });
-
-  it("should say what an unset NODE_ENV was, rather than leave a gap in the line", async () => {
-    const lines = captureLog();
-
-    await loadSecrets(vi.fn(), {});
-
-    expect(lines.join("\n")).toContain("NODE_ENV is unset");
   });
 
   it("should report a thrown non-error too, because a rejection is not always an Error", async () => {

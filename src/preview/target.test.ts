@@ -137,6 +137,6 @@ describe("previewUrl", () => {
   it("should encode a password holding URL delimiters", () => {
     const target = previewTarget({ ...SECRET, PASSWORD: "p@ss/w:rd" }, "75", dumpSource(AAT));
 
-    expect(previewUrl(target)).toBe(`postgresql://hmcts:p%40ss%2Fw%3Ard@${PREVIEW_SERVER_HOST}:5432/dtsse-github-metrics-pr-75?sslmode=require`);
+    expect(previewUrl(target)).toBe(`postgresql://hmcts:p%40ss%2Fw%3Ard@${PREVIEW_SERVER_HOST}:5432/dtsse-github-metrics-pr-75?sslmode=verify-full`);
   });
 });

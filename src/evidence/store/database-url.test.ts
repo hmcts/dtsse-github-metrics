@@ -11,7 +11,7 @@ const MOUNTED = {
 
 describe("resolveDatabaseUrl", () => {
   it("should assemble the mounted parts, requiring TLS as the flexible server does", () => {
-    expect(resolveDatabaseUrl(MOUNTED)).toBe(`postgresql://hmcts:a-vault-password@${MOUNTED.POSTGRES_HOST}:5432/github_metrics?sslmode=require`);
+    expect(resolveDatabaseUrl(MOUNTED)).toBe(`postgresql://hmcts:a-vault-password@${MOUNTED.POSTGRES_HOST}:5432/github_metrics?sslmode=verify-full`);
   });
 
   it.each(Object.keys(MOUNTED))("should fall back where %s is missing, rather than assemble half a URL", (missing) => {

@@ -65,7 +65,7 @@ export async function loadSecrets(read: ReadSecrets, env: Environment = process.
       console.warn(`could not load Key Vault secrets: ${messageOf(error)}`);
     }
   } else {
-    console.info(`not reading the Key Vault: NODE_ENV is ${env.NODE_ENV ?? "unset"} and ${KEY_VAULT_OPT_IN}=true is not set, so the local defaults apply`);
+    console.info("using local configuration");
   }
 
   console.info(`database: ${describeDatabase(env)}`);
