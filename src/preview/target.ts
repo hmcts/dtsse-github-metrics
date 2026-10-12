@@ -142,5 +142,5 @@ export function previewUrl(target: PreviewTarget): string {
   assertPreviewTarget(target);
   const user = encodeURIComponent(target.user);
   const password = encodeURIComponent(target.password);
-  return `postgresql://${user}:${password}@${target.host}:${target.port}/${encodeURIComponent(target.database)}?sslmode=require`;
+  return `postgresql://${user}:${password}@${target.host}:${target.port}/${encodeURIComponent(target.database)}?sslmode=verify-full`;
 }

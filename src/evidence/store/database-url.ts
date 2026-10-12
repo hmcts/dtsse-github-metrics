@@ -2,8 +2,9 @@
  * Assembles `DATABASE_URL` the way every CFT Node service does: from the `POSTGRES_*` parts the Helm
  * chart mounts out of the Key Vault, falling back to a local Docker Compose default.
  *
- * Deployed, the five parts are all present and `sslmode=require` is mandatory — the flexible server
- * refuses an unencrypted connection. Locally, none of them are set and the compose default applies.
+ * Deployed, the five parts are all present and TLS is mandatory — the flexible server refuses an
+ * unencrypted connection. `verify-full` rather than `require` because `pg` already treats `require` as
+ * `verify-full` and warns on every start that it will stop doing so; naming it keeps today's behaviour. Locally, none of them are set and the compose default applies.
  * An explicit `DATABASE_URL` always wins over the fallback, which is how a test run points at a
  * scratch database.
  */
@@ -47,7 +48,7 @@ export function resolveDatabaseUrl(env: Environment = process.env): string {
   const parts = mountedDatabaseParts(env);
   return parts === undefined
     ? (env.DATABASE_URL ?? LOCAL_DATABASE_URL)
-    : `postgresql://${parts.user}:${parts.password}@${parts.host}:${parts.port}/${parts.database}?sslmode=require`;
+    : `postgresql://${parts.user}:${parts.password}@${parts.host}:${parts.port}/${parts.database}?sslmode=verify-full`;
 }
 
 /** Sets `DATABASE_URL` in the environment, for Prisma's own CLI and generated client to read. */

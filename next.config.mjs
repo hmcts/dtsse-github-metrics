@@ -12,7 +12,7 @@ const nextConfig = {
    * and is a change to the frontends entry, not to this file.
    */
   compress: false,
-  serverExternalPackages: ["@hmcts-cft/cloud-native-platform", "applicationinsights", "@prisma/client", "pg", "config"],
+  serverExternalPackages: ["applicationinsights", "@prisma/client", "pg", "config"],
   experimental: {
     staleTimes: {
       dynamic: 0

@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "--aat" ]]; then
+  export USE_KEY_VAULT=true VAULT_TOKEN="$(az account get-access-token --resource https://vault.azure.net -o json)"
+  setup_database="yarn db:generate"
+else
+  export DATABASE_URL="postgresql://${PGUSER:-hmcts}${PGPASSWORD:+:$PGPASSWORD}@host.docker.internal:${PGPORT:-5432}/${PGDATABASE:-github_metrics}"
+  setup_database="yarn db:generate && yarn db:migrate"
+fi
+
+docker run --rm -it \
+  -p 3000:3000 \
+  -v "$PWD":/app \
+  -v dtsse-node-modules:/app/node_modules \
+  -v dtsse-yarn-cache:/root/.yarn/berry \
+  -v "$PWD/scripts/azdummy":/usr/local/bin/az:ro \
+  -w /app \
+  -e ADO_TOKEN="$(az account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv)" \
+  -e COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+  -e WATCHPACK_POLLING=true \
+  -e AUTH_DISABLED=true \
+  -e DATABASE_URL \
+  -e USE_KEY_VAULT \
+  -e VAULT_TOKEN \
+  node:22 bash -c "corepack enable && yarn install && $setup_database && yarn next dev -H 0.0.0.0"
