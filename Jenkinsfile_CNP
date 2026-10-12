@@ -113,6 +113,46 @@ withPipeline(type, product, component) {
     env.E2E_TEST_SCOPE = '@smoke'
     env.TEST_URL = "https://dtsse-github-metrics-pr-${CHANGE_ID}.preview.platform.hmcts.net"
 
+    // The DNS record is created and confirmed resolvable BEFORE the library installs the chart. On a PR's first
+    // build the library creates the A record and polls `/health` straight away, but its health checker only sleeps
+    // between attempts when it gets an unhealthy response. An unresolvable host throws instead, so all 40 attempts
+    // land within a second, before the new record resolves, and `AKS deploy - preview` fails. A rerun passes because
+    // by then the record already exists. Registering it here, with the library's own classes, puts helm install and
+    // the pod rollout between the record's creation and the first health check. The library then finds the record
+    // and only updates it.
+    before('akschartsinstall') {
+      def previewSubscription = new uk.gov.hmcts.contino.Subscription(env).previewName
+      def previewEnvironment = new uk.gov.hmcts.contino.Environment(env).previewName
+      def aksSubscription = new uk.gov.hmcts.pipeline.AKSSubscriptions(this).preview.name
+      def dnsConfigEntry = new uk.gov.hmcts.contino.EnvironmentDnsConfig(this).getEntry(previewEnvironment, product, component)
+      def recordName = "${product}-${component}-${new uk.gov.hmcts.contino.ProjectBranch(env.BRANCH_NAME).imageTag()}"
+
+      // NOT gated on the entry's `active` flag. The platform config marks preview inactive, but the library's
+      // `registerDns` ignores that flag and registers the record regardless, so this does the same. Gating on it
+      // skipped this hook silently.
+      withAksClient(previewSubscription, previewEnvironment, product) {
+        def azPrivateDns = new uk.gov.hmcts.contino.AzPrivateDns(this, previewEnvironment, dnsConfigEntry)
+        if (!azPrivateDns.checkForCname(recordName)) {
+          def kubectl = new uk.gov.hmcts.contino.Kubectl(this, previewSubscription, env.TEAM_NAMESPACE, aksSubscription)
+          kubectl.login()
+          azPrivateDns.registerDns(recordName, kubectl.getServiceLoadbalancerIP('traefik', 'admin'))
+        }
+
+        // Up to 5 minutes. A new private DNS record normally resolves within seconds, so running out of attempts
+        // means something is actually wrong, and failing here says so instead of leaving it to the health check.
+        def fqdn = azPrivateDns.getHostName(recordName)
+        sh script: """
+          for attempt in \$(seq 1 30); do
+            getent hosts ${fqdn} && exit 0
+            echo "${fqdn} does not resolve yet (attempt \$attempt of 30), retrying in 10s"
+            sleep 10
+          done
+          echo "${fqdn} still does not resolve after 30 attempts"
+          exit 1
+        """, label: "Wait for ${fqdn} to resolve"
+      }
+    }
+
     // A scrubbed copy of AAT's database replaces the PR's own before its smoke tests, and the PR's migrations are
     // applied on top of it — see `src/preview/load-aat.ts` for the order and the guards. PULL REQUESTS ONLY: master's
     // staging release reads the real AAT database, and this block is the only place the copy is reachable from.
