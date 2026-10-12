@@ -28,13 +28,13 @@ export function EvidenceTable<Row>({
   columns,
   rows,
   rowKey,
-  cells
+  renderCells
 }: Readonly<{
   columns: readonly EvidenceColumn<Row>[];
   rows: readonly Row[];
   rowKey: (row: Row) => string;
   /** The `<td>`s of one row, in the order of `columns`. */
-  cells: (row: Row) => ReactNode;
+  renderCells: (row: Row) => ReactNode;
 }>) {
   const [column, setColumn] = useState<EvidenceColumn<Row> | null>(null);
   const [direction, setDirection] = useState<Direction>("descending");
@@ -69,7 +69,7 @@ export function EvidenceTable<Row>({
         <tbody className="divide-y divide-slate-800/50">
           {ordered.map((row) => (
             <tr key={rowKey(row)} className="hover:bg-slate-800/30">
-              {cells(row)}
+              {renderCells(row)}
             </tr>
           ))}
         </tbody>

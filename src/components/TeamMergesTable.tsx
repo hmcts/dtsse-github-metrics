@@ -32,7 +32,7 @@ export function TeamMergesTable({ rows, weeks }: Readonly<{ rows: readonly TeamM
       columns={COLUMNS}
       rows={rows}
       rowKey={(row) => `${row.repository}#${row.number}`}
-      cells={(row) => (
+      renderCells={(row) => (
         <>
           <td className="py-2 pl-3 pr-3 tabular-nums text-slate-300">{day(row.merged_at)}</td>
           <RepositoryCell repository={row.repository} weeks={weeks} />
