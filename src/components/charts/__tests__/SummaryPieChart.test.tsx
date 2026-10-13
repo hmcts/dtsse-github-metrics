@@ -408,3 +408,36 @@ describe("the summary wheel's focus on the selected slice", () => {
     expect(wedgeOpacity(container, "#f87171")).toBe("1");
   });
 });
+
+describe("the summary wheel's legend", () => {
+  /** SLICES with an unmeasured slice beside them, counted at `unknown`. */
+  function withUnknown(unknown: number): PieSlice[] {
+    return [...SLICES, { key: "unknown", name: "Unknown", value: unknown, color: "#64748b", unmeasured: true }];
+  }
+
+  function legend(): string[] {
+    return within(screen.getByRole("group", { name: "Code owner filter" }))
+      .getAllByRole("button")
+      .map((button) => button.textContent ?? "");
+  }
+
+  it("should leave an unmeasured slice out of the legend when it is counted at zero", async () => {
+    await drawn(withUnknown(0));
+
+    // Individual is an answer, so it stays at zero; Unknown is the absence of one and goes.
+    expect(legend().map((text) => text.replace(/\d+$/, ""))).toEqual(["Team", "Individual", "Nobody"]);
+  });
+
+  it("should keep an unmeasured slice in the legend when it has members", async () => {
+    await drawn(withUnknown(2));
+
+    expect(entry("Unknown").style.opacity).toBe("1");
+  });
+
+  it("should keep an empty unmeasured slice in the legend while it is the one selected, so it can be cleared", async () => {
+    url("weeks=12&owner=unknown");
+    await drawn(withUnknown(0));
+
+    expect(entry("Unknown").getAttribute("aria-pressed")).toBe("true");
+  });
+});

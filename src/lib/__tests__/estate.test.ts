@@ -255,11 +255,11 @@ describe("the estate summary wheels", () => {
     }
   });
 
-  it("should order every wheel's slices best first with the unmeasured one last, except Vulnerabilities", () => {
-    // The colours then run green, amber, slate in the same order on the stewardship wheels, which is what lets them
-    // be read side by side. `Vulnerabilities` runs by severity, worst first — see its own case.
+  it("should order every wheel's slices best first with the unmeasured one last", () => {
+    // The colours then run green, amber, red, slate in the same order on every wheel, which is what lets them be
+    // read side by side.
     for (const dimension of ESTATE_DIMENSIONS) {
-      expect(dimension.slices[0]?.state).toBe(dimension.parameter === VULNERABILITY_PARAMETER ? "red" : "green");
+      expect(dimension.slices[0]?.state).toBe("green");
       expect(dimension.slices.at(-1)?.state).toBe(dimension.parameter === OWNER_PARAMETER ? "red" : "none");
     }
   });
@@ -375,12 +375,12 @@ describe("the combined vulnerability wheel", () => {
     return { high: 0, medium: 0, clear: 0, unscanned: 0, [key]: 1 };
   }
 
-  it("should draw its slices worst first: high, medium, clear, unscanned", () => {
+  it("should draw its slices in the other wheels' order: clear, medium, high, unscanned", () => {
     const slices = wheel(VULNERABILITY_PARAMETER).slices;
 
-    expect(slices.map((slice) => slice.key)).toEqual(["high", "medium", "clear", "unscanned"]);
-    expect(slices.map((slice) => slice.label)).toEqual(["High", "Medium", "Clear", "Unscanned"]);
-    expect(slices.map((slice) => slice.state)).toEqual(["red", "amber", "green", "none"]);
+    expect(slices.map((slice) => slice.key)).toEqual(["clear", "medium", "high", "unscanned"]);
+    expect(slices.map((slice) => slice.label)).toEqual(["Clear", "Medium", "High", "Unscanned"]);
+    expect(slices.map((slice) => slice.state)).toEqual(["green", "amber", "red", "none"]);
   });
 
   it("should count a repository with a live critical finding on either source as high", () => {

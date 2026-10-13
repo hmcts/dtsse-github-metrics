@@ -72,4 +72,20 @@ describe("dimensionSlices", () => {
     expect(built.map((slice) => slice.color)).toEqual([STRONG_GOOD_HEX, RAG_HEX.green]);
     expect(built.map((slice) => slice.value)).toEqual([1, 0]);
   });
+
+  it("marks a slate slice as unmeasured, and no other", () => {
+    const built = dimensionSlices(
+      {
+        ...DIMENSION,
+        slices: [
+          ...DIMENSION.slices,
+          { key: "none", label: "Unenforced", state: "red", holds: () => false },
+          { key: "unknown", label: "Unknown", state: "none", holds: () => false }
+        ]
+      },
+      []
+    );
+
+    expect(built.map((slice) => slice.unmeasured)).toEqual([false, false, false, true]);
+  });
 });
