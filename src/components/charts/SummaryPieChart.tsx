@@ -31,7 +31,9 @@ const EMPTY_OPACITY = 0.38;
  * Zero-count slices are kept out of the wedge — with `paddingAngle` on, a zero-width wedge draws as a
  * stray tick — but stay in the legend, dimmed. Dropping them instead would make "no repository is
  * unmaintained" and "unmaintained is not a state this report reaches" look the same, and the first is the
- * useful finding.
+ * useful finding. The exception is an `unmeasured` slice — Unknown, Not assessed and the like — which is
+ * left out of the legend at zero: "nothing unknown" is not a finding, only noise. It stays while it is the
+ * active filter, so a link selecting it still has an entry to clear it from.
  *
  * The whole chart is skipped when nothing was counted: an empty ring is a shape readers try to
  * interpret, so the section says it has no data instead.
@@ -92,6 +94,7 @@ export function SummaryPieChart({
    * unfiltered: a ring with every slice dimmed would read as a ring with nothing in it.
    */
   const unselected = (key: string) => active !== "" && key !== active;
+  const legend = data.filter((slice) => !(slice.unmeasured && slice.value === 0 && slice.key !== active));
 
   /**
    * Puts the clicked slice in the URL, WITHOUT NAVIGATING.
@@ -154,7 +157,7 @@ export function SummaryPieChart({
       )}
 
       <fieldset className="flex min-w-0 flex-wrap justify-center gap-x-3 gap-y-1.5" aria-label={`${title} filter`}>
-        {data.map((slice) => (
+        {legend.map((slice) => (
           <button
             key={slice.key}
             type="button"

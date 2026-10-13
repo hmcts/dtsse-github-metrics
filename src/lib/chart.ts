@@ -26,6 +26,12 @@ export interface PieSlice {
   value: number;
   /** A colour value, not a class: a mark is set from a string rather than a Tailwind utility. */
   color: string;
+  /**
+   * Whether the slice is the absence of an answer — a slate slice such as "Unknown" or "Not assessed" — rather than
+   * an answer. `SummaryPieChart` leaves such a slice out of the legend at zero: "nothing unknown" is not a finding
+   * worth a dimmed entry, where "nothing blocked" is.
+   */
+  unmeasured?: boolean;
 }
 
 /**
@@ -68,16 +74,17 @@ export function distributionSlices(labels: Record<string, number>, unreportable 
  * unsimulated, which is the floor band — legal because every slice also carries its word and its count in the
  * legend and the wedges are separated by a gap, so colour is never the only thing telling two of them apart.
  *
- * EVERY SLICE IS RETURNED, including one counted at zero: `SummaryPieChart` dims an empty slice in the legend
+ * EVERY SLICE IS RETURNED, including one counted at zero: `SummaryPieChart` dims an empty answer in the legend
  * rather than dropping it, so a reader sees the whole set of answers the report can give whatever this estate
- * holds.
+ * holds. A slate slice is flagged `unmeasured`, and that one the legend drops at zero instead.
  */
 export function dimensionSlices(dimension: EstateDimension, rows: readonly RepositoryRow[]): PieSlice[] {
   return dimension.slices.map((slice) => ({
     key: slice.key,
     name: slice.label,
     value: rows.filter((row) => slice.holds(row)).length,
-    color: slice.hex ?? RAG_HEX[slice.state]
+    color: slice.hex ?? RAG_HEX[slice.state],
+    unmeasured: slice.state === "none" || slice.state === "cannot_assess"
   }));
 }
 

@@ -480,8 +480,8 @@ const NOT_STATED = "No state stated";
  *
  * THE COLOURS RUN GOOD, WORSE, THEN SLATE ON EVERY WHEEL, so wheels side by side read as one thing: the first slice
  * is the answer that reads well, the next are the ones worth weighing or failed, and slate is the absence of an
- * answer. `Vulnerabilities` is the exception to the order: it runs by severity, red, amber, green, then slate,
- * because its question is how bad the worst live finding is and the worst answer leads.
+ * answer. `Vulnerabilities` follows the same order — clear, medium, high, then unscanned — rather than leading with
+ * the worst severity, so it does not read as the one wheel drawn the other way round.
  *
  * EVERY SLATE SLICE ON THE PUBLIC WHEELS IS NOW SMALL, WHICH IS THE POINT OF THE TWO THAT CHANGED. The wheels this
  * pair replaced — `Code scanning` and `Unsuppressed CVEs` — were the two whose largest slice was the state nobody
@@ -598,16 +598,16 @@ export const ESTATE_DIMENSIONS: readonly EstateDimension[] = [
     hint: "Live vulnerabilities from BOTH sources, by their worst severity: the build pipeline's own dependency scan, and GitHub's Dependabot alerts. High means at least one live critical or high finding on either source. Medium means live findings and none of them critical or high — including findings the source could not grade. Clear means nothing live on whichever source read this repository, which for some of them is one of the two rather than both. Unscanned is the blind spot — no dependency-scan report has been published AND Dependabot is not watching it.",
     cohort: "public",
     slices: [
-      // WORST SEVERITY WINS, on either source: one critical Dependabot alert puts a repository here whatever the
-      // build scan says, because one source finding less does not clear what the other raised.
-      { key: "high", label: "High", state: "red", holds: (row) => vulnerabilityPosition(row).severe },
+      // A MEASURED ZERO: a source that read this repository and found nothing is the finding, and it is not the same
+      // answer as a repository neither source covers.
+      { key: "clear", label: "Clear", state: "green", holds: (row) => vulnerabilityFree(vulnerabilityPosition(row)) },
       // EVERYTHING LIVE THAT IS NOT CRITICAL OR HIGH, which includes the CVE `unknown` band and any Dependabot alert
       // counted in `open` but in no band of `by_severity`. An ungraded finding is still a finding, and leaving it out
       // would report it as clear.
       { key: "medium", label: "Medium", state: "amber", holds: (row) => liveButNotSevere(vulnerabilityPosition(row)) },
-      // A MEASURED ZERO: a source that read this repository and found nothing is the finding, and it is not the same
-      // answer as a repository neither source covers.
-      { key: "clear", label: "Clear", state: "green", holds: (row) => vulnerabilityFree(vulnerabilityPosition(row)) },
+      // WORST SEVERITY WINS, on either source: one critical Dependabot alert puts a repository here whatever the
+      // build scan says, because one source finding less does not clear what the other raised.
+      { key: "high", label: "High", state: "red", holds: (row) => vulnerabilityPosition(row).severe },
       // THE SHARPER WORD, and earned: both sources were consulted and neither is reading this repository, so unlike
       // every other slate slice on this page there is no unread answer behind it. See `NOT_STATED`.
       { key: "unscanned", label: "Unscanned", state: "none", holds: (row) => !vulnerabilityPosition(row).read }
