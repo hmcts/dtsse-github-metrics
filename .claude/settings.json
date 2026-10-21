@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/sonar-lint.sh",
+            "timeout": 120,
+            "statusMessage": "Checking Sonar rules"
+          }
+        ]
+      }
+    ]
+  }
+}
