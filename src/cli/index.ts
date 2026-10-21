@@ -1796,7 +1796,8 @@ async function runCivilServants(configuration: Configuration, argv: Arguments): 
   }
 
   const changed = argv.remove ? await removeCivilServants(organization, logins) : await addCivilServants(organization, logins);
-  const rest = changed === logins.length ? "" : argv.remove ? "; the rest were not flagged" : "; the rest already were";
+  const untouched = argv.remove ? "; the rest were not flagged" : "; the rest already were";
+  const rest = changed === logins.length ? "" : untouched;
   console.info(`${argv.remove ? "cleared" : "flagged"} ${changed} of ${logins.length} logins named${rest}`);
   if (changed > 0) {
     await stampRevision();
