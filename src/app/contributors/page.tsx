@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { ActorsTable } from "@/components/ActorsTable";
+import { CivilServantFilter } from "@/components/CivilServantFilter";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
@@ -34,6 +35,7 @@ export default async function ContributorsPage({ searchParams }: Readonly<{ sear
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const [overview, actors] = await Promise.all([getOverview(weeks), getActors(weeks)]);
   const labelled = anyLabelled(overview.labels);
+  const civilServants = actors.filter((actor) => actor.civil_servant === true).length;
 
   return (
     <div className="space-y-8">
@@ -55,6 +57,8 @@ export default async function ContributorsPage({ searchParams }: Readonly<{ sear
           // one. Fetched here already, for the header, so this costs no request. The tiles read it for the same reason.
           <div className="space-y-4">
             <ReadinessFilter tiles={readinessTiles(actors.map((actor) => classify(contributorLabels(actor.labels, labelled))))} />
+            {/* Only where somebody in this window is flagged: a toggle that can only ever empty the list is noise. */}
+            {civilServants === 0 ? null : <CivilServantFilter count={civilServants} />}
             <ActorsTable rows={actors} weeks={weeks} labelled={labelled} />
           </div>
         )}

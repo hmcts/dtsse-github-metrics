@@ -100,6 +100,17 @@ describe("the contributor rows a window holds", () => {
     expect("name" in (builtActorRows([row("alpha")], held, NO_NAMES, NO_BOTS)[0] ?? {})).toBe(false);
   });
 
+  it("should flag a civil servant from the folded set, and carry no key at all for anybody else", () => {
+    const held = facts({ alpha: { pullRequests: [merge("alpha", "GEvans-HMCTS", 1), merge("alpha", "zed", 2)] } });
+
+    const actors = builtActorRows([row("alpha")], held, NO_NAMES, NO_BOTS, new Set(["gevans-hmcts"]));
+
+    expect(actors).toEqual([
+      { login: "GEvans-HMCTS", civil_servant: true, repositories: 1 },
+      { login: "zed", repositories: 1 }
+    ]);
+  });
+
   it("should leave a bot out of the rows while still keeping its repository's labels for the people", () => {
     const held = facts({ alpha: { pullRequests: [merge("alpha", "renovate[bot]", 1), merge("alpha", "ada", 2)] } });
 

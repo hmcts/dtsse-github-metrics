@@ -245,7 +245,7 @@ const TEAM_PRACTICE: Shape<contract.TeamPractice> = {
 };
 
 const ACTOR_ROW: Shape<contract.ActorRow> = {
-  declared: { login: true, name: true, repositories: true, labels: true },
+  declared: { login: true, name: true, civil_servant: true, repositories: true, labels: true },
   required: { login: true, repositories: true }
 };
 
@@ -257,7 +257,7 @@ const ACTOR_ROW: Shape<contract.ActorRow> = {
  * It extends `Contributor`, so a field added to that base lands on this row as well and is caught here.
  */
 const TEAM_MEMBER_ROW: Shape<contract.TeamMemberRow> = {
-  declared: { login: true, name: true, role: true },
+  declared: { login: true, name: true, civil_servant: true, role: true },
   required: { login: true, role: true }
 };
 

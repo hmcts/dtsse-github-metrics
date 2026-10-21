@@ -34,6 +34,13 @@ export interface Contributor {
   login: string;
   /** GitHub's profile name. Absent, never an empty string — see `Contributor`. */
   name?: string;
+  /**
+   * `true` where somebody has flagged this login as a civil servant's, in the `civil_servants` table.
+   *
+   * ABSENT RATHER THAN `false` for everybody else, because absence is all the table can say about them: nobody
+   * has stated that they are, which is not a statement that they are not. Never sent as `false`.
+   */
+  civil_servant?: true;
 }
 
 export type ObservationStatus = "observed" | "not_applicable";
@@ -1054,6 +1061,8 @@ export interface ActorDetail {
    * absent means GitHub holds no name, and the page heads itself with the login instead.
    */
   name?: string;
+  /** `Contributor.civil_servant`, beside the name for the name's reason. */
+  civil_servant?: true;
   teams: Record<string, string>;
   /**
    * Which of THIS PERSON'S repositories deploy to production, and nothing else.

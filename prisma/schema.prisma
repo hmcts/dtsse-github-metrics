@@ -7,7 +7,7 @@
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
 // `alert_observations`, `sonar_project_map`, the six organisation-graph tables,
-// `repository_production`, `repository_notes`, `cve_scans` and `cve_findings`, or
+// `repository_production`, `civil_servants`, `repository_notes`, `cve_scans` and `cve_findings`, or
 // `security_alert_scans` and `security_alerts`. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
 //
@@ -309,6 +309,35 @@ model RepositoryProduction {
 
   @@id([organization, repository])
   @@map("repository_production")
+}
+
+/// Which GitHub logins belong to civil servants, as far as a PERSON is concerned.
+///
+/// ONE ROW PER FLAGGED LOGIN, AND PRESENCE IS THE FLAG. Nobody else has a row: a login absent from this table
+/// is not a claim that the person is not a civil servant, only that nobody has said they are. Written by
+/// `metrics civil-servants` and by nothing the collector runs.
+///
+/// IT IS A TABLE OF ITS OWN AND NOT A FIELD ON `OrgPerson`, for `RepositoryProduction`'s reason: `org_people`
+/// is change-versioned, so a value set by hand there is lost the next time a collected field moves and the row
+/// is superseded. It is also keyed on the login alone and not on the membership, because a civil servant can
+/// contribute as an outside collaborator with no `org_people` row at all.
+///
+/// NO EMAIL ADDRESS, by design. The list it was seeded from is work addresses, joined to logins through the
+/// SSO mapping once, by hand; the table keeps only the answer, for the reason `PersonFact.displayName` keeps
+/// only the name.
+///
+/// DURABLE, for `RepositoryProduction`'s reason: the fact came from a person and GitHub was never asked, so
+/// `prune` may not touch it. The login is CASEFOLDED by CHECK constraint, because GitHub logins are
+/// case-insensitive and `NatashaAlker` and `natashaalker` must not be two rows.
+model CivilServant {
+  organization String
+  login        String
+  /// Who added the row — an email, or whatever identifies them to their colleagues. Optional.
+  addedBy      String?  @map("added_by")
+  addedAt      DateTime @default(now()) @map("added_at") @db.Timestamptz(6)
+
+  @@id([organization, login])
+  @@map("civil_servants")
 }
 
 /// A free-text note somebody left against a repository — the context that is not derivable from

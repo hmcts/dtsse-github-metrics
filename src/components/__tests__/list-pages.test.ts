@@ -348,6 +348,21 @@ describe("the three list routes", () => {
     expect(markup).toMatch(/by their repositories(&#x27;|') labels/);
   });
 
+  /**
+   * The civil-servant toggle is drawn only where somebody in the window is flagged, with that count on it: a toggle
+   * that could only ever empty the list would be noise.
+   */
+  it("offers the civil-servant toggle only where somebody in the window is flagged", async () => {
+    stubService();
+    expect(renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }))).not.toContain("Civil servants only");
+
+    api.getActors.mockResolvedValue([...ACTORS, { login: "GEvans-HMCTS", civil_servant: true, repositories: 1 }]);
+    const markup = renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }));
+
+    expect(markup).toContain("Civil servants only");
+    expect(markup).toMatch(/Civil servants only.*>1</);
+  });
+
   it("fetches the teams list at the span asked for, and links at the same one", async () => {
     stubService();
     const markup = renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({ weeks: "26" }) }));

@@ -61,6 +61,7 @@ async function wipe(): Promise<void> {
   await prisma.orgPerson.deleteMany();
   await prisma.repositoryOwnership.deleteMany();
   await prisma.repositoryProduction.deleteMany();
+  await prisma.civilServant.deleteMany();
   await prisma.repositoryNote.deleteMany();
   // Findings first: the foreign key would refuse the scans otherwise, which is the point of having it.
   await prisma.cveFinding.deleteMany();
@@ -303,6 +304,16 @@ describe("pruneCache", () => {
     await pruneCache(FUTURE);
 
     expect(await prisma.repositoryProduction.count()).toBe(1);
+  });
+
+  it("should never delete a civil-servant flag, which came from a list nothing here can read again", async () => {
+    // The production flag's reason: a person stated it, from a list of work addresses matched to logins by hand,
+    // and the table keeps only the login. A pruned row is a badge gone with nothing left to restore it from.
+    await prisma.civilServant.create({ data: { organization: "hmcts", login: "gevans-hmcts" } });
+
+    await pruneCache(FUTURE);
+
+    expect(await prisma.civilServant.count()).toBe(1);
   });
 
   it("should never delete a repository note, which nothing but its author could write again", async () => {

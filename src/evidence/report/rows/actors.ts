@@ -59,7 +59,9 @@ export function builtActorRows(
   rows: readonly contract.RepositoryRow[],
   facts: ReadonlyMap<string, Merges>,
   names: ReadonlyMap<string, string>,
-  bots: ReadonlySet<string>
+  bots: ReadonlySet<string>,
+  /** Folded logins somebody has flagged as civil servants'. See `store/civil-servants.ts`. */
+  civilServants: ReadonlySet<string> = new Set()
 ): contract.ActorRow[] {
   const readinessOf = new Map(rows.map((row) => [row.repository, row.readiness]));
   const spelling = new Map<string, string>();
@@ -104,6 +106,8 @@ export function builtActorRows(
       // organisation who have set no profile name, and `stripAbsent` below drops the key rather than sending an
       // empty string a cell would render as a blank line.
       name: names.get(login),
+      // Only ever `true`: an unflagged person carries no key, for the reason `Contributor.civil_servant` gives.
+      ...(civilServants.has(login) ? { civil_servant: true as const } : {}),
       repositories: repositories.size,
       ...(labels.length === 0 ? {} : { labels })
     };

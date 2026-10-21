@@ -67,6 +67,7 @@ describe("migrate", () => {
     expect(await tableNames()).toEqual([
       "_prisma_migrations",
       "alert_observations",
+      "civil_servants",
       "collection_state",
       "cve_findings",
       "cve_scans",

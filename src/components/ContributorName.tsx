@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import Link from "next/link";
+import { CivilServantBadge } from "@/components/CivilServantBadge";
 import { contributorLabel } from "@/lib/person";
 import type { Contributor } from "@/lib/types";
 import { withWeeks } from "@/lib/weeks";
@@ -29,6 +30,10 @@ import { withWeeks } from "@/lib/weeks";
  * THE LINK IS A BLOCK OF ITS OWN, in a `<div>`, rather than inline beside the login. It already reads as its own
  * line, so nothing moves; what changes is that it is no longer a link inside a block of text, which is the case
  * WCAG 1.4.1 (axe's `link-in-text-block`) would otherwise want an underline for.
+ *
+ * THE CIVIL-SERVANT BADGE GOES ON THE SECOND LINE, beside the login, and not beside the link — for that same
+ * reason: the link's block stays the link alone. A person with no name and a badge gets a second line holding
+ * only the badge, which is still not a second copy of the login.
  */
 export function ContributorName({ person, weeks }: Readonly<{ person: Contributor; weeks: number }>) {
   const label = contributorLabel(person);
@@ -42,7 +47,12 @@ export function ContributorName({ person, weeks }: Readonly<{ person: Contributo
           {label}
         </Link>
       </div>
-      {person.name === undefined ? null : <p className="font-mono text-slate-400 mt-0.5 break-all">{person.login}</p>}
+      {person.name === undefined && person.civil_servant !== true ? null : (
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+          {person.name === undefined ? null : <p className="font-mono text-slate-400 break-all">{person.login}</p>}
+          <CivilServantBadge civilServant={person.civil_servant} />
+        </div>
+      )}
     </>
   );
 }

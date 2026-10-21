@@ -10,6 +10,7 @@ import { contributorNames } from "../org/people.ts";
 import { enablementInstants, teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { storedRepositoryAlertScans } from "../store/alerts.ts";
+import { civilServants } from "../store/civil-servants.ts";
 import { getSourceCoverage } from "../store/coverage.ts";
 import { declaredProduction, type ProductionLayers } from "../store/production-override.ts";
 import { storedRepositoryState } from "../store/repository-state.ts";
@@ -373,11 +374,15 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
   // The graph's names, read once per span build and held with the reports rather than per page. It is 778 rows on
   // this estate and it does not vary by span — but the reports are what the cache holds, so a name that rode
   // its own entry would be a second thing to invalidate when a collection lands.
-  const names = await contributorNames(configuration.organization);
+  //
+  // The civil-servant flags ride the same build for the same reason, and are read beside the names: a handful of
+  // rows, set by hand, and a flag held in an entry of its own would be a second thing to invalidate. The CLI that
+  // writes them stamps the revision, which is what rebuilds this.
+  const [names, civil] = await Promise.all([contributorNames(configuration.organization), civilServants(configuration.organization)]);
 
   return {
     rows,
-    actors: builtActorRows(rows, facts, names, botAccounts(configuration.cohort.bot_accounts)),
+    actors: builtActorRows(rows, facts, names, botAccounts(configuration.cohort.bot_accounts), civil),
     merges: builtMergeRows(facts),
     directPushes: builtDirectPushRows(facts),
     // Off the shared read, so the membership behind all five spans is one query — and named through the same map
