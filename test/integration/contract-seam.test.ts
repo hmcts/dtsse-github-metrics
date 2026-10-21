@@ -209,7 +209,7 @@ const OVERVIEW: Shape<contract.OverviewSummary> = {
 };
 
 const TEAM_ROW: Shape<contract.TeamRow> = {
-  declared: { team: true, display_name: true, repositories: true, unavailable: true, actors: true, practice: true, labels: true },
+  declared: { team: true, display_name: true, repositories: true, unavailable: true, actors: true, practice: true, labels: true, civil_servant: true },
   required: { team: true, repositories: true, unavailable: true, actors: true, labels: true }
 };
 

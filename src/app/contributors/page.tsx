@@ -1,16 +1,16 @@
 import { cookies } from "next/headers";
 import { ActorsTable } from "@/components/ActorsTable";
 import { CivilServantFilter } from "@/components/CivilServantFilter";
+import { ContributorReadinessFilter } from "@/components/ContributorReadinessFilter";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
-import { ReadinessFilter } from "@/components/ReadinessFilter";
 import { Section } from "@/components/Section";
 import { getActors, getOverview, getWindows } from "@/lib/api";
+import { CIVIL_SERVANT_PEOPLE_TOGGLE } from "@/lib/civil-servant";
 import { CONTRIBUTOR_TERM_PARAMETER } from "@/lib/filter";
 import { anyLabelled } from "@/lib/rag";
-import { classify, contributorLabels, readinessTiles } from "@/lib/readiness";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
@@ -56,9 +56,10 @@ export default async function ContributorsPage({ searchParams }: Readonly<{ sear
           // window; one person's empty label list cannot tell an unreadable estate from an ungraded
           // one. Fetched here already, for the header, so this costs no request. The tiles read it for the same reason.
           <div className="space-y-4">
-            <ReadinessFilter tiles={readinessTiles(actors.map((actor) => classify(contributorLabels(actor.labels, labelled))))} />
+            {/* Counted in the browser, so the tiles follow the civil-servant toggle below them. */}
+            <ContributorReadinessFilter rows={actors} labelled={labelled} />
             {/* Only where somebody in this window is flagged: a toggle that can only ever empty the list is noise. */}
-            {civilServants === 0 ? null : <CivilServantFilter count={civilServants} />}
+            {civilServants === 0 ? null : <CivilServantFilter label={CIVIL_SERVANT_PEOPLE_TOGGLE} count={civilServants} />}
             <ActorsTable rows={actors} weeks={weeks} labelled={labelled} />
           </div>
         )}

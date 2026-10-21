@@ -229,3 +229,30 @@ function timings(owned: readonly TeamAggregableRow[]): Pick<contract.TeamPractic
     merge_cycle_time_hours: median(owned.map((row) => row.merge_cycle_time_hours).filter((hours): hours is number => hours !== undefined))
   };
 }
+
+/**
+ * The team rows with the Civil Servant flag set on each team whose members are at least `percentage` civil servants.
+ *
+ * MEMBERS AND NOT CONTRIBUTORS, because membership is what "the team" means and contribution is not: a team's
+ * contributors are everybody who merged into a repository it owns, and `platform-operations` holds admin on 217
+ * repositories, so most of the organisation contributes to it. Who GitHub says is IN the team is the only
+ * population whose share of civil servants says anything about the team.
+ *
+ * A team with no membership read, or none at all, is LEFT UNFLAGGED rather than judged on nothing — the absent key
+ * says nobody can tell, as it does for a person. Logins are folded on both sides, for `contributorNames`' reason.
+ */
+export function withCivilServantTeams(
+  rows: readonly contract.TeamRow[],
+  members: ReadonlyMap<string, readonly contract.TeamMemberRow[]>,
+  civilServants: ReadonlySet<string>,
+  percentage: number
+): contract.TeamRow[] {
+  return rows.map((row) => {
+    const people = members.get(row.team.toLowerCase()) ?? [];
+    if (people.length === 0) {
+      return row;
+    }
+    const flagged = people.filter((person) => civilServants.has(person.login.toLowerCase())).length;
+    return flagged * 100 >= percentage * people.length ? { ...row, civil_servant: true as const } : row;
+  });
+}

@@ -2,11 +2,12 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { CivilServantBadge } from "@/components/CivilServantBadge";
 import { ContributorName } from "@/components/ContributorName";
 import { EmptyState } from "@/components/EmptyState";
 import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
-import { matchesCivilServant, parseCivilServantFilter } from "@/lib/civil-servant";
+import { CIVIL_SERVANT_LABEL, matchesCivilServant, parseCivilServantFilter } from "@/lib/civil-servant";
 import { CONTRIBUTOR_TERM_PARAMETER, matchesAny } from "@/lib/filter";
 import { contributorLabel } from "@/lib/person";
 import { combinationKey } from "@/lib/rag";
@@ -39,7 +40,18 @@ const READINESS: Column = {
  */
 const CONTRIBUTOR: Column = { key: "contributor", label: "Contributor", read: (row) => contributorLabel(row) };
 
-const COLUMNS: readonly Column[] = [CONTRIBUTOR, { key: "repositories", label: "Repositories", align: "right", read: (row) => row.repositories }, READINESS];
+/**
+ * Whether somebody is flagged as a civil servant, as a column of its own beside their name. Ascending puts the
+ * flagged first; everybody else ties and keeps the order the service sent.
+ */
+const CIVIL_SERVANT: Column = { key: "civil-servant", label: CIVIL_SERVANT_LABEL, align: "center", read: (row) => (row.civil_servant === true ? 0 : 1) };
+
+const COLUMNS: readonly Column[] = [
+  CONTRIBUTOR,
+  CIVIL_SERVANT,
+  { key: "repositories", label: "Repositories", align: "right", read: (row) => row.repositories },
+  READINESS
+];
 
 /**
  * Everyone who contributed to a reported repository in this window, by their repositories' labels.
@@ -123,6 +135,9 @@ export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly
             <tr key={row.login} className="hover:bg-slate-800/30">
               <td className="py-2 pl-3 pr-3">
                 <ContributorName person={row} weeks={weeks} />
+              </td>
+              <td className="py-2 pr-3 text-center">
+                <CivilServantBadge civilServant={row.civil_servant} />
               </td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.repositories}</td>
               <td className="py-2 pr-3 text-right">

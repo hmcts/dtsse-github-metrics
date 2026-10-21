@@ -354,13 +354,22 @@ describe("the three list routes", () => {
    */
   it("offers the civil-servant toggle only where somebody in the window is flagged", async () => {
     stubService();
-    expect(renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }))).not.toContain("Civil servants only");
+    expect(renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }))).not.toContain("Civil Servants only");
 
     api.getActors.mockResolvedValue([...ACTORS, { login: "GEvans-HMCTS", civil_servant: true, repositories: 1 }]);
     const markup = renderToStaticMarkup(await ContributorsPage({ searchParams: Promise.resolve({}) }));
 
-    expect(markup).toContain("Civil servants only");
-    expect(markup).toMatch(/Civil servants only.*>1</);
+    expect(markup).toMatch(/Civil Servants only.*>1</);
+  });
+
+  it("offers the civil-servant teams toggle only where some team in the window is flagged", async () => {
+    stubService();
+    expect(renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({}) }))).not.toContain("Civil Servant teams only");
+
+    api.getTeams.mockResolvedValue(TEAMS.map((team) => ({ ...team, civil_servant: true })));
+    const markup = renderToStaticMarkup(await TeamsPage({ searchParams: Promise.resolve({}) }));
+
+    expect(markup).toMatch(new RegExp(`Civil Servant teams only.*>${TEAMS.length}<`));
   });
 
   it("fetches the teams list at the span asked for, and links at the same one", async () => {

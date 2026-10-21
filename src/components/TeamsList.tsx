@@ -2,8 +2,10 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { CivilServantBadge } from "@/components/CivilServantBadge";
 import { EmptyState } from "@/components/EmptyState";
 import { distributionSlices } from "@/lib/chart";
+import { matchesCivilServant, parseCivilServantFilter } from "@/lib/civil-servant";
 import { matchesAny, TEAM_TERM_PARAMETER } from "@/lib/filter";
 import { count } from "@/lib/format";
 import { classify, matchesReadiness, READINESS_PARAMETER, teamLabels } from "@/lib/readiness";
@@ -47,20 +49,36 @@ export function TeamsList({ rows, weeks }: Readonly<{ rows: readonly TeamRow[]; 
   const parameters = useSearchParams();
   const term = parameters.get(TEAM_TERM_PARAMETER) ?? "";
   const readiness = parameters.get(READINESS_PARAMETER) ?? "";
-  const shown = rows.filter((row) => matchesAny([row.team, row.display_name], term) && matchesReadiness(classify(teamLabels(row.labels)), readiness));
+  const civilServantsOnly = parseCivilServantFilter((parameter) => parameters.get(parameter));
+  const shown = rows.filter(
+    (row) =>
+      matchesAny([row.team, row.display_name], term) &&
+      matchesReadiness(classify(teamLabels(row.labels)), readiness) &&
+      matchesCivilServant(row, civilServantsOnly)
+  );
 
   // Only a filter hiding every team earns the sentence; no teams at all is the page's own empty state.
   if (shown.length === 0 && rows.length > 0) {
-    return <EmptyState message="No team matches this filter." detail="Clear the filter box or the readiness filter to see every team." />;
+    return (
+      <EmptyState message="No team matches this filter." detail="Clear the filter box, the readiness filter or the civil-servant toggle to see every team." />
+    );
   }
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
       {shown.map((row) => (
         <div key={row.team} className="rounded-lg p-3 space-y-3 hover:bg-slate-800/30 transition-colors">
-          <Link href={withWeeks(`/teams/${encodeURIComponent(row.team)}`, weeks)} className="font-mono text-sm text-indigo-400 hover:text-indigo-300 break-all">
-            {row.team}
-          </Link>
+          {/* The badge sits just right of the name and centred on it. The link is a flex item, so it is not a link in
+              a block of text and `link-in-text-block` does not apply. */}
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={withWeeks(`/teams/${encodeURIComponent(row.team)}`, weeks)}
+              className="font-mono text-sm text-indigo-400 hover:text-indigo-300 break-all"
+            >
+              {row.team}
+            </Link>
+            <CivilServantBadge civilServant={row.civil_servant} />
+          </div>
 
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-400">
             <span className="tabular-nums">{count(row.repositories, "repository", "repositories")}</span>

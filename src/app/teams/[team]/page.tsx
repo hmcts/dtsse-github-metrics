@@ -60,6 +60,7 @@ export default async function TeamPage({
       <EntityHeader
         kind="team"
         name={detail.team}
+        civilServant={detail.civil_servant}
         action={<NavWeekSelector options={windows.options} active={weeks} />}
         context={
           <>

@@ -1,15 +1,16 @@
 import { cookies } from "next/headers";
+import { CivilServantFilter } from "@/components/CivilServantFilter";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
 import { OrganisationHeader } from "@/components/OrganisationHeader";
-import { ReadinessFilter } from "@/components/ReadinessFilter";
 import { Section } from "@/components/Section";
+import { TeamReadinessFilter } from "@/components/TeamReadinessFilter";
 import { TeamsList } from "@/components/TeamsList";
 import { getOverview, getTeams, getWindows } from "@/lib/api";
+import { CIVIL_SERVANT_TEAMS_TOGGLE } from "@/lib/civil-servant";
 import { TEAM_TERM_PARAMETER } from "@/lib/filter";
 import { span } from "@/lib/format";
-import { classify, readinessTiles, teamLabels } from "@/lib/readiness";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
 /**
@@ -34,6 +35,7 @@ export default async function TeamsPage({ searchParams }: Readonly<{ searchParam
   const windows = await getWindows();
   const weeks = resolveWeeks((await searchParams)?.weeks, (await cookies()).get(WEEKS_COOKIE)?.value, windows.options, windows.default);
   const [overview, teams] = await Promise.all([getOverview(weeks), getTeams(weeks)]);
+  const civilServantTeams = teams.filter((team) => team.civil_servant === true).length;
 
   return (
     <div className="space-y-8">
@@ -51,7 +53,10 @@ export default async function TeamsPage({ searchParams }: Readonly<{ searchParam
           />
         ) : (
           <div className="space-y-4">
-            <ReadinessFilter tiles={readinessTiles(teams.map((team) => classify(teamLabels(team.labels))))} />
+            {/* Counted in the browser, so the tiles follow the civil-servant toggle below them. */}
+            <TeamReadinessFilter rows={teams} />
+            {/* Only where some team in this window is flagged, as on `/contributors`. */}
+            {civilServantTeams === 0 ? null : <CivilServantFilter label={CIVIL_SERVANT_TEAMS_TOGGLE} count={civilServantTeams} />}
             <TeamsList rows={teams} weeks={weeks} />
           </div>
         )}

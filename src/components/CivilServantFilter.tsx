@@ -5,7 +5,6 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { ToggleTick } from "@/components/ToggleTick";
 import {
   CIVIL_SERVANT_DOT,
-  CIVIL_SERVANT_LABEL,
   CIVIL_SERVANT_PARAMETER,
   CIVIL_SERVANT_TOGGLE_ACTIVE,
   CIVIL_SERVANT_TOGGLE_INACTIVE,
@@ -15,16 +14,17 @@ import {
 import { filterTarget } from "@/lib/filter";
 
 /**
- * The `/contributors` toggle that narrows the list to the people flagged as civil servants.
+ * The toggle that narrows a list to what is flagged as civil servants': the people on `/contributors`, the teams on
+ * `/teams`.
  *
  * The estate table's Production toggle in another colour: `aria-pressed` and no ×, a count beside the word, and a
- * `replaceState` rather than a navigation because `ActorsTable` filters rows it already holds. On writes the
+ * `replaceState` rather than a navigation because the list filters rows it already holds. On writes the
  * value; off is the parameter's absence.
  *
- * THE COUNT DOES NOT MOVE WITH THE OTHER FILTERS, as the readiness tiles' counts do not: it is every flagged
- * person in this window, whatever the filter box or the tiles say.
+ * THE COUNT DOES NOT MOVE WITH THE OTHER FILTERS: it is everything flagged in this window, whatever the filter
+ * box or the tiles say.
  */
-export function CivilServantFilter({ count }: Readonly<{ count: number }>) {
+export function CivilServantFilter({ label, count }: Readonly<{ label: string; count: number }>) {
   const pathname = usePathname();
   const parameters = useSearchParams();
   const on = parseCivilServantFilter((parameter) => parameters.get(parameter));
@@ -46,7 +46,7 @@ export function CivilServantFilter({ count }: Readonly<{ count: number }>) {
       )}
     >
       <span className={clsx("shrink-0 w-2 h-2 rounded-full", CIVIL_SERVANT_DOT)} aria-hidden="true" />
-      {`${CIVIL_SERVANT_LABEL}s only`}
+      {label}
       <ToggleTick on={on} />
       <span className="tabular-nums text-slate-400">{count}</span>
     </button>

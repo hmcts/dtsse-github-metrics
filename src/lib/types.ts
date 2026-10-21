@@ -1222,6 +1222,12 @@ export interface TeamRow {
   actors: number;
   practice?: TeamPractice;
   labels: Record<string, number>;
+  /**
+   * `true` where at least `civil_servant_team_percentage` of the team's GitHub members are flagged as civil
+   * servants. Absent otherwise, including for a team whose membership was never read — `Contributor.civil_servant`'s
+   * rule: absence is not a claim that the team is not one.
+   */
+  civil_servant?: true;
 }
 
 export interface TeamDetail {
@@ -1242,6 +1248,8 @@ export interface TeamDetail {
   /** How this team works, which is what the team page carries and `/repositories` does not. */
   practice?: TeamPractice;
   labels: Record<string, number>;
+  /** `TeamRow.civil_servant`, carried onto the team's own page. */
+  civil_servant?: true;
   /** The window's merged pull requests across this team's repositories, newest first. */
   merges?: TeamMergeRow[];
   /** The window's commits that reached a default branch with no pull request, newest first. */

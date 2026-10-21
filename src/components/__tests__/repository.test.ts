@@ -234,20 +234,21 @@ describe("ContributorsTable", () => {
   });
 
   it("puts each figure under its own heading rather than another figure’s", () => {
-    expect(cells("carol").map((cell) => cell.text)).toEqual(["carol", "9", "6", "3", "2", "214 lines"]);
+    // The second cell is the Civil Servant column, empty for somebody nobody has flagged.
+    expect(cells("carol").map((cell) => cell.text)).toEqual(["carol", "", "9", "6", "3", "2", "214 lines"]);
   });
 
   it("colours a bypassed process amber and never red, and leaves a clean row green", () => {
     const carol = cells("carol");
     // Only the two columns about bypassed process carry tone, and both cap at amber.
-    expect(carol[3]?.className).toContain(TONE_VALUE.warn);
     expect(carol[4]?.className).toContain(TONE_VALUE.warn);
-    expect(carol[2]?.className).toContain("text-slate-300");
-    expect(carol[5]?.className).toContain("text-slate-300");
+    expect(carol[5]?.className).toContain(TONE_VALUE.warn);
+    expect(carol[3]?.className).toContain("text-slate-300");
+    expect(carol[6]?.className).toContain("text-slate-300");
     // Nobody pushed straight to the branch and nothing merged unreviewed, which reads well.
     const alice = cells("alice");
-    expect(alice[3]?.className).toContain(TONE_VALUE.good);
     expect(alice[4]?.className).toContain(TONE_VALUE.good);
+    expect(alice[5]?.className).toContain(TONE_VALUE.good);
     expect(markup).not.toContain(TONE_VALUE.bad);
   });
 
