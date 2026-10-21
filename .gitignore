@@ -49,6 +49,8 @@ config/local-*.json
 *.p12
 *.key
 
+scripts/
+
 charts/**/values.aat.yaml
 charts/**/values.preview.yaml
 

@@ -137,11 +137,19 @@ subcommand as production-touching unless you have checked which database it reso
 
 | Command | What it is |
 | --- | --- |
-| `yarn lint` | `biome check --error-on-warnings .` — a new warning fails the build |
+| `yarn lint` | `biome check --error-on-warnings .`, then `yarn lint:sonar` — a new warning or Sonar issue fails the build |
+| `yarn lint:sonar` | the SonarCloud quality profile's rules, through their ESLint ports (`eslint.config.mjs`) |
 | `yarn typecheck` | three passes: app, `tsconfig.cli.json`, `tsconfig.e2e.json` |
 | `yarn test:coverage` | unit suite; fails below 100% on any measure |
 | `yarn test:integration` | needs Postgres; run in CI; holds the Postgres-backed modules at 100% |
 | `yarn build` | `next build` plus the CLI's `tsc` build |
+
+**Sonar issues fail `yarn lint`, so they never reach the PR's SonarCloud analysis.** The rules come from
+`sonar-rules.json`, a committed snapshot of the project's SonarCloud quality profile; when the profile changes, run
+`yarn lint:sonar:sync` and commit the result. The handful of rules with no ESLint port are still caught by the
+SonarCloud scan. `// NOSONAR` is honoured, but an issue that looks like a false positive belongs in SonarCloud as
+*Accepted*, where a reviewer can see it. Claude Code runs the same check on every file it edits, through the hook
+in `.claude/settings.json`.
 
 **`yarn lint` is a no-op inside a worktree under `.claude/worktrees/`.** `biome.json` lists
 `"!**/.claude/worktrees"` in `files.includes`, so running `biome check .` from inside one collects no files and

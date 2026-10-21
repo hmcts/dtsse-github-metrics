@@ -28,7 +28,9 @@
     "test:smoke": "yarn e2e:browser && playwright test --config test/e2e/playwright.config.ts --grep @smoke",
     "test:functional": "yarn e2e:browser && playwright test --config test/e2e/playwright.config.ts --grep ${E2E_TEST_SCOPE:-@regression}",
     "test:fullfunctional": "yarn e2e:browser && playwright test --config test/e2e/playwright.config.ts --grep ${E2E_TEST_SCOPE:-@nightly}",
-    "lint": "biome check --error-on-warnings .",
+    "lint": "biome check --error-on-warnings . && yarn lint:sonar",
+    "lint:sonar": "node scripts/lint-sonar.mjs",
+    "lint:sonar:sync": "node scripts/sync-sonar-rules.mjs",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.cli.json --noEmit && tsc -p tsconfig.e2e.json --noEmit",
@@ -72,6 +74,9 @@
     "@vitejs/plugin-react": "6.1.2",
     "@vitest/coverage-v8": "4.1.6",
     "autoprefixer": "10.4.19",
+    "eslint": "10.11.0",
+    "eslint-plugin-sonarjs": "4.2.1",
+    "eslint-plugin-unicorn": "76.0.0",
     "jsdom": "29.1.1",
     "playwright-core": "1.56.1",
     "postcss": "8.4.39",
@@ -80,10 +85,12 @@
     "tailwindcss": "3.4.19",
     "tsx": "4.21.0",
     "typescript": "5.9.3",
+    "typescript-eslint": "8.70.1",
     "vite": "8.0.12",
     "vitest": "4.1.6"
   },
   "resolutions": {
+    "eslint-plugin-sonarjs/typescript": "5.9.3",
     "pg": "8.20.0"
   }
 }
