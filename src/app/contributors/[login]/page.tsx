@@ -45,6 +45,7 @@ export default async function ActorPage({
         kind="contributor"
         name={contributorLabel({ login: actor.actor_login, name: detail.name })}
         identifier={detail.name === undefined}
+        civilServant={detail.civil_servant}
         action={<NavWeekSelector options={windows.options} active={weeks} />}
         context={
           <>

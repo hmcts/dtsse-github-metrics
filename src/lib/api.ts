@@ -137,7 +137,7 @@ async function repositoryContributors(
   weeks: number,
   metrics: ReadonlyMap<string, BehaviourMetricSummary[]>
 ): Promise<ContributorRow[]> {
-  const [merges, pushes, names] = await Promise.all([mergeRows(configured, weeks), directPushRows(configured, weeks), contributorNames(weeks)]);
+  const [merges, pushes, people] = await Promise.all([mergeRows(configured, weeks), directPushRows(configured, weeks), contributorPeople(weeks)]);
   const landed = new Map<string, { login: string; contributions: number }>();
   for (const change of [...merges, ...pushes]) {
     if (change.repository !== repository || change.author === undefined) {
@@ -150,7 +150,7 @@ async function repositoryContributors(
   }
   return [...landed.values()]
     .map((entry) => ({
-      ...named(entry.login, names),
+      ...named(entry.login, people),
       contributions: entry.contributions,
       blocking: 0,
       metrics: metrics.get(entry.login.toLowerCase()) ?? []
@@ -182,38 +182,38 @@ export async function getActors(weeks: number): Promise<ActorRow[]> {
 }
 
 /**
- * Every contributor's profile name in this window, keyed on their folded login.
+ * Every contributor in this window as the pages name them, keyed on their folded login.
  *
  * OFF THE ESTATE'S OWN CONTRIBUTOR LIST rather than a second read of the organisation graph, which is the same
  * argument `teamActors` makes for folding the tables' own rows: the name on `/contributors` and the name on a team
  * page have to be one derivation, or two of them will eventually disagree about who somebody is. `actorRows` is
  * built with the other three reports and held per span, so every caller below shares one build and adds no query.
+ * The civil-servant flag comes the same way, so a badge on a team page is the badge on `/contributors`.
  *
  * Folded, for `contributorNames` in the report layer's reason: the logins on either side of this join are spelled
  * by different walks and a case difference would read exactly like an unset name.
  */
-async function contributorNames(weeks: number): Promise<Map<string, string>> {
+async function contributorPeople(weeks: number): Promise<Map<string, Contributor>> {
   const rows = await getActors(weeks);
-  const names = new Map<string, string>();
-  for (const row of rows) {
-    if (row.name !== undefined) {
-      names.set(row.login.toLowerCase(), row.name);
-    }
-  }
-  return names;
+  return new Map(rows.map((row) => [row.login.toLowerCase(), row]));
 }
 
 /**
- * One person as the pages name them: the login the caller holds, and a profile name where there is one.
+ * One person as the pages name them: the login the caller holds, and a profile name and the civil-servant flag
+ * where there are any.
  *
  * `stripAbsent` does not run over what this builds — these rows are assembled here rather than in the report
  * layer — so the absent case is written as a missing key rather than as `undefined`, which is the same rule stated
  * one layer down. A `name: undefined` surviving to a component would render nothing, which is the failure the
  * whole absent-versus-empty contract exists to prevent.
  */
-function named(login: string, names: ReadonlyMap<string, string>): Contributor {
-  const name = names.get(login.toLowerCase());
-  return name === undefined ? { login } : { login, name };
+function named(login: string, people: ReadonlyMap<string, Contributor>): Contributor {
+  const person = people.get(login.toLowerCase());
+  return {
+    login,
+    ...(person?.name === undefined ? {} : { name: person.name }),
+    ...(person?.civil_servant === true ? { civil_servant: true as const } : {})
+  };
 }
 
 /**
@@ -229,11 +229,11 @@ function named(login: string, names: ReadonlyMap<string, string>): Contributor {
  */
 export async function getActor(login: string, weeks: number): Promise<ActorDetail> {
   const configured = await configuration();
-  const [rows, merges, pushes, names] = await Promise.all([
+  const [rows, merges, pushes, people] = await Promise.all([
     getRepositories(weeks),
     mergeRows(configured, weeks),
     directPushRows(configured, weeks),
-    contributorNames(weeks)
+    contributorPeople(weeks)
   ]);
 
   const folded = login.toLowerCase();
@@ -253,10 +253,12 @@ export async function getActor(login: string, weeks: number): Promise<ActorDetai
   }
 
   const theirs = rows.filter((row) => contributions.has(row.repository));
+  const person = people.get(folded);
   return {
     // Keyed on the folded login rather than on the spelling a merge happened to carry, which is what the name map
     // is built on. Absent where GitHub holds no name, so the page heads itself with the login.
-    ...(names.has(folded) ? { name: names.get(folded) } : {}),
+    ...(person?.name === undefined ? {} : { name: person.name }),
+    ...(person?.civil_servant === true ? { civil_servant: true as const } : {}),
     actor: {
       // The first spelling a change carried, rather than the one in the URL.
       actor_login: first.author,
@@ -401,7 +403,7 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
     merges: ours,
     direct_pushes: pushes,
     ...(members === undefined ? {} : { members }),
-    actors: teamActors(ours, pushes, await contributorNames(weeks))
+    actors: teamActors(ours, pushes, await contributorPeople(weeks))
   };
 }
 
@@ -420,11 +422,11 @@ export async function getTeam(team: string, weeks: number): Promise<TeamDetail> 
  */
 export async function getTeamContributors(weeks: number): Promise<Record<string, Contributor[]>> {
   const configured = await configuration();
-  const [repositories, merges, directPushes, names] = await Promise.all([
+  const [repositories, merges, directPushes, people] = await Promise.all([
     getRepositories(weeks),
     mergeRows(configured, weeks),
     directPushRows(configured, weeks),
-    contributorNames(weeks)
+    contributorPeople(weeks)
   ]);
 
   const teamsOf = new Map<string, readonly string[]>(repositories.filter((row) => !ownedByIndividual(row)).map((row) => [row.repository, owners(row)]));
@@ -440,7 +442,7 @@ export async function getTeamContributors(weeks: number): Promise<Record<string,
     }
   }
 
-  return Object.fromEntries([...changesOf].map(([team, changes]) => [team, teamActors(changes.merges, changes.pushes, names)]));
+  return Object.fromEntries([...changesOf].map(([team, changes]) => [team, teamActors(changes.merges, changes.pushes, people)]));
 }
 
 /** One team's accumulating changes, created on first sight so the two loops above can share the map. */
@@ -462,7 +464,7 @@ function held(
  * `contributions` is every change they landed by either route, which is what makes the direct-push table's authors
  * appear here too — somebody who only ever pushes straight to the default branch is a contributor to the team.
  */
-function teamActors(merges: readonly TeamMergeRow[], pushes: readonly TeamDirectPushRow[], names: ReadonlyMap<string, string>): TeamActorRow[] {
+function teamActors(merges: readonly TeamMergeRow[], pushes: readonly TeamDirectPushRow[], people: ReadonlyMap<string, Contributor>): TeamActorRow[] {
   const found = new Map<string, { login: string; repositories: Set<string>; contributions: number }>();
   for (const row of [...merges, ...pushes]) {
     if (row.author === undefined) {
@@ -476,7 +478,7 @@ function teamActors(merges: readonly TeamMergeRow[], pushes: readonly TeamDirect
   }
   return (
     [...found.values()]
-      .map((entry) => ({ ...named(entry.login, names), repositories: entry.repositories.size, contributions: entry.contributions }))
+      .map((entry) => ({ ...named(entry.login, people), repositories: entry.repositories.size, contributions: entry.contributions }))
       // ALPHABETICAL BY LOGIN AND NOT BY NAME, unlike the `/contributors` column that a reader can re-sort. This
       // list has no sortable header, so its order is the one the page states in its own caption — and a name-led
       // order would put 58% of a team under whatever letter their login starts with, interleaved with the rest.

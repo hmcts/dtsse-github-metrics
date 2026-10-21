@@ -1,5 +1,7 @@
 import clsx from "clsx";
+import { CivilServantBadge } from "@/components/CivilServantBadge";
 import { ContributorName } from "@/components/ContributorName";
+import { CIVIL_SERVANT_LABEL } from "@/lib/civil-servant";
 import { contributorFigures } from "@/lib/contributor";
 import { quantity } from "@/lib/format";
 import { directCommitTone, type Tone, unreviewedMergeTone, valueClass } from "@/lib/tone";
@@ -41,6 +43,9 @@ export function ContributorsTable({ rows, weeks }: Readonly<{ rows: readonly Con
             <th scope="col" className="py-2 pl-3 pr-3 text-left font-medium">
               Contributor
             </th>
+            <th scope="col" className="py-2 pr-3 text-center font-medium">
+              {CIVIL_SERVANT_LABEL}
+            </th>
             <th scope="col" className="py-2 pr-3 text-right font-medium">
               Contributions
             </th>
@@ -67,6 +72,9 @@ export function ContributorsTable({ rows, weeks }: Readonly<{ rows: readonly Con
               <tr key={row.login} className="hover:bg-slate-800/30">
                 <td className="py-2 pl-3 pr-3">
                   <ContributorName person={row} weeks={weeks} />
+                </td>
+                <td className="py-2 pr-3 text-center">
+                  <CivilServantBadge civilServant={row.civil_servant} />
                 </td>
                 <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.contributions}</td>
                 <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{quantity(figures.merged)}</td>

@@ -23,7 +23,8 @@ const EMPTY_OPACITY = 0.38;
  * holds, so a router round trip would refetch the window to answer a question answered here.
  *
  * THE COUNTS DO NOT MOVE WITH THE FILTER BOX, as the estate wheels do not with the table's: they are counted by the
- * page over every row it holds, so a figure can be quoted whatever a reader has typed.
+ * page over every row it holds, so a figure can be quoted whatever a reader has typed. The one exception is the
+ * civil-servant toggle, which narrows what is counted — see `ContributorReadinessFilter` and `TeamReadinessFilter`.
  *
  * Each subgroup names its combination in words beside the dots in its labels' colours, so colour is never the only
  * thing telling two of them apart, and an applied filter wears `ToggleTick` as well as its fill.

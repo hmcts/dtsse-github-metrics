@@ -12,7 +12,8 @@ export const COMMANDS = [
   "prune",
   "evidence",
   "migrate",
-  "reduce-descriptions"
+  "reduce-descriptions",
+  "civil-servants"
 ] as const;
 
 export type Command = (typeof COMMANDS)[number];
@@ -69,6 +70,12 @@ export interface Arguments {
   write: boolean;
   /** Rows per batch, for a command that walks the whole fact table (reduce-descriptions). */
   batchSize?: number;
+  /** Logins named one at a time with `--login`, which may be repeated (civil-servants). */
+  logins: string[];
+  /** A file of logins, one per line (civil-servants). */
+  file?: string;
+  /** Remove the named logins' flags rather than adding them (civil-servants). */
+  remove: boolean;
 }
 
 const OPTIONS = {
@@ -82,7 +89,10 @@ const OPTIONS = {
   "unresolved-limit": { type: "string" },
   all: { type: "boolean" },
   write: { type: "boolean" },
-  "batch-size": { type: "string" }
+  "batch-size": { type: "string" },
+  login: { type: "string", multiple: true },
+  file: { type: "string" },
+  remove: { type: "boolean" }
 } as const;
 
 function integer(value: string | undefined, name: string): number | undefined {
@@ -151,6 +161,13 @@ export function parseArguments(argv: readonly string[]): Arguments {
   );
   const batchSize = atLeast(1, integer(values["batch-size"] as string | undefined, "batch-size"), "--batch-size must be at least one row");
 
+  const logins = (values.login as string[] | undefined) ?? [];
+  const file = values.file as string | undefined;
+  const remove = values.remove === true;
+  if (remove && logins.length === 0 && file === undefined) {
+    throw new UsageError("--remove needs the logins to remove, as --login or --file");
+  }
+
   const startsAt = instant(values.from as string | undefined, "from");
   const endsAt = instant(values.to as string | undefined, "to");
   if (startsAt !== undefined && endsAt !== undefined && days !== undefined) {
@@ -168,6 +185,9 @@ export function parseArguments(argv: readonly string[]): Arguments {
     proposeTeams: values["propose-teams"] === true,
     all: values.all === true,
     write: values.write === true,
+    logins,
+    ...(file === undefined ? {} : { file }),
+    remove,
     ...(unresolvedLimit === undefined ? {} : { unresolvedLimit }),
     ...(batchSize === undefined ? {} : { batchSize })
   };
@@ -192,6 +212,9 @@ commands:
   reduce-descriptions
               replace the stored descriptions of pull requests cached before they
               were reduced with the two answers reports read; counts unless --write
+  civil-servants
+              flag the logins given by --login or --file as civil servants', or with
+              --remove clear them; with neither, print how many are flagged
 
 options:
   --config <file>       path to the YAML configuration; repeat to layer files, later files winning
@@ -206,6 +229,9 @@ options:
   --all                 read every cohort repository rather than a sample of them (doctor)
   --write               apply the change; without it nothing is written (reduce-descriptions)
   --batch-size <n>      rows per batch, so a failure part-way commits what it did (reduce-descriptions)
+  --login <login>       a GitHub login; repeat for several (civil-servants)
+  --file <path>         a file of GitHub logins, one per line (civil-servants)
+  --remove              clear the named logins' flags instead of adding them (civil-servants)
 
 exit status:
   0  every configured repository was observed

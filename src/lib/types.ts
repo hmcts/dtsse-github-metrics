@@ -34,6 +34,13 @@ export interface Contributor {
   login: string;
   /** GitHub's profile name. Absent, never an empty string — see `Contributor`. */
   name?: string;
+  /**
+   * `true` where somebody has flagged this login as a civil servant's, in the `civil_servants` table.
+   *
+   * ABSENT RATHER THAN `false` for everybody else, because absence is all the table can say about them: nobody
+   * has stated that they are, which is not a statement that they are not. Never sent as `false`.
+   */
+  civil_servant?: true;
 }
 
 export type ObservationStatus = "observed" | "not_applicable";
@@ -1054,6 +1061,8 @@ export interface ActorDetail {
    * absent means GitHub holds no name, and the page heads itself with the login instead.
    */
   name?: string;
+  /** `Contributor.civil_servant`, beside the name for the name's reason. */
+  civil_servant?: true;
   teams: Record<string, string>;
   /**
    * Which of THIS PERSON'S repositories deploy to production, and nothing else.
@@ -1213,6 +1222,12 @@ export interface TeamRow {
   actors: number;
   practice?: TeamPractice;
   labels: Record<string, number>;
+  /**
+   * `true` where at least `civil_servant_team_percentage` of the team's GitHub members are flagged as civil
+   * servants. Absent otherwise, including for a team whose membership was never read — `Contributor.civil_servant`'s
+   * rule: absence is not a claim that the team is not one.
+   */
+  civil_servant?: true;
 }
 
 export interface TeamDetail {
@@ -1233,6 +1248,8 @@ export interface TeamDetail {
   /** How this team works, which is what the team page carries and `/repositories` does not. */
   practice?: TeamPractice;
   labels: Record<string, number>;
+  /** `TeamRow.civil_servant`, carried onto the team's own page. */
+  civil_servant?: true;
   /** The window's merged pull requests across this team's repositories, newest first. */
   merges?: TeamMergeRow[];
   /** The window's commits that reached a default branch with no pull request, newest first. */

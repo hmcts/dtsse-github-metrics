@@ -248,6 +248,20 @@ describe("--batch-size", () => {
   it("should refuse a batch size that is not a number", () => {
     expect(() => parseArguments(["reduce-descriptions", "--config", "m.yaml", "--batch-size", "lots"])).toThrow(/whole number/);
   });
+
+  it("should collect repeated --login values and a --file for civil-servants", () => {
+    expect(parseArguments(["civil-servants", "--config", "m.yaml", "--login", "a", "--login", "b", "--file", "logins.txt"])).toMatchObject({
+      command: "civil-servants",
+      logins: ["a", "b"],
+      file: "logins.txt",
+      remove: false
+    });
+  });
+
+  it("should refuse --remove with nothing to remove, which would read as clearing everybody", () => {
+    expect(() => parseArguments(["civil-servants", "--config", "m.yaml", "--remove"])).toThrow(/--remove needs the logins/);
+    expect(parseArguments(["civil-servants", "--config", "m.yaml", "--remove", "--login", "a"])).toMatchObject({ remove: true, logins: ["a"] });
+  });
 });
 
 describe("collectionStatus", () => {

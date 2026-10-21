@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { type AlertWalk, collectOrganisationAlerts, familyCoverage, resolveAlertScans } from "../evidence/alerts/collect.ts";
 import { readinessPolicy } from "../evidence/assessment/assessment.ts";
 import { botAccounts, cachedLastHumanCommit, excludedAuthors, reportedCohort } from "../evidence/behaviour/analysis.ts";
@@ -70,6 +71,7 @@ import { createSonarClient, type SonarClient, SonarError, sonarToken } from "../
 import { sonarProjectMap } from "../evidence/sonar/map.ts";
 import { resolveRepositoryProject } from "../evidence/sonar/resolve.ts";
 import { recordSecurityAlerts, storedAlertCounts } from "../evidence/store/alerts.ts";
+import { addCivilServants, civilServants, removeCivilServants } from "../evidence/store/civil-servants.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
 import { prevailingCachedCoverage } from "../evidence/store/coverage.ts";
@@ -1768,6 +1770,41 @@ function describeCensus(when: string, census: DescriptionCensus): string {
   return `${when}: ${census.rows} cached pull requests, ${census.carryingDescription} carrying a description, ${census.derived} measurable, ${census.unmeasurable} neither`;
 }
 
+/**
+ * Flags logins as civil servants', clears them, or counts them.
+ *
+ * THE ONLY WRITER OF `civil_servants`. The list behind it is work addresses, matched to logins by hand through the
+ * SSO mapping, so this takes logins and nothing else — an address passed here would be stored as a login nobody
+ * has. See `store/civil-servants.ts`.
+ *
+ * NOT under the collector lock: it makes no GitHub call and its writes are idempotent per login. It stamps the
+ * revision after a write that changed something, so the badge appears on the next page load rather than after the
+ * next collection.
+ */
+async function runCivilServants(configuration: Configuration, argv: Arguments): Promise<number> {
+  const organization = configuration.organization;
+  const named = [...argv.logins, ...(argv.file === undefined ? [] : (await readFile(argv.file, "utf8")).split(/\r?\n/))];
+  const logins = named.map((login) => login.trim()).filter((login) => login !== "");
+  const addresses = logins.filter((login) => login.includes("@"));
+  if (addresses.length > 0) {
+    throw new UsageError(`these are not GitHub logins: ${addresses.join(", ")}`);
+  }
+
+  if (logins.length === 0) {
+    console.info(`${(await civilServants(organization)).size} logins are flagged as civil servants in ${organization}`);
+    return EXIT_COMPLETE;
+  }
+
+  const changed = argv.remove ? await removeCivilServants(organization, logins) : await addCivilServants(organization, logins);
+  const rest = changed === logins.length ? "" : argv.remove ? "; the rest were not flagged" : "; the rest already were";
+  console.info(`${argv.remove ? "cleared" : "flagged"} ${changed} of ${logins.length} logins named${rest}`);
+  if (changed > 0) {
+    await stampRevision();
+  }
+  console.info(`${(await civilServants(organization)).size} logins are now flagged as civil servants in ${organization}`);
+  return EXIT_COMPLETE;
+}
+
 async function runMigrate(): Promise<number> {
   const applied = await migrate();
   console.info(applied.length === 0 ? "the database schema is already up to date" : `applied ${applied.length} migrations: ${applied.join(", ")}`);
@@ -1912,6 +1949,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
       // 0 having done nothing, which reads as "already reduced".
       case "reduce-descriptions":
         return await runReduceDescriptions(configuration, parsed);
+      case "civil-servants":
+        return await runCivilServants(configuration, parsed);
     }
   } catch (error) {
     process.stderr.write(`${messageOf(error)}\n`);

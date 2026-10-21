@@ -2,10 +2,12 @@
 
 import { useSearchParams } from "next/navigation";
 import { useState } from "react";
+import { CivilServantBadge } from "@/components/CivilServantBadge";
 import { ContributorName } from "@/components/ContributorName";
 import { EmptyState } from "@/components/EmptyState";
 import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
+import { CIVIL_SERVANT_LABEL, matchesCivilServant, parseCivilServantFilter } from "@/lib/civil-servant";
 import { CONTRIBUTOR_TERM_PARAMETER, matchesAny } from "@/lib/filter";
 import { contributorLabel } from "@/lib/person";
 import { combinationKey } from "@/lib/rag";
@@ -38,7 +40,18 @@ const READINESS: Column = {
  */
 const CONTRIBUTOR: Column = { key: "contributor", label: "Contributor", read: (row) => contributorLabel(row) };
 
-const COLUMNS: readonly Column[] = [CONTRIBUTOR, { key: "repositories", label: "Repositories", align: "right", read: (row) => row.repositories }, READINESS];
+/**
+ * Whether somebody is flagged as a civil servant, as a column of its own beside their name. Ascending puts the
+ * flagged first; everybody else ties and keeps the order the service sent.
+ */
+const CIVIL_SERVANT: Column = { key: "civil-servant", label: CIVIL_SERVANT_LABEL, align: "center", read: (row) => (row.civil_servant === true ? 0 : 1) };
+
+const COLUMNS: readonly Column[] = [
+  CONTRIBUTOR,
+  CIVIL_SERVANT,
+  { key: "repositories", label: "Repositories", align: "right", read: (row) => row.repositories },
+  READINESS
+];
 
 /**
  * Everyone who contributed to a reported repository in this window, by their repositories' labels.
@@ -66,13 +79,19 @@ export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly
   const [column, setColumn] = useState<Column>(READINESS);
   const [direction, setDirection] = useState<Direction>("ascending");
 
-  // The term the page's filter box writes, matched against the login and the profile name both, and the group the
-  // readiness tiles above the list write.
+  // The term the page's filter box writes, matched against the login and the profile name both, the group the
+  // readiness tiles above the list write, and the civil-servant toggle beside them.
   const parameters = useSearchParams();
   const term = parameters.get(CONTRIBUTOR_TERM_PARAMETER) ?? "";
   const readiness = parameters.get(READINESS_PARAMETER) ?? "";
+  const civilServantsOnly = parseCivilServantFilter((parameter) => parameters.get(parameter));
   const ordered = sorted(
-    rows.filter((row) => matchesAny([row.login, row.name], term) && matchesReadiness(classify(contributorLabels(row.labels, labelled)), readiness)),
+    rows.filter(
+      (row) =>
+        matchesAny([row.login, row.name], term) &&
+        matchesReadiness(classify(contributorLabels(row.labels, labelled)), readiness) &&
+        matchesCivilServant(row, civilServantsOnly)
+    ),
     column.read,
     direction
   );
@@ -84,7 +103,12 @@ export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly
 
   // Only a filter hiding everybody earns the sentence; nobody at all is the page's own empty state.
   if (ordered.length === 0 && rows.length > 0) {
-    return <EmptyState message="No contributor matches this filter." detail="Clear the filter box or the readiness filter to see everybody." />;
+    return (
+      <EmptyState
+        message="No contributor matches this filter."
+        detail="Clear the filter box, the readiness filter or the civil-servant toggle to see everybody."
+      />
+    );
   }
 
   return (
@@ -111,6 +135,9 @@ export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly
             <tr key={row.login} className="hover:bg-slate-800/30">
               <td className="py-2 pl-3 pr-3">
                 <ContributorName person={row} weeks={weeks} />
+              </td>
+              <td className="py-2 pr-3 text-center">
+                <CivilServantBadge civilServant={row.civil_servant} />
               </td>
               <td className="py-2 pr-3 text-right tabular-nums text-slate-300">{row.repositories}</td>
               <td className="py-2 pr-3 text-right">

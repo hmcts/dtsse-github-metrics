@@ -194,6 +194,18 @@ describe("getActor", () => {
     });
   });
 
+  it("should carry the civil-servant flag the contributor rows hold, here and in every table that names them", async () => {
+    mocks.actorRows.mockResolvedValue([{ login: "ada", name: "Ada Lovelace", civil_servant: true, repositories: 1 }]);
+    mocks.repositoryReport.mockResolvedValue({ contributors: new Map() });
+    const getters = await api();
+
+    expect(await getters.getActor("ada", 4)).toMatchObject({ name: "Ada Lovelace", civil_servant: true });
+    expect((await getters.getRepository("api", 4)).contributors).toEqual([
+      { login: "Ada", name: "Ada Lovelace", civil_servant: true, contributions: 2, blocking: 0, metrics: [] },
+      { login: "bob", contributions: 2, blocking: 0, metrics: [] }
+    ]);
+  });
+
   it("should order by contributions then name, and leave production absent where no list was read", async () => {
     mocks.repositoryRows.mockResolvedValue([{ repository: "web", team: "platform" }]);
     mocks.mergeRows.mockResolvedValue([merge("web", 1, "dan"), merge("gone", 2, "dan"), merge("api", 3, "dan"), merge("api", 4, "dan")]);

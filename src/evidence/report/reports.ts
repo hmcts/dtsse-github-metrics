@@ -10,6 +10,7 @@ import { contributorNames } from "../org/people.ts";
 import { enablementInstants, teamDisplayNames } from "../policy/repositories.ts";
 import type { Configuration } from "../policy/schema.ts";
 import { storedRepositoryAlertScans } from "../store/alerts.ts";
+import { civilServants } from "../store/civil-servants.ts";
 import { getSourceCoverage } from "../store/coverage.ts";
 import { declaredProduction, type ProductionLayers } from "../store/production-override.ts";
 import { storedRepositoryState } from "../store/repository-state.ts";
@@ -25,7 +26,7 @@ import { builtDirectPushRows, builtMergeRows } from "./rows/changes.ts";
 import { builtTeamMemberRows } from "./rows/members.ts";
 import { repositoryRow } from "./rows/repository.ts";
 import { requestedTrendPeriods, spanStartsAt, TREND_PERIOD_DAYS } from "./spans.ts";
-import { builtTeamRows } from "./teams.ts";
+import { builtTeamRows, withCivilServantTeams } from "./teams.ts";
 import { builtRepositoryTrend, trendWithoutEnablement, trendWithoutWholePeriod } from "./trend.ts";
 
 /**
@@ -94,6 +95,8 @@ interface EstateReports {
   members: ReadonlyMap<string, contract.TeamMemberRow[]>;
   /** The teams the cohort resolved to, in the order the cards are drawn. */
   teams: string[];
+  /** Folded logins flagged as civil servants', which the team cards are flagged from. */
+  civilServants: ReadonlySet<string>;
   /** The window these reports describe, and how far the collection behind them reached. */
   window: ReportingWindow;
   collectedThrough?: Date;
@@ -147,7 +150,12 @@ export async function overviewSummary(configuration: Configuration, weeks: numbe
  */
 export async function teamRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.TeamRow[]> {
   const reports = await estateReports(configuration, weeks, reference);
-  return builtTeamRows(reports.rows, [...reports.merges, ...reports.directPushes], reports.teams, teamDisplayNames(configuration));
+  return withCivilServantTeams(
+    builtTeamRows(reports.rows, [...reports.merges, ...reports.directPushes], reports.teams, teamDisplayNames(configuration)),
+    reports.members,
+    reports.civilServants,
+    configuration.civil_servant_team_percentage
+  );
 }
 
 export async function actorRows(configuration: Configuration, weeks: number, reference = new Date()): Promise<contract.ActorRow[]> {
@@ -373,11 +381,15 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
   // The graph's names, read once per span build and held with the reports rather than per page. It is 778 rows on
   // this estate and it does not vary by span — but the reports are what the cache holds, so a name that rode
   // its own entry would be a second thing to invalidate when a collection lands.
-  const names = await contributorNames(configuration.organization);
+  //
+  // The civil-servant flags ride the same build for the same reason, and are read beside the names: a handful of
+  // rows, set by hand, and a flag held in an entry of its own would be a second thing to invalidate. The CLI that
+  // writes them stamps the revision, which is what rebuilds this.
+  const [names, civil] = await Promise.all([contributorNames(configuration.organization), civilServants(configuration.organization)]);
 
   return {
     rows,
-    actors: builtActorRows(rows, facts, names, botAccounts(configuration.cohort.bot_accounts)),
+    actors: builtActorRows(rows, facts, names, botAccounts(configuration.cohort.bot_accounts), civil),
     merges: builtMergeRows(facts),
     directPushes: builtDirectPushRows(facts),
     // Off the shared read, so the membership behind all five spans is one query — and named through the same map
@@ -386,6 +398,7 @@ async function buildEstateReports(configuration: Configuration, weeks: number, r
     // Resolved ONCE, off the cohort the rows were built from, so the summary's team count and the cards it counts
     // are the same list rather than two reads of the graph that could disagree.
     teams: cohortTeams(read.cohort),
+    civilServants: civil,
     window: { startsAt: window.startsAt, endsAt: window.endsAt },
     collectedThrough
   };

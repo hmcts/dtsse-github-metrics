@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { AvailabilityReason, GitHubError } from "../evidence/domain/availability.ts";
 import { CohortUncollectedError } from "../evidence/org/cohort.ts";
@@ -50,6 +53,9 @@ const storedAlertCounts = vi.hoisted(() => vi.fn(async () => new Map<string, unk
 const resolveCredentials = vi.hoisted(() => vi.fn());
 const createGitHubClient = vi.hoisted(() => vi.fn());
 const stampRevision = vi.hoisted(() => vi.fn());
+const civilServants = vi.hoisted(() => vi.fn(async () => new Set<string>(["gevans-hmcts"])));
+const addCivilServants = vi.hoisted(() => vi.fn(async (_organization: string, _logins: readonly string[]) => 0));
+const removeCivilServants = vi.hoisted(() => vi.fn(async (_organization: string, _logins: readonly string[]) => 0));
 // Granted by default so the collect cases test orchestration, and overridable so the stand-down branch — the
 // one that fires on whichever cluster loses the lock, every day — is reachable without a database.
 const asSoleCollector = vi.hoisted(() => vi.fn(async (run: () => Promise<unknown>) => run()));
@@ -191,6 +197,7 @@ vi.mock("../evidence/store/org-graph.ts", () => ({
   recordRepositoryOwnership
 }));
 vi.mock("../evidence/store/production-override.ts", () => ({ seedProduction }));
+vi.mock("../evidence/store/civil-servants.ts", () => ({ civilServants, addCivilServants, removeCivilServants }));
 vi.mock("../evidence/store/sonar-map.ts", () => ({ storedSonarMappings, recordSonarMapping }));
 // Only the PACER is replaced, and only because it is the one piece of this layer that spends wall-clock time:
 // spacing the commit search to a per-minute quota is what makes a real run take 10 to 30 minutes, and a suite
@@ -2735,5 +2742,76 @@ describe("collect-alerts", () => {
     // having run the commands out of order rather than as a collection that failed. Same answer `collect` gives.
     expect(await main(["collect-alerts", "--config", "m.yaml"])).toBe(EXIT_USAGE);
     expect(recordSecurityAlerts).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The one writer of `civil_servants`.
+ *
+ * Its SQL is the store's, asserted against a real table in `test/integration/civil-servants.test.ts`. What these
+ * cases are about is what the command does with what it is given: logins from `--login` and from a file alike, an
+ * email address refused rather than stored as a login, and the revision stamped only when a row actually moved.
+ */
+describe("civil-servants", () => {
+  let directory: string;
+
+  beforeEach(async () => {
+    loadConfiguration.mockResolvedValue({ organization: "hmcts", lookback: { operational_days: 90 }, teams: [], org_graph: { enabled: true } });
+    directory = await mkdtemp(path.join(tmpdir(), "civil-servants-"));
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  /** Everything the command printed, as one block. */
+  function printed(): string {
+    return (console.info as unknown as MockInstance).mock.calls.map((call) => String(call[0])).join("\n");
+  }
+
+  it("should count the flagged logins when given none to change", async () => {
+    expect(await main(["civil-servants", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+
+    expect(addCivilServants).not.toHaveBeenCalled();
+    expect(removeCivilServants).not.toHaveBeenCalled();
+    expect(printed()).toContain("1 logins are flagged as civil servants in hmcts");
+  });
+
+  it("should flag the logins from a file and from --login together, skipping blank lines", async () => {
+    const file = path.join(directory, "logins.txt");
+    await writeFile(file, "GEvans-HMCTS\r\n\n  NatashaAlker  \n");
+    addCivilServants.mockResolvedValueOnce(3);
+
+    expect(await main(["civil-servants", "--config", "m.yaml", "--login", "js-hmcts", "--file", file])).toBe(EXIT_COMPLETE);
+
+    expect(addCivilServants).toHaveBeenCalledWith("hmcts", ["js-hmcts", "GEvans-HMCTS", "NatashaAlker"]);
+    expect(printed()).toContain("flagged 3 of 3 logins named\n");
+    // So the badge shows on the next page load rather than after the next collection.
+    expect(stampRevision).toHaveBeenCalledOnce();
+  });
+
+  it("should not stamp the revision when every login was already flagged", async () => {
+    expect(await main(["civil-servants", "--config", "m.yaml", "--login", "GEvans-HMCTS"])).toBe(EXIT_COMPLETE);
+
+    expect(printed()).toContain("flagged 0 of 1 logins named; the rest already were");
+    expect(stampRevision).not.toHaveBeenCalled();
+  });
+
+  it("should clear the named logins with --remove", async () => {
+    removeCivilServants.mockResolvedValueOnce(1);
+
+    expect(await main(["civil-servants", "--config", "m.yaml", "--remove", "--login", "GEvans-HMCTS", "--login", "nobody"])).toBe(EXIT_COMPLETE);
+
+    expect(removeCivilServants).toHaveBeenCalledWith("hmcts", ["GEvans-HMCTS", "nobody"]);
+    expect(addCivilServants).not.toHaveBeenCalled();
+    expect(printed()).toContain("cleared 1 of 2 logins named; the rest were not flagged");
+    expect(stampRevision).toHaveBeenCalledOnce();
+  });
+
+  it("should refuse an email address rather than store it as a login", async () => {
+    expect(await main(["civil-servants", "--config", "m.yaml", "--login", "gareth.evans4@justice.gov.uk"])).toBe(EXIT_USAGE);
+
+    expect(addCivilServants).not.toHaveBeenCalled();
+    expect(process.stderr.write).toHaveBeenCalledWith("these are not GitHub logins: gareth.evans4@justice.gov.uk\n");
   });
 });

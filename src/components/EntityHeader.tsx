@@ -1,5 +1,6 @@
 import clsx from "clsx";
 import { ExternalLink } from "lucide-react";
+import { CivilServantBadge } from "@/components/CivilServantBadge";
 import { ProductionBadge } from "@/components/ProductionBadge";
 import { RAGLabel } from "@/components/RAGCard";
 import { borderClass } from "@/lib/rag";
@@ -28,6 +29,7 @@ export function EntityHeader({
   identifier = true,
   label,
   production,
+  civilServant,
   context,
   action,
   href
@@ -53,6 +55,8 @@ export function EntityHeader({
    * passes it in above the unavailable branch.
    */
   production?: boolean;
+  /** A contributor somebody has flagged as a civil servant, or a team enough of whose members are. */
+  civilServant?: boolean;
   context?: React.ReactNode;
   /** The header's own control — the week selector, which every page carries at the top right. */
   action?: React.ReactNode;
@@ -73,6 +77,7 @@ export function EntityHeader({
         <h1 className={clsx("text-xl text-slate-100 break-all", identifier && "font-mono")}>{name}</h1>
         {label ? <RAGLabel label={label} /> : null}
         <ProductionBadge production={production} />
+        <CivilServantBadge civilServant={civilServant} />
         {/* A PLAIN ANCHOR and not `next/link`: this leaves the app, so there is nothing to prefetch and no client
             router to involve. `rel="noreferrer"` alongside `noopener` because the destination does not need to be
             told which of our pages somebody was reading. The icon is decoration — the visible words carry the
