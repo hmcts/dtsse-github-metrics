@@ -140,6 +140,11 @@ that gave up after retrying.
   `metrics.yaml` to fix a project it can't resolve.
 - `prune --days N` deletes cache intervals no collection has used for N days. It never touches the SonarCloud
   map.
+- `civil-servants` flags GitHub logins as civil servants, for the badge and the filter on `/contributors`.
+  `--file logins.txt` (one login per line) or `--login <login>` adds them, `--remove` clears them, and with
+  neither it prints the count. Nothing collected can tell a civil servant from a contractor, so the list is kept
+  by hand, and it holds logins only, never email addresses. Keep the source list out of the repository.
+  `scripts/find-civil-servants` matches a list of work addresses to logins through the SSO mapping.
 
 Missing data is shown with its reason. A repository with no CVE report has not been scanned;
 one with a report and no findings is clean.
