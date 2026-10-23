@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+# Replaces the local compose database with an exact copy of AAT's: every schema, table, sequence, function and
+# row, and `_prisma_migrations` with them, so the local migration history is AAT's too.
+#
+#   scripts/sync-aat-to-local            # needs the VPN
+#   scripts/sync-aat-to-local --yes      # without the confirmation prompt
+#
+# THE SOURCE IS AAT'S READ-ONLY USER, taken from the environment as one complete set, either
+#   PGHOST, PGPORT, PGUSER, PGPASSWORD, PGDATABASE                                   (preferred), or
+#   POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DATABASE
+# The PG* set wins when PGHOST is set; the two are never mixed. PGPORT and POSTGRES_PORT default to 5432, and
+# PGSSLMODE to `require` (set it to `disable` to copy from a server without TLS).
+#
+# AAT IS ONLY READ. The credentials are read-only, and the dump runs in a read-only session as well. Everything that
+# drops or restores is pointed at the local compose server only, and the script refuses to start if the target is
+# not a local host or is the same database as the source.
+#
+# THE LOCAL DATABASE IS DROPPED AND RECREATED, not emptied, so nothing local survives: not a table AAT lacks, not an
+# extension, not a migration this branch has applied ahead of AAT. Run `yarn db:migrate` afterwards to put the
+# branch's own migrations back on top. Owners and grants are not copied (`--no-owner --no-acl`), because AAT's roles
+# do not exist locally; everything is owned by the local user. That is the only difference from AAT.
+#
+# Unlike a PR preview's copy, secret-scanning locations are NOT blanked: the copy stays on this machine.
+#
+# The client tools run inside the compose container (`postgres:16-alpine`), so no local `pg_dump` is needed and its
+# version matches the server. None of the variables above reach the commands that touch the local database: those
+# run in the container with their connection given explicitly.
+set -euo pipefail
+
+repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo"
+
+assume_yes=false
+for argument in "$@"; do
+  case "$argument" in
+    -y | --yes) assume_yes=true ;;
+    -h | --help)
+      sed -n '2,/^set -euo/p' "$0" | sed '$d; s/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "sync-aat-to-local: unknown argument $argument" >&2
+      exit 2
+      ;;
+  esac
+done
+
+# The local end: what `docker-compose.yml` serves, seen from inside its own container.
+target_host=localhost
+target_port=5432
+target_user=hmcts
+target_database=github_metrics
+
+# The AAT end: one whole set of variables, so a stray PGUSER can never pair with POSTGRES_HOST.
+if [[ -n "${PGHOST:-}" ]]; then
+  names=(PGHOST PGPORT PGUSER PGPASSWORD PGDATABASE)
+elif [[ -n "${POSTGRES_HOST:-}" ]]; then
+  names=(POSTGRES_HOST POSTGRES_PORT POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DATABASE)
+else
+  echo "sync-aat-to-local: set PGHOST, PGPORT, PGUSER, PGPASSWORD and PGDATABASE to AAT's read-only user" >&2
+  exit 2
+fi
+source_host="${!names[0]}"
+source_port="${!names[1]:-5432}"
+source_user="${!names[2]:-}"
+source_password="${!names[3]:-}"
+source_database="${!names[4]:-}"
+missing=()
+[[ -n "$source_user" ]] || missing+=("${names[2]}")
+[[ -n "$source_password" ]] || missing+=("${names[3]}")
+[[ -n "$source_database" ]] || missing+=("${names[4]}")
+if ((${#missing[@]} > 0)); then
+  echo "sync-aat-to-local: ${names[0]} is set, but these are missing: ${missing[*]}" >&2
+  exit 2
+fi
+unset missing
+
+case "$target_host" in
+  localhost | 127.0.0.1 | ::1) ;;
+  *)
+    echo "refusing to replace ${target_host}: only the local compose database may be replaced" >&2
+    exit 1
+    ;;
+esac
+if [[ "$source_host" == "$target_host" && "$source_port" == "$target_port" && "$source_database" == "$target_database" ]]; then
+  echo "refusing to copy ${target_database} onto itself" >&2
+  exit 1
+fi
+
+echo "source: ${source_user}@${source_host}:${source_port}/${source_database} (read only)"
+echo "target: ${target_user}@${target_host}:${target_port}/${target_database} in the compose container (dropped and recreated)"
+if [[ "$assume_yes" != true ]]; then
+  read -r -p "replace the local database? [y/N] " answer
+  [[ "$answer" == [yY] || "$answer" == [yY][eE][sS] ]] || { echo "nothing changed"; exit 1; }
+fi
+
+echo "starting the compose database"
+docker compose up -d --wait postgres >/dev/null
+
+# Every client command runs in the compose container. -T because stdin and stdout carry the dump.
+in_container() {
+  docker compose exec -T "$@"
+}
+
+local_psql() {
+  in_container postgres psql -X -q -v ON_ERROR_STOP=1 -h "$target_host" -p "$target_port" -U "$target_user" "$@"
+}
+
+workdir="$(mktemp -d)"
+trap 'rm -rf "$workdir"' EXIT
+dump="$workdir/aat.dump"
+
+# Dumped to a file before anything local is touched, so a dump that fails (VPN down, an expired `az` session)
+# leaves the local database as it was. `default_transaction_read_only` makes the session itself refuse a write.
+echo "dumping ${source_database}"
+started=$(date +%s)
+in_container \
+  -e PGPASSWORD="$source_password" \
+  -e PGSSLMODE="${PGSSLMODE:-require}" \
+  -e PGCONNECT_TIMEOUT=30 \
+  -e PGOPTIONS="-c default_transaction_read_only=on" \
+  postgres pg_dump --format=custom --no-owner --no-acl \
+  -h "$source_host" -p "$source_port" -U "$source_user" -d "$source_database" \
+  >"$dump"
+if [[ "$(head -c 5 "$dump")" != PGDMP ]]; then
+  echo "the dump is not a custom-format archive ($(wc -c <"$dump") bytes), so nothing local was changed" >&2
+  exit 1
+fi
+echo "dumped $(du -h "$dump" | cut -f1) in $(($(date +%s) - started))s"
+
+# WITH (FORCE) ends any session still attached, such as a running `yarn dev`, which reconnects to the copy.
+echo "recreating ${target_database}"
+local_psql -d postgres -v database="$target_database" -v owner="$target_user" <<'SQL'
+DROP DATABASE IF EXISTS :"database" WITH (FORCE);
+CREATE DATABASE :"database" OWNER :"owner";
+SQL
+
+# The new database's `public` schema already exists, so the dump's `CREATE SCHEMA public`, if it carries one, is
+# the one error worth tolerating. --exit-on-error would stop at it, so errors are counted instead and any other
+# one fails the run.
+echo "restoring into ${target_database}"
+started=$(date +%s)
+if ! in_container postgres pg_restore --no-owner --no-acl \
+  -h "$target_host" -p "$target_port" -U "$target_user" -d "$target_database" \
+  <"$dump" 2>"$workdir/restore.log"; then
+  if grep -v -e 'schema "public" already exists' -e 'Command was: CREATE SCHEMA public' \
+    -e 'errors ignored on restore: 1$' -e 'while PROCESSING TOC' -e 'from TOC entry' "$workdir/restore.log" |
+    grep -q .; then
+    cat "$workdir/restore.log" >&2
+    echo "the restore failed; ${target_database} is incomplete, so run this again" >&2
+    exit 1
+  fi
+fi
+echo "restored in $(($(date +%s) - started))s"
+
+# Restored tables carry no planner statistics until autovacuum reaches them.
+local_psql -d "$target_database" -c "ANALYZE"
+
+# What the copy holds, and how its migration history compares with this branch's.
+local_psql -d "$target_database" -A -t <<'SQL' | sed 's/^/  /'
+SELECT format('%s.%s: %s rows', schemaname, relname, n_live_tup) FROM pg_stat_user_tables ORDER BY schemaname, relname;
+SQL
+
+if local_psql -d "$target_database" -A -t -c "SELECT to_regclass('public._prisma_migrations') IS NOT NULL" | grep -q t; then
+  local_psql -d "$target_database" -A -t \
+    -c "SELECT migration_name FROM _prisma_migrations WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL ORDER BY 1" \
+    >"$workdir/applied"
+  find prisma/migrations -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort >"$workdir/local"
+  behind="$(comm -23 "$workdir/applied" "$workdir/local")"
+  ahead="$(comm -13 "$workdir/applied" "$workdir/local")"
+  echo "AAT has applied $(wc -l <"$workdir/applied" | tr -d ' ') migrations"
+  if [[ -n "$behind" ]]; then
+    echo "AAT has migrations this branch does not carry, so merge master before migrating:"
+    printf '  %s\n' $behind
+  fi
+  if [[ -n "$ahead" ]]; then
+    echo "this branch has migrations AAT has not applied; \`yarn db:migrate\` applies them to the copy:"
+    printf '  %s\n' $ahead
+  fi
+fi
+
+echo "the local database now matches ${source_host}/${source_database}"
