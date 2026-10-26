@@ -1,7 +1,8 @@
 /**
- * How a civil servant is marked, wherever the site marks one, and the `/contributors` filter on it.
+ * How a civil servant or a civil servant team is marked, wherever the site marks one, and the filters on it.
  *
- * The flag comes from the `civil_servants` table and only ever reads `true` — see `Contributor.civil_servant`.
+ * The flag comes from the `civil_servants` table for people and the `civil_servant_teams` table for teams, and only
+ * ever reads `true` — see `Contributor.civil_servant`.
  * The badge's ABSENCE IS NOT A CLAIM, as the production badge's is not: somebody with no badge is somebody nobody
  * has flagged.
  */

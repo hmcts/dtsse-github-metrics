@@ -71,6 +71,7 @@ import { createSonarClient, type SonarClient, SonarError, sonarToken } from "../
 import { sonarProjectMap } from "../evidence/sonar/map.ts";
 import { resolveRepositoryProject } from "../evidence/sonar/resolve.ts";
 import { recordSecurityAlerts, storedAlertCounts } from "../evidence/store/alerts.ts";
+import { addCivilServantTeams, civilServantTeams, removeCivilServantTeams } from "../evidence/store/civil-servant-teams.ts";
 import { addCivilServants, civilServants, removeCivilServants } from "../evidence/store/civil-servants.ts";
 import { collectionState, stampCollection, stampRevision } from "../evidence/store/collection-state.ts";
 import { asSoleCollector } from "../evidence/store/collector-lock.ts";
@@ -1806,6 +1807,82 @@ async function runCivilServants(configuration: Configuration, argv: Arguments): 
   return EXIT_COMPLETE;
 }
 
+/** The label that marks a civil servant team in the `civil-servant-teams` file, matched without regard to case. */
+const CIVIL_SERVANT_TEAM_LABEL = "civil servant";
+
+/**
+ * Reads a `civil-servant-teams` file into each team's flag.
+ *
+ * One `team,label` line per team, with no header. The label is `Civil Servant` to flag the team or blank to clear
+ * it; a line with no comma has a blank label. Either field may be quoted, as a spreadsheet exports it. Blank lines
+ * are skipped, and anything else — another label, a line with no team, or one team given both ways — is refused
+ * before anything is written.
+ */
+export function parseCivilServantTeams(text: string): Map<string, boolean> {
+  const flags = new Map<string, boolean>();
+  const refused: string[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (line.trim() === "") {
+      continue;
+    }
+    const comma = line.indexOf(",");
+    const slug = unquoted(comma === -1 ? line : line.slice(0, comma)).toLowerCase();
+    const flag = labelFlag(comma === -1 ? "" : unquoted(line.slice(comma + 1)));
+    if (slug === "" || flag === undefined || (flags.has(slug) && flags.get(slug) !== flag)) {
+      refused.push(line);
+      continue;
+    }
+    flags.set(slug, flag);
+  }
+  if (refused.length > 0) {
+    throw new UsageError(`expected team,Civil Servant or team, on each line, and one label per team; refused: ${refused.join(" | ")}`);
+  }
+  return flags;
+}
+
+/** What a label sets the flag to: on for `Civil Servant`, off for blank, and `undefined` for anything else. */
+function labelFlag(label: string): boolean | undefined {
+  if (label === "") {
+    return false;
+  }
+  return label.toLowerCase() === CIVIL_SERVANT_TEAM_LABEL ? true : undefined;
+}
+
+/** A CSV field trimmed, with one pair of surrounding double quotes removed. */
+function unquoted(field: string): string {
+  const trimmed = field.trim();
+  return trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1).trim() : trimmed;
+}
+
+/**
+ * Sets each team in the file as a civil servant team or not, or counts them.
+ *
+ * THE ONLY WRITER OF `civil_servant_teams`. Every team the file names is set to what its line says, so a blank label
+ * clears a flag; a team the file does not name is left as it was. See `parseCivilServantTeams` for the format.
+ *
+ * NOT under the collector lock, for `runCivilServants`' reason, and it stamps the revision after a write that
+ * changed something for the same one.
+ */
+async function runCivilServantTeams(configuration: Configuration, argv: Arguments): Promise<number> {
+  const organization = configuration.organization;
+  if (argv.file === undefined) {
+    console.info(`${(await civilServantTeams(organization)).size} teams are flagged as civil servant teams in ${organization}`);
+    return EXIT_COMPLETE;
+  }
+
+  const flags = parseCivilServantTeams(await readFile(argv.file, "utf8"));
+  const on = [...flags].filter(([, flag]) => flag).map(([team]) => team);
+  const off = [...flags].filter(([, flag]) => !flag).map(([team]) => team);
+  const added = await addCivilServantTeams(organization, on);
+  const removed = await removeCivilServantTeams(organization, off);
+  console.info(`${flags.size} teams named: flagged ${added} of ${on.length} labelled, cleared ${removed} of ${off.length} unlabelled`);
+  if (added + removed > 0) {
+    await stampRevision();
+  }
+  console.info(`${(await civilServantTeams(organization)).size} teams are now flagged as civil servant teams in ${organization}`);
+  return EXIT_COMPLETE;
+}
+
 async function runMigrate(): Promise<number> {
   const applied = await migrate();
   console.info(applied.length === 0 ? "the database schema is already up to date" : `applied ${applied.length} migrations: ${applied.join(", ")}`);
@@ -1952,6 +2029,8 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         return await runReduceDescriptions(configuration, parsed);
       case "civil-servants":
         return await runCivilServants(configuration, parsed);
+      case "civil-servant-teams":
+        return await runCivilServantTeams(configuration, parsed);
     }
   } catch (error) {
     process.stderr.write(`${messageOf(error)}\n`);

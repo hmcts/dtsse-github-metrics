@@ -62,6 +62,7 @@ async function wipe(): Promise<void> {
   await prisma.repositoryOwnership.deleteMany();
   await prisma.repositoryProduction.deleteMany();
   await prisma.civilServant.deleteMany();
+  await prisma.civilServantTeam.deleteMany();
   await prisma.repositoryNote.deleteMany();
   // Findings first: the foreign key would refuse the scans otherwise, which is the point of having it.
   await prisma.cveFinding.deleteMany();
@@ -314,6 +315,14 @@ describe("pruneCache", () => {
     await pruneCache(FUTURE);
 
     expect(await prisma.civilServant.count()).toBe(1);
+  });
+
+  it("should never delete a civil servant team flag, which came from a list somebody keeps by hand", async () => {
+    await prisma.civilServantTeam.create({ data: { organization: "hmcts", team: "civil" } });
+
+    await pruneCache(FUTURE);
+
+    expect(await prisma.civilServantTeam.count()).toBe(1);
   });
 
   it("should never delete a repository note, which nothing but its author could write again", async () => {

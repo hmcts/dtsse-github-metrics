@@ -376,12 +376,7 @@ export const configurationSchema = z
     //
     // Matched case-insensitively against the cohort's own spelling, as `cohort.no_direct_pushes` is: a name here
     // is typed by hand and a repository name is not. A name matching no repository does nothing.
-    production_repositories: z.array(z.string()).default([]),
-    // HOW MUCH OF A TEAM HAS TO BE CIVIL SERVANTS for its card to carry the Civil Servant badge, as a percentage
-    // of the team's GitHub members. The people come from the `civil_servants` table; this only says how many of
-    // them make a team. A threshold rather than a majority because teams mix civil servants and contractors, and
-    // the question the badge answers is whether the team has a meaningful civil-service presence.
-    civil_servant_team_percentage: percentage.default(33)
+    production_repositories: z.array(z.string()).default([])
   })
   .strict()
   .superRefine(validateCrossReferences);

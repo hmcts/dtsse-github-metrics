@@ -55,7 +55,7 @@ export function EntityHeader({
    * passes it in above the unavailable branch.
    */
   production?: boolean;
-  /** A contributor somebody has flagged as a civil servant, or a team enough of whose members are. */
+  /** A contributor flagged as a civil servant, or a team flagged as a civil servant team. */
   civilServant?: boolean;
   context?: React.ReactNode;
   /** The header's own control — the week selector, which every page carries at the top right. */

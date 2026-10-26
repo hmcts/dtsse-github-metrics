@@ -1223,8 +1223,7 @@ export interface TeamRow {
   practice?: TeamPractice;
   labels: Record<string, number>;
   /**
-   * `true` where at least `civil_servant_team_percentage` of the team's GitHub members are flagged as civil
-   * servants. Absent otherwise, including for a team whose membership was never read — `Contributor.civil_servant`'s
+   * `true` where the team is in the `civil_servant_teams` table. Absent otherwise — `Contributor.civil_servant`'s
    * rule: absence is not a claim that the team is not one.
    */
   civil_servant?: true;

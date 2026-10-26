@@ -7,7 +7,7 @@
 // One Postgres database holds both, so the boundary is no longer a file path. It survives as an
 // invariant instead: `prune` may delete from the four cache tables and must never touch
 // `alert_observations`, `sonar_project_map`, the six organisation-graph tables,
-// `repository_production`, `civil_servants`, `repository_notes`, `cve_scans` and `cve_findings`, or
+// `repository_production`, `civil_servants`, `civil_servant_teams`, `repository_notes`, `cve_scans` and `cve_findings`, or
 // `security_alert_scans` and `security_alerts`. That is enforced by
 // test/integration/prune-never-touches-durable.test.ts, not by convention.
 //
@@ -338,6 +338,25 @@ model CivilServant {
 
   @@id([organization, login])
   @@map("civil_servants")
+}
+
+/// Which teams are civil servant teams, kept by hand.
+///
+/// ONE ROW PER FLAGGED TEAM SLUG, AND PRESENCE IS THE FLAG, as for `CivilServant`. Written by
+/// `metrics civil-servant-teams` from a file listing each team with or without the `Civil Servant` label, and by
+/// nothing the collector runs.
+///
+/// DURABLE, for `CivilServant`'s reason: the fact came from a person, so `prune` may not touch it. The slug is
+/// CASEFOLDED by CHECK constraint, because the report layer keys teams on the folded slug.
+model CivilServantTeam {
+  organization String
+  team         String
+  /// Who added the row — an email, or whatever identifies them to their colleagues. Optional.
+  addedBy      String?  @map("added_by")
+  addedAt      DateTime @default(now()) @map("added_at") @db.Timestamptz(6)
+
+  @@id([organization, team])
+  @@map("civil_servant_teams")
 }
 
 /// A free-text note somebody left against a repository — the context that is not derivable from

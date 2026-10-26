@@ -13,7 +13,8 @@ export const COMMANDS = [
   "evidence",
   "migrate",
   "reduce-descriptions",
-  "civil-servants"
+  "civil-servants",
+  "civil-servant-teams"
 ] as const;
 
 export type Command = (typeof COMMANDS)[number];
@@ -72,7 +73,7 @@ export interface Arguments {
   batchSize?: number;
   /** Logins named one at a time with `--login`, which may be repeated (civil-servants). */
   logins: string[];
-  /** A file of logins, one per line (civil-servants). */
+  /** A file of logins, one per line (civil-servants), or of `team,label` lines (civil-servant-teams). */
   file?: string;
   /** Remove the named logins' flags rather than adding them (civil-servants). */
   remove: boolean;
@@ -215,6 +216,10 @@ commands:
   civil-servants
               flag the logins given by --login or --file as civil servants', or with
               --remove clear them; with neither, print how many are flagged
+  civil-servant-teams
+              set each team in the --file of team,label lines as a civil servant team
+              where the label is "Civil Servant" and clear it where the label is blank;
+              without --file, print how many are flagged
 
 options:
   --config <file>       path to the YAML configuration; repeat to layer files, later files winning
@@ -230,7 +235,8 @@ options:
   --write               apply the change; without it nothing is written (reduce-descriptions)
   --batch-size <n>      rows per batch, so a failure part-way commits what it did (reduce-descriptions)
   --login <login>       a GitHub login; repeat for several (civil-servants)
-  --file <path>         a file of GitHub logins, one per line (civil-servants)
+  --file <path>         a file of GitHub logins, one per line (civil-servants), or of
+                        team,label lines (civil-servant-teams)
   --remove              clear the named logins' flags instead of adding them (civil-servants)
 
 exit status:

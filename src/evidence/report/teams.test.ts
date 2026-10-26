@@ -197,38 +197,10 @@ describe("withCivilServantTeams", () => {
     return { team, repositories: 1, unavailable: 0, actors: 1, labels: {} };
   }
 
-  function members(...logins: string[]): contract.TeamMemberRow[] {
-    return logins.map((login) => ({ login, role: "MEMBER" }));
-  }
-
-  const CIVIL = new Set(["gevans-hmcts", "js-hmcts"]);
-
-  it("should flag a team at or above the percentage, folding logins and slugs on both sides", () => {
-    const rows = withCivilServantTeams(
-      [teamRow("Civil"), teamRow("probate")],
-      new Map([
-        // One of three is 33.3%, which clears 33.
-        ["civil", members("GEvans-HMCTS", "zed", "amy")],
-        // One of four is 25%, which does not.
-        ["probate", members("js-hmcts", "a", "b", "c")]
-      ]),
-      CIVIL,
-      33
-    );
+  it("should flag the teams in the set, folding the row's slug, and leave the rest without the key", () => {
+    const rows = withCivilServantTeams([teamRow("Civil"), teamRow("probate")], new Set(["civil"]));
 
     expect(rows.map((row) => row.civil_servant)).toEqual([true, undefined]);
     expect("civil_servant" in (rows[1] ?? {})).toBe(false);
-  });
-
-  it("should treat the percentage as inclusive", () => {
-    const [row] = withCivilServantTeams([teamRow("civil")], new Map([["civil", members("gevans-hmcts", "zed")]]), CIVIL, 50);
-
-    expect(row?.civil_servant).toBe(true);
-  });
-
-  it("should leave a team unflagged whose membership was never read, or holds nobody", () => {
-    const rows = withCivilServantTeams([teamRow("unread"), teamRow("empty")], new Map([["empty", []]]), CIVIL, 0);
-
-    expect(rows.map((row) => "civil_servant" in row)).toEqual([false, false]);
   });
 });

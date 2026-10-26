@@ -145,6 +145,9 @@ that gave up after retrying.
   neither it prints the count. Nothing collected can tell a civil servant from a contractor, so the list is kept
   by hand, and it holds logins only, never email addresses. Keep the source list out of the repository.
   `scripts/find-civil-servants` matches a list of work addresses to logins through the SSO mapping.
+- `civil-servant-teams --file teams.csv` sets which teams carry the Civil Servant badge on `/teams`, for the
+  "Civil Servant teams only" filter. Each line is `team-slug,Civil Servant` to flag the team or `team-slug,` to
+  clear it; teams the file does not name are left as they are. Without `--file` it prints the count.
 
 Missing data is shown with its reason. A repository with no CVE report has not been scanned;
 one with a report and no findings is clean.

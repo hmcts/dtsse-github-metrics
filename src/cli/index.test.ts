@@ -56,6 +56,9 @@ const stampRevision = vi.hoisted(() => vi.fn());
 const civilServants = vi.hoisted(() => vi.fn(async () => new Set<string>(["gevans-hmcts"])));
 const addCivilServants = vi.hoisted(() => vi.fn(async (_organization: string, _logins: readonly string[]) => 0));
 const removeCivilServants = vi.hoisted(() => vi.fn(async (_organization: string, _logins: readonly string[]) => 0));
+const civilServantTeams = vi.hoisted(() => vi.fn(async () => new Set<string>(["bulk-scan"])));
+const addCivilServantTeams = vi.hoisted(() => vi.fn(async (_organization: string, _teams: readonly string[]) => 0));
+const removeCivilServantTeams = vi.hoisted(() => vi.fn(async (_organization: string, _teams: readonly string[]) => 0));
 // Granted by default so the collect cases test orchestration, and overridable so the stand-down branch — the
 // one that fires on whichever cluster loses the lock, every day — is reachable without a database.
 const asSoleCollector = vi.hoisted(() => vi.fn(async (run: () => Promise<unknown>) => run()));
@@ -198,6 +201,7 @@ vi.mock("../evidence/store/org-graph.ts", () => ({
 }));
 vi.mock("../evidence/store/production-override.ts", () => ({ seedProduction }));
 vi.mock("../evidence/store/civil-servants.ts", () => ({ civilServants, addCivilServants, removeCivilServants }));
+vi.mock("../evidence/store/civil-servant-teams.ts", () => ({ civilServantTeams, addCivilServantTeams, removeCivilServantTeams }));
 vi.mock("../evidence/store/sonar-map.ts", () => ({ storedSonarMappings, recordSonarMapping }));
 // Only the PACER is replaced, and only because it is the one piece of this layer that spends wall-clock time:
 // spacing the commit search to a per-minute quota is what makes a real run take 10 to 30 minutes, and a suite
@@ -2813,5 +2817,77 @@ describe("civil-servants", () => {
 
     expect(addCivilServants).not.toHaveBeenCalled();
     expect(process.stderr.write).toHaveBeenCalledWith("these are not GitHub logins: gareth.evans4@justice.gov.uk\n");
+  });
+});
+
+/**
+ * The one writer of `civil_servant_teams`.
+ *
+ * Its SQL is the store's, asserted in `test/integration/civil-servant-teams.test.ts`. These cases are about the file:
+ * the label sets the flag on, a blank label sets it off, and a line that is neither is refused before any write.
+ */
+describe("civil-servant-teams", () => {
+  let directory: string;
+
+  beforeEach(async () => {
+    loadConfiguration.mockResolvedValue({ organization: "hmcts", lookback: { operational_days: 90 }, teams: [], org_graph: { enabled: true } });
+    directory = await mkdtemp(path.join(tmpdir(), "civil-servant-teams-"));
+  });
+
+  afterEach(async () => {
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  /** Everything the command printed, as one block. */
+  function printed(): string {
+    return (console.info as unknown as MockInstance).mock.calls.map((call) => String(call[0])).join("\n");
+  }
+
+  async function teamsFile(content: string): Promise<string> {
+    const file = path.join(directory, "teams.csv");
+    await writeFile(file, content);
+    return file;
+  }
+
+  it("should count the flagged teams when given no file", async () => {
+    expect(await main(["civil-servant-teams", "--config", "m.yaml"])).toBe(EXIT_COMPLETE);
+
+    expect(addCivilServantTeams).not.toHaveBeenCalled();
+    expect(removeCivilServantTeams).not.toHaveBeenCalled();
+    expect(printed()).toContain("1 teams are flagged as civil servant teams in hmcts");
+  });
+
+  it("should flag the labelled teams and clear the unlabelled ones, folding slugs and skipping blank lines", async () => {
+    const file = await teamsFile('Bulk-Scan,Civil Servant\r\nbar,\n\n"civil","civil servant"\nprobate\n');
+    addCivilServantTeams.mockResolvedValueOnce(1);
+    removeCivilServantTeams.mockResolvedValueOnce(1);
+
+    expect(await main(["civil-servant-teams", "--config", "m.yaml", "--file", file])).toBe(EXIT_COMPLETE);
+
+    expect(addCivilServantTeams).toHaveBeenCalledWith("hmcts", ["bulk-scan", "civil"]);
+    expect(removeCivilServantTeams).toHaveBeenCalledWith("hmcts", ["bar", "probate"]);
+    expect(printed()).toContain("4 teams named: flagged 1 of 2 labelled, cleared 1 of 2 unlabelled");
+    // So the badge shows on the next page load rather than after the next collection.
+    expect(stampRevision).toHaveBeenCalledOnce();
+  });
+
+  it("should not stamp the revision when nothing changed", async () => {
+    const file = await teamsFile("bulk-scan,Civil Servant\n");
+
+    expect(await main(["civil-servant-teams", "--config", "m.yaml", "--file", file])).toBe(EXIT_COMPLETE);
+
+    expect(stampRevision).not.toHaveBeenCalled();
+  });
+
+  it("should refuse a file with an unknown label, a line with no team, or a team given both ways, writing nothing", async () => {
+    const file = await teamsFile("bulk-scan,Contractor\n,Civil Servant\ncivil,Civil Servant\nCivil,\nprobate,\n");
+
+    expect(await main(["civil-servant-teams", "--config", "m.yaml", "--file", file])).toBe(EXIT_USAGE);
+
+    expect(addCivilServantTeams).not.toHaveBeenCalled();
+    expect(removeCivilServantTeams).not.toHaveBeenCalled();
+    expect(process.stderr.write).toHaveBeenCalledWith(
+      "expected team,Civil Servant or team, on each line, and one label per team; refused: bulk-scan,Contractor | ,Civil Servant | Civil,\n"
+    );
   });
 });
