@@ -75,7 +75,7 @@
     "@vitest/coverage-v8": "4.1.6",
     "autoprefixer": "10.4.19",
     "eslint": "10.11.0",
-    "eslint-plugin-sonarjs": "4.2.1",
+    "eslint-plugin-sonarjs": "4.2.2",
     "eslint-plugin-unicorn": "76.0.0",
     "jsdom": "29.1.1",
     "playwright-core": "1.56.1",
