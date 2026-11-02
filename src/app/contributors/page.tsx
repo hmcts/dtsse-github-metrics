@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { ActorsTable } from "@/components/ActorsTable";
 import { CivilServantFilter } from "@/components/CivilServantFilter";
 import { ContributorReadinessFilter } from "@/components/ContributorReadinessFilter";
+import { ContributorsExport } from "@/components/ContributorsExport";
 import { EmptyState } from "@/components/EmptyState";
 import { FilterSearchBox } from "@/components/FilterSearchBox";
 import { NavWeekSelector } from "@/components/NavWeekSelector";
@@ -10,6 +11,7 @@ import { Section } from "@/components/Section";
 import { getActors, getOverview, getWindows } from "@/lib/api";
 import { CIVIL_SERVANT_PEOPLE_TOGGLE } from "@/lib/civil-servant";
 import { CONTRIBUTOR_TERM_PARAMETER } from "@/lib/filter";
+import { span } from "@/lib/format";
 import { anyLabelled } from "@/lib/rag";
 import { resolveWeeks, type SearchValue, WEEKS_COOKIE } from "@/lib/weeks";
 
@@ -58,8 +60,15 @@ export default async function ContributorsPage({ searchParams }: Readonly<{ sear
           <div className="space-y-4">
             {/* Counted in the browser, so the tiles follow the civil-servant toggle below them. */}
             <ContributorReadinessFilter rows={actors} labelled={labelled} />
-            {/* Only where somebody in this window is flagged: a toggle that can only ever empty the list is noise. */}
-            {civilServants === 0 ? null : <CivilServantFilter label={CIVIL_SERVANT_PEOPLE_TOGGLE} count={civilServants} />}
+            {/* The toggle row with the export hard right, as `/repositories` lays its toggles and export out. `ml-auto`
+                rather than `justify-between`, so the button stays right where the toggle is not drawn. */}
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Only where somebody in this window is flagged: a toggle that can only ever empty the list is noise. */}
+              {civilServants === 0 ? null : <CivilServantFilter label={CIVIL_SERVANT_PEOPLE_TOGGLE} count={civilServants} />}
+              <div className="ml-auto">
+                <ContributorsExport rows={actors} labelled={labelled} window={span(overview.starts_at, overview.ends_at)} />
+              </div>
+            </div>
             <ActorsTable rows={actors} weeks={weeks} labelled={labelled} />
           </div>
         )}
