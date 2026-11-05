@@ -164,6 +164,12 @@ function subgroupName(labels: readonly GradedLabel[]): string {
   return words.length === 1 ? `${words[0]} only` : words.join(" + ");
 }
 
+/** A group's word, as its tile prints it. */
+export function readinessGroupName(group: ReadinessGroup): string {
+  // Total over `ReadinessGroup`, which `GROUPS` lists every member of — so this never misses.
+  return (GROUPS.find((entry) => entry.key === group) as GroupDefinition).name;
+}
+
 /** Whether a key names a group or a subgroup. Anything else — a stale bookmark — reads as unfiltered. */
 export function isReadinessKey(key: string): boolean {
   return GROUPS.some((group) => group.key === key) || SUBGROUP_GROUP.has(key);
