@@ -7,7 +7,7 @@ module "postgresql" {
     azurerm.postgres_network = azurerm.postgres_network
   }
 
-  source = "git@github.com:hmcts/terraform-module-postgresql-flexible?ref=master"
+  source = "git@github.com:hmcts/terraform-module-postgresql-flexible?ref=DTSPO-30107-additional-postgres-admins"
 
   name          = "dts-${var.component}"
   env           = var.env
@@ -24,11 +24,12 @@ module "postgresql" {
     }
   ]
 
-  pgsql_version        = "16"
-  pgsql_sku            = "GP_Standard_D2ds_v4"
-  pgsql_storage_mb     = 32768
-  auto_grow_enabled    = true
-  admin_user_object_id = var.jenkins_AAD_objectId
+  pgsql_version                 = "16"
+  pgsql_sku                     = "GP_Standard_D2ds_v4"
+  pgsql_storage_mb              = 32768
+  auto_grow_enabled             = true
+  admin_user_object_id          = var.jenkins_AAD_objectId
+  preserve_legacy_jenkins_admin = false
 }
 
 resource "azurerm_key_vault_secret" "postgres_host" {
