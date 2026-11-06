@@ -52,14 +52,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@axe-core/playwright@npm:4.10.2":
-  version: 4.10.2
-  resolution: "@axe-core/playwright@npm:4.10.2"
+"@axe-core/playwright@npm:4.14.0":
+  version: 4.14.0
+  resolution: "@axe-core/playwright@npm:4.14.0"
   dependencies:
-    axe-core: "npm:~4.10.3"
+    axe-core: "npm:~4.14.0"
   peerDependencies:
     playwright-core: ">= 1.0.0"
-  checksum: 10c0/3dc02d177eb1b4865bbef05df993a5ad94268cb862e7095a273d7c7191174855f9f5a444cd8ad3ccea4991fab884083d6fdc661d471515af0d6c571958162043
+  checksum: 10c0/a42bca2305bbb80a374be9ff6642cac7b45f5f0aef1be9170ae42617c3423501ab1a33c8581641a71554a0c6a69f6ca512a5cc6e320ed197339a9ac4edfa713c
   languageName: node
   linkType: hard
 
@@ -491,19 +491,25 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@biomejs/biome@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/biome@npm:2.4.15"
+"@biomejs/biome@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/biome@npm:2.6.5"
   dependencies:
-    "@biomejs/cli-darwin-arm64": "npm:2.4.15"
-    "@biomejs/cli-darwin-x64": "npm:2.4.15"
-    "@biomejs/cli-linux-arm64": "npm:2.4.15"
-    "@biomejs/cli-linux-arm64-musl": "npm:2.4.15"
-    "@biomejs/cli-linux-x64": "npm:2.4.15"
-    "@biomejs/cli-linux-x64-musl": "npm:2.4.15"
-    "@biomejs/cli-win32-arm64": "npm:2.4.15"
-    "@biomejs/cli-win32-x64": "npm:2.4.15"
+    "@biomejs/cli-android-arm64": "npm:2.6.5"
+    "@biomejs/cli-android-x64": "npm:2.6.5"
+    "@biomejs/cli-darwin-arm64": "npm:2.6.5"
+    "@biomejs/cli-darwin-x64": "npm:2.6.5"
+    "@biomejs/cli-linux-arm64": "npm:2.6.5"
+    "@biomejs/cli-linux-arm64-musl": "npm:2.6.5"
+    "@biomejs/cli-linux-x64": "npm:2.6.5"
+    "@biomejs/cli-linux-x64-musl": "npm:2.6.5"
+    "@biomejs/cli-win32-arm64": "npm:2.6.5"
+    "@biomejs/cli-win32-x64": "npm:2.6.5"
   dependenciesMeta:
+    "@biomejs/cli-android-arm64":
+      optional: true
+    "@biomejs/cli-android-x64":
+      optional: true
     "@biomejs/cli-darwin-arm64":
       optional: true
     "@biomejs/cli-darwin-x64":
@@ -522,62 +528,76 @@ __metadata:
       optional: true
   bin:
     biome: bin/biome
-  checksum: 10c0/46ac114b97f00e5fe0d22590337c80c7a2467d2aabf57d7f99b92356fd01cf76bb7d972782508e0f51c34e08a1a7f8e9eefec6fe72aa7b5f53b9161b7fe582e2
+  checksum: 10c0/33c28cda87d0f247c95b806de64d42205d12a3adcb742a19d6c42f4d5fdcfb1255adffbf0228794b3bc60c0d21516c80213f26603f802b20e4776bbc16ae8756
   languageName: node
   linkType: hard
 
-"@biomejs/cli-darwin-arm64@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-darwin-arm64@npm:2.4.15"
+"@biomejs/cli-android-arm64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-android-arm64@npm:2.6.5"
+  conditions: os=android & cpu=arm64
+  languageName: node
+  linkType: hard
+
+"@biomejs/cli-android-x64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-android-x64@npm:2.6.5"
+  conditions: os=android & cpu=x64
+  languageName: node
+  linkType: hard
+
+"@biomejs/cli-darwin-arm64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-darwin-arm64@npm:2.6.5"
   conditions: os=darwin & cpu=arm64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-darwin-x64@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-darwin-x64@npm:2.4.15"
+"@biomejs/cli-darwin-x64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-darwin-x64@npm:2.6.5"
   conditions: os=darwin & cpu=x64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-arm64-musl@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-linux-arm64-musl@npm:2.4.15"
+"@biomejs/cli-linux-arm64-musl@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-linux-arm64-musl@npm:2.6.5"
   conditions: os=linux & cpu=arm64 & libc=musl
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-arm64@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-linux-arm64@npm:2.4.15"
+"@biomejs/cli-linux-arm64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-linux-arm64@npm:2.6.5"
   conditions: os=linux & cpu=arm64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-x64-musl@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-linux-x64-musl@npm:2.4.15"
+"@biomejs/cli-linux-x64-musl@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-linux-x64-musl@npm:2.6.5"
   conditions: os=linux & cpu=x64 & libc=musl
   languageName: node
   linkType: hard
 
-"@biomejs/cli-linux-x64@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-linux-x64@npm:2.4.15"
+"@biomejs/cli-linux-x64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-linux-x64@npm:2.6.5"
   conditions: os=linux & cpu=x64 & libc=glibc
   languageName: node
   linkType: hard
 
-"@biomejs/cli-win32-arm64@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-win32-arm64@npm:2.4.15"
+"@biomejs/cli-win32-arm64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-win32-arm64@npm:2.6.5"
   conditions: os=win32 & cpu=arm64
   languageName: node
   linkType: hard
 
-"@biomejs/cli-win32-x64@npm:2.4.15":
-  version: 2.4.15
-  resolution: "@biomejs/cli-win32-x64@npm:2.4.15"
+"@biomejs/cli-win32-x64@npm:2.6.5":
+  version: 2.6.5
+  resolution: "@biomejs/cli-win32-x64@npm:2.6.5"
   conditions: os=win32 & cpu=x64
   languageName: node
   linkType: hard
@@ -3801,10 +3821,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"axe-core@npm:~4.10.3":
-  version: 4.10.3
-  resolution: "axe-core@npm:4.10.3"
-  checksum: 10c0/1b1c24f435b2ffe89d76eca0001cbfff42dbf012ad9bd37398b70b11f0d614281a38a28bc3069e8972e3c90ec929a8937994bd24b0ebcbaab87b8d1e241ab0c7
+"axe-core@npm:~4.14.0":
+  version: 4.14.0
+  resolution: "axe-core@npm:4.14.0"
+  checksum: 10c0/8aaa0bf748e0dcf202e8f837951a37b28b4b62d639bed58c07a6890bf035ed6a11ede9f4006db9ca8041db821dc80476c27cff08fd70afa9195ee58fb995a958
   languageName: node
   linkType: hard
 
@@ -4462,9 +4482,9 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "dtsse-github-metrics@workspace:."
   dependencies:
-    "@axe-core/playwright": "npm:4.10.2"
+    "@axe-core/playwright": "npm:4.14.0"
     "@azure/cosmos": "npm:4.5.1"
-    "@biomejs/biome": "npm:2.4.15"
+    "@biomejs/biome": "npm:2.6.5"
     "@hmcts-cft/cloud-native-platform": "npm:2.0.0"
     "@playwright/test": "npm:1.56.1"
     "@prisma/adapter-pg": "npm:7.8.0"
