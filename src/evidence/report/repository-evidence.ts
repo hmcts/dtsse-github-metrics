@@ -14,6 +14,7 @@ import { reportedAssurance } from "./contract/assurance.ts";
 import { storedMaintenance } from "./contract/maintenance.ts";
 import { contractGate, storedGate } from "./contract/merge-gate.ts";
 import { contractObservation } from "./contract/observation.ts";
+import { storedSettings } from "./contract/repository-settings.ts";
 import { securityReport } from "./contract/security.ts";
 import { storedSonar } from "./contract/sonar.ts";
 import type { MeasuredRow } from "./measured.ts";
@@ -80,7 +81,7 @@ export function builtRepositoryEvidence(configuration: Configuration, input: Rep
     // THROUGH `contractAssessment`, which is the fourth translation at this boundary and the only one that was
     // already correct. The domain and the contract spell every field of an assessment the same way, so the policy's
     // own object was handed straight over — see `./contract/assessment.ts` for why that being right was luck.
-    assessment: policy.enabled ? contractAssessment(policy.assess(merges, gate)) : undefined,
+    assessment: policy.enabled ? contractAssessment(policy.assess(merges, gate, storedSettings(input.state.payload))) : undefined,
     // THE SAME DERIVATION THE ESTATE ROW'S CRITERION COLUMNS USE, called with the same two arguments. The page is
     // where each criterion's `detail` is readable as text rather than as a `title` a touch reader never sees — and
     // it is one function, so the column and the sentence cannot grade a repository differently.

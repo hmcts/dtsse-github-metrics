@@ -1,5 +1,6 @@
 import type { AssuranceEvidence } from "../domain/assurance.ts";
 import type { MergeGateReport } from "../domain/merge-gate.ts";
+import type { RepositorySettings } from "../domain/repository-settings.ts";
 import type { SecurityAlertEvidence } from "../domain/security-alerts.ts";
 import type { SonarState } from "../domain/sonar.ts";
 import type { MaintenanceEvidence } from "../domain/standards.ts";
@@ -57,6 +58,12 @@ export interface RepositoryStatePayload {
    * than the field, or a walk that failed — which the report states rather than reading it as nobody.
    */
   maintenance?: MaintenanceEvidence;
+  /**
+   * The repository settings the secure-by-design checks read, added 2026-11-13. NEEDS NO MIGRATION, for the reason
+   * `sonar` did not. Each block inside is absent when it was not read, and so is the whole field on a row older
+   * than it; the assessment reports either as not read rather than as a weak setting.
+   */
+  settings?: RepositorySettings;
 }
 
 /** Records what a collection observed, replacing whatever the last one recorded. */

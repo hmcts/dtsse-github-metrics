@@ -15,8 +15,16 @@ import { roundHalfEven } from "../behaviour/rounding.ts";
 import { type DistributionObservation, type Merge, type Merges, ObservationStatus, type RateObservation } from "../domain/facts.ts";
 import { type MergeGateEvidence, type MergeGateReport, requiredApprovals, requiredContexts } from "../domain/merge-gate.ts";
 import { type ReadinessAssessment, type ReadinessCondition, ReadinessLabel, UnreviewedSubstantialOutcome } from "../domain/readiness.ts";
+import type { RepositorySettings } from "../domain/repository-settings.ts";
 import { byCodePoint } from "../org/graph.ts";
-import type { AssessmentConfiguration, Configuration, DistributionThreshold, ReadinessThresholds, TrivialityConfiguration } from "../policy/schema.ts";
+import type {
+  AssessmentConfiguration,
+  Configuration,
+  DistributionThreshold,
+  ReadinessThresholds,
+  SecureDesignSeverity,
+  TrivialityConfiguration
+} from "../policy/schema.ts";
 
 /**
  * Readiness for AI enablement, judged from declared governance and observed behaviour. Ported from
@@ -242,6 +250,101 @@ function governance(report: MergeGateReport): Judgement[] {
   ];
 }
 
+/**
+ * A secure-by-design finding, landing as hard as the policy says it should.
+ *
+ * `caution` reports it without touching the label; `amber` and `red` make it a blocking condition imposing
+ * that colour.
+ */
+function secureDesignFinding(severity: SecureDesignSeverity, condition: string, detail: string): Judgement {
+  switch (severity) {
+    case "caution":
+      return caution(condition, detail);
+    case "amber":
+      return blocking(condition, ReadinessLabel.Amber, detail);
+    case "red":
+      return blocking(condition, ReadinessLabel.Red, detail);
+  }
+}
+
+/**
+ * Whether the repository lets its workflows run any GitHub Action from any source.
+ *
+ * Flagged only when Actions is enabled AND `allowed_actions` is `all`. An unread setting is reported as an
+ * informational clear and never flagged: not having looked is not evidence of a weak setting.
+ */
+function actionsPolicy(settings: RepositorySettings | undefined, severity: SecureDesignSeverity): Judgement {
+  const actions = settings?.actions;
+  if (actions === undefined || (actions.enabled && actions.allowedActions === undefined)) {
+    return clear("actions-policy-not-read", "which GitHub Actions this repository allows was not read, so it was not judged", true);
+  }
+  if (actions.enabled && actions.allowedActions === "all") {
+    return secureDesignFinding(severity, "actions-allow-all", "any GitHub Action from any source can run in this repository's workflows");
+  }
+  if (!actions.enabled) {
+    return clear("actions-restricted", "GitHub Actions is disabled in this repository, so no third-party Action can run");
+  }
+  return clear(
+    "actions-restricted",
+    `this repository's workflows can run only the GitHub Actions it allows (${actions.allowedActions}), not any Action from any source`
+  );
+}
+
+/**
+ * Whether every Action the repository's workflows use must be pinned to a full-length commit SHA.
+ *
+ * A tag such as `v4` can be moved to different code after review; a full SHA cannot. Flagged only when Actions is
+ * enabled AND `sha_pinning_required` is false. With Actions disabled no Action runs, so there is nothing to pin.
+ * Unread is an informational clear, for the same reason as the Actions policy.
+ */
+function shaPinningPolicy(settings: RepositorySettings | undefined, severity: SecureDesignSeverity): Judgement {
+  const actions = settings?.actions;
+  if (actions === undefined || (actions.enabled && actions.shaPinningRequired === undefined)) {
+    return clear(
+      "actions-sha-pinning-not-read",
+      "whether this repository requires Actions pinned to a full commit SHA was not read, so it was not judged",
+      true
+    );
+  }
+  if (!actions.enabled) {
+    return clear("actions-sha-pinning-required", "GitHub Actions is disabled in this repository, so no Action runs that could need pinning");
+  }
+  if (actions.shaPinningRequired) {
+    return clear("actions-sha-pinning-required", "every Action this repository's workflows use must be pinned to a full-length commit SHA");
+  }
+  return secureDesignFinding(
+    severity,
+    "actions-sha-pinning-not-required",
+    "this repository's workflows can use an Action by tag or branch, which can be moved to different code after review"
+  );
+}
+
+/**
+ * Whether anyone with a GitHub account can open an issue on the repository.
+ *
+ * Flagged only when issues are enabled AND the creation policy is `ALL`. Unread is an informational clear,
+ * for the same reason as the Actions policy.
+ */
+function issuePolicy(settings: RepositorySettings | undefined, severity: SecureDesignSeverity): Judgement {
+  const issues = settings?.issues;
+  if (issues === undefined || (issues.enabled && issues.creationPolicy === undefined)) {
+    return clear("issue-policy-not-read", "who can open an issue on this repository was not read, so it was not judged", true);
+  }
+  if (issues.enabled && issues.creationPolicy === "ALL") {
+    return secureDesignFinding(severity, "issues-open-to-public", "anyone with a GitHub account can open an issue on this repository");
+  }
+  if (!issues.enabled) {
+    return clear("issues-restricted", "issues are disabled on this repository, so nobody can open one");
+  }
+  if (issues.creationPolicy === "COLLABORATORS_ONLY") {
+    return clear("issues-restricted", "only collaborators can open an issue on this repository");
+  }
+  return clear(
+    "issues-restricted",
+    `issues are enabled and GitHub reported the creation policy as ${issues.creationPolicy}, which does not open them to everyone`
+  );
+}
+
 /** Compares one observed rate against its configured green and amber boundaries. */
 function gradeRate(metric: BehaviourMetric, thresholds: ReadinessThresholds, observation: RateObservation): Judgement {
   const graded = measuredRate(metric.identifier, observation);
@@ -456,8 +559,15 @@ export function createPolicy(configuration: AssessmentConfiguration, triviality:
     unreviewedSubstantialCounts,
     unreviewedSubstantialOutcome,
     /** Judges one repository's readiness for agentic tooling. */
-    assess(cohort: Merges, report: MergeGateReport): ReadinessAssessment {
-      const judgements = [...governance(report), ...behaviour(cohort)];
+    assess(cohort: Merges, report: MergeGateReport, settings?: RepositorySettings): ReadinessAssessment {
+      const severity = configuration["secure-by-design"];
+      const judgements = [
+        ...governance(report),
+        ...behaviour(cohort),
+        actionsPolicy(settings, severity["actions-allow-all"]),
+        shaPinningPolicy(settings, severity["actions-sha-pinning-not-required"]),
+        issuePolicy(settings, severity["public-issue-creation"])
+      ];
       const blockingConditions = section(judgements, Outcome.Blocking);
       return {
         label: label(blockingConditions),

@@ -279,6 +279,34 @@ describe("the graded sections of one repository's page", () => {
     expect(builtRepositoryEvidence(disabled, input()).assessment).toBeUndefined();
   });
 
+  it("should carry the stored secure-by-design settings into the assessment as cautions", () => {
+    const payload = {
+      defaultBranch: "main",
+      mergeGate: { gate: GATE },
+      settings: { actions: { enabled: true, allowedActions: "all", shaPinningRequired: false }, issues: { enabled: true, creationPolicy: "ALL" } }
+    };
+    const assessment = builtRepositoryEvidence(CONFIGURATION, input({ state: { fetchedAt: FETCHED, payload } })).assessment;
+    const without = builtRepositoryEvidence(CONFIGURATION, input()).assessment;
+
+    expect(assessment?.caution.map((condition) => condition.condition)).toEqual(
+      expect.arrayContaining(["actions-allow-all", "actions-sha-pinning-not-required", "issues-open-to-public"])
+    );
+    // A caution leaves the label where it was.
+    expect(assessment?.label).toBe(without?.label);
+  });
+
+  it("should report every setting as not read, informationally, when the payload carries no settings", () => {
+    const clear = builtRepositoryEvidence(CONFIGURATION, input()).assessment?.clear ?? [];
+
+    expect(clear).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ condition: "actions-policy-not-read", informational: true }),
+        expect.objectContaining({ condition: "actions-sha-pinning-not-read", informational: true }),
+        expect.objectContaining({ condition: "issue-policy-not-read", informational: true })
+      ])
+    );
+  });
+
   it("should drop a bot's direct commit from the reported cohort while counting the human's", () => {
     // THE OTHER HALF OF THE ONE SEAM. `excluded_authors` narrows the pull requests and the all-bots rule narrows the
     // direct commits, so the totals are not always `merged - reported`: a bot's commit leaves the direct-commit

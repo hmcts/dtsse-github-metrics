@@ -28,6 +28,10 @@ assessment:
     maximum_count: 0
     maximum_percentage: 1
   review-depth-minimum-percentage: 50
+  secure-by-design:
+    actions-allow-all: caution
+    actions-sha-pinning-not-required: caution
+    public-issue-creation: caution
 traceability:
   minimum_description: 30
   reference_patterns:

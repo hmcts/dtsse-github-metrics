@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { CheckConclusion, type DirectCommitFact, type Merges, type PullRequestFact, type ReviewFact, ReviewState } from "../domain/facts.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../domain/merge-gate.ts";
 import { ReadinessLabel, UnreviewedSubstantialOutcome } from "../domain/readiness.ts";
+import type { RepositorySettings } from "../domain/repository-settings.ts";
 import { parseConfiguration } from "../policy/load.ts";
+import type { SecureDesignSeverity } from "../policy/schema.ts";
 import { createPolicy, readinessPolicy } from "./assessment.ts";
 
 // Ported from tests/test_assessment.py.
@@ -394,6 +396,244 @@ describe("the neutral merge-gate rules", () => {
     const names = assessment.clear.map((condition) => condition.condition);
 
     expect(names.indexOf("pull-request-review-required")).toBeLessThan(names.indexOf("branch-deletion-restricted"));
+  });
+});
+
+function secureDesignPolicy(actions: SecureDesignSeverity, issues: SecureDesignSeverity, pinning: SecureDesignSeverity = "caution") {
+  return createPolicy(
+    {
+      ...CONFIGURATION.assessment,
+      "secure-by-design": { "actions-allow-all": actions, "actions-sha-pinning-not-required": pinning, "public-issue-creation": issues }
+    },
+    CONFIGURATION.triviality
+  );
+}
+
+function find(assessment: ReturnType<ReturnType<typeof policy>["assess"]>, condition: string) {
+  for (const outcome of ["blocking", "caution", "clear"] as const) {
+    const found = assessment[outcome].find((entry) => entry.condition === condition);
+    if (found !== undefined) {
+      return { outcome, ...found };
+    }
+  }
+  return undefined;
+}
+
+const RESTRICTED: RepositorySettings = {
+  actions: { enabled: true, allowedActions: "local_only", shaPinningRequired: true },
+  issues: { enabled: true, creationPolicy: "COLLABORATORS_ONLY" }
+};
+
+describe("the Actions policy", () => {
+  it.each([
+    [{ enabled: true, allowedActions: "all" }, "actions-allow-all", "caution"],
+    [{ enabled: true, allowedActions: "local_only" }, "actions-restricted", "clear"],
+    [{ enabled: true, allowedActions: "selected" }, "actions-restricted", "clear"],
+    [{ enabled: false }, "actions-restricted", "clear"],
+    [{ enabled: false, allowedActions: "all" }, "actions-restricted", "clear"],
+    [{ enabled: true }, "actions-policy-not-read", "clear"]
+  ])("should judge %o as %s in %s", (actions, condition, outcome) => {
+    const assessment = policy().assess(healthy(), report(), { ...RESTRICTED, actions });
+
+    expect(find(assessment, condition)?.outcome).toBe(outcome);
+    expect(assessment.label).toBe(ReadinessLabel.Green);
+  });
+
+  it("should say exactly what allowing every Action means", () => {
+    const assessment = policy().assess(healthy(), report(), { actions: { enabled: true, allowedActions: "all" } });
+
+    expect(find(assessment, "actions-allow-all")?.detail).toBe("any GitHub Action from any source can run in this repository's workflows");
+  });
+
+  it("should name the allowed set when Actions is restricted", () => {
+    const assessment = policy().assess(healthy(), report(), { actions: { enabled: true, allowedActions: "selected" } });
+
+    expect(find(assessment, "actions-restricted")?.detail).toBe(
+      "this repository's workflows can run only the GitHub Actions it allows (selected), not any Action from any source"
+    );
+  });
+
+  it("should report Actions enabled with no allowed set as not read, never as restricted", () => {
+    const assessment = policy().assess(healthy(), report(), { actions: { enabled: true } });
+
+    expect(find(assessment, "actions-policy-not-read")?.informational).toBe(true);
+    expect(find(assessment, "actions-restricted")).toBeUndefined();
+  });
+
+  it("should report an unread Actions policy as informational clear, never as a finding", () => {
+    const assessment = policy().assess(healthy(), report(), { issues: RESTRICTED.issues });
+
+    const found = find(assessment, "actions-policy-not-read");
+    expect(found?.outcome).toBe("clear");
+    expect(found?.informational).toBe(true);
+    expect(find(assessment, "actions-allow-all")).toBeUndefined();
+  });
+});
+
+describe("the SHA pinning policy", () => {
+  it.each([
+    [{ enabled: true, allowedActions: "all", shaPinningRequired: false }, "actions-sha-pinning-not-required", "caution"],
+    [{ enabled: true, allowedActions: "local_only", shaPinningRequired: false }, "actions-sha-pinning-not-required", "caution"],
+    [{ enabled: true, allowedActions: "all", shaPinningRequired: true }, "actions-sha-pinning-required", "clear"],
+    [{ enabled: false }, "actions-sha-pinning-required", "clear"],
+    [{ enabled: false, shaPinningRequired: false }, "actions-sha-pinning-required", "clear"],
+    [{ enabled: true, allowedActions: "all" }, "actions-sha-pinning-not-read", "clear"]
+  ])("should judge %o as %s in %s", (actions, condition, outcome) => {
+    const assessment = policy().assess(healthy(), report(), { ...RESTRICTED, actions });
+
+    expect(find(assessment, condition)?.outcome).toBe(outcome);
+    expect(assessment.label).toBe(ReadinessLabel.Green);
+  });
+
+  it("should say exactly what not requiring SHA pinning means", () => {
+    const assessment = policy().assess(healthy(), report(), { actions: { enabled: true, allowedActions: "selected", shaPinningRequired: false } });
+
+    expect(find(assessment, "actions-sha-pinning-not-required")?.detail).toBe(
+      "this repository's workflows can use an Action by tag or branch, which can be moved to different code after review"
+    );
+  });
+
+  it("should say what is required when SHA pinning is on", () => {
+    const assessment = policy().assess(healthy(), report(), { actions: { enabled: true, allowedActions: "selected", shaPinningRequired: true } });
+
+    expect(find(assessment, "actions-sha-pinning-required")?.detail).toBe(
+      "every Action this repository's workflows use must be pinned to a full-length commit SHA"
+    );
+  });
+
+  it("should say why nothing needs pinning when Actions is disabled", () => {
+    const assessment = policy().assess(healthy(), report(), { actions: { enabled: false } });
+
+    expect(find(assessment, "actions-sha-pinning-required")?.detail).toBe(
+      "GitHub Actions is disabled in this repository, so no Action runs that could need pinning"
+    );
+  });
+
+  it("should report an unread SHA pinning setting as informational clear, never as a finding", () => {
+    const assessment = policy().assess(healthy(), report(), { issues: RESTRICTED.issues });
+
+    const found = find(assessment, "actions-sha-pinning-not-read");
+    expect(found?.outcome).toBe("clear");
+    expect(found?.informational).toBe(true);
+    expect(find(assessment, "actions-sha-pinning-not-required")).toBeUndefined();
+  });
+});
+
+describe("the issue creation policy", () => {
+  it.each([
+    [{ enabled: true, creationPolicy: "ALL" }, "issues-open-to-public", "caution"],
+    [{ enabled: true, creationPolicy: "COLLABORATORS_ONLY" }, "issues-restricted", "clear"],
+    [{ enabled: false, creationPolicy: "ALL" }, "issues-restricted", "clear"],
+    [{ enabled: false }, "issues-restricted", "clear"],
+    [{ enabled: true }, "issue-policy-not-read", "clear"]
+  ])("should judge %o as %s in %s", (issues, condition, outcome) => {
+    const assessment = policy().assess(healthy(), report(), { ...RESTRICTED, issues });
+
+    expect(find(assessment, condition)?.outcome).toBe(outcome);
+    expect(assessment.label).toBe(ReadinessLabel.Green);
+  });
+
+  it("should say exactly what an open issue policy means", () => {
+    const assessment = policy().assess(healthy(), report(), { issues: { enabled: true, creationPolicy: "ALL" } });
+
+    expect(find(assessment, "issues-open-to-public")?.detail).toBe("anyone with a GitHub account can open an issue on this repository");
+  });
+
+  it("should say who may open an issue when only collaborators can", () => {
+    const assessment = policy().assess(healthy(), report(), { issues: { enabled: true, creationPolicy: "COLLABORATORS_ONLY" } });
+
+    expect(find(assessment, "issues-restricted")?.detail).toBe("only collaborators can open an issue on this repository");
+  });
+
+  it("should name a creation policy it does not recognise, and not treat it as open to everyone", () => {
+    const assessment = policy().assess(healthy(), report(), { issues: { enabled: true, creationPolicy: "MAINTAINERS_ONLY" } });
+
+    expect(find(assessment, "issues-restricted")?.detail).toBe(
+      "issues are enabled and GitHub reported the creation policy as MAINTAINERS_ONLY, which does not open them to everyone"
+    );
+    expect(find(assessment, "issues-open-to-public")).toBeUndefined();
+  });
+
+  it("should report issues enabled with no creation policy as not read, never as restricted", () => {
+    const assessment = policy().assess(healthy(), report(), { issues: { enabled: true } });
+
+    expect(find(assessment, "issue-policy-not-read")?.informational).toBe(true);
+    expect(find(assessment, "issues-restricted")).toBeUndefined();
+  });
+
+  it("should report an unread issue policy as informational clear, never as a finding", () => {
+    const assessment = policy().assess(healthy(), report(), { actions: RESTRICTED.actions });
+
+    const found = find(assessment, "issue-policy-not-read");
+    expect(found?.outcome).toBe("clear");
+    expect(found?.informational).toBe(true);
+  });
+});
+
+describe("secure-by-design severity", () => {
+  const OPEN: RepositorySettings = {
+    actions: { enabled: true, allowedActions: "all" },
+    issues: { enabled: true, creationPolicy: "ALL" }
+  };
+
+  it("should leave a green label green when both findings are cautions", () => {
+    const assessment = secureDesignPolicy("caution", "caution").assess(healthy(), report(), OPEN);
+
+    expect(assessment.label).toBe(ReadinessLabel.Green);
+    expect(assessment.caution.map((entry) => entry.condition)).toEqual(expect.arrayContaining(["actions-allow-all", "issues-open-to-public"]));
+    expect(assessment.blocking).toEqual([]);
+  });
+
+  it.each([
+    ["amber", ReadinessLabel.Amber],
+    ["red", ReadinessLabel.Red]
+  ] as const)("should block the Actions finding in %s when configured so", (severity, expected) => {
+    const assessment = secureDesignPolicy(severity, "caution").assess(healthy(), report(), OPEN);
+
+    expect(assessment.label).toBe(expected);
+    expect(assessment.blocking).toEqual([expect.objectContaining({ condition: "actions-allow-all", label: expected })]);
+    expect(find(assessment, "issues-open-to-public")?.outcome).toBe("caution");
+  });
+
+  it.each([
+    ["amber", ReadinessLabel.Amber],
+    ["red", ReadinessLabel.Red]
+  ] as const)("should block the issue finding in %s when configured so", (severity, expected) => {
+    const assessment = secureDesignPolicy("caution", severity).assess(healthy(), report(), OPEN);
+
+    expect(assessment.label).toBe(expected);
+    expect(assessment.blocking).toEqual([expect.objectContaining({ condition: "issues-open-to-public", label: expected })]);
+    expect(find(assessment, "actions-allow-all")?.outcome).toBe("caution");
+  });
+
+  it.each([
+    ["amber", ReadinessLabel.Amber],
+    ["red", ReadinessLabel.Red]
+  ] as const)("should block the SHA pinning finding in %s when configured so", (severity, expected) => {
+    const unpinned: RepositorySettings = { ...OPEN, actions: { enabled: true, allowedActions: "selected", shaPinningRequired: false } };
+    const assessment = secureDesignPolicy("caution", "caution", severity).assess(healthy(), report(), unpinned);
+
+    expect(assessment.label).toBe(expected);
+    expect(assessment.blocking).toEqual([expect.objectContaining({ condition: "actions-sha-pinning-not-required", label: expected })]);
+    expect(find(assessment, "issues-open-to-public")?.outcome).toBe("caution");
+  });
+
+  it("should never block on an unread setting, however severe the configuration", () => {
+    const assessment = secureDesignPolicy("red", "red", "red").assess(healthy(), report());
+
+    expect(assessment.label).toBe(ReadinessLabel.Green);
+    expect(find(assessment, "actions-policy-not-read")?.outcome).toBe("clear");
+    expect(find(assessment, "actions-sha-pinning-not-read")?.outcome).toBe("clear");
+    expect(find(assessment, "issue-policy-not-read")?.outcome).toBe("clear");
+  });
+
+  it("should leave a restricted repository clear, however severe the configuration", () => {
+    const assessment = secureDesignPolicy("red", "red", "red").assess(healthy(), report(), RESTRICTED);
+
+    expect(assessment.label).toBe(ReadinessLabel.Green);
+    expect(find(assessment, "actions-restricted")?.outcome).toBe("clear");
+    expect(find(assessment, "actions-sha-pinning-required")?.outcome).toBe("clear");
+    expect(find(assessment, "issues-restricted")?.outcome).toBe("clear");
   });
 });
 

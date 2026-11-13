@@ -233,6 +233,44 @@ describe("what a row says about the window", () => {
     expect(repositoryRow(disabled, entry(), collected(READABLE_GATE), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness).toBeUndefined();
   });
 
+  it("should grade readiness with the stored secure-by-design settings", () => {
+    const strict = readinessPolicy(
+      parseConfiguration(
+        "version: 1\norganization: hmcts\nassessment:\n  minimum_merges: 1\n  secure-by-design:\n    actions-allow-all: red\n    public-issue-creation: caution\n"
+      )
+    );
+    const flagged = { ...READABLE_GATE, settings: { actions: { enabled: true, allowedActions: "all" } } };
+    const restricted = { ...READABLE_GATE, settings: { actions: { enabled: true, allowedActions: "selected" } } };
+
+    expect(repositoryRow(strict, entry(), collected(flagged), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness).toBe("red");
+    const unflagged = repositoryRow(strict, entry(), collected(READABLE_GATE), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness;
+    expect(unflagged).toBeDefined();
+    expect(unflagged).not.toBe("red");
+    expect(repositoryRow(strict, entry(), collected(restricted), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness).toBe(unflagged);
+  });
+
+  it("should grade readiness red on unpinned Actions when configured so", () => {
+    const strict = readinessPolicy(
+      parseConfiguration("version: 1\norganization: hmcts\nassessment:\n  minimum_merges: 1\n  secure-by-design:\n    actions-sha-pinning-not-required: red\n")
+    );
+    const unpinned = { ...READABLE_GATE, settings: { actions: { enabled: true, allowedActions: "selected", shaPinningRequired: false } } };
+    const pinned = { ...READABLE_GATE, settings: { actions: { enabled: true, allowedActions: "selected", shaPinningRequired: true } } };
+
+    expect(repositoryRow(strict, entry(), collected(unpinned), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness).toBe("red");
+    expect(repositoryRow(strict, entry(), collected(pinned), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness).not.toBe("red");
+  });
+
+  it("should leave readiness unchanged by a flagged setting whose severity is caution", () => {
+    const flagged = {
+      ...READABLE_GATE,
+      settings: { actions: { enabled: true, allowedActions: "all", shaPinningRequired: false }, issues: { enabled: true, creationPolicy: "ALL" } }
+    };
+
+    expect(repositoryRow(POLICY, entry(), collected(flagged), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness).toBe(
+      repositoryRow(POLICY, entry(), collected(READABLE_GATE), NO_MERGES, NO_PRODUCTION, BOTH, NO_CVE_SCAN).readiness
+    );
+  });
+
   it("should carry the stored SonarCloud coverage onto the row", () => {
     const payload = {
       defaultBranch: "main",

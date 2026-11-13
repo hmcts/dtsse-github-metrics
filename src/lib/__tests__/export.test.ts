@@ -532,6 +532,10 @@ describe("contributorExportRows", () => {
     expect(csvDocument(rows).split("\r\n")[0]).toBe("GitHub username,Name,Civil servant,Repositories,Readiness,Labels");
   });
 
+  it.each(['=HYPERLINK("https://example.test")', "+1", "-1", "@SUM(A1)"])("keeps a profile name of %s from running as a formula", (name) => {
+    expect(contributorExportRows([{ login: "someone", name, repositories: 1, labels: ["green"] }], true)[1]?.[1]).toBe(`'${name}`);
+  });
+
   it("reads a dash for the group and Not assessed where the policy graded nothing in the window", () => {
     expect(contributorExportRows([{ login: "anyone", repositories: 1, labels: ["green"] }], false)[1]).toEqual(["anyone", "", "", "1", ABSENT, "Not assessed"]);
   });

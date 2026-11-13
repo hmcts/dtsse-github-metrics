@@ -3,6 +3,7 @@ import { messageOf } from "../../platform/error-message.ts";
 import type { AssuranceEvidence, HygieneSignals, SecretAlertSummary } from "../domain/assurance.ts";
 import { ageInDays } from "../domain/assurance.ts";
 import { GitHubError } from "../domain/availability.ts";
+import type { RepositorySettings } from "../domain/repository-settings.ts";
 import { AliasAnswer, readAliasedBatch, reaskable } from "../github/aliased-batch.ts";
 import type { GitHubClient, GraphqlPartial } from "../github/client.ts";
 
@@ -141,6 +142,8 @@ export function assuranceQuery(batchSize: number = DefaultAssuranceBatchSize): s
             name
             hasVulnerabilityAlertsEnabled
             isSecurityPolicyEnabled
+            hasIssuesEnabled
+            issueCreationPolicy
             ${files}
           }`
     )
@@ -157,7 +160,10 @@ export function assuranceQuery(batchSize: number = DefaultAssuranceBatchSize): s
 const assuranceEntrySchema = z.object({
   name: z.string().nullish(),
   hasVulnerabilityAlertsEnabled: z.boolean().nullish(),
-  isSecurityPolicyEnabled: z.boolean().nullish()
+  isSecurityPolicyEnabled: z.boolean().nullish(),
+  hasIssuesEnabled: z.boolean().nullish(),
+  // A string rather than an enum, so a policy GitHub adds later is stored rather than refusing the whole entry.
+  issueCreationPolicy: z.string().nullish()
 });
 
 /**
@@ -170,6 +176,12 @@ const assuranceEntrySchema = z.object({
  */
 export interface GraphAssurance extends Pick<HygieneSignals, "vulnerabilityAlerts" | "updateConfiguration"> {
   securityPolicy?: boolean;
+  /**
+   * Who may open an issue, for the secure-by-design checks. Not a hygiene signal either, and lifted out beside
+   * `securityPolicy` for the same reason. Absent when GitHub did not answer `hasIssuesEnabled`, which the
+   * assessment reports as not read.
+   */
+  issues?: NonNullable<RepositorySettings["issues"]>;
 }
 
 /**
@@ -200,8 +212,14 @@ function readAssuranceEntry(organization: string, repository: string, value: unk
   return {
     ...(parsed.data.hasVulnerabilityAlertsEnabled == null ? {} : { vulnerabilityAlerts: parsed.data.hasVulnerabilityAlertsEnabled }),
     ...(parsed.data.isSecurityPolicyEnabled == null ? {} : { securityPolicy: parsed.data.isSecurityPolicyEnabled }),
+    ...(parsed.data.hasIssuesEnabled == null ? {} : { issues: issuesSetting(parsed.data.hasIssuesEnabled, parsed.data.issueCreationPolicy) }),
     updateConfiguration: configured
   };
+}
+
+/** The issue creation setting, with the policy left out where GitHub gave none (as it may with issues off). */
+function issuesSetting(enabled: boolean, policy: string | null | undefined): NonNullable<RepositorySettings["issues"]> {
+  return policy == null ? { enabled } : { enabled, creationPolicy: policy };
 }
 
 /**
@@ -429,7 +447,9 @@ export function assuranceEvidence(
   const age = alerts === undefined ? undefined : severeAlertAge(alerts, reference);
   // The policy is lifted OUT of the hygiene signals it arrives beside: it is its own criterion, and leaving it in
   // `hygiene` would have folded a value that is true everywhere into the hygiene composite.
-  const { securityPolicy, ...hygieneFromGraph } = graph ?? {};
+  // The issue setting is lifted out for the same reason and is not part of the assurance evidence at all: the
+  // collector stores it under `settings`.
+  const { securityPolicy, issues: _issues, ...hygieneFromGraph } = graph ?? {};
   return {
     hygiene: { ...hygieneFromMetadata(metadata), ...hygieneFromGraph },
     ...(age === undefined ? {} : { oldestSevereAlertDays: age }),

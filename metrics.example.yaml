@@ -39,6 +39,13 @@ assessment:
   # A caution boundary rather than a green/amber pair: a shallow review rate is weighed, never
   # allowed to hold the readiness label down.
   review-depth-minimum-percentage: 50
+  # Repository settings the secure design team asked to see: Actions allowed from any source, Actions that need
+  # not be pinned to a full commit SHA, and issues anyone with a GitHub account can open. `caution` shows the finding in amber and leaves the readiness label alone;
+  # `amber` or `red` makes it a blocking condition that holds the label at that colour.
+  secure-by-design:
+    actions-allow-all: caution
+    actions-sha-pinning-not-required: caution
+    public-issue-creation: caution
 # Neither number enters the readiness label. `reference_patterns` is a list because HMCTS traces work
 # through both a GitHub issue and a Jira key; the defaults below match those two.
 #

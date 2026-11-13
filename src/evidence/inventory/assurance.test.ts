@@ -166,6 +166,13 @@ describe("assuranceQuery", () => {
     expect(assuranceQuery(1)).toContain("__typename");
   });
 
+  it("should ask who may open an issue, beside whether issues are on", () => {
+    const document = assuranceQuery(1);
+
+    expect(document).toContain("hasIssuesEnabled");
+    expect(document).toContain("issueCreationPolicy");
+  });
+
   it("should build one document per batch size and reuse it, the text depending on nothing else", () => {
     expect(assuranceQuery(DefaultAssuranceBatchSize)).toBe(assuranceQuery(DefaultAssuranceBatchSize));
   });
@@ -327,6 +334,27 @@ describe("collectAssuranceSignals", () => {
     });
   });
 
+  it.each([
+    ["anyone may open an issue", { hasIssuesEnabled: true, issueCreationPolicy: "ALL" }, { enabled: true, creationPolicy: "ALL" }],
+    ["only collaborators may", { hasIssuesEnabled: true, issueCreationPolicy: "COLLABORATORS_ONLY" }, { enabled: true, creationPolicy: "COLLABORATORS_ONLY" }],
+    ["issues are off", { hasIssuesEnabled: false, issueCreationPolicy: "ALL" }, { enabled: false, creationPolicy: "ALL" }],
+    ["GitHub named no policy", { hasIssuesEnabled: true, issueCreationPolicy: null }, { enabled: true }]
+  ])("should carry the issue setting where %s", (_case, fields, issues) => {
+    const { fetch } = replying({ body: { data: { a0: { ...entry("alpha"), ...fields } } } });
+
+    return collectAssuranceSignals(client(fetch), "hmcts", ["alpha"], 1).then((signals) => {
+      expect(signals.get("alpha")).toEqual({ vulnerabilityAlerts: true, updateConfiguration: false, issues });
+    });
+  });
+
+  it("should leave the issue setting absent where GitHub did not say whether issues are on", () => {
+    const { fetch } = replying({ body: { data: { a0: { ...entry("alpha"), hasIssuesEnabled: null, issueCreationPolicy: "ALL" } } } });
+
+    return collectAssuranceSignals(client(fetch), "hmcts", ["alpha"], 1).then((signals) => {
+      expect(signals.get("alpha")).not.toHaveProperty("issues");
+    });
+  });
+
   it("should ask for nothing when given no repositories", () => {
     const { fetch, sent } = replying();
 
@@ -423,6 +451,18 @@ describe("the security policy signal", () => {
 
   it("stays absent where GitHub said nothing, rather than reading as no policy", () => {
     expect(assuranceEvidence({}, { vulnerabilityAlerts: true, updateConfiguration: true }, [], NOW).securityPolicy).toBeUndefined();
+  });
+});
+
+/** The issue setting rides on the same document, and is stored under `settings` rather than as assurance evidence. */
+describe("the issue creation setting", () => {
+  it("leaves the hygiene signals and the rest of the evidence exactly as they were", () => {
+    const graph = { securityPolicy: true, vulnerabilityAlerts: true, updateConfiguration: true };
+    const without = assuranceEvidence({}, graph, [], NOW);
+    const withIssues = assuranceEvidence({}, { ...graph, issues: { enabled: true, creationPolicy: "ALL" } }, [], NOW);
+
+    expect(withIssues).toEqual(without);
+    expect(withIssues.hygiene).not.toHaveProperty("issues");
   });
 });
 
