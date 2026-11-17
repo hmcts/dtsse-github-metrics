@@ -4783,7 +4783,7 @@ __metadata:
     jsdom: "npm:29.1.1"
     lucide-react: "npm:0.414.0"
     next: "npm:16.4.6"
-    openid-client: "npm:6.8.4"
+    openid-client: "npm:6.9.0"
     pg: "npm:8.20.0"
     playwright-core: "npm:1.56.1"
     postcss: "npm:8.4.39"
@@ -5883,10 +5883,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"jose@npm:^6.2.2":
-  version: 6.2.12
-  resolution: "jose@npm:6.2.12"
-  checksum: 10c0/e8582b946fabcae228819982dda4849908c353e9cb098f02f773635aa0d2f4917f17484c7441b8d526e564013b4cf96951455c94f81d0a39ee765bad44ce293d
+"jose@npm:^6.2.15":
+  version: 6.2.17
+  resolution: "jose@npm:6.2.17"
+  checksum: 10c0/1a00d44656e38664c54a8b2d903b6c947b3fc4275f7ede2462f74e50ce320359ea324deba15652dcc158c14ed99135a2382a4c5718be350923a9e583bea727db
   languageName: node
   linkType: hard
 
@@ -6608,7 +6608,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"oauth4webapi@npm:^3.8.5":
+"oauth4webapi@npm:^3.8.8":
   version: 3.8.8
   resolution: "oauth4webapi@npm:3.8.8"
   checksum: 10c0/1f7d35ba8d7d5aa9ce9ec5959a4611ed2b5dd7830172b1546749b91dda8c53f7934e669c6f81e912c64e3ae4fc681d4d6ce149b42cc9d17db97162bf8765e028
@@ -6657,13 +6657,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"openid-client@npm:6.8.4":
-  version: 6.8.4
-  resolution: "openid-client@npm:6.8.4"
+"openid-client@npm:6.9.0":
+  version: 6.9.0
+  resolution: "openid-client@npm:6.9.0"
   dependencies:
-    jose: "npm:^6.2.2"
-    oauth4webapi: "npm:^3.8.5"
-  checksum: 10c0/bb062df77d48368f99f776f26d94e11053da80b89d2baeea9f069b7a2b359ef5dc10e0c9b0f9a90fb361eded7ff02dba3f5419b8909ec3f0c379d09807824c49
+    jose: "npm:^6.2.15"
+    oauth4webapi: "npm:^3.8.8"
+  checksum: 10c0/546f9404f869f8168ed6760ab764f4c7105d8a712879caa801c7a65da0d5c57166536700578df56638bbd701b73696439bdbff91c150ea3550d25e32c8ef5e9d
   languageName: node
   linkType: hard
 
