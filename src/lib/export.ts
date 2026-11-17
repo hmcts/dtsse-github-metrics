@@ -18,6 +18,8 @@
 
 import { ABSENT, day, quantity } from "@/lib/format";
 import { contributorEntry } from "@/lib/person";
+import { RAG_LABEL } from "@/lib/rag";
+import { classify, contributorLabels, readinessGroupName } from "@/lib/readiness";
 import {
   ASSURANCE_CRITERIA,
   ASSURANCE_GRADE_LABEL,
@@ -37,7 +39,7 @@ import {
   SECRETS_CRITERION,
   uncollectedDetail
 } from "@/lib/rows";
-import type { Contributor, RepositoryRow } from "@/lib/types";
+import type { ActorRow, Contributor, RepositoryRow } from "@/lib/types";
 
 /**
  * What separates one contributor from the next inside a single cell.
@@ -172,4 +174,32 @@ export function repositoryExportRows(
   expanded = false
 ): string[][] {
   return [repositoryExportHeadings(expanded), ...rows.map((row) => repositoryExportRow(row, teamContributors[row.team], expanded))];
+}
+
+/** What the contributors export's columns are headed, left to right. */
+export const CONTRIBUTOR_EXPORT_HEADINGS: readonly string[] = ["GitHub username", "Name", "Civil servant", "Repositories", "Readiness", "Labels"];
+
+/**
+ * One contributor's cells: their login first, since that is what the file is usually wanted for.
+ *
+ * `Readiness` is the tile the person is counted under and `Labels` the badges the table draws, in the table's own
+ * words — so a file of the Review tile says which combination put each person there. A person in no group, where the
+ * policy graded nothing in this window, reads the dash; an unset profile name and an unflagged person read empty.
+ */
+function contributorExportRow(row: ActorRow, labelled: boolean): string[] {
+  const labels = contributorLabels(row.labels, labelled);
+  const group = classify(labels)?.group;
+  return [
+    row.login,
+    row.name ?? "",
+    row.civil_servant === true ? "Yes" : "",
+    String(row.repositories),
+    group === undefined ? ABSENT : readinessGroupName(group),
+    labels.length === 0 ? RAG_LABEL.none : labels.map((label) => RAG_LABEL[label]).join(CONTRIBUTOR_SEPARATOR)
+  ];
+}
+
+/** The contributors document, heading row first, over rows ALREADY FILTERED AND ORDERED — see `repositoryExportRows`. */
+export function contributorExportRows(rows: readonly ActorRow[], labelled: boolean): string[][] {
+  return [[...CONTRIBUTOR_EXPORT_HEADINGS], ...rows.map((row) => contributorExportRow(row, labelled))];
 }
