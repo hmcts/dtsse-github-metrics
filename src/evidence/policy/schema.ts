@@ -50,7 +50,7 @@ const enablementInstant = z.union([z.string(), z.date()]).transform((value, ctx)
   try {
     return value instanceof Date ? parseInstant(value.toISOString()) : parseInstant(value);
   } catch (error) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: messageOf(error) });
+    ctx.addIssue({ code: "custom", message: messageOf(error) });
     return z.NEVER;
   }
 });
@@ -316,7 +316,7 @@ const traceability = z
             new RegExp(pattern);
           } catch (error) {
             ctx.addIssue({
-              code: z.ZodIssueCode.custom,
+              code: "custom",
               message: `invalid reference pattern ${JSON.stringify(pattern)}: ${messageOf(error)}`
             });
           }
@@ -329,12 +329,12 @@ export const configurationSchema = z
   .object({
     version: z.literal(1),
     organization: nonEmpty,
-    lookback: lookback.default({}),
-    cohort: cohort.default({}),
-    triviality: triviality.default({}),
-    assessment: assessment.default({}),
-    traceability: traceability.default({}),
-    org_graph: orgGraph.default({}),
+    lookback: lookback.prefault({}),
+    cohort: cohort.prefault({}),
+    triviality: triviality.prefault({}),
+    assessment: assessment.prefault({}),
+    traceability: traceability.prefault({}),
+    org_graph: orgGraph.prefault({}),
     // Removed from the cohort outright, whatever the graph says. Kept from the file era unchanged: the graph
     // can say what a repository IS but not that somebody decided it should not be reported, and that decision
     // is exactly the kind that belongs in a reviewed file.
@@ -396,7 +396,7 @@ export const configurationSchema = z
 function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.RefinementCtx): void {
   const identifiers = value.teams.map((entry) => entry.identifier);
   if (new Set(identifiers).size !== identifiers.length) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["teams"], message: "team identifiers must be unique" });
+    ctx.addIssue({ code: "custom", path: ["teams"], message: "team identifiers must be unique" });
   }
 
   // RELAXED from "a repository may belong to only one team". Shared ownership is real — a platform repository
@@ -412,7 +412,7 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
       left.localeCompare(right)
     );
     if (repeated.length > 0) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["teams"], message: `${entry.identifier} lists a repository twice: ${repeated.join(", ")}` });
+      ctx.addIssue({ code: "custom", path: ["teams"], message: `${entry.identifier} lists a repository twice: ${repeated.join(", ")}` });
     }
   }
 
@@ -422,7 +422,7 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
   const ownedExclusions = value.excluded_repositories.filter((name) => owned.has(name)).sort(byCodePoint);
   if (ownedExclusions.length > 0) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       path: ["excluded_repositories"],
       message: `excluded repositories may not have an owner: ${ownedExclusions.join(", ")}`
     });
@@ -438,7 +438,7 @@ function validateCrossReferences(value: z.infer<typeof baseObject>, ctx: z.Refin
     .map(([repository]) => repository)
     .sort((left, right) => left.localeCompare(right));
   if (blank.length > 0) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["sonar_projects"], message: `sonar project keys may not be empty: ${blank.join(", ")}` });
+    ctx.addIssue({ code: "custom", path: ["sonar_projects"], message: `sonar project keys may not be empty: ${blank.join(", ")}` });
   }
 
   // NEITHER AN `enablement:` NOR A `sonar_projects:` KEY IS CHECKED AGAINST THE COHORT, and that is a

@@ -124,7 +124,7 @@ function withoutAbsent(detail: SecurityAlertDetail): SecurityAlertDetail {
  * turn every repository's answer into unmeasured. An alert naming no repository or no number is skipped for a
  * different reason — those three fields are its identity, and there is nowhere to store it without them.
  */
-function readRecord<T extends z.ZodTypeAny>(
+function readRecord<T extends z.ZodType>(
   schema: T,
   family: AlertFamily,
   record: unknown,

@@ -18,7 +18,7 @@ const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().null
 const instant = z.string().transform((value, ctx) => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `unreadable instant: ${value}` });
+    ctx.addIssue({ code: "custom", message: `unreadable instant: ${value}` });
     return z.NEVER;
   }
   return parsed;
@@ -124,7 +124,7 @@ export const humanCommitHistorySchema = z.object({
  * degrades to "this evidence is unavailable" for the repository, and neither is allowed to escape as an
  * unclassified crash that would end the whole collection.
  */
-export function parseResponse<Schema extends z.ZodTypeAny>(schema: Schema, data: unknown, what: string): z.infer<Schema> {
+export function parseResponse<Schema extends z.ZodType>(schema: Schema, data: unknown, what: string): z.infer<Schema> {
   const result = schema.safeParse(data);
   if (!result.success) {
     throw new GitHubError(`GitHub returned invalid ${what}`, AvailabilityReason.CollectionFailed, undefined, { cause: result.error });
