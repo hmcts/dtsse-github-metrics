@@ -77,6 +77,43 @@ describe("parseConfiguration", () => {
     expect(assessment["time-to-first-review"]).toEqual({ maximum: 8 });
     expect(assessment["unreviewed-substantial-merges"]).toEqual({ maximum_count: 0, maximum_percentage: 1 });
     expect(assessment["review-depth-minimum-percentage"]).toBe(50);
+    expect(assessment["secure-by-design"]).toEqual({
+      "actions-allow-all": "caution",
+      "actions-sha-pinning-not-required": "caution",
+      "public-issue-creation": "caution"
+    });
+  });
+
+  it("should default a secure-by-design check left out of a stated block to caution", () => {
+    const document = `${VALID}\nassessment:\n  secure-by-design:\n    actions-allow-all: red\n`;
+
+    expect(parseConfiguration(document).assessment["secure-by-design"]).toEqual({
+      "actions-allow-all": "red",
+      "actions-sha-pinning-not-required": "caution",
+      "public-issue-creation": "caution"
+    });
+  });
+
+  it.each(["caution", "amber", "red"])("should accept %s as a secure-by-design severity", (severity) => {
+    const document = `${VALID}\nassessment:\n  secure-by-design:\n    actions-allow-all: ${severity}\n    actions-sha-pinning-not-required: ${severity}\n    public-issue-creation: ${severity}\n`;
+
+    expect(parseConfiguration(document).assessment["secure-by-design"]).toEqual({
+      "actions-allow-all": severity,
+      "actions-sha-pinning-not-required": severity,
+      "public-issue-creation": severity
+    });
+  });
+
+  it("should reject a secure-by-design severity it does not know", () => {
+    const document = `${VALID}\nassessment:\n  secure-by-design:\n    actions-allow-all: green\n`;
+
+    expect(() => parseConfiguration(document)).toThrow(/actions-allow-all/);
+  });
+
+  it("should reject a secure-by-design check it does not know", () => {
+    const document = `${VALID}\nassessment:\n  secure-by-design:\n    public-issues: red\n`;
+
+    expect(() => parseConfiguration(document)).toThrow(/public-issues/);
   });
 
   it("should apply the documented default traceability policy when none is given", () => {
@@ -351,6 +388,14 @@ describe("the shipped metrics.example.yaml", () => {
  */
 describe("the deployment's metrics.yaml", () => {
   const configuration = parseConfiguration(readFileSync(path.join(process.cwd(), "metrics.yaml"), "utf8"), "metrics.yaml");
+
+  it("should state every secure-by-design check as a caution", () => {
+    expect(configuration.assessment["secure-by-design"]).toEqual({
+      "actions-allow-all": "caution",
+      "actions-sha-pinning-not-required": "caution",
+      "public-issue-creation": "caution"
+    });
+  });
 
   it("should state a production list", () => {
     expect(configuration.production_repositories.length).toBeGreaterThan(0);

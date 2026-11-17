@@ -10,6 +10,7 @@ import { type ProductionLayers, reportedProduction } from "../../store/productio
 import { reportedAssurance } from "../contract/assurance.ts";
 import { cveReport } from "../contract/cve.ts";
 import { storedGate } from "../contract/merge-gate.ts";
+import { storedSettings } from "../contract/repository-settings.ts";
 import { reportedAlerts } from "../contract/security.ts";
 import { storedSonar } from "../contract/sonar.ts";
 import type { MeasuredRow } from "../measured.ts";
@@ -110,7 +111,7 @@ export function repositoryRow(
   }
 
   const gate = storedGate(state.payload);
-  const assessment = policy.enabled ? policy.assess(merges, gate) : undefined;
+  const assessment = policy.enabled ? policy.assess(merges, gate, storedSettings(state.payload)) : undefined;
   const payload = state.payload as { securityAlerts?: SecurityAlertEvidence; deploysToProduction?: boolean };
 
   return {

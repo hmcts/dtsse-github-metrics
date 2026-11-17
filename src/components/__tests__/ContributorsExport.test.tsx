@@ -28,6 +28,7 @@ const ROWS: ActorRow[] = [
 
 let downloaded: { content: string; filename: string } | undefined;
 let built = "";
+let revoked: string[] = [];
 
 function mount(rows: readonly ActorRow[] = ROWS) {
   return render(<ContributorsExport rows={rows} labelled window="2026-08-10 to 2026-11-02" />);
@@ -53,6 +54,7 @@ function exported(query: string): string[] {
 beforeEach(() => {
   parameters = new URLSearchParams();
   built = "";
+  revoked = [];
   downloaded = undefined;
   vi.stubGlobal(
     "Blob",
@@ -62,7 +64,7 @@ beforeEach(() => {
       }
     }
   );
-  vi.stubGlobal("URL", { createObjectURL: () => "blob:stubbed", revokeObjectURL: () => undefined });
+  vi.stubGlobal("URL", { createObjectURL: () => "blob:stubbed", revokeObjectURL: (released: string) => void revoked.push(released) });
   const create = document.createElement.bind(document);
   vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
     const element = create(tag);
@@ -93,6 +95,26 @@ describe("ContributorsExport", () => {
     expect(exported("weeks=12&readiness=review")).toEqual(["mixed"]);
   });
 
+  it("exports the people a subgroup counts, and names the file after the subgroup", () => {
+    expect(exported("weeks=12&readiness=green-amber")).toEqual(["careful"]);
+    expect(downloaded?.filename).toMatch(/^contributors-green-amber-2026-08-10to2026-11-02-taken-/);
+  });
+
+  it("reads a stale readiness key as unfiltered, and leaves it out of the file name", () => {
+    expect(exported("weeks=12&readiness=bogus")).toEqual(["ready", "careful", "mixed", "blocked"]);
+    expect(downloaded?.filename).toMatch(/^contributors-2026-08-10to2026-11-02-taken-/);
+  });
+
+  it("opens the document with a byte-order mark, so a spreadsheet reads it as UTF-8", () => {
+    exported("");
+    expect(downloaded?.content.startsWith("\uFEFF")).toBe(true);
+  });
+
+  it("releases the object URL once the download has been handed over", () => {
+    exported("");
+    expect(revoked).toEqual(["blob:stubbed"]);
+  });
+
   it("follows the term and the civil-servant toggle", () => {
     expect(exported("contributor=rea")).toEqual(["ready"]);
     expect(exported("civil-servants=true")).toEqual(["mixed"]);
@@ -102,5 +124,10 @@ describe("ContributorsExport", () => {
     parameters = new URLSearchParams("contributor=nobody");
     mount();
     expect(control()).toHaveProperty("disabled", true);
+  });
+
+  it("is enabled where the filters leave anybody", () => {
+    mount();
+    expect(control()).toHaveProperty("disabled", false);
   });
 });

@@ -638,6 +638,8 @@ describe("what collect walks", () => {
       refusing?: string[];
       /** What a per-repository read answers, where the case is about it. */
       get?: (path: string) => Promise<unknown>;
+      /** What every GraphQL document answers, where the case is about one. Empty by default. */
+      graphql?: (query: string, variables?: Record<string, unknown>) => Promise<unknown>;
       /** The records an estate-wide listing answers with, by path. Empty for every path not named. */
       records?: Record<string, unknown[]>;
       configuration?: Record<string, unknown>;
@@ -653,7 +655,12 @@ describe("what collect walks", () => {
     const listed = (options.listed ?? ["fresh", "stale"]).map((name) => ({ name, default_branch: "main" }));
     createGitHubClient.mockReturnValue({
       get,
-      graphql: vi.fn().mockResolvedValue({}),
+      graphql: vi.fn(options.graphql ?? (async () => ({}))),
+      // The batched readers' partial-answer call, offered only where a case answers GraphQL itself; without it they
+      // fail as they always have in these cases and every repository reads unread.
+      ...(options.graphql === undefined
+        ? {}
+        : { graphqlPartial: async (query: string, variables?: Record<string, unknown>) => ({ data: await options.graphql?.(query, variables) }) }),
       paginate: function paginate(path: string) {
         paths.push(String(path));
         return (async function* pages() {
@@ -860,6 +867,85 @@ describe("what collect walks", () => {
     expect(recordRepositoryState.mock.calls.map(([, repository, state]) => [repository, "mergeGate" in (state as object)])).toEqual([
       ["fresh", true],
       ["stale", true]
+    ]);
+  });
+
+  it("should read and store each repository's Actions permissions on both paths", async () => {
+    // Configuration rather than activity, like the gate, so the stale path reads it too.
+    const asked = await pathsAskedFor({
+      get: async (path) =>
+        path.endsWith("/actions/permissions") ? { enabled: true, allowed_actions: "all", sha_pinning_required: false } : { default_branch: "main" }
+    });
+
+    expect(asked.filter((path) => path.endsWith("/actions/permissions")).sort()).toEqual([
+      "/repos/hmcts/fresh/actions/permissions",
+      "/repos/hmcts/stale/actions/permissions"
+    ]);
+    expect(recordRepositoryState.mock.calls.map(([, repository, state]) => [repository, (state as { settings?: unknown }).settings])).toEqual([
+      ["fresh", { actions: { enabled: true, allowedActions: "all", shaPinningRequired: false } }],
+      ["stale", { actions: { enabled: true, allowedActions: "all", shaPinningRequired: false } }]
+    ]);
+  });
+
+  it("should store no Actions permissions, and warn, when they could not be read", async () => {
+    await pathsAskedFor({
+      get: async (path) => {
+        if (path.endsWith("/actions/permissions")) {
+          throw new GitHubError("Resource not accessible by integration", AvailabilityReason.PermissionDenied, 403);
+        }
+        return { default_branch: "main" };
+      }
+    });
+
+    expect(recordRepositoryState.mock.calls.map(([, repository, state]) => [repository, (state as { settings?: unknown }).settings])).toEqual([
+      ["fresh", {}],
+      ["stale", {}]
+    ]);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("fresh: Actions permissions could not be read"));
+  });
+
+  it("should store no Actions permissions, and not warn, when GitHub answers 404", async () => {
+    await pathsAskedFor({
+      get: async (path) => {
+        if (path.endsWith("/actions/permissions")) {
+          throw new GitHubError("Not Found", AvailabilityReason.NotFoundOrInaccessible, 404);
+        }
+        return { default_branch: "main" };
+      }
+    });
+
+    expect(recordRepositoryState.mock.calls.map(([, repository, state]) => [repository, (state as { settings?: unknown }).settings])).toEqual([
+      ["fresh", {}],
+      ["stale", {}]
+    ]);
+    expect(console.warn).not.toHaveBeenCalledWith(expect.stringContaining("Actions permissions"));
+  });
+
+  it("should store each repository's issue creation setting from the assurance batch on both paths", async () => {
+    const asked = await pathsAskedFor({
+      get: async (path) => (path.endsWith("/actions/permissions") ? { enabled: false } : { default_branch: "main" }),
+      graphql: async (query, variables) => {
+        if (!query.includes("query AssuranceSignals(")) {
+          return {};
+        }
+        const answers: Record<string, unknown> = {
+          fresh: { hasIssuesEnabled: true, issueCreationPolicy: "ALL" },
+          stale: { hasIssuesEnabled: false, issueCreationPolicy: "COLLABORATORS_ONLY" }
+        };
+        const data: Record<string, unknown> = {};
+        for (const [key, name] of Object.entries(variables ?? {})) {
+          if (key.startsWith("r")) {
+            data[`a${key.slice(1)}`] = { name, hasVulnerabilityAlertsEnabled: true, ...(answers[String(name)] as object) };
+          }
+        }
+        return data;
+      }
+    });
+
+    expect(asked).toContain("/repos/hmcts/stale/actions/permissions");
+    expect(recordRepositoryState.mock.calls.map(([, repository, state]) => [repository, (state as { settings?: unknown }).settings])).toEqual([
+      ["fresh", { actions: { enabled: false }, issues: { enabled: true, creationPolicy: "ALL" } }],
+      ["stale", { actions: { enabled: false }, issues: { enabled: false, creationPolicy: "COLLABORATORS_ONLY" } }]
     ]);
   });
 
@@ -1427,11 +1513,11 @@ describe("evidence", () => {
   });
 
   /** The readiness `evidence` reports for one repository whose stored state is `state`, with the policy on. */
-  async function assessedWith(state: unknown): Promise<Record<string, unknown> | undefined> {
+  async function assessedWith(state: unknown, assessment: Record<string, unknown> = {}): Promise<Record<string, unknown> | undefined> {
     // The shipped thresholds, read through the real loader, because every grade the policy makes needs one.
     const { parseConfiguration } = await vi.importActual<typeof import("../evidence/policy/load.ts")>("../evidence/policy/load.ts");
     const shipped = parseConfiguration("version: 1\norganization: hmcts\n");
-    const enabled = { assessment: { ...shipped.assessment, enabled: true }, triviality: shipped.triviality };
+    const enabled = { assessment: { ...shipped.assessment, enabled: true, ...assessment }, triviality: shipped.triviality };
     const { repositories } = await reported(["repo-a"], { "repo-a": { pullRequests: [merge()] } }, { "repo-a": state }, { configuration: enabled });
     return repositories[0];
   }
@@ -1449,6 +1535,27 @@ describe("evidence", () => {
     const gate = { branch: "main", pullRequests: [], requiredStatusChecks: [], blocksForcePushes: true, appliesToAdministrators: true };
 
     expect((await assessedWith({ mergeGate: { gate } }))?.blocking).not.toContain("merge-gate-not-collected");
+  });
+
+  it("should grade the stored secure-by-design settings at the configured severity", async () => {
+    const red = { "secure-by-design": { "actions-allow-all": "red", "public-issue-creation": "amber" } };
+    const settings = { actions: { enabled: true, allowedActions: "all" }, issues: { enabled: true, creationPolicy: "ALL" } };
+
+    const flagged = await assessedWith({ settings }, red);
+    expect(flagged).toMatchObject({ readiness: "red", blocking: expect.arrayContaining(["actions-allow-all", "issues-open-to-public"]) });
+
+    // At the shipped `caution` severity neither setting blocks.
+    const cautioned = await assessedWith({ settings });
+    expect(cautioned?.blocking).not.toContain("actions-allow-all");
+    expect(cautioned?.blocking).not.toContain("issues-open-to-public");
+  });
+
+  it("should not block on settings a stored state never carried", async () => {
+    const red = { "secure-by-design": { "actions-allow-all": "red", "public-issue-creation": "red" } };
+
+    const blocking = (await assessedWith({ securityAlerts: {} }, red))?.blocking as string[];
+    expect(blocking).not.toContain("actions-allow-all");
+    expect(blocking).not.toContain("issues-open-to-public");
   });
 });
 

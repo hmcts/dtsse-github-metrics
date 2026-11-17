@@ -21,6 +21,7 @@ import { AvailabilityReason, CollectionStatus } from "../evidence/domain/availab
 import { EvidenceSource } from "../evidence/domain/coverage.ts";
 import type { Merges } from "../evidence/domain/facts.ts";
 import type { MergeGateEvidence, MergeGateReport } from "../evidence/domain/merge-gate.ts";
+import type { RepositorySettings } from "../evidence/domain/repository-settings.ts";
 import type { SecurityAlertEvidence } from "../evidence/domain/security-alerts.ts";
 import { isSonarObservation, SonarMappingOutcome, type SonarResolutionAttempt, type SonarState, type StoredSonarMapping } from "../evidence/domain/sonar.ts";
 import { HUMAN_MAINTENANCE_SEARCH_DAYS, type MaintenanceEvidence } from "../evidence/domain/standards.ts";
@@ -38,6 +39,7 @@ import {
 import { type EstateRepository, readEstateMetadata } from "../evidence/inventory/estate-metadata.ts";
 import { collectMergeGate } from "../evidence/inventory/merge-gate.ts";
 import { deploysToProduction, fetchProductionRepositories } from "../evidence/inventory/production.ts";
+import { collectActionsPermissions } from "../evidence/inventory/repository-settings.ts";
 import {
   type AlertSource,
   collectOrganisationDependabotAlerts,
@@ -66,6 +68,7 @@ import { storedDisplayNames } from "../evidence/org/people.ts";
 import { loadConfiguration } from "../evidence/policy/load.ts";
 import { configuredTeamSlugs, sonarOrganizationName } from "../evidence/policy/repositories.ts";
 import type { Configuration } from "../evidence/policy/schema.ts";
+import { storedSettings } from "../evidence/report/contract/repository-settings.ts";
 import { alreadyAnswered, attributeProject, searchPacer } from "../evidence/sonar/attribute.ts";
 import { createSonarClient, type SonarClient, SonarError, sonarToken } from "../evidence/sonar/client.ts";
 import { sonarProjectMap } from "../evidence/sonar/map.ts";
@@ -262,6 +265,21 @@ async function collectRepository(
   // Enforces review and Enforces CI wheels for a gate GitHub would have disclosed for one to three calls each.
   const gate = await collectMergeGate(client, organization, repository, defaultBranch);
 
+  // Read on both paths for the same reason: which Actions may run is configuration. An unread answer is left out
+  // of `settings`, which the assessment reports as not read rather than as a weak setting. Warned about but not
+  // counted as a failure, as the merge gate is not: the rest of the repository was still collected.
+  const actionsPermissions = await collectActionsPermissions(client, organization, repository);
+  if (actionsPermissions.failure !== undefined) {
+    console.warn(`${repository}: ${actionsPermissions.failure}`);
+  }
+  // Who may open an issue came off the batched assurance document, so it costs nothing here. Absent where the batch
+  // could not read this repository, and then left out of `settings` for the same reason.
+  const issues = options.assurance?.issues;
+  const settings: RepositorySettings = {
+    ...(actionsPermissions.actions === undefined ? {} : { actions: actionsPermissions.actions }),
+    ...(issues === undefined ? {} : { issues })
+  };
+
   if (!options.behaviour) {
     // No cached merges to consult on this path, so the human commit is always searched for: a stale repository is
     // exactly the one the Maintenance section most needs an answer about.
@@ -274,6 +292,7 @@ async function collectRepository(
       defaultBranch,
       fetchedAt: reference,
       mergeGate: gate,
+      settings,
       sonar: sonar.state,
       // The two families this path has answers for, counted rather than thrown away — both come off estate-wide
       // reads, so a stale repository costs nothing to report them for. Code scanning stays absent, which reads
@@ -337,6 +356,7 @@ async function collectRepository(
     defaultBranch,
     fetchedAt: reference,
     mergeGate: gate,
+    settings,
     securityAlerts: alerts.evidence,
     deploysToProduction: deploysToProduction(production, organization, repository),
     assurance,
@@ -1853,8 +1873,9 @@ async function runEvidence(configuration: Configuration, argv: Arguments): Promi
       directCommits: (facts?.directCommits ?? []).map((fact) => fact.payload)
     };
     const merges = reportedCohort(deserialiseMerges(payloads), excluded, bots).merges;
-    const gate = readStoredGate(states.get(repository)?.payload);
-    const assessment = policy.enabled ? policy.assess(merges, gate) : undefined;
+    const payload = states.get(repository)?.payload;
+    const gate = readStoredGate(payload);
+    const assessment = policy.enabled ? policy.assess(merges, gate, storedSettings(payload)) : undefined;
 
     rows.push({
       repository,
