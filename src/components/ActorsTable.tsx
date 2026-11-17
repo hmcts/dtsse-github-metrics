@@ -7,11 +7,10 @@ import { ContributorName } from "@/components/ContributorName";
 import { EmptyState } from "@/components/EmptyState";
 import { RAGLabel } from "@/components/RAGCard";
 import { type Align, SortHeader } from "@/components/SortHeader";
-import { CIVIL_SERVANT_LABEL, matchesCivilServant, parseCivilServantFilter } from "@/lib/civil-servant";
-import { CONTRIBUTOR_TERM_PARAMETER, matchesAny } from "@/lib/filter";
+import { filterActors } from "@/lib/actors";
+import { CIVIL_SERVANT_LABEL } from "@/lib/civil-servant";
 import { contributorLabel } from "@/lib/person";
 import { combinationKey } from "@/lib/rag";
-import { classify, contributorLabels, matchesReadiness, READINESS_PARAMETER } from "@/lib/readiness";
 import { type Direction, nextDirection, type SortValue, sorted } from "@/lib/sort";
 import type { ActorRow, ReadinessLabel } from "@/lib/types";
 
@@ -81,17 +80,10 @@ export function ActorsTable({ rows, weeks, labelled }: Readonly<{ rows: readonly
 
   // The term the page's filter box writes, matched against the login and the profile name both, the group the
   // readiness tiles above the list write, and the civil-servant toggle beside them.
+  // Through `filterActors`, which the export reads the same URL through.
   const parameters = useSearchParams();
-  const term = parameters.get(CONTRIBUTOR_TERM_PARAMETER) ?? "";
-  const readiness = parameters.get(READINESS_PARAMETER) ?? "";
-  const civilServantsOnly = parseCivilServantFilter((parameter) => parameters.get(parameter));
   const ordered = sorted(
-    rows.filter(
-      (row) =>
-        matchesAny([row.login, row.name], term) &&
-        matchesReadiness(classify(contributorLabels(row.labels, labelled)), readiness) &&
-        matchesCivilServant(row, civilServantsOnly)
-    ),
+    filterActors(rows, (parameter) => parameters.get(parameter), labelled),
     column.read,
     direction
   );
