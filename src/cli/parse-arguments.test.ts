@@ -74,18 +74,12 @@ describe("parseArguments", () => {
   // A flag nothing reads is refused rather than accepted, so `--help` and the behaviour cannot disagree.
   // Each of these parsed and was then ignored by every command, four of them while `usage` advertised them
   // against `evidence` — which is implemented and read none of them.
-  it.each([
-    "--logging=debug",
-    "--metric=review-depth",
-    "--refresh",
-    "--offline",
-    "--identities",
-    "--format=json",
-    "--period-days=28",
-    "--periods=3"
-  ])("should refuse %s, which no command reads", (flag) => {
-    expect(() => parseArguments(["evidence", "--config", "m.yaml", flag])).toThrow(UsageError);
-  });
+  it.each(["--logging=debug", "--metric=review-depth", "--refresh", "--offline", "--identities", "--format=json", "--period-days=28", "--periods=3"])(
+    "should refuse %s, which no command reads",
+    (flag) => {
+      expect(() => parseArguments(["evidence", "--config", "m.yaml", flag])).toThrow(UsageError);
+    }
+  );
 
   it("should refuse --maximum-days, which never raised the window span it claimed to", () => {
     expect(() => parseArguments(["collect", "--config", "m.yaml", "--maximum-days=400"])).toThrow(UsageError);

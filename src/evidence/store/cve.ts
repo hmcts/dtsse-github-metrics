@@ -186,7 +186,7 @@ export async function storedCveEvidence(organization: string): Promise<Map<strin
       // held per `collection_state.revision`, so a collation that reordered it would make two builds of unchanged
       // evidence differ.
       existing.codebaseTypes = [...existing.codebaseTypes, scan.codebaseType].sort(byCodePoint);
-      existing.scannedAt = scan.reportedAt > existing.scannedAt ? scan.reportedAt : existing.scannedAt;
+      existing.scannedAt = new Date(Math.max(scan.reportedAt.getTime(), existing.scannedAt.getTime()));
     }
 
     const perRepository = new Map<string, CveOccurrence[]>();

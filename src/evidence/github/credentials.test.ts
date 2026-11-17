@@ -343,16 +343,13 @@ describe("mintedExpiry", () => {
     expect(mintedExpiry({ expires_at: "2026-08-08T13:00:00Z" })?.toISOString()).toBe("2026-08-08T13:00:00.000Z");
   });
 
-  it.each([
-    [{}],
-    [null],
-    ["2026-08-08T13:00:00Z"],
-    [{ expires_at: 17 }],
-    [{ expires_at: "not a date" }]
-  ])("should treat %o as an unknown expiry rather than a failure", (payload) => {
-    // The token GitHub just issued works now; an unreadable expiry falls back to the 401 retry.
-    expect(mintedExpiry(payload)).toBeUndefined();
-  });
+  it.each([[{}], [null], ["2026-08-08T13:00:00Z"], [{ expires_at: 17 }], [{ expires_at: "not a date" }]])(
+    "should treat %o as an unknown expiry rather than a failure",
+    (payload) => {
+      // The token GitHub just issued works now; an unreadable expiry falls back to the 401 retry.
+      expect(mintedExpiry(payload)).toBeUndefined();
+    }
+  );
 });
 
 describe("mintedToken", () => {

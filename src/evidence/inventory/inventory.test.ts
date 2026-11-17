@@ -617,13 +617,12 @@ describe("organisationRecords", () => {
     expect(organisationRecords(source({ read: true, named: false, enabled: true }))).toEqual([]);
   });
 
-  it.each([
-    [{ read: true, named: false, enabled: false }],
-    [{ read: true, named: false, enabled: undefined }],
-    [{ read: false, named: false, enabled: true }]
-  ])("should hand back nothing for %o, which is unmeasured rather than empty", (place) => {
-    expect(organisationRecords(source(place))).toBeUndefined();
-  });
+  it.each([[{ read: true, named: false, enabled: false }], [{ read: true, named: false, enabled: undefined }], [{ read: false, named: false, enabled: true }]])(
+    "should hand back nothing for %o, which is unmeasured rather than empty",
+    (place) => {
+      expect(organisationRecords(source(place))).toBeUndefined();
+    }
+  );
 });
 
 describe("alertRepositoryName", () => {
@@ -767,15 +766,12 @@ describe("parseRepositoryUrl", () => {
     expect(parseRepositoryUrl("git@github.com:hmcts/bar-api.git")).toBeUndefined();
   });
 
-  it.each([
-    "https://github.com/hmcts",
-    "https://github.com/hmcts/a/b",
-    "https://github.com/hmcts/.git",
-    "not a url",
-    "file:///hmcts/cath-service"
-  ])("should refuse %s", (url) => {
-    expect(parseRepositoryUrl(url)).toBeUndefined();
-  });
+  it.each(["https://github.com/hmcts", "https://github.com/hmcts/a/b", "https://github.com/hmcts/.git", "not a url", "file:///hmcts/cath-service"])(
+    "should refuse %s",
+    (url) => {
+      expect(parseRepositoryUrl(url)).toBeUndefined();
+    }
+  );
 });
 
 describe("entryRepository", () => {

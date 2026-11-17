@@ -677,7 +677,8 @@ describe("what collect walks", () => {
 
   /** The window one run's pull-request fill asked to cover. */
   function windowAskedFor(): { startsAt: Date; endsAt: Date } {
-    return (fillCachedSource.mock.calls[0]?.[0] as { window: { startsAt: Date; endsAt: Date } }).window;
+    const [options] = fillCachedSource.mock.calls[0] ?? [];
+    return (options as { window: { startsAt: Date; endsAt: Date } }).window;
   }
 
   it("should fail a run whose only repository could not be read at all", async () => {

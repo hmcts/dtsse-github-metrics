@@ -305,14 +305,14 @@ describe("parseConfiguration", () => {
     expect(() => parseConfiguration("- not a mapping\n")).toThrow(ConfigurationError);
   });
 
-  it.each([
-    "!!python/object/apply:builtins.str [unsafe]",
-    '!!js/function "function(){return 1}"'
-  ])("should reject the constructor tag %s, which could instantiate an arbitrary object", (document) => {
-    // `json: true` is set on the loader so a duplicate key resolves as PyYAML resolved it. This
-    // asserts that option did not also widen the schema: an unknown tag is still refused.
-    expect(() => parseConfiguration(document)).toThrow(ConfigurationError);
-  });
+  it.each(["!!python/object/apply:builtins.str [unsafe]", '!!js/function "function(){return 1}"'])(
+    "should reject the constructor tag %s, which could instantiate an arbitrary object",
+    (document) => {
+      // `json: true` is set on the loader so a duplicate key resolves as PyYAML resolved it. This
+      // asserts that option did not also widen the schema: an unknown tag is still refused.
+      expect(() => parseConfiguration(document)).toThrow(ConfigurationError);
+    }
+  );
 });
 
 describe("the shipped metrics.example.yaml", () => {
