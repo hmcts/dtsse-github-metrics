@@ -16,7 +16,7 @@
 
 import { describe, expect, it } from "vitest";
 import { csvDocument } from "@/lib/csv";
-import { CONTRIBUTOR_SEPARATOR, repositoryExportHeadings, repositoryExportRows } from "@/lib/export";
+import { CONTRIBUTOR_EXPORT_HEADINGS, CONTRIBUTOR_SEPARATOR, contributorExportRows, repositoryExportHeadings, repositoryExportRows } from "@/lib/export";
 import { ABSENT } from "@/lib/format";
 import type { Contributor, RepositoryRow } from "@/lib/types";
 import { UNCOLLECTED_DETAIL } from "@/lib/types";
@@ -509,5 +509,30 @@ describe("repositoryExportRows with the CVE counts", () => {
 
     expect(cell(rows, "pcs-api", "Unsuppressed Crit CVEs")).toBe("-");
     expect(cell(rows, "pcs-api", "Total")).toBe("-");
+  });
+});
+
+describe("contributorExportRows", () => {
+  it("leads on the username and states the tile and the labels in the table's words", () => {
+    const rows = contributorExportRows(
+      [
+        { login: "ready", name: "Rea Dy", repositories: 4, labels: ["green", "amber"], civil_servant: true },
+        { login: "mixed", repositories: 2, labels: ["green", "amber", "red"] },
+        { login: "unreadable", repositories: 1, labels: [] }
+      ],
+      true
+    );
+
+    expect(rows).toEqual([
+      [...CONTRIBUTOR_EXPORT_HEADINGS],
+      ["ready", "Rea Dy", "Yes", "4", "Ready", "Ready; Caution"],
+      ["mixed", "", "", "2", "Review", "Ready; Caution; Blocked"],
+      ["unreadable", "", "", "1", "Cannot assess", "Cannot assess"]
+    ]);
+    expect(csvDocument(rows).split("\r\n")[0]).toBe("GitHub username,Name,Civil servant,Repositories,Readiness,Labels");
+  });
+
+  it("reads a dash for the group and Not assessed where the policy graded nothing in the window", () => {
+    expect(contributorExportRows([{ login: "anyone", repositories: 1, labels: ["green"] }], false)[1]).toEqual(["anyone", "", "", "1", ABSENT, "Not assessed"]);
   });
 });
