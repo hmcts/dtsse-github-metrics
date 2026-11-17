@@ -270,6 +270,27 @@ const unreviewedSubstantialThresholds = z
   })
   .strict();
 
+/**
+ * How hard a secure-by-design finding lands on the readiness label.
+ *
+ * `caution` reports the finding in amber and leaves the label alone. `amber` and `red` make it a blocking
+ * condition that holds the label at that colour.
+ */
+const secureDesignSeverity = z.enum(["caution", "amber", "red"]);
+
+/**
+ * The repository settings the secure design team asked to see: Actions allowed from any source, Actions that
+ * need not be pinned to a full commit SHA, and issues that anyone with a GitHub account can open. All three start
+ * as `caution`, so turning a check on changes no label until somebody decides it should.
+ */
+const secureByDesign = z
+  .object({
+    "actions-allow-all": secureDesignSeverity.default("caution"),
+    "actions-sha-pinning-not-required": secureDesignSeverity.default("caution"),
+    "public-issue-creation": secureDesignSeverity.default("caution")
+  })
+  .strict();
+
 const assessment = z
   .object({
     enabled: z.boolean().default(true),
@@ -292,7 +313,9 @@ const assessment = z
     "unreviewed-substantial-merges": unreviewedSubstantialThresholds.default({ maximum_count: 0, maximum_percentage: 1 }),
     // A caution boundary, not a green/amber pair: no defensible label-deciding threshold exists yet,
     // so a shallow rate is something to weigh rather than something that holds the label down.
-    "review-depth-minimum-percentage": percentage.default(50)
+    "review-depth-minimum-percentage": percentage.default(50),
+    // `caution` leaves the label alone; `amber` and `red` make the finding block at that colour.
+    "secure-by-design": secureByDesign.prefault({})
   })
   .strict();
 
@@ -464,5 +487,6 @@ export type TrivialityConfiguration = z.infer<typeof triviality>;
 export type TraceabilityConfiguration = z.infer<typeof traceability>;
 export type ReadinessThresholds = z.infer<typeof readinessThresholds>;
 export type DistributionThreshold = z.infer<typeof distributionThreshold>;
+export type SecureDesignSeverity = z.infer<typeof secureDesignSeverity>;
 
 export { PRODUCTION_LIST_URL };

@@ -93,6 +93,12 @@ excluded_repositories: []
   It lists exact logins because GitHub reports these accounts as users.
 - `teams:` overrides the owner `collect-org` works out for a repository.
 - `assessment` holds the green/amber/red thresholds.
+- `assessment.secure-by-design` sets how three repository settings are graded: `actions-allow-all` (Actions
+  enabled with any action from any source allowed), `actions-sha-pinning-not-required` (Actions enabled without
+  requiring every action to be pinned to a full commit SHA) and `public-issue-creation` (issues enabled and anyone with a
+  GitHub account can open one). Each takes `caution` (the default: shown in amber, label unchanged), `amber` or
+  `red` (a blocking condition that holds the label at that colour). A setting that wasn't read, for example on a
+  repository collected before this was added, is reported as not read and never flagged.
 
 Both cohort lists are applied when a report is built, so changing them takes effect on the next page load.
 
@@ -110,7 +116,8 @@ credential. `evidence` and the dashboard read only the database.
 
 If a private or internal repository reports no evidence, check the App installation holds every permission the
 App declares. Adding a permission to an App leaves existing installations pending until an organisation admin
-approves it, and private repositories need `pull_requests: read`.
+approves it, and private repositories need `pull_requests: read`. Reading a repository's Actions permissions
+needs the repository `administration: read` permission; without it the Actions policy is reported as not read.
 
 SonarCloud is read anonymously; set `SONAR_TOKEN` to include private projects. `collect-cve` needs
 `CVE_COSMOS_ACCOUNT` and `CVE_COSMOS_KEY` (the read-only key for `pipeline-metrics`).
@@ -145,6 +152,11 @@ that gave up after retrying.
   neither it prints the count. Nothing collected can tell a civil servant from a contractor, so the list is kept
   by hand, and it holds logins only, never email addresses. Keep the source list out of the repository.
   `scripts/find-civil-servants` matches a list of work addresses to logins through the SSO mapping.
+
+`/repositories` and `/contributors` each have an Export CSV button. It exports the rows the current filters
+show, in the table's default order, and names the file after the reporting window, the day it was taken and,
+on `/contributors`, the readiness tile selected. The contributors file has one row per GitHub username, with
+the name, civil-servant flag, repository count, readiness group and labels.
 
 Missing data is shown with its reason. A repository with no CVE report has not been scanned;
 one with a report and no findings is clean.

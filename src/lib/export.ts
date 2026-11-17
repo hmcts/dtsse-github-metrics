@@ -179,6 +179,19 @@ export function repositoryExportRows(
 /** What the contributors export's columns are headed, left to right. */
 export const CONTRIBUTOR_EXPORT_HEADINGS: readonly string[] = ["GitHub username", "Name", "Civil servant", "Repositories", "Readiness", "Labels"];
 
+/** The leading characters a spreadsheet reads as the start of a formula. */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+
+/**
+ * Free text a stranger chose, made safe to open in a spreadsheet.
+ *
+ * A GitHub profile name is set by its owner, and one beginning `=` would run as a formula in Excel or Sheets when the
+ * file is opened. A leading apostrophe makes the spreadsheet read the cell as text and is not displayed.
+ */
+function textCell(value: string): string {
+  return FORMULA_LEAD.test(value) ? `'${value}` : value;
+}
+
 /**
  * One contributor's cells: their login first, since that is what the file is usually wanted for.
  *
@@ -191,7 +204,7 @@ function contributorExportRow(row: ActorRow, labelled: boolean): string[] {
   const group = classify(labels)?.group;
   return [
     row.login,
-    row.name ?? "",
+    textCell(row.name ?? ""),
     row.civil_servant === true ? "Yes" : "",
     String(row.repositories),
     group === undefined ? ABSENT : readinessGroupName(group),
