@@ -71,7 +71,7 @@
     "@types/pg": "8.23.1",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
-    "@vitejs/plugin-react": "6.1.2",
+    "@vitejs/plugin-react": "6.3.0",
     "@vitest/coverage-v8": "4.1.12",
     "autoprefixer": "10.4.19",
     "eslint": "10.11.0",
