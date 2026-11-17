@@ -47,14 +47,12 @@ describe("dumpSource", () => {
     expect(() => dumpSource({ ...AAT, [missing]: undefined })).toThrow(`${missing} is not set`);
   });
 
-  it.each([
-    PREVIEW_SERVER_HOST,
-    PREVIEW_SERVER_HOST.toUpperCase(),
-    `${PREVIEW_SERVER_HOST}.`,
-    ` ${PREVIEW_SERVER_HOST}`
-  ])("should refuse a source of %j when it is the preview server", (host) => {
-    expect(() => dumpSource({ ...AAT, AAT_POSTGRES_HOST: host })).toThrow(/names the preview server/);
-  });
+  it.each([PREVIEW_SERVER_HOST, PREVIEW_SERVER_HOST.toUpperCase(), `${PREVIEW_SERVER_HOST}.`, ` ${PREVIEW_SERVER_HOST}`])(
+    "should refuse a source of %j when it is the preview server",
+    (host) => {
+      expect(() => dumpSource({ ...AAT, AAT_POSTGRES_HOST: host })).toThrow(/names the preview server/);
+    }
+  );
 });
 
 describe("previewTarget", () => {

@@ -83,7 +83,7 @@ export function createSonarClient(options: SonarClientOptions) {
    * public ones, which is most of an open organisation. A 404 is carried as `NotFoundOrInaccessible` because
    * the caller reads it as a REFUTATION — a project that does not exist — rather than as a failure.
    */
-  async function read<Schema extends z.ZodTypeAny>(schema: Schema, path: string, parameters: Record<string, string>, what: string): Promise<z.infer<Schema>> {
+  async function read<Schema extends z.ZodType>(schema: Schema, path: string, parameters: Record<string, string>, what: string): Promise<z.infer<Schema>> {
     const url = new URL(`${baseUrl}${path}`);
     for (const [name, value] of Object.entries(parameters)) {
       url.searchParams.set(name, value);

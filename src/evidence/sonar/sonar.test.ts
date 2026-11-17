@@ -300,7 +300,7 @@ describe("createSonarClient", () => {
 
     const [url, init] = (fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0] ?? [];
     expect(new URL(String(url)).origin).toBe("https://sonar.example");
-    expect((init?.headers as Record<string, string>).Authorization).toBe(`Basic ${Buffer.from("squ_test:").toString("base64")}`);
+    expect((init?.headers as Record<string, string> | undefined)?.Authorization).toBe(`Basic ${Buffer.from("squ_test:").toString("base64")}`);
   });
 
   it("should keep an analysis that carries no date, and a measure sent as null, as absences", async () => {

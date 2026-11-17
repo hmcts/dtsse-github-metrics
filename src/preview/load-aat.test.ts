@@ -191,19 +191,18 @@ describe("loadAat", () => {
     expect(events.filter((event) => event.startsWith("migrate"))).toEqual([]);
   });
 
-  it.each([
-    "pg_restore preview < /tmp/preview-aat-copy-x/aat.dump",
-    "scrub",
-    "migrate /dtsse-github-metrics-pr-75"
-  ])("should empty the database, delete the dump and never restart the app when %s fails", async (failOn) => {
-    const { deps, events } = fake({ failOn });
+  it.each(["pg_restore preview < /tmp/preview-aat-copy-x/aat.dump", "scrub", "migrate /dtsse-github-metrics-pr-75"])(
+    "should empty the database, delete the dump and never restart the app when %s fails",
+    async (failOn) => {
+      const { deps, events } = fake({ failOn });
 
-    await expect(loadAat(OPTIONS, deps)).rejects.toThrow(`${failOn} failed`);
-    const after = events.slice(events.indexOf(failOn) + 1);
-    expect(after).toContain("reset");
-    expect(after.at(-1)).toBe("rm /tmp/preview-aat-copy-x");
-    expect(events.filter((event) => event.includes("--replicas=1"))).toEqual([]);
-  });
+      await expect(loadAat(OPTIONS, deps)).rejects.toThrow(`${failOn} failed`);
+      const after = events.slice(events.indexOf(failOn) + 1);
+      expect(after).toContain("reset");
+      expect(after.at(-1)).toBe("rm /tmp/preview-aat-copy-x");
+      expect(events.filter((event) => event.includes("--replicas=1"))).toEqual([]);
+    }
+  );
 
   it("should leave the PR database untouched and delete the dump when the dump fails", async () => {
     const { deps, events } = fake({ failOn: "pg_dump aat > /tmp/preview-aat-copy-x/aat.dump" });

@@ -844,16 +844,12 @@ describe("classification helpers", () => {
     expect(byAlias.get("a0")).toBe("FORBIDDEN: first");
   });
 
-  it.each([
-    [{ type: "FORBIDDEN", message: "no" }],
-    [{ path: [] }],
-    [{ path: [7] }],
-    [{ path: "a0" }],
-    [null],
-    ["a string"]
-  ])("should key nothing for %o, which names no alias", (error) => {
-    expect(graphqlErrorsByAlias([error]).size).toBe(0);
-  });
+  it.each([[{ type: "FORBIDDEN", message: "no" }], [{ path: [] }], [{ path: [7] }], [{ path: "a0" }], [null], ["a string"]])(
+    "should key nothing for %o, which names no alias",
+    (error) => {
+      expect(graphqlErrorsByAlias([error]).size).toBe(0);
+    }
+  );
 
   it("should name UNKNOWN where GitHub gave no type, and an empty message where it gave none", () => {
     expect(graphqlErrorsByAlias([{ message: "no", path: ["a0"] }]).get("a0")).toBe("UNKNOWN: no");

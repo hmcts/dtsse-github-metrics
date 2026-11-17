@@ -23,7 +23,7 @@ const pageInfo = z.object({ hasNextPage: z.boolean(), endCursor: z.string().null
 const instant = z.string().transform((value, ctx) => {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: `unreadable instant: ${value}` });
+    ctx.addIssue({ code: "custom", message: `unreadable instant: ${value}` });
     return z.NEVER;
   }
   return parsed;

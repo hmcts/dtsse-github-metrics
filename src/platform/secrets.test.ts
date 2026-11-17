@@ -181,13 +181,14 @@ describe("the deployed chart's CronJobs", () => {
     expect(ceiling).toBeLessThan(limit);
   });
 
-  it.each(
-    jobs.filter(([, block]) => block.devmemoryLimits !== undefined)
-  )("should keep %s's dev memory keys in step with the pair devMode ignores", (_name, block) => {
-    // `library/templates/v2/_container.tpl` reads one pair or the other and never both, and the CNP pipeline
-    // installs the `-staging` release with `global.devMode`. A dev pair left at the chart default is a pod that
-    // OOMs in staging alone, which is where that was first found.
-    expect(block.devmemoryLimits).toEqual(block.memoryLimits);
-    expect(block.devmemoryRequests).toEqual(block.memoryRequests);
-  });
+  it.each(jobs.filter(([, block]) => block.devmemoryLimits !== undefined))(
+    "should keep %s's dev memory keys in step with the pair devMode ignores",
+    (_name, block) => {
+      // `library/templates/v2/_container.tpl` reads one pair or the other and never both, and the CNP pipeline
+      // installs the `-staging` release with `global.devMode`. A dev pair left at the chart default is a pod that
+      // OOMs in staging alone, which is where that was first found.
+      expect(block.devmemoryLimits).toEqual(block.memoryLimits);
+      expect(block.devmemoryRequests).toEqual(block.memoryRequests);
+    }
+  );
 });

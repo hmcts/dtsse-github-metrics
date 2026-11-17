@@ -51,14 +51,14 @@ yarn db:migrate:dev && AUTH_DISABLED=true yarn dev  # or the local database
 
 One Next.js application and one image, with two entry points:
 
-| Entry point | Runs as | Does |
-| --- | --- | --- |
-| `node server.js` | the web pod | serves the dashboard, reading collected evidence from Postgres |
-| `node dist/cli/run.js collect` | a daily CronJob at 14:00 | contacts GitHub, caches facts, stamps the collection |
-| `node dist/cli/run.js collect-org` | a daily CronJob at 13:30 | walks the organisation's teams, people and repository ownership |
-| `node dist/cli/run.js collect-cve` | a daily CronJob at 13:00 | reads the CVE reports the Jenkins security stage publishes to Cosmos |
-| `node dist/cli/run.js collect-alerts` | a daily CronJob at 11:00 | reads each alert family's organisation-wide endpoint for the individual alerts |
-| `node dist/cli/run.js map-sonar` | a weekly CronJob, Mondays 09:00 | resolves each SonarCloud project to the repository it analyses |
+| Entry point                           | Runs as                         | Does                                                                           |
+| ------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------ |
+| `node server.js`                      | the web pod                     | serves the dashboard, reading collected evidence from Postgres                 |
+| `node dist/cli/run.js collect`        | a daily CronJob at 14:00        | contacts GitHub, caches facts, stamps the collection                           |
+| `node dist/cli/run.js collect-org`    | a daily CronJob at 13:30        | walks the organisation's teams, people and repository ownership                |
+| `node dist/cli/run.js collect-cve`    | a daily CronJob at 13:00        | reads the CVE reports the Jenkins security stage publishes to Cosmos           |
+| `node dist/cli/run.js collect-alerts` | a daily CronJob at 11:00        | reads each alert family's organisation-wide endpoint for the individual alerts |
+| `node dist/cli/run.js map-sonar`      | a weekly CronJob, Mondays 09:00 | resolves each SonarCloud project to the repository it analyses                 |
 
 The web pod holds no GitHub or Cosmos credential and talks only to Postgres. The one table it writes is
 `repository_notes`, for the free-text notes signed-in readers add to a repository.
@@ -78,8 +78,8 @@ has. `metrics.yaml` decides which of those repositories count and how they are g
 cohort:
   visibilities: [public]
   include_archived: false
-  active_within_days: 90         # repositories collect walks for behaviour evidence
-  unmaintained_after_days: 365   # past this, a repository is flagged "should be archived"
+  active_within_days: 90 # repositories collect walks for behaviour evidence
+  unmaintained_after_days: 365 # past this, a repository is flagged "should be archived"
   excluded_authors: [renovate, dependabot]
   bot_accounts: [fluxcdbot, hmcts-platform-operations, claude]
 excluded_repositories: []

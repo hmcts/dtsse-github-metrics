@@ -9,8 +9,8 @@ both to Next; this file is the one to edit.
 
 ## Absent and zero are different answers, everywhere
 
-**The single most important rule in the codebase.** Every figure this service reports distinguishes *nobody
-measured this* from *this was measured and the answer is none*:
+**The single most important rule in the codebase.** Every figure this service reports distinguishes _nobody
+measured this_ from _this was measured and the answer is none_:
 
 - **absent** (`undefined`, dropped from the JSON by `stripAbsent`, rendered as a dash) means unmeasured — the
   walk was refused, no gate could be read, no SonarCloud project resolved, the repository was never collected.
@@ -22,7 +22,7 @@ way that quietly reads absence as the bottom of a range. `lib/format.ts`'s `quan
 `lib/sort.ts`'s handling of absent keys exist to keep this honest — use them rather than `String(...)`, which
 prints `undefined` for a figure nobody measured.
 
-A field being optional on a contract can also mean *an older deployment did not send it*. Where that is the
+A field being optional on a contract can also mean _an older deployment did not send it_. Where that is the
 case the field's own comment says so, with the version it appeared in, because the two absences take different
 fallbacks.
 
@@ -135,20 +135,20 @@ subcommand as production-touching unless you have checked which database it reso
 
 ## Gates
 
-| Command | What it is |
-| --- | --- |
-| `yarn lint` | `biome check --error-on-warnings .`, then `yarn lint:sonar` — a new warning or Sonar issue fails the build |
-| `yarn lint:sonar` | the SonarCloud quality profile's rules, through their ESLint ports (`eslint.config.mjs`) |
-| `yarn typecheck` | three passes: app, `tsconfig.cli.json`, `tsconfig.e2e.json` |
-| `yarn test:coverage` | unit suite; fails below 100% on any measure |
-| `yarn test:integration` | needs Postgres; run in CI; holds the Postgres-backed modules at 100% |
-| `yarn build` | `next build` plus the CLI's `tsc` build |
+| Command                 | What it is                                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `yarn lint`             | `biome check --error-on-warnings .`, then `yarn lint:sonar` — a new warning or Sonar issue fails the build |
+| `yarn lint:sonar`       | the SonarCloud quality profile's rules, through their ESLint ports (`eslint.config.mjs`)                   |
+| `yarn typecheck`        | three passes: app, `tsconfig.cli.json`, `tsconfig.e2e.json`                                                |
+| `yarn test:coverage`    | unit suite; fails below 100% on any measure                                                                |
+| `yarn test:integration` | needs Postgres; run in CI; holds the Postgres-backed modules at 100%                                       |
+| `yarn build`            | `next build` plus the CLI's `tsc` build                                                                    |
 
 **Sonar issues fail `yarn lint`, so they never reach the PR's SonarCloud analysis.** The rules come from
 `sonar-rules.json`, a committed snapshot of the project's SonarCloud quality profile; when the profile changes, run
 `yarn lint:sonar:sync` and commit the result. The handful of rules with no ESLint port are still caught by the
 SonarCloud scan. `// NOSONAR` is honoured, but an issue that looks like a false positive belongs in SonarCloud as
-*Accepted*, where a reviewer can see it. Claude Code runs the same check on every file it edits, through the hook
+_Accepted_, where a reviewer can see it. Claude Code runs the same check on every file it edits, through the hook
 in `.claude/settings.json`.
 
 **`yarn lint` is a no-op inside a worktree under `.claude/worktrees/`.** `biome.json` lists
