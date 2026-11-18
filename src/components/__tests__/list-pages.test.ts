@@ -244,7 +244,7 @@ describe("the three list routes", () => {
     const markup = renderToStaticMarkup(await RepositoriesPage());
 
     expect(markup).not.toContain('aria-label="Reporting window"');
-    expect(markup).not.toContain("week window");
+    expect(markup).not.toContain(">4w</button>");
   });
 
   /**
