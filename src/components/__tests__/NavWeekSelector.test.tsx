@@ -97,7 +97,7 @@ function group(): HTMLElement {
 }
 
 function button(weeks: number): HTMLElement {
-  return screen.getByLabelText(`${weeks} week window`);
+  return screen.getByRole("button", { name: `${weeks}w` });
 }
 
 /** The span the group says is selected, which is the guess while a render is in flight. */

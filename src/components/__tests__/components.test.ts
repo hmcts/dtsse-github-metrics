@@ -749,7 +749,7 @@ describe("WeekSpanButtons", () => {
     const markup = settled();
     expect(markup).toContain('aria-busy="false"');
     expect(markup).not.toContain("opacity-50");
-    expect(markup).toContain('aria-label="4 week window" class="px-3 py-1.5 rounded text-sm transition-colors bg-indigo-600');
+    expect(markup).toContain('aria-pressed="true" class="px-3 py-1.5 rounded text-sm transition-colors bg-indigo-600');
   });
 
   // The pressed highlight says which button was clicked; this says the page behind it has not

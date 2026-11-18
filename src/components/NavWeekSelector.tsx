@@ -101,7 +101,6 @@ export function WeekSpanButtons({
           type="button"
           onClick={() => onChoose(weeks)}
           aria-pressed={current === weeks}
-          aria-label={`${weeks} week window`}
           className={`px-3 py-1.5 rounded text-sm transition-colors ${
             current === weeks ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
           }`}

@@ -42,7 +42,7 @@ test.describe("navigation @regression", () => {
     // that a visit to it cannot rewrite the remembered window through `proxy`, and this is the assertion that
     // holds it to that: a reader who chose 26 weeks still has 26 weeks after passing through.
     await page.getByRole("link", { name: "Teams" }).first().click();
-    await expect(page.getByRole("button", { name: "26 week window" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "26w", exact: true })).toHaveAttribute("aria-pressed", "true");
   });
 
   test("should offer every configured span @regression", async ({ page }) => {
@@ -50,7 +50,7 @@ test.describe("navigation @regression", () => {
 
     const selector = page.getByRole("group", { name: "Reporting window" });
     for (const weeks of [1, 4, 8, 12, 26]) {
-      await expect(selector.getByRole("button", { name: `${weeks} week window` })).toBeVisible();
+      await expect(selector.getByRole("button", { name: `${weeks}w`, exact: true })).toBeVisible();
     }
   });
 
