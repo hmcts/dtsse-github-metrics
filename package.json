@@ -92,6 +92,6 @@
   "resolutions": {
     "eslint-plugin-sonarjs/typescript": "5.9.3",
     "pg": "8.20.0",
-    "@azure/monitor-opentelemetry/@opentelemetry/instrumentation-http": "0.222.0"
+    "@azure/monitor-opentelemetry/@opentelemetry/instrumentation-http": "0.301.2"
   }
 }
